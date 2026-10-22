@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.module.js';
 import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
+import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
 import {
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
@@ -1188,6 +1189,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
   // Water polygons & river ribbons (subdivided to 32m to follow 3D DEM terrain + pure vertical (0,1,0) normals)
   const waterPos = [];
   const waterNorm = [];
+  const waterUv = []; // feature/atmosphere: shore distance for the water shader
   for (let wIdx = 0; wIdx < (data.water_polys || []).length; wIdx++) {
     const wp = data.water_polys[wIdx];
     const [osmId, , flatOuter, flatHoles] = wp;
@@ -1235,6 +1237,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
       waterPos.push(ax, ya, az, cx, yc, cz, bx, yb, bz);
       waterNorm.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
     }
+    appendPolyShoreUv(waterUv, subTris, flatOuter, flatHoles); // feature/atmosphere
   }
 
   for (let lIdx = 0; lIdx < (data.water_lines || []).length; lIdx++) {
@@ -1268,6 +1271,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
         0, 1, 0, 0, 1, 0, 0, 1, 0,
         0, 1, 0, 0, 1, 0, 0, 1, 0
       );
+      appendRibbonShoreUv(waterUv, halfW); // feature/atmosphere
     }
   }
 
@@ -1275,6 +1279,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.Float32BufferAttribute(waterPos, 3));
     geom.setAttribute('normal', new THREE.Float32BufferAttribute(waterNorm, 3));
+    geom.setAttribute('uv', new THREE.Float32BufferAttribute(waterUv, 2)); // feature/atmosphere
     finalizeAndReleaseGeometry(geom, false);
     const mesh = new THREE.Mesh(geom, mats.waterMat);
     mesh.receiveShadow = true;
