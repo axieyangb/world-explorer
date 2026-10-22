@@ -294,7 +294,7 @@ export class StreetFeatures {
     const poolGeom = new THREE.PlaneGeometry(1, 1);
     poolGeom.rotateX(-Math.PI / 2);
     this.poolMat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(1.0, 0.72, 0.42) }, uIntensity: { value: 0 } },
+      uniforms: { uColor: { value: new THREE.Color(1.0, 0.66, 0.34) }, uIntensity: { value: 0 } },
       vertexShader: POOL_VS, fragmentShader: POOL_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -8,
     });
@@ -382,7 +382,7 @@ export class StreetFeatures {
           } else if (nBulb < 6000) writeMatrix(bulbArr, nBulb++ * 16, x, y, z, heads[i + 3], 1);
           if (nHalo < 8000) writeMatrix(haloArr, nHalo++ * 16, x, y - (isPost ? 0 : 0.1), z, 0, 1);
           if (nPool < 8000) {
-            const sc = isPost ? 9 : 15;
+            const sc = isPost ? 8 : 12;
             writeMatrixScaled(poolArr, nPool++ * 16, x, heads[i + 4] + 0.08, z, sc);
           }
         }
@@ -477,7 +477,7 @@ export class StreetFeatures {
       this._lightOn = on;
       this.bulbMat.color.setRGB(0.54 + 0.46 * on, 0.54 + 0.36 * on, 0.5 + 0.2 * on);
       this.haloMat.uniforms.uIntensity.value = 1.0 * on;
-      this.poolMat.uniforms.uIntensity.value = 1.0 * on;
+      this.poolMat.uniforms.uIntensity.value = 0.55 * on;
       this.halos.visible = on > 0.02 && this.halos.count > 0;
       this.pools.visible = on > 0.02 && this.pools.count > 0;
     }

@@ -67,6 +67,19 @@ function hash2(x, z) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+function pointAt(w, d) {
+  const { flat, cum, n } = w;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] <= d) lo = mid;
+    else hi = mid;
+  }
+  const seg = cum[hi] - cum[lo];
+  const f = seg > 1e-6 ? Math.max(0, Math.min(1, (d - cum[lo]) / seg)) : 0;
+  return [flat[lo * 3] + (flat[hi * 3] - flat[lo * 3]) * f, flat[lo * 3 + 2] + (flat[hi * 3 + 2] - flat[lo * 3 + 2]) * f];
+}
+
 function pointInRing(px, pz, flat) {
   let inside = false;
   for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
@@ -212,48 +225,92 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     return false;
   };
 
-  // ---- 2. Intersection detection from raw OSM ways (shared vertices, distinct arm directions) ----
+  // ---- 2. Intersection detection: geometric crossings / T-junctions between different OSM ways ----
+  // (Z14 vector tiles do not guarantee shared vertices, so test segment pairs with an endpoint tolerance.)
   const nodeMap = new Map();
   const roads = data.roads || [];
+  const ways = [];
+  const rawGrid = makeGrid(32);
   for (let r = 0; r < roads.length; r++) {
     const [wid, cls, , , lanes, widthM, oneway, isBridge, isTunnel, , flat] = roads[r];
     if (!STREET_CLS.has(cls) || isBridge || isTunnel || !flat || flat.length < 6) continue;
     const n = flat.length / 3;
-    for (let i = 0; i < n; i++) {
-      const x = flat[i * 3], z = flat[i * 3 + 2];
-      if (x < -505 || x > 505 || z < -505 || z > 505) continue;
-      const key = `${Math.round(x * 2)},${Math.round(z * 2)}`;
-      let node = nodeMap.get(key);
-      if (!node) nodeMap.set(key, (node = { x, z, arms: [] }));
-      for (const dir of [-1, 1]) {
-        const j = i + dir;
-        if (j < 0 || j >= n) continue;
-        // Walk ~7m along the way for a stable arm direction
-        let k = j, ex = flat[k * 3], ez = flat[k * 3 + 2];
-        let armLen = Math.hypot(ex - x, ez - z);
-        while (armLen < 7 && k + dir >= 0 && k + dir < n) {
-          k += dir;
-          ex = flat[k * 3];
-          ez = flat[k * 3 + 2];
-          armLen = Math.hypot(ex - x, ez - z);
+    const cum = new Float32Array(n);
+    for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(flat[i * 3] - flat[i * 3 - 3], flat[i * 3 + 2] - flat[i * 3 - 1]);
+    const w = { wid, cls, lanes, hw: Math.max(1.0, widthM * 0.5), oneway, flat, n, cum, total: cum[n - 1], idx: ways.length };
+    ways.push(w);
+    for (let i = 0; i < n - 1; i++) {
+      const x1 = flat[i * 3], z1 = flat[i * 3 + 2], x2 = flat[i * 3 + 3], z2 = flat[i * 3 + 5];
+      if (Math.max(x1, x2) < -510 || Math.min(x1, x2) > 510 || Math.max(z1, z2) < -510 || Math.min(z1, z2) > 510) continue;
+      rawGrid.insertBox(Math.min(x1, x2) - 1, Math.min(z1, z2) - 1, Math.max(x1, x2) + 1, Math.max(z1, z2) + 1, [w, i]);
+    }
+  }
+  // Direction of way `w` leaving arc-length position `d` towards +1 / -1, sampled ~7m away
+  const armDir = (w, d, dir) => {
+    const target = Math.max(0, Math.min(w.total, d + dir * 7));
+    const p0 = pointAt(w, d), p1 = pointAt(w, target);
+    const l = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    return l < 0.5 ? null : [(p1[0] - p0[0]) / l, (p1[1] - p0[1]) / l];
+  };
+  const addArm = (node, w, d) => {
+    for (const dir of [-1, 1]) {
+      const avail = dir > 0 ? w.total - d : d;
+      if (avail < 1.5) continue;
+      const v = armDir(w, d, dir);
+      if (!v) continue;
+      let merged = false;
+      for (const a of node.arms) {
+        if (a.ax * v[0] + a.az * v[1] > 0.94) {
+          merged = true;
+          if (w.hw > a.hw) a.hw = w.hw;
+          if (avail > a.total) a.total = avail;
+          break;
         }
-        if (armLen < 0.5) continue;
-        // total available length along this arm
-        let total = 0;
-        for (let q = i; q + dir >= 0 && q + dir < n && total < 30; q += dir) {
-          total += Math.hypot(flat[(q + dir) * 3] - flat[q * 3], flat[(q + dir) * 3 + 2] - flat[q * 3 + 2]);
-        }
-        const ax = (ex - x) / armLen, az = (ez - z) / armLen;
-        let merged = false;
-        for (const a of node.arms) {
-          if (a.ax * ax + a.az * az > 0.94) {
-            merged = true;
-            if (widthM * 0.5 > a.hw) a.hw = widthM * 0.5;
-            break;
-          }
-        }
-        if (!merged) {
-          node.arms.push({ ax, az, hw: Math.max(1.0, widthM * 0.5), cls, lanes, oneway, forward: dir > 0, id: wid, total });
+      }
+      if (!merged) {
+        node.arms.push({ ax: v[0], az: v[1], hw: w.hw, cls: w.cls, lanes: w.lanes, oneway: w.oneway, forward: dir > 0, id: w.wid, total: avail });
+      }
+    }
+  };
+  const seenPair = new Set();
+  const cellsDone = new Set();
+  for (let gz = -560; gz < 560; gz += 32) {
+    for (let gx = -560; gx < 560; gx += 32) {
+      const list = rawGrid.query(gx + 16, gz + 16);
+      if (list.length < 2 || cellsDone.has(list)) continue;
+      cellsDone.add(list);
+      for (let a = 0; a < list.length; a++) {
+        const [wa, ia] = list[a];
+        const ax1 = wa.flat[ia * 3], az1 = wa.flat[ia * 3 + 2], ax2 = wa.flat[ia * 3 + 3], az2 = wa.flat[ia * 3 + 5];
+        const la = wa.cum[ia + 1] - wa.cum[ia];
+        if (la < 0.05) continue;
+        for (let b = a + 1; b < list.length; b++) {
+          const [wb, ib] = list[b];
+          if (wb === wa || wb.wid === wa.wid) continue;
+          const pk = wa.idx < wb.idx ? `${wa.idx}:${ia}:${wb.idx}:${ib}` : `${wb.idx}:${ib}:${wa.idx}:${ia}`;
+          if (seenPair.has(pk)) continue;
+          seenPair.add(pk);
+          const bx1 = wb.flat[ib * 3], bz1 = wb.flat[ib * 3 + 2], bx2 = wb.flat[ib * 3 + 3], bz2 = wb.flat[ib * 3 + 5];
+          const lb = wb.cum[ib + 1] - wb.cum[ib];
+          if (lb < 0.05) continue;
+          const rX = ax2 - ax1, rZ = az2 - az1, sX = bx2 - bx1, sZ = bz2 - bz1;
+          const den = rX * sZ - rZ * sX;
+          if (Math.abs(den) < 1e-6 * la * lb || Math.abs(den) / (la * lb) < 0.26) continue; // parallel / grazing (< ~15 deg)
+          const qx = bx1 - ax1, qz = bz1 - az1;
+          const t = (qx * sZ - qz * sX) / den;
+          const u = (qx * rZ - qz * rX) / den;
+          const ea = 1.5 / la, eb = 1.5 / lb; // endpoint tolerance (T-junction gaps)
+          if (t < -ea || t > 1 + ea || u < -eb || u > 1 + eb) continue;
+          // Endpoint overshoot only allowed at the way's real ends
+          if ((t < 0 && ia > 0) || (t > 1 && ia < wa.n - 2) || (u < 0 && ib > 0) || (u > 1 && ib < wb.n - 2)) continue;
+          const tc = Math.max(0, Math.min(1, t)), uc = Math.max(0, Math.min(1, u));
+          const x = ax1 + rX * tc, z = az1 + rZ * tc;
+          if (x < -505 || x > 505 || z < -505 || z > 505) continue;
+          const key = `${Math.round(x / 3)},${Math.round(z / 3)}`;
+          let node = nodeMap.get(key);
+          if (!node) nodeMap.set(key, (node = { x, z, arms: [] }));
+          addArm(node, wa, wa.cum[ia] + la * tc);
+          addArm(node, wb, wb.cum[ib] + lb * uc);
         }
       }
     }
