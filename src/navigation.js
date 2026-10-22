@@ -1,194 +1,218 @@
 import * as THREE from '../vendor/three.module.js';
+import { getBeijingTerrainElevation } from './environment.js';
+import { getLang } from './i18n.js';
+import { computeRoadRoute } from './features/route_graph.js';
 
+const RIBBON_AHEAD_M = 1200;
+const RIBBON_STEP_M = 8;
+const RIBBON_HALF_W = 0.9;
+const ARRIVE_M = 30;
+
+export function formatDistance(m) {
+  const zh = getLang() === 'zh';
+  if (m < 1000) return `${Math.max(10, Math.round(m / 10) * 10)} ${zh ? '米' : 'm'}`;
+  const km = m / 1000;
+  return `${km < 10 ? km.toFixed(1) : Math.round(km)} ${zh ? '公里' : 'km'}`;
+}
+
+export function formatDuration(sec) {
+  const zh = getLang() === 'zh';
+  const min = Math.max(1, Math.round(sec / 60));
+  if (min < 60) return `${min} ${zh ? '分钟' : 'min'}`;
+  const h = Math.floor(min / 60);
+  const rm = min % 60;
+  return zh ? `${h} 小时 ${rm} 分钟` : `${h} h ${rm} min`;
+}
+
+/**
+ * GPS route state: tile-based road routing (global), progress tracking,
+ * arrival detection and a thin 3D ground ribbon that follows the road surface.
+ * Route geometry is stored in lat/lon so it survives world-origin changes.
+ */
 export class RoadNavigator {
   constructor(scene) {
     this.scene = scene;
-    this.nodes = null; // idStr -> [x, y, z]
-    this.adj = null;   // idStr -> [[nbrId, distM, costSec, roadName], ...]
-    this.grid = new Map(); // "gx,gz" -> [idStr, ...]
-    this.ready = false;
-
-    this.activeRoute = null; // { points: [[x,y,z], ...], totalDistM, etaSec, roadNames, destName }
-    this.routeMesh = null;
-  }
-
-  async init() {
-    const resp = await fetch('/data/nav_graph.json');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    this.nodes = data.nodes || {};
-    this.adj = data.adj || {};
-
-    for (const [idStr, pt] of Object.entries(this.nodes)) {
-      const gx = Math.floor(pt[0] / 500);
-      const gz = Math.floor(pt[2] / 500);
-      const key = `${gx},${gz}`;
-      let cell = this.grid.get(key);
-      if (!cell) {
-        cell = [];
-        this.grid.set(key, cell);
-      }
-      cell.push(idStr);
-    }
     this.ready = true;
+    this.app = null; // attached by MapSystem: worldOrigin + sampleRoadSurface
+    this.activeRoute = null;
+    this.routeMesh = null;
+    this.arrivedAt = -Infinity;
+    this._seq = 0;
+    this._lastUpdate = 0;
+    this._originRef = null;
+    this._ribbonAt = null;
+    this._ribbonTime = 0;
+    this._ribbonChunks = 0;
+    this._lastReroute = 0;
   }
 
-  findNearestNode(x, z) {
-    if (!this.ready) return null;
-    const cx = Math.floor(x / 500);
-    const cz = Math.floor(z / 500);
-    let bestId = null;
-    let bestD2 = Infinity;
+  /** Legacy hook (the old Beijing-only nav graph is no longer needed). */
+  init() {}
 
-    for (let r = 0; r <= 6; r++) {
-      for (let dx = -r; dx <= r; dx++) {
-        for (let dz = -r; dz <= r; dz++) {
-          if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
-          const cell = this.grid.get(`${cx + dx},${cz + dz}`);
-          if (!cell) continue;
-          for (let i = 0; i < cell.length; i++) {
-            const idStr = cell[i];
-            const pt = this.nodes[idStr];
-            const d2 = (pt[0] - x) ** 2 + (pt[2] - z) ** 2;
-            if (d2 < bestD2) {
-              bestD2 = d2;
-              bestId = idStr;
-            }
-          }
-        }
-      }
-      if (bestId !== null && r >= 1) break;
-    }
-    return bestId;
+  attach(app) {
+    this.app = app;
   }
 
-  computeRoute(startX, startZ, goalX, goalZ, destName = '自选目的地') {
-    if (!this.ready) return null;
-    const startId = this.findNearestNode(startX, startZ);
-    const goalId = this.findNearestNode(goalX, goalZ);
-    if (!startId || !goalId || startId === goalId) return null;
+  get origin() {
+    return this.app && this.app.worldOrigin;
+  }
 
-    const goalPt = this.nodes[goalId];
-    const gScore = new Map();
-    const cameFrom = new Map();
-    const cameRoad = new Map();
-    const closed = new Set();
+  worldToLatLon(x, z) {
+    const o = this.origin;
+    return [o.centerLat - z / o.mPerDegLat, o.centerLon + x / o.mPerDegLon];
+  }
 
-    // Binary min-heap priority queue: [fScore, nodeIdStr]
-    const heap = [];
-    const pushHeap = (f, id) => {
-      heap.push([f, id]);
-      let idx = heap.length - 1;
-      while (idx > 0) {
-        const p = (idx - 1) >> 1;
-        if (heap[p][0] <= heap[idx][0]) break;
-        const tmp = heap[p];
-        heap[p] = heap[idx];
-        heap[idx] = tmp;
-        idx = p;
-      }
-    };
-    const popHeap = () => {
-      const top = heap[0];
-      const last = heap.pop();
-      if (heap.length > 0) {
-        heap[0] = last;
-        let idx = 0;
-        const n = heap.length;
-        while (true) {
-          let l = idx * 2 + 1;
-          let r = l + 1;
-          let smallest = idx;
-          if (l < n && heap[l][0] < heap[smallest][0]) smallest = l;
-          if (r < n && heap[r][0] < heap[smallest][0]) smallest = r;
-          if (smallest === idx) break;
-          const tmp = heap[idx];
-          heap[idx] = heap[smallest];
-          heap[smallest] = tmp;
-          idx = smallest;
-        }
-      }
-      return top;
-    };
+  latLonToWorld(lat, lon) {
+    const o = this.origin;
+    return [(lon - o.centerLon) * o.mPerDegLon, (o.centerLat - lat) * o.mPerDegLat];
+  }
 
-    const hFunc = (idStr) => {
-      const p = this.nodes[idStr];
-      return Math.hypot(p[0] - goalPt[0], p[2] - goalPt[2]) / 26.0;
-    };
-
-    gScore.set(startId, 0);
-    pushHeap(hFunc(startId), startId);
-
-    let iters = 0;
-    let found = false;
-    while (heap.length > 0 && iters < 65000) {
-      iters++;
-      const [, curr] = popHeap();
-      if (curr === goalId) {
-        found = true;
-        break;
-      }
-      if (closed.has(curr)) continue;
-      closed.add(curr);
-
-      const curG = gScore.get(curr);
-      const nbrs = this.adj[curr];
-      if (!nbrs) continue;
-
-      for (let i = 0; i < nbrs.length; i++) {
-        const [nbrNum, , edgeCost, rName] = nbrs[i];
-        const nbr = String(nbrNum);
-        if (closed.has(nbr)) continue;
-        const tentG = curG + edgeCost;
-        const prevG = gScore.get(nbr);
-        if (prevG === undefined || tentG < prevG) {
-          gScore.set(nbr, tentG);
-          cameFrom.set(nbr, curr);
-          cameRoad.set(nbr, rName);
-          pushHeap(tentG + hFunc(nbr), nbr);
-        }
-      }
-    }
-
-    if (!found) return null;
-
-    // Reconstruct path
-    const pts = [];
-    const roadSeq = [];
-    let curr = goalId;
-    while (curr) {
-      const pt = this.nodes[curr];
-      pts.push([pt[0], pt[1], pt[2]]);
-      const rn = cameRoad.get(curr);
-      if (rn && (roadSeq.length === 0 || roadSeq[roadSeq.length - 1] !== rn)) {
-        roadSeq.push(rn);
-      }
-      curr = cameFrom.get(curr);
-    }
-    pts.reverse();
-    roadSeq.reverse();
-
-    let totalDistM = 0;
-    for (let i = 0; i < pts.length - 1; i++) {
-      totalDistM += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][2] - pts[i][2]);
-    }
-
-    this.activeRoute = {
-      points: pts,
-      totalDistM,
-      etaSec: gScore.get(goalId) || totalDistM / 16.0,
-      roadNames: roadSeq.slice(0, 6),
-      destName,
-      goalX: goalPt[0],
-      goalZ: goalPt[2],
-    };
-
-    this._rebuild3DRouteRibbon();
+  /** Builds a road route between two lat/lon points (async). */
+  async routeTo(fromLat, fromLon, toLat, toLon, destName = '') {
+    const seq = ++this._seq;
+    const r = await computeRoadRoute({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon });
+    if (seq !== this._seq || !r) return null;
+    this._setRoute(r, destName, toLat, toLon);
     return this.activeRoute;
   }
 
+  /** Legacy world-coordinate API. */
+  computeRoute(startX, startZ, goalX, goalZ, destName = '') {
+    const [a, b] = this.worldToLatLon(startX, startZ);
+    const [c, d] = this.worldToLatLon(goalX, goalZ);
+    return this.routeTo(a, b, c, d, destName);
+  }
+
   clearRoute() {
+    this._seq++;
     this.activeRoute = null;
+    this._disposeRibbon();
+  }
+
+  /** One quiet line for the HUD, or '' when idle. */
+  statusText(now = performance.now()) {
+    const r = this.activeRoute;
+    if (r) return `${formatDistance(r.remainingM)} · ${formatDuration(r.remainingSec)}`;
+    if (now - this.arrivedAt < 3000) return getLang() === 'zh' ? '已到达' : 'Arrived';
+    return '';
+  }
+
+  _setRoute(r, destName, goalLat, goalLon) {
+    const ll = r.latlon;
+    const cum = new Float64Array(ll.length);
+    const mLat = 111320;
+    const mLon = 111320 * Math.cos((ll[0][0] * Math.PI) / 180);
+    for (let i = 1; i < ll.length; i++) {
+      cum[i] = cum[i - 1] + Math.hypot((ll[i][1] - ll[i - 1][1]) * mLon, (ll[i][0] - ll[i - 1][0]) * mLat);
+    }
+    const total = cum[ll.length - 1] || 1;
+    this.activeRoute = {
+      latlon: ll,
+      cum,
+      totalDistM: total,
+      etaSec: r.etaSec,
+      secPerM: r.etaSec / total,
+      straight: r.straight,
+      destName,
+      goalLat,
+      goalLon,
+      progressIdx: 0,
+      remainingM: total,
+      remainingSec: r.etaSec,
+      offSince: 0,
+      points: [],
+      goalX: 0,
+      goalZ: 0,
+    };
+    this._reproject();
+    this._disposeRibbon();
+    this._ribbonAt = null;
+  }
+
+  _reproject() {
+    const r = this.activeRoute;
+    this._originRef = this.origin;
+    if (!r || !this.origin) return;
+    r.points = r.latlon.map(([lat, lon]) => {
+      const [x, z] = this.latLonToWorld(lat, lon);
+      return [x, 0, z];
+    });
+    [r.goalX, r.goalZ] = this.latLonToWorld(r.goalLat, r.goalLon);
+  }
+
+  /** Called every frame (cheap; internally throttled). */
+  update(playerPos, now = performance.now()) {
+    const r = this.activeRoute;
+    if (!r || !this.origin) return;
+    if (now - this._lastUpdate < 200) return;
+    this._lastUpdate = now;
+    if (this._originRef !== this.origin) {
+      this._reproject();
+      this._disposeRibbon();
+      this._ribbonAt = null;
+    }
+
+    const px = playerPos.x;
+    const pz = playerPos.z;
+    const pts = r.points;
+    const toGoal = Math.hypot(r.goalX - px, r.goalZ - pz);
+    if (toGoal < ARRIVE_M) {
+      this.clearRoute();
+      this.arrivedAt = now;
+      return;
+    }
+
+    // Progress along the polyline (search a window ahead of the last index).
+    let bestI = r.progressIdx;
+    let bestT = 0;
+    let bestD = Infinity;
+    const i0 = Math.max(0, r.progressIdx - 3);
+    const i1 = Math.min(pts.length - 2, r.progressIdx + 120);
+    for (let i = i0; i <= i1; i++) {
+      const ax = pts[i][0], az = pts[i][2];
+      const vx = pts[i + 1][0] - ax, vz = pts[i + 1][2] - az;
+      const l2 = vx * vx + vz * vz;
+      const t = l2 > 1e-6 ? Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / l2)) : 0;
+      const d = Math.hypot(ax + vx * t - px, az + vz * t - pz);
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+        bestT = t;
+      }
+    }
+    if (r.straight) {
+      r.remainingM = toGoal;
+    } else {
+      r.progressIdx = bestI;
+      const seg = r.cum[bestI + 1] - r.cum[bestI];
+      r.remainingM = Math.max(0, r.totalDistM - (r.cum[bestI] + seg * bestT)) + Math.min(bestD, 200);
+    }
+    r.remainingSec = r.remainingM * r.secPerM;
+
+    // Quiet auto-reroute when clearly off the route for a few seconds.
+    if (!r.straight && bestD > 90) {
+      if (!r.offSince) r.offSince = now;
+      if (now - r.offSince > 4000 && now - this._lastReroute > 10000) {
+        this._lastReroute = now;
+        const [lat, lon] = this.worldToLatLon(px, pz);
+        this.routeTo(lat, lon, r.goalLat, r.goalLon, r.destName);
+      }
+    } else {
+      r.offSince = 0;
+    }
+
+    // 3D ribbon near the player; refreshed as we move or as chunks stream in.
+    const chunks = this.app && this.app.loadedChunks ? this.app.loadedChunks.size : 0;
+    const moved = this._ribbonAt ? Math.hypot(px - this._ribbonAt[0], pz - this._ribbonAt[1]) : Infinity;
+    if (moved > 120 || (chunks !== this._ribbonChunks && now - this._ribbonTime > 1500)) {
+      this._ribbonAt = [px, pz];
+      this._ribbonTime = now;
+      this._ribbonChunks = chunks;
+      this._rebuildRibbon(playerPos);
+    }
+  }
+
+  _disposeRibbon() {
     if (this.routeMesh) {
       this.scene.remove(this.routeMesh);
       this.routeMesh.geometry.dispose();
@@ -197,48 +221,79 @@ export class RoadNavigator {
     }
   }
 
-  _rebuild3DRouteRibbon() {
-    if (this.routeMesh) {
-      this.scene.remove(this.routeMesh);
-      this.routeMesh.geometry.dispose();
-      this.routeMesh.material.dispose();
-      this.routeMesh = null;
+  _surfaceY(x, z, prevY) {
+    const terr = getBeijingTerrainElevation(x, z);
+    const app = this.app;
+    if (app && typeof app.sampleRoadSurface === 'function') {
+      const s = app.sampleRoadSurface(x, prevY, z) || (Math.abs(prevY - terr) > 2 ? app.sampleRoadSurface(x, terr, z) : null);
+      if (s) return s.y;
     }
-    if (!this.activeRoute || this.activeRoute.points.length < 2) return;
+    return terr;
+  }
 
-    const pts = this.activeRoute.points;
-    const pos = [];
-    const hw = 2.2;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const [x1, y1, z1] = pts[i];
-      const [x2, y2, z2] = pts[i + 1];
-      const dx = x2 - x1, dz = z2 - z1;
-      const len = Math.hypot(dx, dz);
-      if (len < 0.1) continue;
-      const nx = (-dz / len) * hw;
-      const nz = (dx / len) * hw;
-      const ry1 = y1 + 0.55;
-      const ry2 = y2 + 0.55;
-      pos.push(
-        x1 + nx, ry1, z1 + nz,
-        x1 - nx, ry1, z1 - nz,
-        x2 - nx, ry2, z2 - nz,
-        x1 + nx, ry1, z1 + nz,
-        x2 - nx, ry2, z2 - nz,
-        x2 + nx, ry2, z2 + nz
-      );
+  _rebuildRibbon(playerPos) {
+    this._disposeRibbon();
+    const r = this.activeRoute;
+    if (!r || r.points.length < 2) return;
+    const pts = r.points;
+
+    // Sample the route ahead of the player at a fixed step.
+    const samples = [];
+    let acc = 0;
+    let prevY = playerPos.y;
+    const start = r.straight ? 0 : Math.max(0, r.progressIdx);
+    for (let i = start; i < pts.length - 1 && acc < RIBBON_AHEAD_M; i++) {
+      const ax = pts[i][0], az = pts[i][2];
+      const bx = pts[i + 1][0], bz = pts[i + 1][2];
+      const len = Math.hypot(bx - ax, bz - az);
+      const steps = Math.max(1, Math.ceil(len / RIBBON_STEP_M));
+      for (let k = 0; k < steps && acc < RIBBON_AHEAD_M; k++) {
+        const t = k / steps;
+        const x = ax + (bx - ax) * t;
+        const z = az + (bz - az) * t;
+        if (Math.abs(x) > 19950 || Math.abs(z) > 19950) continue;
+        if (r.straight && Math.hypot(x - playerPos.x, z - playerPos.z) > RIBBON_AHEAD_M) continue;
+        prevY = this._surfaceY(x, z, prevY);
+        samples.push(x, prevY, z);
+        acc += len / steps;
+      }
     }
+    const n = samples.length / 3;
+    if (n < 2) return;
 
+    const pos = new Float32Array(n * 6);
+    const idx = [];
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - 1);
+      const b = Math.min(n - 1, i + 1);
+      let dx = samples[b * 3] - samples[a * 3];
+      let dz = samples[b * 3 + 2] - samples[a * 3 + 2];
+      const l = Math.hypot(dx, dz) || 1;
+      dx /= l;
+      dz /= l;
+      const x = samples[i * 3], y = samples[i * 3 + 1] + 0.3, z = samples[i * 3 + 2];
+      pos.set([x - dz * RIBBON_HALF_W, y, z + dx * RIBBON_HALF_W, x + dz * RIBBON_HALF_W, y, z - dx * RIBBON_HALF_W], i * 6);
+      if (i < n - 1) {
+        const v = i * 2;
+        idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+      }
+    }
     const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geom.setIndex(idx);
+    geom.computeBoundingSphere();
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x00f5d4,
+      color: 0x4aa3ff,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.82,
-      depthTest: true,
+      opacity: 0.55,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -4,
     });
     this.routeMesh = new THREE.Mesh(geom, mat);
+    this.routeMesh.renderOrder = 5;
     this.scene.add(this.routeMesh);
   }
 }
