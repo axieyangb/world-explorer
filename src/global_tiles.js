@@ -928,7 +928,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     parks,
     facilities,
     osm_trees: [],
-    landcover: extractLandcoverPolys(tiles, toLocalXZ), // [feature/vegetation] landuse/landcover ground polygons
+    vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
   };
 }
 

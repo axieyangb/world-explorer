@@ -394,12 +394,13 @@ function pickTree(r, mix, coniferBias = 1, palmBias = 1) {
 /**
  * Chunk hook: builds the landcover ground mesh into `terrainGroup` and returns the vegetation instance table.
  */
-export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPointInWater, isPointInSunkenTrench, terrainGroup, worldOrigin }) {
-  const landPolys = data.landcover || [];
+export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPointInWater, isPointInSunkenTrench, terrainGroup }) {
+  const src = data.vegetation || {};
+  const landPolys = src.landcover || [];
   const lcMesh = buildLandcoverMesh(landPolys, ox, oz, isPointInWater, isPointInSunkenTrench);
   if (lcMesh && terrainGroup) terrainGroup.add(lcMesh);
 
-  const lat = worldOrigin && Number.isFinite(worldOrigin.centerLat) ? worldOrigin.centerLat : 39.9;
+  const lat = Number.isFinite(src.lat) ? src.lat : 39.9;
   const mix = climateMix(Math.abs(lat));
   const autumnChance = Math.abs(lat) > 34 && Math.abs(lat) < 55 ? 0.06 : 0;
 
@@ -412,19 +413,24 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   const junctionGrid = createGrid(40);
   const nodeDeg = new Map();
   const segs = [];
-  for (const s of roadSegments || []) {
-    if (s.tunnel) continue;
-    const x1 = s.x1 - ox, z1 = s.z1 - oz, x2 = s.x2 - ox, z2 = s.z2 - oz;
-    const hw = (s.width || 4) * 0.5;
-    const seg = { x1, z1, x2, z2, hw, cls: s.cls, bridge: s.bridge, name: s.name || '' };
-    segs.push(seg);
-    roadGrid.insert(Math.min(x1, x2) - hw - 4, Math.min(z1, z2) - hw - 4, Math.max(x1, x2) + hw + 4, Math.max(z1, z2) + hw + 4, seg);
-    if (!s.bridge) {
-      for (const [x, z] of [[x1, z1], [x2, z2]]) {
-        const k = `${Math.round(x / 1.5)},${Math.round(z / 1.5)}`;
-        const e = nodeDeg.get(k);
-        if (e) e.n++;
-        else nodeDeg.set(k, { x, z, n: 1 });
+  // Use the raw chunk road polylines (all classes, unclipped) so clearance also covers neighbours' road ends
+  for (const r of data.roads || []) {
+    const [, cls, name, , , widthM, , isBridge, isTunnel, , flat] = r;
+    if (isTunnel || !flat || flat.length < 6) continue;
+    const hw = Math.max(1.0, (widthM || 4) * 0.5);
+    for (let i = 0; i + 5 < flat.length; i += 3) {
+      const x1 = flat[i], z1 = flat[i + 2], x2 = flat[i + 3], z2 = flat[i + 5];
+      if (Math.max(x1, x2) < -530 || Math.min(x1, x2) > 530 || Math.max(z1, z2) < -530 || Math.min(z1, z2) > 530) continue;
+      const seg = { x1, z1, x2, z2, hw, cls, bridge: isBridge, name: name || '' };
+      segs.push(seg);
+      roadGrid.insert(Math.min(x1, x2) - hw - 4, Math.min(z1, z2) - hw - 4, Math.max(x1, x2) + hw + 4, Math.max(z1, z2) + hw + 4, seg);
+      if (!isBridge && cls !== 'footway' && cls !== 'cycleway' && cls !== 'steps') {
+        for (const [x, z] of [[x1, z1], [x2, z2]]) {
+          const k = `${Math.round(x / 1.5)},${Math.round(z / 1.5)}`;
+          const e = nodeDeg.get(k);
+          if (e) e.n++;
+          else nodeDeg.set(k, { x, z, n: 1 });
+        }
       }
     }
   }
@@ -508,7 +514,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   };
 
   // --- 1. Street trees: rows on sidewalks, regular spacing per street, skipping junctions/driveways ---
-  const STREET = { primary: 2.2, secondary: 2.2, tertiary: 2.2, residential: 1.6, living_street: 1.6, unclassified: 1.6 };
+  const STREET = { trunk: 2.2, primary: 2.2, secondary: 2.2, tertiary: 2.2, residential: 1.6, living_street: 1.6, unclassified: 1.6 };
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
     const sw = STREET[s.cls];
@@ -520,6 +526,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     const sr = mulberry32(streetSeed);
     // One species & spacing per street (consistent rows), small chance of an unplanted street
     if (sr() < (s.cls === 'residential' ? 0.25 : 0.1)) continue;
+    if (s.hw * 2 < 7 && sr() < 0.5) continue; // narrow streets are often unplanted
     const spacing = 8 + sr() * 4;
     const sp = pickTree(sr(), mix, 0.3, 1.3);
     const baseScale = 0.82 + sr() * 0.22;
@@ -535,7 +542,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
       for (let side = -1; side <= 1; side += 2) {
         const x = bx + nx * off * side, z = bz + nz * off * side;
         if (nearJunction(x, z, 11)) continue;
-        if (!groundOk(x, z, 0.5, 1.6, 2.5)) continue;
+        if (!groundOk(x, z, 0.5, 2.8, 2.5)) continue;
         const sc = baseScale * (0.92 + rng() * 0.16);
         if (!push(sp, x, z, sc, sc * (0.95 + rng() * 0.1), rng() * Math.PI * 2, rng)) break;
       }
@@ -604,17 +611,17 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
           const x = gx + rng() * cell, z = gz + rng() * cell;
           if (x > maxX || z > maxZ || !inside(x, z)) continue;
           if (isBush) {
-            if (!groundOk(x, z, 1.0, 1.2, 1.5)) continue;
+            if (!groundOk(x, z, 2.0, 1.2, 1.5)) continue;
             // Bushes come in small clumps
             const n = 1 + Math.floor(rng() * 3);
             for (let k = 0; k < n; k++) {
               const bx = x + (rng() - 0.5) * 3.2, bz = z + (rng() - 0.5) * 3.2;
-              if (k > 0 && !groundOk(bx, bz, 1.0, 1.2, 1.5)) continue;
-              const sc = 0.7 + rng() * 0.6;
+              if (k > 0 && !groundOk(bx, bz, 2.0, 1.2, 1.5)) continue;
+              const sc = 0.9 + rng() * 0.8;
               push(SP_BUSH, bx, bz, sc, sc * (0.8 + rng() * 0.4), rng() * 6.283, rng);
             }
           } else {
-            if (!groundOk(x, z, 2.2, 2.5, 3)) continue;
+            if (!groundOk(x, z, 3.0, 2.5, 3)) continue;
             const sp = a.key === LC_SAND ? SP_PALM : pickTree(rng(), mix, conBias, 1);
             const sc = sMin + rng() * (sMax - sMin);
             push(sp, x, z, sc, sc * (0.9 + rng() * 0.25), rng() * 6.283, rng);
