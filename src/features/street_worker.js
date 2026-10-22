@@ -151,6 +151,7 @@ const CURB_FACE = [0.6, 0.6, 0.59];
  * @param {THREE.Group} root chunk root with userData.{roadSegments, buildingColliders, subGroups}
  */
 export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
+  const tStart = Date.now();
   const region = resolveStreetRegion(worldOrigin || currentOrigin);
   const style = REGION_STYLE[region] || REGION_STYLE.intl;
   const ud = root.userData;
@@ -781,6 +782,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     }
   }
 
+  dbg.ms = Date.now() - tStart;
   const outTypes = {};
   for (const [k, arr] of Object.entries(types)) outTypes[k] = new Float32Array(arr);
   return {
