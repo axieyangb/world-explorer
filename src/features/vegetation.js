@@ -247,6 +247,14 @@ function buildFarGeometry(sp) {
     uv.push(u0, 0, u1, 0, u1, 1, u0, 0, u1, 1, u0, 1);
     for (let i = 0; i < 6; i++) nrm.push(0, 1, 0);
   }
+  if (sp === SP_BROADLEAF || sp === SP_TALL || sp === SP_BUSH) {
+    // Horizontal canopy cap so crossed quads don't read as an "X" from above
+    const r = W * 0.42, y = H * (sp === SP_BUSH ? 0.75 : 0.66);
+    const v0 = sp === SP_BUSH ? 0.55 : 0.45, v1 = sp === SP_BUSH ? 0.95 : 0.9;
+    pos.push(-r, y, -r, -r, y, r, r, y, r, -r, y, -r, r, y, r, r, y, -r);
+    uv.push(u0, v0, u0, v1, u1, v1, u0, v0, u1, v1, u1, v0);
+    for (let i = 0; i < 6; i++) nrm.push(0, 1, 0);
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
