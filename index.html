@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Explorer</title>
+  <meta name="description" content="World Explorer — Real-Time 3D Open-World Earth Exploration, Driving & Flight Simulator." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Primary 3D WebGL2 Viewport -->
+  <canvas id="webgl-canvas"></canvas>
+
+  <!-- Zone 1 — Top-Center: Quiet Location Pill & Spotlight Address Search -->
+  <header id="location-bar" class="location-bar">
+    <button id="location-pill" class="location-pill" type="button" title="Search any address, street, or city [/]">
+      <svg class="hud-svg-icon loc-pin-svg" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 21s-6-5.2-6-10a6 6 0 1 1 12 0c0 4.8-6 10-6 10z" />
+        <circle cx="12" cy="11" r="2.2" />
+      </svg>
+      <span id="location-pill-text" class="loc-pill-text">Chang&apos;an Ave · Beijing</span>
+      <kbd class="loc-key-badge">/</kbd>
+    </button>
+
+    <div id="location-search-panel" class="location-search-panel hidden">
+      <div class="location-input-row">
+        <svg class="hud-svg-icon loc-search-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20l-4.2-4.2" />
+        </svg>
+        <input
+          type="text"
+          id="location-input"
+          class="location-input"
+          placeholder="Type any address, street, or city..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <kbd id="location-esc-badge" class="loc-key-badge" title="Close [Esc]">Esc</kbd>
+      </div>
+      <div id="location-dropdown" class="location-dropdown">
+        <div id="location-chips-section" class="loc-section">
+          <div id="location-chips-label" class="loc-section-label">World Destinations</div>
+          <div id="location-chips" class="location-chips"></div>
+        </div>
+        <div id="location-results-section" class="loc-section hidden">
+          <div id="location-results" class="location-results"></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Zone 2 — Top-Right: Compact Progressive-Disclosure Action Dock -->
+  <nav id="hud-dock" class="hud-dock">
+    <div class="dock-dropdown-wrap">
+      <button id="mode-vehicle-btn" class="dock-pill" type="button" title="Switch Mode or Vehicle [F / C / G]">
+        <span id="mode-vehicle-label">DRIVE · GT COUPE</span>
+        <span class="dock-caret">▾</span>
+      </button>
+      <div id="mode-vehicle-menu" class="dock-popover hidden">
+        <div id="menu-sec-mode" class="popover-label">Mode</div>
+        <div class="popover-mode-row">
+          <button type="button" class="popover-mode-btn active" data-mode="drive"><span data-i18n="mode_drive">Drive</span> <kbd>F</kbd></button>
+          <button type="button" class="popover-mode-btn" data-mode="helicopter"><span data-i18n="mode_fly">Fly</span> <kbd>C</kbd></button>
+          <button type="button" class="popover-mode-btn" data-mode="walk"><span data-i18n="mode_walk">Walk</span> <kbd>F</kbd></button>
+        </div>
+        <div id="menu-sec-vehicle" class="popover-label">Vehicle <kbd>G</kbd></div>
+        <div id="vehicle-menu-list" class="popover-vehicle-list"></div>
+      </div>
+    </div>
+
+    <button id="time-btn" class="dock-pill" type="button" title="Cycle Time of Day">
+      <span id="time-btn-label">DAY</span>
+    </button>
+
+    <button id="camera-btn" class="dock-pill" type="button" title="Cycle Camera View [V]">
+      <span id="camera-btn-label">CHASE</span>
+    </button>
+
+    <button id="map-btn" class="dock-pill" type="button" title="Open World Map [M]">
+      <span id="map-btn-label">MAP</span>
+    </button>
+
+    <button id="lang-btn" class="dock-pill dock-pill-compact" type="button" title="Switch Language (EN / 中文)">
+      <span id="lang-btn-label">EN</span>
+    </button>
+  </nav>
+
+  <!-- Zone 3 — Bottom-Left: Squircle Radar Minimap + GTA V Street Label -->
+  <aside id="hud-radar" class="hud-radar">
+    <div id="minimap-container" class="radar-squircle" title="Open World Map [M]">
+      <canvas id="minimap-canvas" width="168" height="168"></canvas>
+      <span class="radar-north">N</span>
+      <span id="gps-status" class="radar-gps hidden"></span>
+    </div>
+    <div class="radar-readout">
+      <div id="radar-street" class="radar-street">Chang&apos;an Ave</div>
+      <div id="radar-city" class="radar-city">Beijing, CN</div>
+    </div>
+  </aside>
+
+  <!-- Zone 4 — Bottom-Right: Boxless Forza Horizon 5 Speedometer / Flight Telemetry -->
+  <aside id="hud-speedometer" class="hud-speedometer">
+    <div class="speed-main-row">
+      <span id="speed-value" class="speed-value">0</span>
+      <div class="speed-meta-col">
+        <span id="speed-unit" class="speed-unit">KM/H</span>
+        <span id="speed-gear-badge" class="speed-gear-badge">D1</span>
+      </div>
+    </div>
+    <div class="speed-bar-track">
+      <div id="speed-bar-fill" class="speed-bar-fill"></div>
+    </div>
+  </aside>
+
+  <!-- Bottom-Center: Auto-Fading Controls Hint -->
+  <footer id="hud-controls-hint" class="hud-controls-hint">
+    WASD Move · Shift Boost · Space Brake/Up · F Walk/Drive · C Helicopter · G Switch Car · / Search Address
+  </footer>
+
+  <!-- Full-Screen Interactive Vector GIS & A* Navigation Map Modal -->
+  <div id="world-map-modal" class="map-modal hidden">
+    <div class="map-modal-header">
+      <div class="map-title-block">
+        <h2 id="map-modal-heading">WORLD MAP</h2>
+        <p id="map-modal-sub">Scroll to zoom · Drag to pan · Click to teleport or set GPS route</p>
+      </div>
+      <div class="map-modal-actions">
+        <button id="btn-map-click-mode" class="dock-pill active">Click: Teleport</button>
+        <button id="btn-map-center-player" class="dock-pill">Center</button>
+        <button id="btn-map-reset-view" class="dock-pill">Overview</button>
+        <button id="btn-map-clear-gps" class="dock-pill">Clear Route</button>
+        <button id="btn-map-close" class="dock-pill dock-pill-danger">Close [M]</button>
+      </div>
+    </div>
+    <canvas id="world-map-canvas"></canvas>
+    <div id="world-map-tooltip" class="map-tooltip hidden"></div>
+    <div class="map-legend">
+      <span class="leg-item"><i class="leg-line ring"></i> Highway</span>
+      <span class="leg-item"><i class="leg-line primary"></i> Arterial</span>
+      <span class="leg-item"><i class="leg-line bridge"></i> Bridge</span>
+      <span class="leg-item"><i class="leg-line subway"></i> Transit</span>
+      <span class="leg-item"><i class="leg-box water"></i> Water</span>
+      <span class="leg-item"><i class="leg-box chunk"></i> Active 3D</span>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

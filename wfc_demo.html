@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>北京 3D 建筑波函数坍缩 (WFC) 快速迭代实验台</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #10161d;
+      color: #e8eef5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+    #wfc-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: grab;
+    }
+    #wfc-canvas:active {
+      cursor: grabbing;
+    }
+
+    /* Top Demo Navigation Bar */
+    .top-bar {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(16, 22, 31, 0.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(100, 181, 246, 0.25);
+      border-radius: 10px;
+      padding: 8px 14px;
+      z-index: 20;
+    }
+    .demo-tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .demo-tab-btn {
+      background: rgba(38, 50, 66, 0.85);
+      color: #b0c4de;
+      border: 1px solid rgba(144, 202, 249, 0.22);
+      border-radius: 6px;
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .demo-tab-btn:hover {
+      background: rgba(55, 75, 98, 0.95);
+      color: #ffffff;
+    }
+    .demo-tab-btn.active {
+      background: linear-gradient(135deg, #1976d2, #0288d1);
+      color: #ffffff;
+      border-color: #64b5f6;
+      box-shadow: 0 0 12px rgba(33, 150, 243, 0.45);
+    }
+    .back-link {
+      color: #81d4fa;
+      text-decoration: none;
+      font-size: 12px;
+      padding: 6px 10px;
+      border: 1px solid rgba(129, 212, 250, 0.35);
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .back-link:hover {
+      background: rgba(129, 212, 250, 0.15);
+    }
+
+    /* Left Parameter & Telemetry Control Panel */
+    .left-panel {
+      position: fixed;
+      top: 68px;
+      left: 12px;
+      width: 350px;
+      background: rgba(15, 21, 29, 0.90);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(144, 202, 249, 0.22);
+      border-radius: 10px;
+      padding: 14px;
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+    }
+    .hud-header h2 {
+      font-size: 15px;
+      color: #64b5f6;
+      margin-bottom: 3px;
+    }
+    .hud-header p {
+      font-size: 12px;
+      color: #b0bec5;
+      line-height: 1.4;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 5px;
+      background: rgba(25, 35, 48, 0.85);
+      padding: 9px 10px;
+      border-radius: 7px;
+      border-left: 3px solid #29b6f6;
+      font-size: 12px;
+    }
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .metric-label {
+      color: #90a4ae;
+    }
+    .metric-val {
+      color: #ffca28;
+      font-family: monospace;
+      font-weight: 600;
+      text-align: right;
+    }
+    .step-banner {
+      font-size: 12px;
+      color: #80cbc4;
+      background: rgba(0, 150, 136, 0.14);
+      border: 1px solid rgba(77, 182, 172, 0.3);
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-family: monospace;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .control-group label {
+      font-size: 12px;
+      color: #90caf9;
+      font-weight: 600;
+    }
+    select, input[type="number"] {
+      background: #1c2633;
+      color: #e8eef5;
+      border: 1px solid #3c526b;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+      width: 100%;
+    }
+    .seed-row {
+      display: flex;
+      gap: 6px;
+    }
+    .btn-action {
+      background: #0277bd;
+      color: #ffffff;
+      border: 1px solid #4fc3f7;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-action:hover {
+      background: #039be5;
+    }
+    .block-mode-row {
+      display: flex;
+      gap: 5px;
+    }
+    .block-mode-btn {
+      flex: 1;
+      background: #1e2936;
+      color: #b0bec5;
+      border: 1px solid #37474f;
+      border-radius: 5px;
+      padding: 6px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .block-mode-btn.active {
+      background: #00897b;
+      color: #ffffff;
+      border-color: #4db6ac;
+    }
+    .desc-box {
+      font-size: 11.5px;
+      color: #9eaab6;
+      line-height: 1.45;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 8px;
+    }
+
+    /* Right 2D Facade Entropy & Socket Matrix Inspector (Demo 1) */
+    #matrix-inspector-box {
+      position: fixed;
+      top: 68px;
+      right: 12px;
+      width: 440px;
+      background: rgba(15, 21, 29, 0.90);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(144, 202, 249, 0.25);
+      border-radius: 10px;
+      padding: 10px;
+      z-index: 15;
+    }
+    #wfc-matrix-canvas {
+      display: block;
+      width: 100%;
+      height: 230px;
+      border-radius: 6px;
+      border: 1px solid #2c3e50;
+    }
+    .legend-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 7px;
+      font-size: 11px;
+      color: #b0bec5;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="wfc-canvas"></canvas>
+
+  <div class="top-bar">
+    <div class="demo-tabs">
+      <button class="demo-tab-btn active" data-demo="1">Demo 1 · 2D立面坍缩实验室</button>
+      <button class="demo-tab-btn" data-demo="2">Demo 2 · 北京 24 大建筑样式展台 (6×4)</button>
+      <button class="demo-tab-btn" data-demo="3">Demo 3 · 同轮廓 × 9种子多样性矩阵</button>
+      <button class="demo-tab-btn" data-demo="4">Demo 4 · 1D垂向退台 + 屋顶构件解剖</button>
+      <button class="demo-tab-btn" data-demo="5">Demo 5 · 知春路 54 栋多样式街区对比</button>
+    </div>
+    <a class="back-link" href="/">← 返回 40km×40km 北京主世界</a>
+  </div>
+
+  <div class="left-panel">
+    <div class="hud-header">
+      <h2 id="hud-title">Demo 1 · 2D 立面语法波函数坍缩实验室</h2>
+      <p id="hud-subtitle">加载中...</p>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-row">
+        <span class="metric-label">WFC 求解耗时:</span>
+        <span class="metric-val"><span id="hud-solve-ms">0.00</span> ms</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">晶格与几何规模:</span>
+        <span class="metric-val" id="hud-cells">-</span>
+      </div>
+    </div>
+
+    <div class="step-banner" id="hud-step-info">-</div>
+
+    <div class="control-group">
+      <label for="sel-bldg">真实北京 OSM / Overture 2D 建筑轮廓:</label>
+      <select id="sel-bldg"></select>
+    </div>
+
+    <div class="control-group">
+      <label for="sel-archetype">建筑年代与风格语法规则集 (Archetype):</label>
+      <select id="sel-archetype">
+        <option value="auto">自动按语义匹配 (Auto Classify)</option>
+        <option value="zgc_tech_office">中关村现代科技大厦 (zgc_tech_office)</option>
+        <option value="danwei_slab_80s">80年代老小区家属院板楼 (danwei_slab_80s)</option>
+        <option value="residential_tower_00s">2000年代高层商品房塔楼 (residential_tower_00s)</option>
+        <option value="ministry_big_roof">三里河民族形式大屋顶办公楼 (ministry_big_roof)</option>
+        <option value="commercial_podium">商业综合体与底商裙房 (commercial_podium)</option>
+        <option value="hutong_courtyard">老北京胡同四合院 (hutong_courtyard)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="inp-seed">确定性波函数种子 (Seed):</label>
+      <div class="seed-row">
+        <input type="number" id="inp-seed" value="2026" />
+        <button class="btn-action" id="btn-rand-seed">🎲 随机新种子</button>
+      </div>
+    </div>
+
+    <!-- Demo 1 Step-by-Step Controls -->
+    <div class="control-group" id="panel-step-controls">
+      <label for="inp-step">单步波函数观测与 AC-3 约束传播进度:</label>
+      <input type="range" id="inp-step" min="0" max="30" value="30" style="width:100%;" />
+      <button class="btn-action" id="btn-play-steps" style="width:100%; margin-top:4px;">▶ 自动播放波函数坍缩</button>
+    </div>
+
+    <!-- Demo 4 Explode Controls -->
+    <div class="control-group" id="panel-explode-controls" style="display:none;">
+      <label for="inp-explode">垂向体块分级退台展开间距: <span id="lbl-explode-val">14.0m</span></label>
+      <input type="range" id="inp-explode" min="0" max="28" step="0.5" value="14" style="width:100%;" />
+    </div>
+
+    <!-- Demo 5 Street Block Mode Controls -->
+    <div class="control-group" id="panel-block-controls" style="display:none;">
+      <label>知春路 54 栋真实建筑街区对比模式:</label>
+      <div class="block-mode-row">
+        <button class="block-mode-btn active" data-mode="wfc">全量 3D WFC</button>
+        <button class="block-mode-btn" data-mode="split">左右同屏对比</button>
+        <button class="block-mode-btn" data-mode="legacy">旧版火柴盒</button>
+      </div>
+    </div>
+
+    <div class="desc-box" id="hud-desc">
+      鼠标左键拖拽旋转视角 · 右键或 Shift+左键平移 · 滚轮缩放视距
+    </div>
+  </div>
+
+  <div id="matrix-inspector-box">
+    <canvas id="wfc-matrix-canvas" width="420" height="230"></canvas>
+    <div class="legend-row">
+      <span class="legend-item"><i class="swatch" style="background:#4caf50;"></i>包阳台列</span>
+      <span class="legend-item"><i class="swatch" style="background:#ff5722;"></i>单元门/楼梯间列</span>
+      <span class="legend-item"><i class="swatch" style="background:#9c27b0;"></i>商品房飘窗列</span>
+      <span class="legend-item"><i class="swatch" style="background:#0288d1;"></i>玻璃幕墙</span>
+      <span class="legend-item"><i class="swatch" style="background:#26a69a;"></i>壁柱长窗</span>
+      <span class="legend-item"><i class="swatch" style="background:#c62828;"></i>牌楼冠顶/红门</span>
+      <span class="legend-item"><i class="swatch" style="background:#16324a; border:1px solid #ffca28;"></i>?(K) 未坍缩叠加态</span>
+    </div>
+  </div>
+
+  <script type="module" src="./src/wfc/wfc_demo_app.js"></script>
+</body>
+</html>

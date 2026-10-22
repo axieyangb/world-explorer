@@ -1,0 +1,814 @@
+:root {
+  --glass-bg: rgba(12, 14, 18, 0.65);
+  --glass-bg-elevated: rgba(18, 21, 28, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-hover: rgba(255, 255, 255, 0.28);
+  --text-bright: #f5f7fa;
+  --text-main: #c8d0dc;
+  --text-muted: rgba(255, 255, 255, 0.56);
+  --accent-blue: #4dabf7;
+  --accent-cyan: #00f5d4;
+  --accent-amber: #fcc419;
+  --accent-red: #ff6b6b;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Display", "Segoe UI", "PingFang SC", sans-serif;
+  --font-mono: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #101318;
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+#webgl-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  cursor: grab;
+}
+
+#webgl-canvas:active {
+  cursor: grabbing;
+}
+
+.hidden {
+  display: none !important;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* ============================================================================
+ * Zone 1 — Top-Center: Quiet Location Pill & Spotlight Address Search
+ * ============================================================================ */
+.location-bar {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.location-pill {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.32);
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.location-pill:hover {
+  background: rgba(20, 24, 32, 0.78);
+  border-color: var(--glass-border-hover);
+}
+
+.loc-pin {
+  font-size: 13px;
+}
+
+.loc-pill-text {
+  max-width: 340px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.1px;
+}
+
+.loc-key-badge {
+  margin-left: 2px;
+  font-size: 10px;
+  padding: 1px 5px;
+  opacity: 0.75;
+}
+
+.location-search-panel {
+  width: min(460px, calc(100vw - 32px));
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.location-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.loc-search-icon {
+  font-size: 14px;
+  opacity: 0.75;
+}
+
+.location-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.location-input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+#location-esc-badge {
+  cursor: pointer;
+}
+
+.location-dropdown {
+  padding: 10px 12px 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.loc-section-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.location-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.loc-chip {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 5px 11px;
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.loc-chip:hover {
+  background: rgba(77, 171, 247, 0.22);
+  border-color: rgba(77, 171, 247, 0.55);
+}
+
+.location-results {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.loc-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.loc-result-item:hover,
+.loc-result-item.active {
+  background: rgba(77, 171, 247, 0.18);
+}
+
+.loc-result-main {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loc-result-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ============================================================================
+ * Zone 2 — Top-Right: Compact Progressive-Disclosure Action Dock
+ * ============================================================================ */
+.hud-dock {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dock-dropdown-wrap {
+  position: relative;
+}
+
+.dock-pill {
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.dock-pill:hover,
+.dock-pill.active {
+  background: rgba(24, 28, 38, 0.82);
+  border-color: var(--glass-border-hover);
+}
+
+.dock-pill-compact {
+  padding: 0 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.dock-pill-danger:hover {
+  background: rgba(255, 107, 107, 0.22);
+  border-color: rgba(255, 107, 107, 0.55);
+}
+
+.dock-caret {
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.dock-popover {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  width: 240px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popover-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.popover-mode-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+
+.popover-mode-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  padding: 6px 4px;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.popover-mode-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-bright);
+}
+
+.popover-mode-btn.active {
+  background: rgba(77, 171, 247, 0.22);
+  border-color: rgba(77, 171, 247, 0.6);
+  color: var(--text-bright);
+}
+
+.popover-vehicle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.popover-veh-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.popover-veh-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-bright);
+}
+
+.popover-veh-btn.active {
+  background: rgba(77, 171, 247, 0.18);
+  border-color: rgba(77, 171, 247, 0.45);
+  color: var(--text-bright);
+}
+
+/* ============================================================================
+ * Zone 3 — Bottom-Left: Squircle Radar Minimap + GTA V Street Label
+ * ============================================================================ */
+.hud-radar {
+  position: fixed;
+  bottom: 22px;
+  left: 22px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.radar-squircle {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(14, 17, 22, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.48);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.radar-squircle:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+#minimap-canvas {
+  width: 168px;
+  height: 168px;
+  display: block;
+}
+
+.radar-north {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 12, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-bright);
+  pointer-events: none;
+}
+
+.radar-gps {
+  position: absolute;
+  bottom: 7px;
+  left: 8px;
+  right: 8px;
+  background: rgba(10, 14, 20, 0.86);
+  border: 1px solid rgba(0, 245, 212, 0.45);
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.radar-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 2px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
+.radar-street {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.15px;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.radar-city {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.68);
+  letter-spacing: 0.2px;
+}
+
+/* ============================================================================
+ * Zone 4 — Bottom-Right: Boxless Forza Horizon 5 Speedometer / Flight Telemetry
+ * ============================================================================ */
+.hud-speedometer {
+  position: fixed;
+  bottom: 22px;
+  right: 26px;
+  z-index: 20;
+  min-width: 176px;
+  padding: 10px 4px 4px 18px;
+  background: radial-gradient(ellipse at 75% 70%, rgba(8, 10, 14, 0.52) 0%, rgba(8, 10, 14, 0.0) 76%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+.hud-speedometer.walk-hidden {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.speed-main-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.speed-value {
+  font-size: 68px;
+  font-weight: 800;
+  font-style: italic;
+  line-height: 0.92;
+  letter-spacing: -2px;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.65);
+}
+
+.speed-meta-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.speed-unit {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: rgba(255, 255, 255, 0.66);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+.speed-gear-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.4px;
+}
+
+.speed-gear-badge.boost {
+  background: rgba(252, 196, 25, 0.28);
+  border-color: rgba(252, 196, 25, 0.75);
+  color: var(--accent-amber);
+}
+
+.speed-bar-track {
+  width: 168px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.speed-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4dabf7 0%, #00f5d4 70%, #fcc419 100%);
+  transition: width 0.08s linear;
+}
+
+/* ============================================================================
+ * Bottom-Center: Auto-Fading Controls Hint
+ * ============================================================================ */
+.hud-controls-hint {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(10, 12, 16, 0.52);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.6s ease;
+}
+
+.hud-controls-hint.faded {
+  opacity: 0;
+}
+
+/* ============================================================================
+ * Full-Screen World Map Modal
+ * ============================================================================ */
+.map-modal {
+  position: fixed;
+  inset: 0;
+  background: #11141a;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-modal-header {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 102;
+}
+
+.map-title-block h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 2px;
+}
+
+.map-title-block p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.map-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#world-map-canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+#world-map-canvas:active {
+  cursor: grabbing;
+}
+
+.map-tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: var(--glass-bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--text-bright);
+  z-index: 105;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.map-legend {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--glass-bg-elevated);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--text-main);
+  z-index: 102;
+}
+
+.leg-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.leg-line {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.leg-line.ring { background: #e5c07b; height: 4px; }
+.leg-line.primary { background: #d19a66; }
+.leg-line.bridge { background: #e06c75; height: 4px; }
+.leg-line.subway { background: #61afef; }
+
+.leg-box {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.leg-box.water { background: #26547c; border: 1px solid #56b6c2; }
+.leg-box.chunk { background: rgba(152, 195, 121, 0.22); border: 1px solid #98c379; }
+
+
+.hud-svg-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.loc-pin-svg {
+  color: var(--accent-blue);
+  opacity: 0.95;
+}
+
+.loc-search-svg {
+  color: var(--text-muted);
+}
+
+.dock-pill {
+  letter-spacing: 0.45px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+
+.location-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.loc-result-item {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.loc-result-item:hover {
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.loc-result-main {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loc-result-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hud-speedometer {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
