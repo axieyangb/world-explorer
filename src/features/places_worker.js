@@ -293,7 +293,7 @@ export function computePlacesPayload(ctx) {
     // Tall towers: mast + aviation beacon
     if (rawH >= 60) {
       const topBase = hasPent ? roofY + ph : roofY;
-      const mastP = rawH >= 90 ? 0.75 : 0.3;
+      const mastP = rawH >= 120 ? 0.5 : rawH >= 90 ? 0.25 : 0.06;
       if (rng() < mastP) {
         const mh = Math.max(8, Math.min(45, rawH * 0.14));
         push('mast', ox + cx, topBase, oz + cz, rot, 1, mh, 1, 0xffffff);
@@ -364,14 +364,45 @@ export function computePlacesPayload(ctx) {
 
   // ---------------------------------------------------------------- 2. POIs: awnings, signs, transit markers, labels
   const awnings = [];
+  // Ground road segments (local) used to keep street furniture off the carriageway
+  const groundSegs = [];
+  for (const s of roadSegments) {
+    if (s.bridge || s.tunnel) continue;
+    groundSegs.push([s.x1 - ox, s.z1 - oz, s.x2 - ox, s.z2 - oz, (s.width || 6) * 0.5]);
+  }
+  const pushOffRoad = (x, z) => {
+    for (let iter = 0; iter < 3; iter++) {
+      let moved = false;
+      for (const [ax, az, bx, bz, hw] of groundSegs) {
+        if (x < Math.min(ax, bx) - hw - 3 || x > Math.max(ax, bx) + hw + 3 || z < Math.min(az, bz) - hw - 3 || z > Math.max(az, bz) + hw + 3) continue;
+        const dx = bx - ax, dz = bz - az;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+        const qx = ax + dx * t, qz = az + dz * t;
+        const d = Math.hypot(x - qx, z - qz);
+        if (d < hw + 1.5) {
+          const l = Math.sqrt(l2);
+          let nx = -dz / l, nz = dx / l;
+          if ((x - qx) * nx + (z - qz) * nz < 0) { nx = -nx; nz = -nz; }
+          x = qx + nx * (hw + 2.2);
+          z = qz + nz * (hw + 2.2);
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    return [x, z];
+  };
   for (const q of (places && places.pois) || []) {
-    const [px, pz, cls, sub, name, nameEn] = q;
+    let [px, pz, cls, sub, name, nameEn] = q;
     const isTransit = cls === 'railway' || sub === 'subway_entrance' || sub === 'train_station_entrance';
     const isStore = STOREFRONT.has(cls);
     const rng = mulberry32(hash2(ox + px, oz + pz, 31));
     let labelY = terrainY(px, pz) + 4.6;
 
     if (isTransit) {
+      [px, pz] = pushOffRoad(px, pz);
       push('transit', ox + px, terrainY(px, pz), oz + pz, rng() * Math.PI * 2, 1, 1, 1, sub === 'subway' || sub === 'subway_entrance' ? 0x1f5fbf : 0x2f7d4a);
       labelY = terrainY(px, pz) + 4.4;
     } else if (isStore) {
@@ -533,6 +564,10 @@ export function computePlacesPayload(ctx) {
       for (const B of blds) {
         if (px > B.minX - r && px < B.maxX + r && pz > B.minZ - r && pz < B.maxZ + r) { ok = false; break; }
       }
+      const bb2 = (places && places.bldBoxes) || [];
+      for (let k = 0; ok && k < bb2.length; k += 4) {
+        if (px > bb2[k] - r && px < bb2[k + 2] + r && pz > bb2[k + 1] - r && pz < bb2[k + 3] + r) ok = false;
+      }
       if (!ok) continue;
       planePts.push([px, pz, r]);
       const rot = edge.angle + Math.PI * 0.5 + (rng() < 0.5 ? 0 : Math.PI);
@@ -561,6 +596,11 @@ export function computePlacesPayload(ctx) {
       const tx = mx + nx * (D / 2 + 12), tz = mz + nz * (D / 2 + 12);
       let ok = L > 60 && Math.abs(tx) < 480 && Math.abs(tz) < 480 && !inWater(tx, tz);
       if (ok) for (const rl of runwayLines) if (distToPolyline(tx, tz, rl[1]) < 120) { ok = false; break; }
+      const bb3 = (places && places.bldBoxes) || [];
+      for (let k = 0; ok && k < bb3.length; k += 4) {
+        if ((bb3[k + 2] - bb3[k]) * (bb3[k + 3] - bb3[k + 1]) > 2500 &&
+          Math.abs((bb3[k] + bb3[k + 2]) / 2 - tx) < 400 && Math.abs((bb3[k + 1] + bb3[k + 3]) / 2 - tz) < 400) ok = false;
+      }
       if (ok) {
         const gy = getBeijingTerrainElevation(ox + tx, oz + tz) - 0.5;
         structs.box(tx, tz, gy, gy + 6.5, ex, ez, L / 2, D / 2, [0.78, 0.78, 0.76]);
@@ -590,17 +630,20 @@ export function computePlacesPayload(ctx) {
   };
   if (isPointInWater) {
     for (const pier of (places && places.piers) || []) {
-      if (ships.length >= 5) break;
-      for (let i = 0; i + 3 < pier.length && ships.length < 5; i += 2) {
+      if (ships.length >= 3) break;
+      for (let i = 0; i + 3 < pier.length && ships.length < 3; i += 2) {
         const ax = pier[i], az = pier[i + 1], bx = pier[i + 2], bz = pier[i + 3];
         const len = Math.hypot(bx - ax, bz - az);
         if (len < 40) continue;
         const dx = (bx - ax) / len, dz = (bz - az) / len;
         const rng = mulberry32(hash2(ox + ax, oz + az, 57));
-        for (let s = 30; s < len - 20 && ships.length < 5; s += 90) {
+        for (let s = 30; s < len - 20 && ships.length < 3; s += 90) {
           const mx = ax + dx * s, mz = az + dz * s;
           for (const side of [1, -1]) {
-            const big = rng() < 0.55;
+            const off0 = 16;
+            const x0 = mx - dz * side * off0, z0 = mz + dx * side * off0;
+            // Big cargo ships only where the water is wide (harbours), small vessels on rivers/canals
+            const big = rng() < 0.55 && shipFits(x0 - dz * side * 14, z0 + dx * side * 14, dx, dz, 85, 30);
             const hl = big ? 58 : 26, hw = big ? 10 : 5;
             const off = hw + 6;
             const x = mx - dz * side * off, z = mz + dx * side * off;
@@ -617,7 +660,7 @@ export function computePlacesPayload(ctx) {
         const x = (rng() - 0.5) * 900, z = (rng() - 0.5) * 900;
         const a = rng() * Math.PI * 2;
         const dx = Math.sin(a), dz = Math.cos(a);
-        if (shipFits(x, z, dx, dz, 64, 14)) { addShip(x, z, dx, dz, true, rng); break; }
+        if (shipFits(x, z, dx, dz, 90, 40)) { addShip(x, z, dx, dz, true, rng); break; }
         if (shipFits(x, z, dx, dz, 30, 7)) { addShip(x, z, dx, dz, false, rng); break; }
       }
     }

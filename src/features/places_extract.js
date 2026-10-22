@@ -151,7 +151,7 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
         const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
         // Owner chunk = bbox center inside this chunk, so each bowl is built exactly once
         if (cx < -CHUNK_HALF || cx >= CHUNK_HALF || cz < -CHUNK_HALF || cz >= CHUNK_HALF) continue;
-        const key = `${Math.round(cx / 10)},${Math.round(cz / 10)}`;
+        const key = `${Math.round(cx / 40)},${Math.round(cz / 40)}`;
         if (seenStadium.has(key)) continue;
         seenStadium.add(key);
         stadiums.push(flat);
@@ -159,7 +159,32 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
     }
   }
 
+  // Footprint boxes of every nearby building (incl. neighbour chunks) so parked planes and
+  // terminal massing never land inside a real terminal; only needed for airport chunks.
+  const bldBoxes = [];
+  if (aeroPolys.some((a) => a[0] === 'apron')) {
+    for (const t of tiles) {
+      for (const f of t.building || []) {
+        if (f.type !== 3) continue;
+        for (const poly of f.geom) {
+          if (!poly.outer || poly.outer.length < 3) continue;
+          let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+          for (const ll of poly.outer) {
+            const [lx, lz] = toLocalXZ(ll[0], ll[1]);
+            if (lx < minX) minX = lx;
+            if (lx > maxX) maxX = lx;
+            if (lz < minZ) minZ = lz;
+            if (lz > maxZ) maxZ = lz;
+          }
+          if (maxX < -700 || minX > 700 || maxZ < -700 || minZ > 700) continue;
+          bldBoxes.push(Math.round(minX), Math.round(minZ), Math.round(maxX), Math.round(maxZ));
+        }
+      }
+    }
+  }
+
   return {
+    bldBoxes,
     lat: origin ? origin.centerLat : 0,
     lon: origin ? origin.centerLon : 0,
     pois,

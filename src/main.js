@@ -32,6 +32,7 @@ import {
 } from "./entities.js";
 import { RoadNavigator } from "./navigation.js";
 import { MapSystem } from "./map_modal.js";
+import { PlacesSystem } from "./features/places.js"; // feature/places
 import {
   getLang,
   setLang,
@@ -368,6 +369,7 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     }
 
+    this.places = new PlacesSystem(this.scene); // feature/places
     this._animate();
   }
 
@@ -2298,6 +2300,7 @@ class WorldExplorerApp {
     this._updateStreamingChunks(false);
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
+    if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
