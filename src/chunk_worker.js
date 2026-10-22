@@ -14,7 +14,7 @@ self.onmessage = async (e) => {
     const { key, cx, cz, ox, oz, worldOrigin } = msg;
     try {
       const data = msg.data || (await fetchGlobalChunkData(cx, cz, worldOrigin));
-      const { payload, transferList } = computeChunkWorkerPayload(cx, cz, ox, oz, data);
+      const { payload, transferList } = computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin);
       self.postMessage({ type: 'chunkBuilt', key, payload }, transferList);
     } catch (err) {
       self.postMessage({ type: 'chunkError', key, error: String(err && err.message ? err.message : err) });

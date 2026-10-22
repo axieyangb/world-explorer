@@ -1,3 +1,4 @@
+import * as THREE from '../../vendor/three.module.js';
 import {
   BEIJING_STYLES_24,
   BEIJING_ARCHETYPES,

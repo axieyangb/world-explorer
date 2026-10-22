@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Builds a self-contained single-file HTML release of World Explorer for static-host."""
 
 import base64
