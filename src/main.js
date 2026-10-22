@@ -59,6 +59,7 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
   );
 }
 
+import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -143,6 +144,7 @@ class WorldExplorerApp {
     this.currentRoadName = "Chang'an Ave";
     this.currentLayer = 0;
     this.timePresetIdx = 0;
+    this.atmosphere = initAtmosphere(this); // feature/atmosphere: day/night cycle + weather + water
     this.teleportGeneration = 0;
 
     this.loadedChunks = new Map();
@@ -2271,6 +2273,7 @@ class WorldExplorerApp {
     const timeBtn = document.getElementById("time-btn");
     if (timeBtn) {
       timeBtn.addEventListener("click", () => {
+        if (this.atmosphere) return; // feature/atmosphere owns the time & weather pill
         this.timePresetIdx = (this.timePresetIdx + 1) % TIME_PRESET_ORDER.length;
         this.setTimeOfDay(TIME_PRESET_ORDER[this.timePresetIdx]);
       });
@@ -2349,6 +2352,7 @@ class WorldExplorerApp {
       this.mapSystem.updateMinimap(this.pos, minimapYaw, this.loadedChunks);
     }
 
+    if (this.atmosphere) this.atmosphere.update(dt); // feature/atmosphere
     this.renderer.render(this.scene, this.camera);
   }
 }
