@@ -1,0 +1,692 @@
+{
+  "tileSize": 512,
+  "count": 24,
+  "facades": [
+    {
+      "id": "glass_curtain_blue",
+      "index": 0,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.8,
+      "metersPerBay": 3.6,
+      "regions": [
+        "nyc",
+        "tokyo",
+        "beijing",
+        "london",
+        "paris",
+        "asia",
+        "europe",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial",
+        "tower"
+      ],
+      "minHeight": 28.0,
+      "maxHeight": 500.0,
+      "isCurtainWall": true,
+      "avgColor": [
+        0.5008,
+        0.6256,
+        0.7369
+      ],
+      "windowCoverage": 0.81
+    },
+    {
+      "id": "glass_curtain_dark",
+      "index": 1,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.8,
+      "metersPerBay": 3.6,
+      "regions": [
+        "nyc",
+        "tokyo",
+        "beijing",
+        "london",
+        "asia",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial",
+        "tower"
+      ],
+      "minHeight": 32.0,
+      "maxHeight": 500.0,
+      "isCurtainWall": true,
+      "avgColor": [
+        0.295,
+        0.3286,
+        0.3522
+      ],
+      "windowCoverage": 0.82
+    },
+    {
+      "id": "glass_curtain_green",
+      "index": 2,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.8,
+      "metersPerBay": 3.6,
+      "regions": [
+        "nyc",
+        "tokyo",
+        "beijing",
+        "london",
+        "asia",
+        "europe",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial",
+        "tower"
+      ],
+      "minHeight": 26.0,
+      "maxHeight": 450.0,
+      "isCurtainWall": true,
+      "avgColor": [
+        0.4014,
+        0.5732,
+        0.5325
+      ],
+      "windowCoverage": 0.547
+    },
+    {
+      "id": "office_concrete_grid",
+      "index": 3,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.7,
+      "metersPerBay": 3.8,
+      "regions": [
+        "nyc",
+        "tokyo",
+        "beijing",
+        "london",
+        "europe",
+        "asia",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial"
+      ],
+      "minHeight": 16.0,
+      "maxHeight": 140.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.5933,
+        0.5888,
+        0.5704
+      ],
+      "windowCoverage": 0.298
+    },
+    {
+      "id": "office_limestone_modern",
+      "index": 4,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.8,
+      "metersPerBay": 3.8,
+      "regions": [
+        "nyc",
+        "paris",
+        "london",
+        "europe",
+        "beijing",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial"
+      ],
+      "minHeight": 16.0,
+      "maxHeight": 130.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.5207,
+        0.4926,
+        0.4523
+      ],
+      "windowCoverage": 0.379
+    },
+    {
+      "id": "office_bronze_fins",
+      "index": 5,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.8,
+      "metersPerBay": 3.6,
+      "regions": [
+        "nyc",
+        "london",
+        "tokyo",
+        "beijing",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial",
+        "tower"
+      ],
+      "minHeight": 22.0,
+      "maxHeight": 220.0,
+      "isCurtainWall": true,
+      "avgColor": [
+        0.4646,
+        0.4447,
+        0.4044
+      ],
+      "windowCoverage": 0.45
+    },
+    {
+      "id": "nyc_brownstone",
+      "index": 6,
+      "floors": 3,
+      "bays": 3,
+      "metersPerFloor": 3.5,
+      "metersPerBay": 3.4,
+      "regions": [
+        "nyc",
+        "global"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "lowrise"
+      ],
+      "minHeight": 6.0,
+      "maxHeight": 26.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4885,
+        0.3696,
+        0.3052
+      ],
+      "windowCoverage": 0.183
+    },
+    {
+      "id": "nyc_artdeco_limestone",
+      "index": 7,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.8,
+      "metersPerBay": 3.6,
+      "regions": [
+        "nyc",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial",
+        "tower",
+        "residential"
+      ],
+      "minHeight": 22.0,
+      "maxHeight": 280.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.562,
+        0.5363,
+        0.4909
+      ],
+      "windowCoverage": 0.309
+    },
+    {
+      "id": "nyc_red_brick_warehouse",
+      "index": 8,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.7,
+      "metersPerBay": 3.8,
+      "regions": [
+        "nyc",
+        "london",
+        "global"
+      ],
+      "types": [
+        "industrial",
+        "residential",
+        "apartments",
+        "commercial"
+      ],
+      "minHeight": 8.0,
+      "maxHeight": 48.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4053,
+        0.3361,
+        0.3044
+      ],
+      "windowCoverage": 0.172
+    },
+    {
+      "id": "paris_haussmann",
+      "index": 9,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.6,
+      "metersPerBay": 3.5,
+      "regions": [
+        "paris",
+        "europe"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "commercial",
+        "office"
+      ],
+      "minHeight": 10.0,
+      "maxHeight": 38.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.5695,
+        0.5501,
+        0.5136
+      ],
+      "windowCoverage": 0.265
+    },
+    {
+      "id": "london_georgian_brick",
+      "index": 10,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.5,
+      "metersPerBay": 3.4,
+      "regions": [
+        "london",
+        "europe",
+        "nyc"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "office"
+      ],
+      "minHeight": 8.0,
+      "maxHeight": 36.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4967,
+        0.453,
+        0.3845
+      ],
+      "windowCoverage": 0.176
+    },
+    {
+      "id": "europe_stucco_pastel",
+      "index": 11,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.5,
+      "metersPerBay": 3.5,
+      "regions": [
+        "paris",
+        "europe",
+        "global"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "lowrise"
+      ],
+      "minHeight": 6.0,
+      "maxHeight": 32.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.66,
+        0.5764,
+        0.472
+      ],
+      "windowCoverage": 0.117
+    },
+    {
+      "id": "tokyo_midrise_tile",
+      "index": 12,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.4,
+      "metersPerBay": 3.5,
+      "regions": [
+        "tokyo",
+        "asia",
+        "beijing"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "commercial"
+      ],
+      "minHeight": 8.0,
+      "maxHeight": 55.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4362,
+        0.4215,
+        0.3941
+      ],
+      "windowCoverage": 0.303
+    },
+    {
+      "id": "tokyo_office_white_panel",
+      "index": 13,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.6,
+      "metersPerBay": 3.8,
+      "regions": [
+        "tokyo",
+        "asia",
+        "beijing",
+        "global"
+      ],
+      "types": [
+        "office",
+        "commercial"
+      ],
+      "minHeight": 14.0,
+      "maxHeight": 120.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.5555,
+        0.5837,
+        0.5963
+      ],
+      "windowCoverage": 0.457
+    },
+    {
+      "id": "asia_residential_tower",
+      "index": 14,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.2,
+      "metersPerBay": 3.6,
+      "regions": [
+        "beijing",
+        "tokyo",
+        "asia"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "tower"
+      ],
+      "minHeight": 18.0,
+      "maxHeight": 160.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.5604,
+        0.6011,
+        0.6278
+      ],
+      "windowCoverage": 0.173
+    },
+    {
+      "id": "china_hutong_greybrick",
+      "index": 15,
+      "floors": 2,
+      "bays": 3,
+      "metersPerFloor": 3.4,
+      "metersPerBay": 3.8,
+      "regions": [
+        "beijing",
+        "asia"
+      ],
+      "types": [
+        "residential",
+        "lowrise",
+        "historic"
+      ],
+      "minHeight": 3.0,
+      "maxHeight": 14.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4727,
+        0.405,
+        0.3881
+      ],
+      "windowCoverage": 0.223
+    },
+    {
+      "id": "residential_beige_slab",
+      "index": 16,
+      "floors": 4,
+      "bays": 4,
+      "metersPerFloor": 3.3,
+      "metersPerBay": 3.6,
+      "regions": [
+        "beijing",
+        "tokyo",
+        "asia",
+        "europe",
+        "nyc",
+        "global"
+      ],
+      "types": [
+        "residential",
+        "apartments"
+      ],
+      "minHeight": 12.0,
+      "maxHeight": 95.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.6638,
+        0.6279,
+        0.5764
+      ],
+      "windowCoverage": 0.154
+    },
+    {
+      "id": "retail_storefront_brick",
+      "index": 17,
+      "floors": 1,
+      "bays": 3,
+      "metersPerFloor": 4.2,
+      "metersPerBay": 4.2,
+      "regions": [
+        "nyc",
+        "paris",
+        "london",
+        "tokyo",
+        "beijing",
+        "europe",
+        "asia",
+        "global"
+      ],
+      "types": [
+        "retail",
+        "podium"
+      ],
+      "minHeight": 3.5,
+      "maxHeight": 12.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4038,
+        0.3706,
+        0.3568
+      ],
+      "windowCoverage": 0.29
+    },
+    {
+      "id": "parking_garage_concrete",
+      "index": 18,
+      "floors": 4,
+      "bays": 3,
+      "metersPerFloor": 3.4,
+      "metersPerBay": 4.5,
+      "regions": [
+        "nyc",
+        "tokyo",
+        "beijing",
+        "london",
+        "paris",
+        "global"
+      ],
+      "types": [
+        "industrial",
+        "parking",
+        "commercial"
+      ],
+      "minHeight": 9.0,
+      "maxHeight": 45.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.3832,
+        0.3756,
+        0.3573
+      ],
+      "windowCoverage": 0.455
+    },
+    {
+      "id": "china_soviet_redbrick",
+      "index": 19,
+      "floors": 3,
+      "bays": 4,
+      "metersPerFloor": 3.3,
+      "metersPerBay": 3.5,
+      "regions": [
+        "beijing",
+        "asia"
+      ],
+      "types": [
+        "residential",
+        "apartments",
+        "lowrise"
+      ],
+      "minHeight": 9.0,
+      "maxHeight": 28.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.4108,
+        0.3145,
+        0.2615
+      ],
+      "windowCoverage": 0.223
+    },
+    {
+      "id": "residential_white_modern",
+      "index": 20,
+      "floors": 4,
+      "bays": 3,
+      "metersPerFloor": 3.3,
+      "metersPerBay": 4.0,
+      "regions": [
+        "nyc",
+        "paris",
+        "london",
+        "tokyo",
+        "beijing",
+        "europe",
+        "asia",
+        "global"
+      ],
+      "types": [
+        "residential",
+        "apartments"
+      ],
+      "minHeight": 12.0,
+      "maxHeight": 75.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.527,
+        0.5376,
+        0.5394
+      ],
+      "windowCoverage": 0.366
+    },
+    {
+      "id": "us_suburban_siding",
+      "index": 21,
+      "floors": 2,
+      "bays": 3,
+      "metersPerFloor": 3.2,
+      "metersPerBay": 3.8,
+      "regions": [
+        "nyc",
+        "global"
+      ],
+      "types": [
+        "residential",
+        "lowrise",
+        "house"
+      ],
+      "minHeight": 3.0,
+      "maxHeight": 11.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.6183,
+        0.6566,
+        0.6779
+      ],
+      "windowCoverage": 0.161
+    },
+    {
+      "id": "retail_storefront_glass",
+      "index": 22,
+      "floors": 1,
+      "bays": 3,
+      "metersPerFloor": 4.2,
+      "metersPerBay": 4.4,
+      "regions": [
+        "nyc",
+        "paris",
+        "london",
+        "tokyo",
+        "beijing",
+        "europe",
+        "asia",
+        "global"
+      ],
+      "types": [
+        "retail",
+        "podium"
+      ],
+      "minHeight": 3.5,
+      "maxHeight": 12.0,
+      "isCurtainWall": true,
+      "avgColor": [
+        0.4681,
+        0.4975,
+        0.5149
+      ],
+      "windowCoverage": 0.67
+    },
+    {
+      "id": "industrial_metal_cladding",
+      "index": 23,
+      "floors": 2,
+      "bays": 4,
+      "metersPerFloor": 4.5,
+      "metersPerBay": 4.5,
+      "regions": [
+        "nyc",
+        "tokyo",
+        "beijing",
+        "london",
+        "paris",
+        "europe",
+        "asia",
+        "global"
+      ],
+      "types": [
+        "industrial",
+        "warehouse",
+        "manufacture"
+      ],
+      "minHeight": 4.0,
+      "maxHeight": 24.0,
+      "isCurtainWall": false,
+      "avgColor": [
+        0.2679,
+        0.2896,
+        0.3041
+      ],
+      "windowCoverage": 0.181
+    }
+  ]
+}

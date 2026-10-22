@@ -694,117 +694,167 @@ function insetPolygonFlatXZForRoof(flat, insetDist) {
  *    unit entrance canopies, Pailou/Dougong crowns, and flush window bays at 10x lower triangle count than per-cell boxes)
  * 4. 3D Pitched & Rooftop Greeble WFC (`emitTierRoofAndGreebles`)
  */
-const ARCHITECTURAL_PALETTES = [
-  // 0: Silver-Blue Glass Curtain Wall Tower
-  {
-    styleBucket: 0,
-    wallPrimary: [0.74, 0.78, 0.83],
-    wallSecondary: [0.64, 0.68, 0.74],
-    roofDeck: [0.24, 0.27, 0.30],
-    accent: [0.54, 0.59, 0.65],
-  },
-  // 1: Warm Limestone & Travertine Commercial/Civic
-  {
-    styleBucket: 1,
-    wallPrimary: [0.83, 0.79, 0.72],
-    wallSecondary: [0.75, 0.71, 0.64],
-    roofDeck: [0.31, 0.29, 0.27],
-    accent: [0.68, 0.63, 0.56],
-  },
-  // 2: Deep Charcoal & Brushed Aluminum High-Rise
-  {
-    styleBucket: 2,
-    wallPrimary: [0.40, 0.43, 0.48],
-    wallSecondary: [0.33, 0.36, 0.40],
-    roofDeck: [0.20, 0.22, 0.25],
-    accent: [0.55, 0.58, 0.63],
-  },
-  // 3: Warm Sandstone & Terracotta Mid-Rise
-  {
-    styleBucket: 3,
-    wallPrimary: [0.78, 0.69, 0.60],
-    wallSecondary: [0.70, 0.61, 0.52],
-    roofDeck: [0.29, 0.27, 0.25],
-    accent: [0.84, 0.78, 0.70],
-  },
-  // 4: Crisp White Precast & Glass Residential
-  {
-    styleBucket: 4,
-    wallPrimary: [0.87, 0.88, 0.90],
-    wallSecondary: [0.78, 0.80, 0.83],
-    roofDeck: [0.30, 0.32, 0.35],
-    accent: [0.68, 0.71, 0.75],
-  },
-  // 5: Classic Urban Masonry & Brownstone
-  {
-    styleBucket: 5,
-    wallPrimary: [0.66, 0.51, 0.43],
-    wallSecondary: [0.77, 0.73, 0.66],
-    roofDeck: [0.25, 0.25, 0.27],
-    accent: [0.80, 0.76, 0.69],
-  },
-  // 6: Champagne Bronze Financial Tower
-  {
-    styleBucket: 6,
-    wallPrimary: [0.76, 0.72, 0.64],
-    wallSecondary: [0.65, 0.61, 0.54],
-    roofDeck: [0.25, 0.25, 0.27],
-    accent: [0.58, 0.54, 0.47],
-  },
-  // 7: Heritage Courtyard / Traditional Civic
-  {
-    styleBucket: 7,
-    wallPrimary: [0.56, 0.57, 0.60],
-    wallSecondary: [0.47, 0.49, 0.52],
-    roofDeck: [0.24, 0.25, 0.28],
-    accent: [0.64, 0.36, 0.32],
-  },
+export const FACADE_CATALOG = [
+  { id: 'glass_curtain_blue', index: 0, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.6, isCurtainWall: true, avgColor: [0.5008, 0.6256, 0.7369] },
+  { id: 'glass_curtain_dark', index: 1, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.6, isCurtainWall: true, avgColor: [0.2950, 0.3286, 0.3522] },
+  { id: 'glass_curtain_green', index: 2, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.6, isCurtainWall: true, avgColor: [0.4014, 0.5732, 0.5325] },
+  { id: 'office_concrete_grid', index: 3, floors: 4, bays: 4, metersPerFloor: 3.7, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.5933, 0.5888, 0.5704] },
+  { id: 'office_limestone_modern', index: 4, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.5207, 0.4926, 0.4523] },
+  { id: 'office_bronze_fins', index: 5, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.6, isCurtainWall: true, avgColor: [0.4646, 0.4447, 0.4044] },
+  { id: 'nyc_brownstone', index: 6, floors: 3, bays: 3, metersPerFloor: 3.5, metersPerBay: 3.4, isCurtainWall: false, avgColor: [0.4885, 0.3696, 0.3052] },
+  { id: 'nyc_artdeco_limestone', index: 7, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.6, isCurtainWall: false, avgColor: [0.5620, 0.5363, 0.4909] },
+  { id: 'nyc_red_brick_warehouse', index: 8, floors: 4, bays: 4, metersPerFloor: 3.7, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.4053, 0.3361, 0.3044] },
+  { id: 'paris_haussmann', index: 9, floors: 4, bays: 4, metersPerFloor: 3.6, metersPerBay: 3.5, isCurtainWall: false, avgColor: [0.5695, 0.5501, 0.5136] },
+  { id: 'london_georgian_brick', index: 10, floors: 4, bays: 4, metersPerFloor: 3.5, metersPerBay: 3.4, isCurtainWall: false, avgColor: [0.4967, 0.4530, 0.3845] },
+  { id: 'europe_stucco_pastel', index: 11, floors: 4, bays: 4, metersPerFloor: 3.5, metersPerBay: 3.5, isCurtainWall: false, avgColor: [0.6600, 0.5764, 0.4720] },
+  { id: 'tokyo_midrise_tile', index: 12, floors: 4, bays: 4, metersPerFloor: 3.4, metersPerBay: 3.5, isCurtainWall: false, avgColor: [0.4362, 0.4215, 0.3941] },
+  { id: 'tokyo_office_white_panel', index: 13, floors: 4, bays: 4, metersPerFloor: 3.6, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.5555, 0.5837, 0.5963] },
+  { id: 'asia_residential_tower', index: 14, floors: 4, bays: 4, metersPerFloor: 3.2, metersPerBay: 3.6, isCurtainWall: false, avgColor: [0.5604, 0.6011, 0.6278] },
+  { id: 'china_hutong_greybrick', index: 15, floors: 2, bays: 3, metersPerFloor: 3.4, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.4727, 0.4050, 0.3881] },
+  { id: 'residential_beige_slab', index: 16, floors: 4, bays: 4, metersPerFloor: 3.3, metersPerBay: 3.6, isCurtainWall: false, avgColor: [0.6638, 0.6279, 0.5764] },
+  { id: 'retail_storefront_brick', index: 17, floors: 1, bays: 3, metersPerFloor: 4.2, metersPerBay: 4.2, isCurtainWall: false, avgColor: [0.4038, 0.3706, 0.3568] },
+  { id: 'parking_garage_concrete', index: 18, floors: 4, bays: 3, metersPerFloor: 3.4, metersPerBay: 4.5, isCurtainWall: false, avgColor: [0.3832, 0.3756, 0.3573] },
+  { id: 'china_soviet_redbrick', index: 19, floors: 3, bays: 4, metersPerFloor: 3.3, metersPerBay: 3.5, isCurtainWall: false, avgColor: [0.4108, 0.3145, 0.2615] },
+  { id: 'residential_white_modern', index: 20, floors: 4, bays: 3, metersPerFloor: 3.3, metersPerBay: 4.0, isCurtainWall: false, avgColor: [0.5270, 0.5376, 0.5394] },
+  { id: 'us_suburban_siding', index: 21, floors: 2, bays: 3, metersPerFloor: 3.2, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.6183, 0.6566, 0.6779] },
+  { id: 'retail_storefront_glass', index: 22, floors: 1, bays: 3, metersPerFloor: 4.2, metersPerBay: 4.4, isCurtainWall: true, avgColor: [0.4681, 0.4975, 0.5149] },
+  { id: 'industrial_metal_cladding', index: 23, floors: 2, bays: 4, metersPerFloor: 4.5, metersPerBay: 4.5, isCurtainWall: false, avgColor: [0.2679, 0.2896, 0.3041] },
 ];
 
-function selectArchitecturalPalette(bldgInfo, seed) {
+export function resolveRegionTag(worldOrigin) {
+  if (!worldOrigin || worldOrigin.isBeijing) return 'beijing';
+  const lat = Number(worldOrigin.centerLat) || 39.9042;
+  const lon = Number(worldOrigin.centerLon) || 116.4074;
+  if (lat >= 39.4 && lat <= 40.5 && lon >= 115.8 && lon <= 117.0) return 'beijing';
+  if (lat >= 40.4 && lat <= 41.1 && lon >= -74.4 && lon <= -73.6) return 'nyc';
+  if (lat >= 48.6 && lat <= 49.1 && lon >= 2.0 && lon <= 2.7) return 'paris';
+  if (lat >= 51.2 && lat <= 51.8 && lon >= -0.6 && lon <= 0.4) return 'london';
+  if (lat >= 35.3 && lat <= 35.9 && lon >= 139.3 && lon <= 140.1) return 'tokyo';
+  if (lat >= 35.0 && lat <= 65.0 && lon >= -11.0 && lon <= 35.0) return 'europe';
+  if (lat >= 1.0 && lat <= 48.0 && lon >= 95.0 && lon <= 146.0) return 'asia';
+  if (lat >= 24.0 && lat <= 50.0 && lon >= -126.0 && lon <= -66.0) return 'us';
+  return 'global';
+}
+
+export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   const h = Number(bldgInfo.height) || 18;
   const btype = String(bldgInfo.btype || '').toLowerCase();
   const name = String(bldgInfo.name || '').toLowerCase();
   const rawStyle = String(bldgInfo.style || '').toLowerCase();
 
-  let idx = Math.abs(seed) % 7;
-  if (
-    rawStyle.includes('palace') ||
-    rawStyle.includes('hutong') ||
-    btype === 'temple' ||
-    btype === 'historic' ||
-    name.includes('宫') ||
-    name.includes('庙') ||
-    name.includes('寺') ||
-    (h <= 9.5 && (Math.abs(seed) % 5 === 0))
-  ) {
-    idx = 7;
-  } else if (h >= 75) {
-    const tallChoices = [0, 2, 6, 0, 1];
-    idx = tallChoices[Math.abs(seed) % tallChoices.length];
-  } else if (h >= 36) {
-    const midChoices = [0, 1, 2, 4, 6];
-    idx = midChoices[Math.abs(seed) % midChoices.length];
-  } else if (btype.includes('apartments') || btype.includes('residential')) {
-    const resChoices = [3, 4, 1, 5];
-    idx = resChoices[Math.abs(seed) % resChoices.length];
+  let pool;
+  if (btype === 'parking' || btype === 'garages') {
+    pool = [18, 18, 23];
+  } else if (btype === 'industrial' || btype === 'warehouse' || btype === 'manufacture') {
+    pool = region === 'nyc' || region === 'london' ? [8, 23, 8, 18] : [23, 23, 18, 8];
+  } else if (btype === 'retail' && h <= 10.5) {
+    pool = [17, 22];
+  } else if (region === 'paris') {
+    if (h >= 48) {
+      pool = [0, 1, 2, 4, 5];
+    } else if (h >= 12) {
+      pool = [9, 9, 9, 4, 11, 20];
+    } else {
+      pool = [11, 9, 4];
+    }
+  } else if (region === 'london') {
+    if (h >= 48) {
+      pool = [0, 1, 2, 5, 4];
+    } else if (h >= 16) {
+      pool = [10, 10, 8, 4, 3, 20, 5];
+    } else {
+      pool = [10, 10, 8, 11];
+    }
+  } else if (region === 'nyc' || region === 'us') {
+    if (h >= 65) {
+      pool = [0, 1, 2, 7, 5, 7, 0];
+    } else if (h >= 24) {
+      pool = [7, 8, 3, 4, 5, 0, 20, 16];
+    } else if (h <= 10.5 && (region === 'us' || btype === 'house' || btype === 'detached' || btype === 'residential')) {
+      pool = [21, 6, 8, 21];
+    } else {
+      pool = [6, 6, 8, 7, 10, 21];
+    }
+  } else if (region === 'tokyo') {
+    if (h >= 55) {
+      pool = [0, 1, 2, 13, 5, 14];
+    } else if (h >= 18) {
+      pool = [12, 13, 14, 20, 3, 16, 12];
+    } else {
+      pool = [12, 12, 13, 20, 16];
+    }
+  } else if (region === 'beijing' || region === 'asia') {
+    if (
+      rawStyle.includes('hutong') ||
+      rawStyle.includes('palace') ||
+      btype === 'temple' ||
+      btype === 'historic' ||
+      name.includes('宫') ||
+      name.includes('庙') ||
+      name.includes('寺') ||
+      (region === 'beijing' && h <= 10.0)
+    ) {
+      pool = [15, 15, 19];
+    } else if (h >= 65) {
+      pool = [0, 1, 2, 5, 13, 4];
+    } else if (h <= 25 && (btype.includes('apartments') || btype.includes('residential') || rawStyle !== 'glass')) {
+      pool = [19, 19, 16, 20, 12, 14];
+    } else if (btype.includes('apartments') || btype.includes('residential')) {
+      pool = [14, 14, 16, 20, 19];
+    } else if (h >= 24) {
+      pool = [13, 3, 4, 5, 0, 14, 20, 16];
+    } else {
+      pool = [19, 12, 16, 15, 20];
+    }
+  } else if (region === 'europe') {
+    if (h >= 45) {
+      pool = [0, 1, 2, 4, 5];
+    } else {
+      pool = [11, 9, 10, 20, 4, 16];
+    }
+  } else {
+    if (h >= 55) {
+      pool = [0, 1, 2, 5, 7, 4];
+    } else if (h >= 20) {
+      pool = [3, 4, 20, 16, 13, 8, 7];
+    } else if (h <= 10.5) {
+      pool = [21, 6, 11, 19, 12];
+    } else {
+      pool = [6, 8, 11, 20, 16, 12];
+    }
   }
 
-  const base = ARCHITECTURAL_PALETTES[idx];
-  const shift = (((seed >>> 5) & 0xff) / 255.0 - 0.5) * 0.07;
-  const warmShift = (((seed >>> 13) & 0xff) / 255.0 - 0.5) * 0.035;
-  const tint = (c) => [
-    Math.max(0.12, Math.min(0.95, c[0] + shift + warmShift)),
-    Math.max(0.12, Math.min(0.95, c[1] + shift)),
-    Math.max(0.12, Math.min(0.95, c[2] + shift - warmShift)),
+  const pickIdx = pool[((seed >>> 3) ^ (seed >>> 11)) % pool.length];
+  const spec = FACADE_CATALOG[pickIdx] || FACADE_CATALOG[0];
+
+  // Subtle neutral wall tint so AI facade texture colors stay true while neighboring buildings vary slightly
+  const shift = (((seed >>> 5) & 0xff) / 255.0 - 0.5) * 0.08;
+  const warmShift = (((seed >>> 13) & 0xff) / 255.0 - 0.5) * 0.04;
+  const wallTint = [
+    Math.max(0.88, Math.min(1.06, 0.97 + shift + warmShift)),
+    Math.max(0.88, Math.min(1.06, 0.97 + shift)),
+    Math.max(0.88, Math.min(1.06, 0.97 + shift - warmShift)),
+  ];
+
+  const avg = spec.avgColor;
+  const clampC = (v) => Math.max(0.14, Math.min(0.92, v));
+  const wallSecondary = [
+    clampC(avg[0] * 0.88 + shift),
+    clampC(avg[1] * 0.88 + shift),
+    clampC(avg[2] * 0.88 + shift),
+  ];
+  const roofDeck = [
+    clampC(avg[0] * 0.52),
+    clampC(avg[1] * 0.52),
+    clampC(avg[2] * 0.54),
   ];
 
   return {
-    styleBucket: base.styleBucket,
-    wallPrimary: tint(base.wallPrimary),
-    wallSecondary: tint(base.wallSecondary),
-    roofDeck: tint(base.roofDeck),
-    accent: tint(base.accent),
+    spec,
+    texIdx: spec.index,
+    wallTint,
+    wallSecondary,
+    roofDeck,
   };
 }
 
@@ -825,6 +875,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     baseY,
     topY,
     wallOutOffset = 0.0,
+    region = 'beijing',
   } = bldgInfo;
 
   if (!flatOuter || flatOuter.length < 6) return null;
@@ -848,8 +899,17 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   });
   const styleId = styleInfo.id;
   const arch = BEIJING_ARCHETYPES[styleInfo.archetypeId] || BEIJING_ARCHETYPES.modern_curtain_tower;
-  const palette = selectArchitecturalPalette(bldgInfo, seed);
-  const styleBucket = palette.styleBucket;
+  const facadeSel = selectFacadeForBuilding(bldgInfo, seed, region);
+  const upperSpec = facadeSel.spec;
+  // Choose modern glass retail storefront (22) for glass/modern/office towers, brick storefront (17) for masonry/classic
+  const useGlassStorefront =
+    upperSpec.isCurtainWall ||
+    upperSpec.index === 3 ||
+    upperSpec.index === 13 ||
+    upperSpec.index === 14 ||
+    upperSpec.index === 20 ||
+    (seed & 1) === 0;
+  const retailSpec = FACADE_CATALOG[useGlassStorefront ? 22 : 17];
 
   const ccwOuter = ensureCCWFlatXZ(flatOuter);
   const totalSpan = Math.max(3.2, topY - baseY);
@@ -896,6 +956,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   };
 
+  const uBayShift = ((seed >>> 7) % upperSpec.bays) / upperSpec.bays;
+
   for (let tIdx = 0; tIdx < tiers.length; tIdx++) {
     const tier = tiers[tIdx];
     const isTopTier = tIdx === tiers.length - 1;
@@ -904,12 +966,30 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
 
     const parapetH = isTopTier ? Math.min(0.85, Math.max(0.35, tierSpan * 0.04)) : 0.42;
     const shaftY1 = Math.max(tier.y0 + 0.2, tier.y1 - parapetH);
-    const vBase0 = Math.max(0.0, tier.y0 - baseY);
-    const vShaft1 = Math.max(vBase0 + 0.2, shaftY1 - baseY);
+    const shaftSpan = shaftY1 - tier.y0;
+
+    // Ground-floor retail storefront podium on tier 0 of mid/high-rise urban buildings
+    const hasRetailPodium =
+      tIdx === 0 &&
+      !isPart &&
+      (rawMinH || 0) <= 0.5 &&
+      shaftSpan >= 12.5 &&
+      upperSpec.id !== 'china_hutong_greybrick' &&
+      upperSpec.id !== 'parking_garage_concrete' &&
+      upperSpec.id !== 'industrial_metal_cladding' &&
+      upperSpec.id !== 'us_suburban_siding' &&
+      upperSpec.id !== 'nyc_brownstone' &&
+      (seed % 3 !== 0 || btype === 'commercial' || btype === 'retail');
+
+    const podiumH = hasRetailPodium ? Math.min(4.2, shaftSpan * 0.35) : 0.0;
+    const upperY0 = tier.y0 + podiumH;
+    const upperSpan = Math.max(0.2, shaftY1 - upperY0);
+    const upperFloors = Math.max(1, Math.round(upperSpan / upperSpec.metersPerFloor));
+    const upperV1 = upperFloors / upperSpec.floors;
 
     const emitRing = (ringPts, isHole) => {
       const nPts = ringPts.length / 2;
-      let uAccum = 0.0;
+      let uAccumMeters = 0.0;
 
       for (let i = 0; i < nPts; i++) {
         const iNext = (i + 1) % nPts;
@@ -928,49 +1008,93 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         const z2 = rz2 + nz * wallOutOffset;
 
         // Subtle directional sun-warmth variation per wall normal + vertical AO gradient
-        const dirShade = 0.96 + 0.05 * (nx * 0.65 + nz * 0.45);
-        const botShade = (tIdx === 0 ? 0.84 : 0.92) * dirShade;
+        const dirShade = 0.96 + 0.04 * (nx * 0.65 + nz * 0.45);
+        const botShade = (tIdx === 0 ? 0.85 : 0.93) * dirShade;
+        const midShade = 0.94 * dirShade;
         const topShade = 1.02 * dirShade;
 
-        const wCol = palette.wallPrimary;
+        const wCol = facadeSel.wallTint;
         const rB = Math.min(1, wCol[0] * botShade);
         const gB = Math.min(1, wCol[1] * botShade);
         const bB = Math.min(1, wCol[2] * botShade);
+        const rM = Math.min(1, wCol[0] * midShade);
+        const gM = Math.min(1, wCol[1] * midShade);
+        const bM = Math.min(1, wCol[2] * midShade);
         const rT = Math.min(1, wCol[0] * topShade);
         const gT = Math.min(1, wCol[1] * topShade);
         const bT = Math.min(1, wCol[2] * topShade);
 
-        // 1. Main Facade Wall Quad (2 triangles = 6 vertices)
+        // Snap straight walls (>= 2.8m) to whole bay counts so building corners align with piers/mullions
+        let uStart, uEnd;
+        if (len >= 2.8) {
+          const nBays = Math.max(1, Math.round(len / upperSpec.metersPerBay));
+          uStart = uBayShift;
+          uEnd = uBayShift + nBays / upperSpec.bays;
+        } else {
+          const tileW = upperSpec.bays * upperSpec.metersPerBay;
+          uStart = uBayShift + uAccumMeters / tileW;
+          uEnd = uBayShift + (uAccumMeters + len) / tileW;
+        }
+
+        if (hasRetailPodium && !isHole) {
+          // 1a. Ground-Floor Retail Storefront Podium Quad
+          pos.push(
+            x1, tier.y0, z1,
+            x1, upperY0, z1,
+            x2, upperY0, z2,
+            x1, tier.y0, z1,
+            x2, upperY0, z2,
+            x2, tier.y0, z2
+          );
+          for (let k = 0; k < 6; k++) norm.push(nx, 0, nz);
+          col.push(
+            rB, gB, bB,
+            rM, gM, bM,
+            rM, gM, bM,
+            rB, gB, bB,
+            rM, gM, bM,
+            rB, gB, bB
+          );
+          if (triEntity) triEntity.push(entityIdx, entityIdx);
+
+          const retailBays = Math.max(1, Math.round(len / retailSpec.metersPerBay));
+          const ru0 = retailSpec.index * 1000.0;
+          const ru1 = retailSpec.index * 1000.0 + retailBays / retailSpec.bays;
+          pushUvQuad(ru0, 1.0, ru1, 2.0);
+        }
+
+        // 1b. Upper Facade Shaft Quad
+        const yBot = hasRetailPodium && !isHole ? upperY0 : tier.y0;
+        const cBotR = hasRetailPodium && !isHole ? rM : rB;
+        const cBotG = hasRetailPodium && !isHole ? gM : gB;
+        const cBotB = hasRetailPodium && !isHole ? bM : bB;
+
         pos.push(
-          x1, tier.y0, z1,
+          x1, yBot, z1,
           x1, shaftY1, z1,
           x2, shaftY1, z2,
-          x1, tier.y0, z1,
+          x1, yBot, z1,
           x2, shaftY1, z2,
-          x2, tier.y0, z2
+          x2, yBot, z2
         );
-        for (let k = 0; k < 6; k++) {
-          norm.push(nx, 0, nz);
-        }
+        for (let k = 0; k < 6; k++) norm.push(nx, 0, nz);
         col.push(
-          rB, gB, bB,
+          cBotR, cBotG, cBotB,
           rT, gT, bT,
           rT, gT, bT,
-          rB, gB, bB,
+          cBotR, cBotG, cBotB,
           rT, gT, bT,
-          rB, gB, bB
+          cBotR, cBotG, cBotB
         );
-        if (triEntity) {
-          triEntity.push(entityIdx, entityIdx);
-        }
+        if (triEntity) triEntity.push(entityIdx, entityIdx);
 
-        const u0 = styleBucket * 1000.0 + uAccum;
-        const u1 = styleBucket * 1000.0 + uAccum + len;
-        pushUvQuad(u0, vBase0, u1, vShaft1);
-        uAccum += len;
+        const u0 = upperSpec.index * 1000.0 + uStart;
+        const u1 = upperSpec.index * 1000.0 + uEnd;
+        pushUvQuad(u0, 1.0, u1, 1.0 + upperV1);
+        uAccumMeters += len;
 
         // 2. Architectural Parapet / Cornice Band at top of tier (solid stone/metal, uv = -10)
-        const pCol = palette.wallSecondary;
+        const pCol = facadeSel.wallSecondary;
         const pr = Math.min(1, pCol[0] * dirShade * 1.03);
         const pg = Math.min(1, pCol[1] * dirShade * 1.03);
         const pb = Math.min(1, pCol[2] * dirShade * 1.03);
@@ -1029,7 +1153,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     for (const h of holes) allPts.push(...h);
     const tris = THREE.ShapeUtils.triangulateShape(contour, holes);
     const roofY = isTopTier ? tier.y1 - 0.25 : tier.y1;
-    const deckCol = isTopTier ? palette.roofDeck : palette.wallSecondary;
+    const deckCol = isTopTier ? facadeSel.roofDeck : facadeSel.wallSecondary;
 
     for (const [a, b, c] of tris) {
       const pa = allPts[a], pb = allPts[b], pc = allPts[c];
@@ -1054,7 +1178,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
       const pd = Math.min(12.0, spanZ * 0.34);
       const ph = Math.min(3.4, Math.max(2.0, totalSpan * 0.05));
       const beforeLen = pos.length;
-      pushWorldBox(pos, norm, col, cx, roofY, cz, pw, ph, pd, palette.wallSecondary, triEntity, entityIdx, false);
+      pushWorldBox(pos, norm, col, cx, roofY, cz, pw, ph, pd, facadeSel.wallSecondary, triEntity, entityIdx, false);
       const addedVerts = (pos.length - beforeLen) / 3;
       pushRoofUv(addedVerts);
     }
@@ -1067,7 +1191,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   }
 
-  return { styleId, arch, palette };
+  return { styleId, arch, facadeId: upperSpec.id, facadeIndex: upperSpec.index };
 }
 
 /**
