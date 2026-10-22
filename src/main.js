@@ -352,9 +352,14 @@ class WorldExplorerApp {
 
     this._buildGlobalHorizonLayer(this.beijingLodBuffer);
 
-    this.mapSystem = new MapSystem(this.overview, this.navigator, (wx, wz, label, snapToRoad = false) => {
-      this.teleportToWorld(wx, wz, label, snapToRoad);
-    });
+    this.mapSystem = new MapSystem(
+      this.overview,
+      this.navigator,
+      (wx, wz, label, snapToRoad = false) => {
+        this.teleportToWorld(wx, wz, label, snapToRoad);
+      },
+      this // [worldmap] app handle: worldOrigin, speed, teleportToLocation, sampleRoadSurface
+    );
 
     this.navigator.init();
 
