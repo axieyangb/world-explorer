@@ -10,7 +10,7 @@ import { latLonToTileXY } from '../global_tiles.js';
 import { loadTileData } from './map_tiles.js';
 
 const SPEED = { motorway: 27, trunk: 22, primary: 15, secondary: 13, tertiary: 11, minor: 8.5, service: 5, busway: 8 };
-const MAX_TILES = 30;
+const MAX_TILES = 25;
 const MAX_ROUTE_M = 300000;
 const CONNECTOR_SPEED = 4;
 

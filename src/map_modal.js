@@ -102,7 +102,7 @@ export class MapSystem {
       this.gpsStatusEl.className = 'wm-nav-line hidden';
     }
     this._mmLast = 0;
-    this._mmZoom = 16.4;
+    this._mmZoom = 15.7;
     this._mmForce = true;
     this._navText = null;
     this._navTick = 0;
@@ -213,7 +213,8 @@ export class MapSystem {
       if (e.key === 'Enter') {
         e.preventDefault();
         clearTimeout(debounce);
-        const pick = this._results[Math.max(0, this._activeResult)];
+        const fresh = this._resultsQuery === this.searchInput.value;
+        const pick = fresh ? this._results[Math.max(0, this._activeResult)] : null;
         if (pick) this._pickResult(pick);
         else this._search(this.searchInput.value, true);
       } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -852,6 +853,7 @@ export class MapSystem {
     const seq = ++this._searchSeq;
     if (!q.trim()) {
       this._results = [];
+      this._resultsQuery = q;
       this.resultsEl.classList.add('hidden');
       return;
     }
@@ -862,6 +864,7 @@ export class MapSystem {
       res = [];
     }
     if (seq !== this._searchSeq) return;
+    this._resultsQuery = q;
     this._results = (res || []).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon)).slice(0, 5);
     this._activeResult = -1;
     if (pickFirst && this._results.length) {
@@ -936,7 +939,7 @@ export class MapSystem {
 
     // Zoom out smoothly with speed.
     const speed = Math.abs((this.app && this.app.speed) || 0);
-    const target = 16.5 - Math.min(1, speed / 38) * 1.7;
+    const target = 15.7 - Math.min(1, speed / 38) * 1.3;
     this._mmZoom += (target - this._mmZoom) * 0.08;
     const zoom = this._mmZoom;
     const ws = this._ws(zoom);

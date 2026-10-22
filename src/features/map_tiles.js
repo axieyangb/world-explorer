@@ -96,7 +96,7 @@ export function pickName(tags, lang) {
 // ---------------------------------------------------------------------------
 const MAX_DATA_TILES = 260;
 const MAX_RASTERS = 140;
-const MAX_CONCURRENT = 6;
+const MAX_CONCURRENT = 4;
 
 const dataStore = new Map(); // key -> { prep } | { pending, job } | { failed, at }
 const queue = []; // { key, z, x, y, wanted, resolve? }
@@ -253,7 +253,7 @@ function polysToLocal(geom, n, x, y) {
 
 const PLACE_MINZ = {
   continent: 0, country: 3, state: 6, city: 5, town: 9, village: 11, suburb: 11,
-  hamlet: 13, quarter: 13, neighbourhood: 14, isolated_dwelling: 15,
+  hamlet: 14, quarter: 14.5, neighbourhood: 15.8, isolated_dwelling: 16,
 };
 
 function prepareTile(layers, z, x, y) {
