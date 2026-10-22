@@ -31,6 +31,7 @@ import {
   TrafficManager,
 } from "./entities.js";
 import { RoadNavigator } from "./navigation.js";
+import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
 import { MapSystem } from "./map_modal.js";
 import {
   getLang,
@@ -204,7 +205,7 @@ class WorldExplorerApp {
     this.heliMesh.rotation.y = this.yaw;
     this.scene.add(this.heliMesh);
 
-    this.traffic = new TrafficManager(this.scene, 42);
+    this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
     this.navigator = new RoadNavigator(this.scene);
 
     this.keys = new Set();

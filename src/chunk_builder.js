@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.module.js';
+import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
 import {
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
@@ -2920,6 +2921,10 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
     }
   }
 
+  // [feature/traffic] worker-side lane graph for AI cars & pedestrians
+  const trafficGraph = buildTrafficGraph(root.userData.roadSegments, data?.facilities ?? null, ox, oz);
+  for (const b of trafficGraphBuffers(trafficGraph)) transferSet.add(b);
+
   return {
     payload: {
       cx,
@@ -2931,6 +2936,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
       buildingColliders: root.userData.buildingColliders,
       roadEntities: root.userData.roadEntities,
       buildingEntities: root.userData.buildingEntities,
+      trafficGraph, // [feature/traffic]
     },
     transferList: Array.from(transferSet),
   };
@@ -2998,6 +3004,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     buildingColliders: buildingColliders || [],
     roadEntities: roadEntities || [],
     buildingEntities: buildingEntities || [],
+    trafficGraph: payload.trafficGraph || null, // [feature/traffic]
   };
 
   return root;
