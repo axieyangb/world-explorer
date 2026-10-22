@@ -72,6 +72,51 @@ const LOAD_RADIUS = 2;   // 5x5 chunks = 25 km^2 active streaming zone
 const UNLOAD_RADIUS = 3; // Hysteresis gap
 const TIME_PRESET_ORDER = ["noon", "sunset", "night", "overcast"];
 
+// [integration perf] Beijing skyline LOD as one InstancedMesh per ~5 km tile (frustum culling), behind the
+// single-InstancedMesh API the horizon code uses (setMatrixAt / setColorAt / instanceMatrix.needsUpdate).
+class SkylineTiles extends THREE.Group {
+  constructor(geom, material, ranges, total) {
+    super();
+    this._geom = geom;
+    this.material = material;
+    this.tiles = [];
+    this.tileOf = new Uint16Array(total);
+    ranges.forEach(([s, e], ti) => {
+      const m = new THREE.InstancedMesh(geom, material, e - s);
+      m.castShadow = false;
+      m.receiveShadow = false;
+      m.userData.start = s;
+      this.tiles.push(m);
+      this.add(m);
+      this.tileOf.fill(ti, s, e);
+    });
+    const tiles = this.tiles;
+    this.instanceMatrix = {
+      set needsUpdate(v) {
+        if (!v) return;
+        for (const m of tiles) if (m.userData.dirty) { m.instanceMatrix.needsUpdate = true; m.userData.dirty = false; }
+      },
+    };
+    this.instanceColor = {
+      set needsUpdate(v) {
+        if (v) for (const m of tiles) if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      },
+    };
+  }
+  get geometry() { return this._geom; }
+  setMatrixAt(i, mat) {
+    const m = this.tiles[this.tileOf[i]];
+    m.setMatrixAt(i - m.userData.start, mat);
+    m.userData.dirty = true;
+  }
+  setColorAt(i, c) {
+    const m = this.tiles[this.tileOf[i]];
+    m.setColorAt(i - m.userData.start, c);
+  }
+  // Call once after the initial fill (hidden instances later move to y=-5000 and must not grow the bounds).
+  computeTileBounds() { for (const m of this.tiles) m.computeBoundingSphere(); }
+}
+
 class WorldExplorerApp {
   constructor() {
     this.canvas = document.getElementById("webgl-canvas");
@@ -81,7 +126,7 @@ class WorldExplorerApp {
       logarithmicDepthBuffer: false,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // [integration perf] cap 1.5
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -743,6 +788,20 @@ class WorldExplorerApp {
           keptRecordIndices.push(rIdx);
         }
       }
+      // [integration perf] group instances by ~5 km tile so each tile is its own frustum-culled draw
+      const SKY_TILE = 5000;
+      const tileOfRec = (r) => {
+        const o = 4 + r * 28;
+        return Math.floor(dv.getFloat32(o, true) / SKY_TILE) * 1000 + Math.floor(dv.getFloat32(o + 4, true) / SKY_TILE);
+      };
+      const recTile = new Map();
+      for (const r of keptRecordIndices) recTile.set(r, tileOfRec(r));
+      keptRecordIndices.sort((a, b) => recTile.get(a) - recTile.get(b) || a - b);
+      const tileRanges = [];
+      for (let i = 0; i < keptRecordIndices.length; i++) {
+        if (i === 0 || recTile.get(keptRecordIndices[i]) !== recTile.get(keptRecordIndices[i - 1])) tileRanges.push([i, i + 1]);
+        else tileRanges[tileRanges.length - 1][1] = i + 1;
+      }
       const count = keptRecordIndices.length;
       this.skylineCount = count;
       this.skylineDataView = dv;
@@ -762,7 +821,8 @@ class WorldExplorerApp {
           'varying vec3 vLodWorldPos;\nvarying vec3 vLodNorm;\n' +
           shader.vertexShader.replace(
             '#include <worldpos_vertex>',
-            '#include <worldpos_vertex>\nvLodWorldPos = worldPosition.xyz;\nvLodNorm = normalize(objectNormal);'
+            // [integration] own world position: three only declares worldPosition when shadows/envmap are on
+            '#include <worldpos_vertex>\nvec4 lodWp = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nlodWp = instanceMatrix * lodWp;\n#endif\nvLodWorldPos = (modelMatrix * lodWp).xyz;\nvLodNorm = normalize(objectNormal);'
           );
         shader.fragmentShader =
           'uniform float uLodNightEmissive;\nvarying vec3 vLodWorldPos;\nvarying vec3 vLodNorm;\n' +
@@ -786,7 +846,7 @@ class WorldExplorerApp {
             }`
           );
       };
-      this.skylineInstanced = new THREE.InstancedMesh(boxGeom, lodMat, count);
+      this.skylineInstanced = new SkylineTiles(boxGeom, lodMat, tileRanges, count);
       this.skylineInstanced.castShadow = false;
       this.skylineInstanced.receiveShadow = false;
       this.skylineInstanced.frustumCulled = false;
@@ -840,6 +900,7 @@ class WorldExplorerApp {
       if (this.skylineInstanced.instanceColor) {
         this.skylineInstanced.instanceColor.needsUpdate = true;
       }
+      this.skylineInstanced.computeTileBounds();
       this.horizonRoot.add(this.skylineInstanced);
     } else {
       this.skylineCount = 0;

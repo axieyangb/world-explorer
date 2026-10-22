@@ -489,7 +489,9 @@ export class CityTraffic {
     if (node.sig && rem < 70) {
       const ph = getSignalPhase(node.sig, now, de.endAxis);
       if (ph !== 'green') {
-        const stopDist = rem - this._stopBack(node) - c.len * 0.5;
+        // [integration] +2.2: car-following keeps ~2.5 m to a stopped leader; the stop line is not a car, so
+        // offset it to halt with the bumper just behind street's painted line.
+        const stopDist = rem - this._stopBack(node) - c.len * 0.5 + 2.2;
         const canStop = c.v * c.v / (2 * 7) < stopDist + 0.5;
         if (stopDist > -0.5 && canStop && (ph === 'red' || c.v * c.v / (2 * 4) < stopDist)) {
           if (stopDist < gap) { gap = stopDist; leadV = 0; atRed = true; }
