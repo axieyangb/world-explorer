@@ -10,6 +10,7 @@ import {
 import { appendCompactChunkBuildingWFC } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
+import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
@@ -724,18 +725,11 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
       if (stage === 3) {
         // 5. 3D Vegetation (Street Boulevard Trees, Park Cypress/Pine & Western Hills Forests)
-        buildVegetation(
-          cx,
-          cz,
-          ox,
-          oz,
-          data,
-          roadSegments,
-          buildingColliders,
-          subGroups.vegetation,
-          mats,
-          isPointInWater
-        );
+        // [feature/vegetation] Landcover ground mesh + instanced street/park/forest trees (replaces legacy buildVegetation)
+        root.userData.vegInstances = buildVegetationLayer({
+          cx, cz, ox, oz, data, roadSegments, isPointInWater, isPointInSunkenTrench,
+          terrainGroup: subGroups.terrain,
+        });
 
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)
         buildFacilities(data.facilities || [], ox, oz, subGroups.facilities, mats);
@@ -2947,6 +2941,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
       buildingEntities: root.userData.buildingEntities,
       trafficGraph, // [feature/traffic]
       street: root.userData.street || null, // [feature/street]
+      vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
     },
     transferList: Array.from(transferSet),
   };
@@ -3016,9 +3011,18 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     buildingEntities: buildingEntities || [],
     trafficGraph: payload.trafficGraph || null, // [feature/traffic]
     street: payload.street || null, // [feature/street]
+    vegInstances: payload.vegInstances || null, // [feature/vegetation]
   };
 
   return root;
+}
+
+// [feature/vegetation] Adds the vegetation instance buffers to the worker transfer list.
+function vegInstancesForTransfer(v, transferSet) {
+  if (!v) return null;
+  if (v.inst?.buffer) transferSet.add(v.inst.buffer);
+  if (v.species?.buffer) transferSet.add(v.species.buffer);
+  return v;
 }
 
 /**

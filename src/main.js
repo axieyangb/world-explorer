@@ -32,6 +32,7 @@ import {
 } from "./entities.js";
 import { RoadNavigator } from "./navigation.js";
 import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
+import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import {
@@ -132,6 +133,7 @@ class WorldExplorerApp {
 
     this.mats = createSharedMaterials();
     this.streetFeatures = new StreetFeatures(this.scene, this.mats); // [feature/street]
+    this.vegetation = new VegetationSystem(this.scene, this.mats); // [feature/vegetation] instanced trees + landcoverMat
     this.chunksRoot = new THREE.Group();
     this.scene.add(this.chunksRoot);
 
@@ -2310,6 +2312,7 @@ class WorldExplorerApp {
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
+    this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {

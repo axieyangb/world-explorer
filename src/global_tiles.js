@@ -1,4 +1,5 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
+import { extractLandcoverPolys } from "./features/vegetation_worker.js"; // [feature/vegetation]
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -927,6 +928,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     parks,
     facilities,
     osm_trees: [],
+    vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
   };
 }
 
