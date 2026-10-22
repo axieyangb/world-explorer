@@ -6,6 +6,7 @@ import {
   buildChunkTerrainArrays,
 } from './environment.js';
 import { appendCompactChunkBuildingWFC } from './wfc/wfc_mesh_builder.js';
+import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
@@ -735,6 +736,11 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)
         buildFacilities(data.facilities || [], ox, oz, subGroups.facilities, mats);
+
+        // feature/places: rooftop detail, POIs, airports, ships, stadiums, bridge steel, train rails
+        root.userData.places = computePlacesPayload({
+          data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
+        });
 
         stage = 4;
         this.done = true;
@@ -2931,8 +2937,9 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
       buildingColliders: root.userData.buildingColliders,
       roadEntities: root.userData.roadEntities,
       buildingEntities: root.userData.buildingEntities,
+      places: root.userData.places || null, // feature/places
     },
-    transferList: Array.from(transferSet),
+    transferList: (collectPlacesTransfer(root.userData.places, transferSet), Array.from(transferSet)), // feature/places
   };
 }
 
@@ -2998,6 +3005,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     buildingColliders: buildingColliders || [],
     roadEntities: roadEntities || [],
     buildingEntities: buildingEntities || [],
+    places: payload.places || null, // feature/places
   };
 
   return root;
