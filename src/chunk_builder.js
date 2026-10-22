@@ -11,6 +11,7 @@ import { appendCompactChunkBuildingWFC } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
+import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
@@ -734,6 +735,11 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)
         buildFacilities(data.facilities || [], ox, oz, subGroups.facilities, mats);
         root.userData.street = computeStreetFeatures(root, data, ox, oz, null, mats); // [feature/street]
+
+        // feature/places: rooftop detail, POIs, airports, ships, stadiums, bridge steel, train rails
+        root.userData.places = computePlacesPayload({
+          data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
+        });
 
         stage = 4;
         this.done = true;
@@ -2942,8 +2948,9 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
       trafficGraph, // [feature/traffic]
       street: root.userData.street || null, // [feature/street]
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
+      places: root.userData.places || null, // feature/places
     },
-    transferList: Array.from(transferSet),
+    transferList: (collectPlacesTransfer(root.userData.places, transferSet), Array.from(transferSet)), // feature/places
   };
 }
 
@@ -3012,6 +3019,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     trafficGraph: payload.trafficGraph || null, // [feature/traffic]
     street: payload.street || null, // [feature/street]
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
+    places: payload.places || null, // feature/places
   };
 
   return root;

@@ -1,5 +1,6 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_worker.js"; // [feature/vegetation]
+import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -213,6 +214,8 @@ const INTERESTING_LAYERS = new Set([
   "landuse",
   "landcover",
   "place",
+  "poi", // feature/places
+  "aeroway", // feature/places
 ]);
 
 export function decodeMvtTile(arrayBuffer, z, tx, ty) {
@@ -929,6 +932,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     facilities,
     osm_trees: [],
     vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
+    places: extractPlaceFeatures(tiles, toLocalXZ, origin), // feature/places
   };
 }
 

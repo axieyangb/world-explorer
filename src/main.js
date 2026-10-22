@@ -35,6 +35,7 @@ import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
 import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
+import { PlacesSystem } from "./features/places.js"; // feature/places
 import {
   getLang,
   setLang,
@@ -380,6 +381,7 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     }
 
+    this.places = new PlacesSystem(this.scene); // feature/places
     this._animate();
   }
 
@@ -2313,6 +2315,7 @@ class WorldExplorerApp {
     this.traffic.update(dt, this.pos, this.loadedChunks);
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
+    if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
