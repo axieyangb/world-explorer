@@ -8,7 +8,7 @@ import re
 import struct
 import time
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent  # repo (or worktree) containing this script
 OUT_FILE = Path('/tmp/world_explorer.html')
 
 MOD_ID_MAP = {
@@ -33,8 +33,31 @@ MOD_ID_MAP = {
     'src/landmarks/batch_10.js': '__MOD_landmarks_batch_10',
     'src/landmarks_40.js': '__MOD_landmarks_40',
     'src/environment.js': '__MOD_environment',
+    # Worker-side feature modules (imported by global_tiles.js / chunk_builder.js).
+    'src/features/vegetation_extract.js': '__MOD_vegetation_extract',
+    'src/features/places_extract.js': '__MOD_places_extract',
+    'src/features/signals.js': '__MOD_signals',
+    'src/features/traffic_graph.js': '__MOD_traffic_graph',
+    'src/features/water_shore.js': '__MOD_water_shore',
+    'src/features/street_worker.js': '__MOD_street_worker',
+    'src/features/vegetation_worker.js': '__MOD_vegetation_worker',
+    'src/features/places_worker.js': '__MOD_places_worker',
     'src/chunk_builder.js': '__MOD_chunk_builder',
+    'src/chunk_worker.js': '__MOD_chunk_worker',
     'src/entities.js': '__MOD_entities',
+    # Main-thread feature modules.
+    'src/features/daylight.js': '__MOD_daylight',
+    'src/features/traffic_models.js': '__MOD_traffic_models',
+    'src/features/city_traffic.js': '__MOD_city_traffic',
+    'src/features/map_tiles.js': '__MOD_map_tiles',
+    'src/features/route_graph.js': '__MOD_route_graph',
+    'src/features/street_furniture.js': '__MOD_street_furniture',
+    'src/features/vegetation.js': '__MOD_vegetation',
+    'src/features/places.js': '__MOD_places',
+    'src/features/sky.js': '__MOD_sky',
+    'src/features/rain.js': '__MOD_rain',
+    'src/features/surfaces.js': '__MOD_surfaces',
+    'src/features/atmosphere.js': '__MOD_atmosphere',
     'src/navigation.js': '__MOD_navigation',
     'src/map_modal.js': '__MOD_map_modal',
     'src/main.js': '__MOD_main',
@@ -45,6 +68,33 @@ def resolve_rel_import(from_rel: str, spec: str) -> str:
   base = (ROOT / from_rel).parent
   target = (base / spec).resolve()
   return str(target.relative_to(ROOT))
+
+
+IMPORT_RE = re.compile(
+    r'^\s*import\s+(?:\*\s+as\s+[A-Za-z0-9_$]+|\{[^}]*\})\s*from\s*[\'"]([^\'"]+)[\'"]', re.M | re.S
+)
+
+
+def module_order_for(entry: str) -> list:
+  """Dependency-first (post-order DFS) module list; fails on cycles or unmapped modules."""
+  order, state = [], {}
+
+  def visit(rel, stack):
+    if state.get(rel) == 2:
+      return
+    if state.get(rel) == 1:
+      raise SystemExit(f'import cycle (IIFE bundle cannot handle it): {" -> ".join(stack + [rel])}')
+    if rel not in MOD_ID_MAP:
+      raise SystemExit(f'{rel} (imported by {stack[-1] if stack else "?"}) is missing from MOD_ID_MAP')
+    state[rel] = 1
+    code = (ROOT / rel).read_text(encoding='utf-8')
+    for spec in IMPORT_RE.findall(code):
+      visit(resolve_rel_import(rel, spec), stack + [rel])
+    state[rel] = 2
+    order.append(rel)
+
+  visit(entry, [])
+  return order
 
 
 def wrap_es_module_as_iife(rel_path: str) -> str:
@@ -124,6 +174,13 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
       flags=re.M | re.S,
   )
 
+  code = code.replace('import.meta.url', 'document.baseURI')
+  for bad in ('import.meta', 'import(', 'export default', 'export *'):
+    if bad in code:
+      raise SystemExit(f'{rel_path}: unsupported syntax for the IIFE bundle: {bad!r}')
+  if re.search(r'^\s*(import|export)\s', code, flags=re.M):
+    raise SystemExit(f'{rel_path}: unconverted import/export statement left in the IIFE bundle')
+
   all_exports = exported_names + brace_returns
   ret_stmt = f'return {{ {", ".join(all_exports)} }};' if all_exports else 'return {};'
   return f'const {mod_var} = (() => {{\n{code}\n{ret_stmt}\n}})();\n'
@@ -177,76 +234,13 @@ def build_world_explorer_html():
   b64_lod = gz_b64(pack_lod_soa())
 
   print('[2/2] Bundling Three.js & World Explorer ES modules...', flush=True)
-  worker_module_order = [
-      'vendor/three.module.js',
-      'src/wfc/wfc_archetypes.js',
-      'src/global_tiles.js',
-      'src/environment.js',
-      'src/wfc/wfc_solver.js',
-      'src/wfc/wfc_mesh_builder.js',
-      'src/landmarks_core.js',
-      'src/landmarks/batch_01.js',
-      'src/landmarks/batch_02.js',
-      'src/landmarks/batch_03.js',
-      'src/landmarks/batch_04.js',
-      'src/landmarks/batch_05.js',
-      'src/landmarks/batch_06.js',
-      'src/landmarks/batch_07.js',
-      'src/landmarks/batch_08.js',
-      'src/landmarks/batch_09.js',
-      'src/landmarks/batch_10.js',
-      'src/landmarks_40.js',
-      'src/chunk_builder.js',
-  ]
-  worker_bundled_js = '\n'.join(wrap_es_module_as_iife(m) for m in worker_module_order) + """
-self.onmessage = async (e) => {
-  const msg = e.data;
-  if (!msg) return;
-  if (msg.type === 'initDem') {
-    __MOD_environment.setBeijingDemState(msg.demState);
-    self.postMessage({ type: 'demReady' });
-    return;
-  }
-  if (msg.type === 'buildChunk') {
-    const { key, cx, cz, ox, oz, worldOrigin } = msg;
-    try {
-      const data = msg.data || (await __MOD_global_tiles.fetchGlobalChunkData(cx, cz, worldOrigin));
-      const { payload, transferList } = __MOD_chunk_builder.computeChunkWorkerPayload(cx, cz, ox, oz, data);
-      self.postMessage({ type: 'chunkBuilt', key, payload }, transferList);
-    } catch (err) {
-      self.postMessage({ type: 'chunkError', key, error: String(err) });
-    }
-  }
-};
-"""
+  # The worker bundle is chunk_worker.js (its self.onmessage handler) plus everything it imports.
+  worker_module_order = module_order_for('src/chunk_worker.js')
+  worker_bundled_js = '\n'.join(wrap_es_module_as_iife(m) for m in worker_module_order)
   b64_worker = gz_b64(worker_bundled_js.encode('utf-8'))
 
-  module_order = [
-      'vendor/three.module.js',
-      'src/i18n.js',
-      'src/wfc/wfc_archetypes.js',
-      'src/global_tiles.js',
-      'src/environment.js',
-      'src/wfc/wfc_solver.js',
-      'src/wfc/wfc_mesh_builder.js',
-      'src/landmarks_core.js',
-      'src/landmarks/batch_01.js',
-      'src/landmarks/batch_02.js',
-      'src/landmarks/batch_03.js',
-      'src/landmarks/batch_04.js',
-      'src/landmarks/batch_05.js',
-      'src/landmarks/batch_06.js',
-      'src/landmarks/batch_07.js',
-      'src/landmarks/batch_08.js',
-      'src/landmarks/batch_09.js',
-      'src/landmarks/batch_10.js',
-      'src/landmarks_40.js',
-      'src/chunk_builder.js',
-      'src/entities.js',
-      'src/navigation.js',
-      'src/map_modal.js',
-      'src/main.js',
-  ]
+  module_order = module_order_for('src/main.js')
+  print(f'  main bundle: {len(module_order)} modules, worker bundle: {len(worker_module_order)} modules', flush=True)
   bundled_js = '\n'.join(wrap_es_module_as_iife(m) for m in module_order)
 
   bootstrap_js = r"""
@@ -363,7 +357,12 @@ await (async function bootstrapWorldExplorer() {
   html = (ROOT / 'index.html').read_text(encoding='utf-8')
   css = (ROOT / 'styles.css').read_text(encoding='utf-8')
 
-  html = html.replace('<link rel="stylesheet" href="styles.css" />', f'<style>\n{css}\n</style>')
+  wm_css = (ROOT / 'src/features/worldmap.css').read_text(encoding='utf-8')
+  # map_modal.js injectStyles() skips its <link> when #wm-styles already exists.
+  html = html.replace(
+      '<link rel="stylesheet" href="styles.css" />',
+      f'<style>\n{css}\n</style>\n<style id="wm-styles">\n{wm_css}\n</style>',
+  )
 
   embedded_payload = f"""
   <script type="application/octet-stream" id="b64-overview">{b64_ov}</script>

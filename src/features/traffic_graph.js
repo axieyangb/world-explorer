@@ -1,7 +1,6 @@
 // Worker-safe lane-graph builder for AI traffic & pedestrians (no THREE dependency).
 // Turns a chunk's world-space road sub-segments into a compact polyline graph:
 // nodes = intersections / dead ends / chunk-border ends, edges = polylines between them.
-import { signalKeyFromFacility } from './signals.js';
 
 // Class codes: 0 motorway, 1 trunk, 2 primary, 3 secondary, 4 tertiary, 5 residential,
 // 6 service/other, 7 *_link, 8 footway/pedestrian/path, 9 cycleway (ignored).
@@ -20,7 +19,7 @@ export function trafficClassCode(cls) {
   return 6;
 }
 
-export function buildTrafficGraph(segs, facilities, ox = 0, oz = 0) {
+export function buildTrafficGraph(segs, signalNodes, ox = 0, oz = 0) {
   const nx = [], ny = [], nz = [];
   const cell = new Map();
   const nodeSegs = [];
@@ -61,30 +60,28 @@ export function buildTrafficGraph(segs, facilities, ox = 0, oz = 0) {
     nodeSegs[b].push(i);
   }
 
-  // Signalized intersections: from "tl" facilities (shared key), else degree rule.
+  // Signalized intersections: exactly the ones feature/street renders lights at (shared keys).
+  // signalNodes = street payload Float32Array [x, z, R, stopDist]* in chunk-local meters.
+  // Every degree>=3 graph node inside the street intersection radius gets the street node's key, and a
+  // stop distance so cars halt just behind the painted stop line. No street lights -> no signals.
   const N = nx.length;
   const sigKey = new Array(N).fill(null);
-  const tls = (facilities || []).filter((f) => Array.isArray(f) && f[0] === 'tl');
-  if (tls.length) {
-    for (const f of tls) {
-      const ex = ox + f[1] - 5.5, ez = oz + f[3] - 5.5;
-      let best = -1, bd = 2.5 * 2.5;
-      for (let n = 0; n < N; n++) {
-        const d = (nx[n] - ex) ** 2 + (nz[n] - ez) ** 2;
-        if (d < bd && nodeSegs[n].length >= 3) { bd = d; best = n; }
-      }
-      if (best >= 0) sigKey[best] = signalKeyFromFacility(f[1], f[3], ox, oz);
-    }
-  } else if (facilities === null) {
+  const sigStop = new Float32Array(N).fill(-1);
+  const sn = signalNodes || [];
+  for (let k = 0; k + 3 < sn.length; k += 4) {
+    const wx = ox + sn[k], wz = oz + sn[k + 1];
+    const R = Math.max(3, sn[k + 2]), stop = sn[k + 3];
+    const key = `${Math.round(wx)},${Math.round(wz)}`;
+    let best = -1, bd = Infinity;
     for (let n = 0; n < N; n++) {
-      const ids = new Set();
-      let major = false;
-      for (const si of nodeSegs[n]) {
-        const c = sMeta[si][0];
-        if (c >= 2 && c <= 5) { ids.add(sSig[si]); if (c <= 4) major = true; }
-      }
-      if (major && ids.size >= 3) sigKey[n] = `${Math.round(nx[n])},${Math.round(nz[n])}`;
+      if (nodeSegs[n].length < 3) continue;
+      const d = Math.hypot(nx[n] - wx, nz[n] - wz);
+      if (d < bd) { bd = d; best = n; }
+      if (d > R) continue;
+      sigKey[n] = key;
+      sigStop[n] = Math.max(2, stop - d);
     }
+    if (best >= 0 && sigKey[best] === null && bd < R + 4) { sigKey[best] = key; sigStop[best] = Math.max(2, stop - bd); }
   }
 
   const isBreak = (n) => {
@@ -135,7 +132,7 @@ export function buildTrafficGraph(segs, facilities, ox = 0, oz = 0) {
   for (let i = 0; i < M; i++) {
     const n = outNodes[i];
     nodes[i * 3] = nx[n]; nodes[i * 3 + 1] = ny[n]; nodes[i * 3 + 2] = nz[n];
-    if (sigKey[n] !== null) sigKeys.push([i, sigKey[n]]);
+    if (sigKey[n] !== null) sigKeys.push([i, sigKey[n], sigStop[n]]);
   }
   const eCls = new Uint8Array(E), eLanes = new Uint8Array(E), eOneway = new Uint8Array(E);
   const eWidth = new Float32Array(E);

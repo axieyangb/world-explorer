@@ -330,6 +330,7 @@ class WorldExplorerApp {
         nitroActive: Boolean(this.nitroActive),
         x: Math.round(this.pos.x),
         y: Number(this.pos.y.toFixed(2)),
+        groundY: Number(getBeijingTerrainElevation(this.pos.x, this.pos.z).toFixed(2)), // [integration] test probe
         z: Math.round(this.pos.z),
         road: getLang() === "en" ? translateRoadName(this.currentRoadName) : this.currentRoadName,
         layer: this.currentLayer,
@@ -2310,6 +2311,8 @@ class WorldExplorerApp {
     const dt = Math.min(0.05, this.clock.getDelta());
     this._updatePhysics(dt);
     this._updateCamera(dt);
+    // [integration] atmosphere first: daylight/sun/weather are then current for traffic, street, places and shadows
+    if (this.atmosphere) this.atmosphere.update(dt); // feature/atmosphere
     this._updateStreamingChunks(false);
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
@@ -2367,7 +2370,6 @@ class WorldExplorerApp {
       this.mapSystem.updateMinimap(this.pos, minimapYaw, this.loadedChunks);
     }
 
-    if (this.atmosphere) this.atmosphere.update(dt); // feature/atmosphere
     this.renderer.render(this.scene, this.camera);
   }
 }

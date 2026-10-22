@@ -1,5 +1,5 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
-import { extractLandcoverPolys } from "./features/vegetation_worker.js"; // [feature/vegetation]
+import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";

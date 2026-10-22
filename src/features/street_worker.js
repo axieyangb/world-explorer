@@ -2,7 +2,7 @@
 // Runs inside the chunk Web Worker (and in the main-thread fallback build path).
 // Output (attached to chunk root.userData.street and forwarded in the worker payload):
 //   { region, types: { <type>: Float32Array[x,y,z,rotY,scaleX]* }, heads: Float32Array[x,y,z,rotY,groundY]*,
-//     signals: Float32Array[x,y,z,rotY,axis,nodeX,nodeZ,horizontal]*, signalNodes: Float32Array[x,z]* }
+//     signals: Float32Array[x,y,z,rotY,axis,nodeX,nodeZ,horizontal]*, signalNodes: Float32Array[x,z,R,stopDist]* }  (stopDist = node -> far edge of stop line)
 // All coordinates are chunk-local (add ox/oz for world). Road detail meshes (lines, crosswalks, stop lines,
 // tire wear, curbs) are appended to subGroups.markings.
 import * as THREE from '../../vendor/three.module.js';
@@ -555,6 +555,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     if (!inChunk(node.x, node.z)) continue;
     const signalized = node.majors >= 1 && node.arms.some((a) => a.cls === 'primary' || a.cls === 'secondary' || a.cls === 'trunk' || (a.cls === 'tertiary' && node.majors >= 2));
     let anySignal = false;
+    let sigStop = 0; // [integration] distance from node to just behind the farthest stop line
     for (const arm of node.arms) {
       if (!SIDEWALK_CLS.has(arm.cls) && arm.cls !== 'trunk' && arm.cls !== 'unclassified' && arm.cls !== 'living_street') continue;
       const hw = arm.hw;
@@ -632,10 +633,11 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
           signals.push(hx, gy + 5.6, hz, rotFor(ax, az), axis, node.x, node.z, horiz);
           occupy(px, pz);
           anySignal = true;
+          sigStop = Math.max(sigStop, sl + 0.45 + 0.6);
         }
       }
     }
-    if (anySignal) signalNodes.push(node.x, node.z);
+    if (anySignal) signalNodes.push(node.x, node.z, node.R, sigStop); // [integration] read by traffic_graph.js
   }
 
   // ---- 5. Sidewalk furniture along ways ----

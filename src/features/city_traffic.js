@@ -171,7 +171,7 @@ export class CityTraffic {
   *_addChunkGen(key, chunk) {
     const ud = chunk.userData;
     let g = ud.trafficGraph;
-    if (!g) g = ud.trafficGraph = buildTrafficGraph(ud.roadSegments || [], null, ud.ox, ud.oz);
+    if (!g) g = ud.trafficGraph = buildTrafficGraph(ud.roadSegments || [], ud.street ? ud.street.signalNodes : null, ud.ox, ud.oz);
     const rec = { chunk, nodes: [], edges: [] };
     this.chunkRecs.set(key, rec);
     const M = g.nodes.length / 3;
@@ -180,7 +180,7 @@ export class CityTraffic {
       refs[i] = this._acquireNode(g.nodes[i * 3], g.nodes[i * 3 + 1], g.nodes[i * 3 + 2]);
       rec.nodes.push(refs[i]);
     }
-    for (const [i, k] of g.sigKeys) refs[i].sig = k;
+    for (const [i, k, sb] of g.sigKeys) { refs[i].sig = k; if (sb > 0) refs[i].stopBack = sb; } // [integration] street's stop line
     const E = g.eA.length;
     for (let i = 0; i < E; i++) {
       if ((i & 255) === 255) yield;

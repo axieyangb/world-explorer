@@ -2931,7 +2931,8 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
   }
 
   // [feature/traffic] worker-side lane graph for AI cars & pedestrians
-  const trafficGraph = buildTrafficGraph(root.userData.roadSegments, data?.facilities ?? null, ox, oz);
+  // [integration] signals come from street's visible lights (street suppresses the 'tl' facilities)
+  const trafficGraph = buildTrafficGraph(root.userData.roadSegments, root.userData.street ? root.userData.street.signalNodes : null, ox, oz);
   for (const b of trafficGraphBuffers(trafficGraph)) transferSet.add(b);
 
   return {

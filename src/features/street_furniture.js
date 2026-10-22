@@ -422,14 +422,14 @@ export class StreetFeatures {
     this.stats.refreshMs = +(performance.now() - t0).toFixed(2);
   }
 
-  _updateSignals(timeSec) {
+  _updateSignals() {
     const sigs = this.activeSignals;
     const n = Math.min(sigs.length, this.lamps.instanceMatrix.count);
     const arr = this.lamps.instanceMatrix.array;
     let changed = false;
     for (let i = 0; i < n; i++) {
       const g = sigs[i];
-      const phase = getSignalPhase(g.key, g.axis ? timeSec + 15 : timeSec) || 'red';
+      const phase = getSignalPhase(g.key, undefined, g.axis ? 'ew' : 'ns') || 'red'; // shared clock (signals.js)
       if (phase === g.phase) continue;
       g.phase = phase;
       changed = true;
@@ -469,7 +469,7 @@ export class StreetFeatures {
       this._refresh(camPos, loadedChunks);
     }
     // Clear phase cache only when signals are re-collected (handled by new objects in _refresh)
-    this._updateSignals(performance.now() / 1000);
+    this._updateSignals();
 
     const day = getDaylight();
     const on = 1 - smooth(0.15, 0.6, day);
