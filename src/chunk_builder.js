@@ -6,6 +6,8 @@ import {
   buildChunkTerrainArrays,
 } from './environment.js';
 import { appendCompactChunkBuildingWFC } from './wfc/wfc_mesh_builder.js';
+import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
+const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
@@ -735,6 +737,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)
         buildFacilities(data.facilities || [], ox, oz, subGroups.facilities, mats);
+        root.userData.street = computeStreetFeatures(root, data, ox, oz, null, mats); // [feature/street]
 
         stage = 4;
         this.done = true;
@@ -1718,7 +1721,7 @@ function buildRoadsAndBridges(
         // Lane Markings: +0.025m above road surface + polygonOffset (-4, -6) + depthWrite: false
         const my1 = cy1 + 0.025;
         const my2 = cy2 + 0.025;
-        if (!oneway && widthM >= 7.0 && cls !== 'footway' && cls !== 'pedestrian') {
+        if (!STREET_OWNS_LANE_MARKINGS && !oneway && widthM >= 7.0 && cls !== 'footway' && cls !== 'pedestrian') {
           const ylw = [0.95, 0.78, 0.24];
           const cw = 0.15;
           mPos.push(
@@ -1732,7 +1735,7 @@ function buildRoadsAndBridges(
           for (let k = 0; k < 6; k++) mCol.push(...ylw);
         }
 
-        if (lanes >= 2 && widthM >= 5.5 && segLen >= 1.2) {
+        if (!STREET_OWNS_LANE_MARKINGS && lanes >= 2 && widthM >= 5.5 && segLen >= 1.2) {
           const wht = [0.92, 0.94, 0.96];
           for (let l = 1; l < lanes; l++) {
             if (!oneway && l * 2 === lanes) continue;
@@ -2748,6 +2751,7 @@ function buildFacilities(facilities, ox, oz, facGroup, mats) {
 
   for (const f of facilities) {
     const [ftype, lx, ly, lz] = f;
+    if (STREET_OWNS_LANE_MARKINGS && (ftype === 'tl' || ftype === 'cr')) continue; // [feature/street] replaced by street furniture
     const y = getBeijingTerrainElevation(ox + lx, oz + lz) + (ly || 0);
 
     if (ftype === 'tl') {
@@ -2931,6 +2935,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
       buildingColliders: root.userData.buildingColliders,
       roadEntities: root.userData.roadEntities,
       buildingEntities: root.userData.buildingEntities,
+      street: root.userData.street || null, // [feature/street]
     },
     transferList: Array.from(transferSet),
   };
@@ -2998,6 +3003,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     buildingColliders: buildingColliders || [],
     roadEntities: roadEntities || [],
     buildingEntities: buildingEntities || [],
+    street: payload.street || null, // [feature/street]
   };
 
   return root;

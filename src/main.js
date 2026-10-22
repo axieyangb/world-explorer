@@ -32,6 +32,7 @@ import {
 } from "./entities.js";
 import { RoadNavigator } from "./navigation.js";
 import { MapSystem } from "./map_modal.js";
+import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import {
   getLang,
   setLang,
@@ -128,6 +129,7 @@ class WorldExplorerApp {
     this.scene.add(this.playerLight);
 
     this.mats = createSharedMaterials();
+    this.streetFeatures = new StreetFeatures(this.scene, this.mats); // [feature/street]
     this.chunksRoot = new THREE.Group();
     this.scene.add(this.chunksRoot);
 
@@ -2298,6 +2300,7 @@ class WorldExplorerApp {
     this._updateStreamingChunks(false);
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
+    this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
