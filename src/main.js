@@ -1,6 +1,7 @@
 import * as THREE from "../vendor/three.module.js";
 import {
   createSharedMaterials,
+  loadFacadeArrayTexture,
   buildChunkMeshGroup,
   createChunkBuildTask,
   pointInRing2D,
@@ -340,6 +341,7 @@ class WorldExplorerApp {
       fetch("/data/global_overview.json?v=overture4").catch(() => null),
       initBeijingDem(),
       fetch("/data/city_buildings_lod.bin?v=overture4").catch(() => null),
+      loadFacadeArrayTexture(this.mats),
     ]);
     this.beijingOverview = resp && resp.ok ? await resp.json() : await buildGlobalOverviewFromTiles(this.worldOrigin);
     this.overview = this.beijingOverview;
@@ -794,8 +796,7 @@ class WorldExplorerApp {
         const rawH = dv.getUint16(off + 16, true) * 0.1;
         const rawMinH = dv.getUint16(off + 18, true) * 0.1;
         const yaw = dv.getInt16(off + 20, true) * 0.0001;
-        const cx = dv.getUint8(off + 25);
-        const cz = dv.getUint8(off + 26);
+        const [cx, cz] = this.worldToChunk(wx, wz);
 
         const tY = getBeijingTerrainElevation(wx, wz);
         const baseH = rawMinH > 0 ? tY + rawMinH : tY - (tY > 1.5 ? 2.0 : 0.05);
@@ -1065,12 +1066,12 @@ class WorldExplorerApp {
       const data = await fetchGlobalChunkData(cx, cz, this.worldOrigin);
       if (!data || (this.teleportGeneration || 0) !== genId) return;
       if (immediate) {
-        const group = buildChunkMeshGroup(cx, cz, ox, oz, data, this.mats, this.layerVisibility);
+        const group = buildChunkMeshGroup(cx, cz, ox, oz, data, this.mats, this.layerVisibility, this.worldOrigin);
         this.chunksRoot.add(group);
         this.loadedChunks.set(key, group);
         this.horizonCutoutDirty = true;
       } else {
-        const task = createChunkBuildTask(cx, cz, ox, oz, data, this.mats, this.layerVisibility);
+        const task = createChunkBuildTask(cx, cz, ox, oz, data, this.mats, this.layerVisibility, this.worldOrigin);
         this.buildQueue.set(key, task);
       }
     } catch {

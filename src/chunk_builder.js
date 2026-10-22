@@ -5,7 +5,7 @@ import {
   buildChunkTerrainMesh,
   buildChunkTerrainArrays,
 } from './environment.js';
-import { appendCompactChunkBuildingWFC } from './wfc/wfc_mesh_builder.js';
+import { appendCompactChunkBuildingWFC, FACADE_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
@@ -242,6 +242,131 @@ function createStyleFacadeTexture(style) {
 /**
  * Creates shared materials and procedural architectural facade textures.
  */
+function createFallbackFacadeArrayTexture() {
+  const N = FACADE_CATALOG.length;
+  const S = 16;
+  const data = new Uint8Array(S * S * N * 4);
+  for (let i = 0; i < N; i++) {
+    const spec = FACADE_CATALOG[i];
+    const avg = spec.avgColor || [0.55, 0.55, 0.55];
+    const rWall = Math.round(avg[0] * 255);
+    const gWall = Math.round(avg[1] * 255);
+    const bWall = Math.round(avg[2] * 255);
+    const baseOff = i * S * S * 4;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const isWin = (x % 4 >= 1 && x % 4 <= 2) && (y % 4 >= 1 && y % 4 <= 2);
+        const off = baseOff + (y * S + x) * 4;
+        data[off] = isWin ? Math.round(rWall * 0.55) : rWall;
+        data[off + 1] = isWin ? Math.round(gWall * 0.62) : gWall;
+        data[off + 2] = isWin ? Math.round(bWall * 0.72) : bWall;
+        data[off + 3] = isWin ? 220 : 12;
+      }
+    }
+  }
+  const tex = new THREE.DataArrayTexture(data, S, S, N);
+  tex.format = THREE.RGBAFormat;
+  tex.type = THREE.UnsignedByteType;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = (err) => reject(err);
+    img.src = src;
+  });
+}
+
+/**
+ * Loads the 24-layer 512x512 seamless AI facade strip + window mask strip into a WebGL2
+ * THREE.DataArrayTexture (RGBA, where RGB = sRGB albedo and A = linear window glass mask).
+ */
+export async function loadFacadeArrayTexture(mats) {
+  if (typeof document === 'undefined') return null;
+  try {
+    const stripSrc =
+      (typeof window !== 'undefined' && window.__EMBEDDED_FACADE_STRIP__) ||
+      '/assets/facades/facade_strip.jpg';
+    const maskSrc =
+      (typeof window !== 'undefined' && window.__EMBEDDED_FACADE_MASK_STRIP__) ||
+      '/assets/facades/facade_mask_strip.jpg';
+
+    const [rgbImg, maskImg] = await Promise.all([
+      loadImageElement(stripSrc),
+      loadImageElement(maskSrc),
+    ]);
+
+    const S = 512;
+    const N = Math.max(1, Math.round(rgbImg.height / S));
+    const totalH = S * N;
+
+    const cRgb = document.createElement('canvas');
+    cRgb.width = S;
+    cRgb.height = totalH;
+    const ctxRgb = cRgb.getContext('2d');
+    ctxRgb.drawImage(rgbImg, 0, 0, S, totalH);
+    const rgbBytes = ctxRgb.getImageData(0, 0, S, totalH).data;
+
+    const cMask = document.createElement('canvas');
+    cMask.width = S;
+    cMask.height = totalH;
+    const ctxMask = cMask.getContext('2d');
+    ctxMask.drawImage(maskImg, 0, 0, S, totalH);
+    const maskBytes = ctxMask.getImageData(0, 0, S, totalH).data;
+
+    const rgba = new Uint8Array(S * S * N * 4);
+    for (let layer = 0; layer < N; layer++) {
+      const layerDstBase = layer * S * S * 4;
+      for (let r = 0; r < S; r++) {
+        // Flip each 512x512 tile vertically so v=0 is bottom (ground) and v=1 is top (roof)
+        const srcRow = layer * S + (S - 1 - r);
+        const srcRowBase = srcRow * S * 4;
+        const dstRowBase = layerDstBase + r * S * 4;
+        for (let c = 0; c < S; c++) {
+          const sOff = srcRowBase + c * 4;
+          const dOff = dstRowBase + c * 4;
+          rgba[dOff] = rgbBytes[sOff];
+          rgba[dOff + 1] = rgbBytes[sOff + 1];
+          rgba[dOff + 2] = rgbBytes[sOff + 2];
+          rgba[dOff + 3] = maskBytes[sOff];
+        }
+      }
+    }
+
+    const arrayTex = new THREE.DataArrayTexture(rgba, S, S, N);
+    arrayTex.format = THREE.RGBAFormat;
+    arrayTex.type = THREE.UnsignedByteType;
+    arrayTex.colorSpace = THREE.SRGBColorSpace;
+    arrayTex.wrapS = THREE.RepeatWrapping;
+    arrayTex.wrapT = THREE.RepeatWrapping;
+    arrayTex.minFilter = THREE.LinearMipmapLinearFilter;
+    arrayTex.magFilter = THREE.LinearFilter;
+    arrayTex.generateMipmaps = true;
+    arrayTex.anisotropy = 8;
+    arrayTex.needsUpdate = true;
+
+    if (mats && mats.wfcBldgMat && mats.wfcBldgMat.userData.nightUniforms) {
+      const prev = mats.wfcBldgMat.userData.nightUniforms.uFacadeArray.value;
+      mats.wfcBldgMat.userData.nightUniforms.uFacadeArray.value = arrayTex;
+      if (prev && prev !== arrayTex && prev.dispose) prev.dispose();
+    }
+    return arrayTex;
+  } catch (err) {
+    console.warn('Facade array texture load fallback:', err);
+    return null;
+  }
+}
+
 export function createSharedMaterials() {
   const texGlass = createStyleFacadeTexture('glass');
   const texModern = createStyleFacadeTexture('modern');
@@ -379,8 +504,10 @@ export function createSharedMaterials() {
     metalness: 0.22,
   });
 
+  const fallbackFacadeArray = createFallbackFacadeArrayTexture();
   const wfcNightUniforms = {
     uNightEmissive: { value: 0.08 },
+    uFacadeArray: { value: fallbackFacadeArray },
   };
   const wfcBldgMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -392,6 +519,7 @@ export function createSharedMaterials() {
   wfcBldgMat.userData.nightUniforms = wfcNightUniforms;
   wfcBldgMat.onBeforeCompile = (shader) => {
     shader.uniforms.uNightEmissive = wfcNightUniforms.uNightEmissive;
+    shader.uniforms.uFacadeArray = wfcNightUniforms.uFacadeArray;
     shader.vertexShader =
       'varying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
       shader.vertexShader.replace(
@@ -399,98 +527,66 @@ export function createSharedMaterials() {
         '#include <beginnormal_vertex>\nvEmissive = step(1.5, length(objectNormal));\nobjectNormal = normalize(objectNormal);\nvFacadeUv = uv;\nvWorldNorm = objectNormal;'
       );
     shader.fragmentShader =
-      'uniform float uNightEmissive;\nvarying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
+      'uniform float uNightEmissive;\nuniform mediump sampler2DArray uFacadeArray;\nvarying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
       shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-        if (vFacadeUv.y >= 0.0 && abs(vWorldNorm.y) < 0.45) {
-          float styleId = floor((vFacadeUv.x + 1.0) / 1000.0);
-          float uMeters = max(0.0, vFacadeUv.x - styleId * 1000.0);
-          float vMeters = vFacadeUv.y;
+        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45) {
+          float texLayer = clamp(floor((vFacadeUv.x + 0.5) / 1000.0), 0.0, 23.0);
+          float uRep = max(0.0, vFacadeUv.x - texLayer * 1000.0);
+          float vRep = max(0.0, vFacadeUv.y - 1.0);
 
-          float bayW = 2.8;
-          float floorH = 3.5;
-          float winW = 0.66;
-          float winH = 0.62;
-          if (styleId < 0.5) {
-            bayW = 2.5; floorH = 3.6; winW = 0.78; winH = 0.74;
-          } else if (styleId < 1.5) {
-            bayW = 3.2; floorH = 3.8; winW = 0.64; winH = 0.62;
-          } else if (styleId < 2.5) {
-            bayW = 2.4; floorH = 3.5; winW = 0.76; winH = 0.72;
-          } else if (styleId < 3.5) {
-            bayW = 3.0; floorH = 3.1; winW = 0.56; winH = 0.55;
-          } else if (styleId < 4.5) {
-            bayW = 2.8; floorH = 3.2; winW = 0.64; winH = 0.60;
-          } else if (styleId < 5.5) {
-            bayW = 3.1; floorH = 3.3; winW = 0.52; winH = 0.56;
-          } else if (styleId < 6.5) {
-            bayW = 2.5; floorH = 3.7; winW = 0.74; winH = 0.70;
-          } else {
-            bayW = 3.4; floorH = 3.6; winW = 0.48; winH = 0.48;
-          }
+          vec4 texSample = texture(uFacadeArray, vec3(uRep, vRep, texLayer));
+          vec3 facadeRgb = texSample.rgb;
+          float rawAlpha = texSample.a;
+          float winMask = smoothstep(0.22, 0.56, rawAlpha);
 
-          float gx = uMeters / bayW;
-          float gy = vMeters / floorH;
-          vec2 cellId = floor(vec2(gx, gy));
-          vec2 fuv = fract(vec2(gx, gy));
-          vec2 dgrid = max(fwidth(vec2(gx, gy)), vec2(0.0015));
-          float lodFade = 1.0 - smoothstep(0.22, 0.78, max(dgrid.x, dgrid.y));
+          // Pure photographic AI facade albedo modulated by subtle per-building tint & vertical AO
+          diffuseColor.rgb = facadeRgb * diffuseColor.rgb * 1.08;
 
-          if (vMeters < 4.1) {
-            // Ground-floor architectural podium & retail storefront glazing
-            float sGx = uMeters / 3.8;
-            float sFx = fract(sGx);
-            float sDx = max(fwidth(sGx), 0.002);
-            float sWinX = smoothstep(0.10 - sDx, 0.10 + sDx, sFx) * (1.0 - smoothstep(0.90 - sDx, 0.90 + sDx, sFx));
-            float sWinY = smoothstep(0.06, 0.10, vMeters / 4.1) * (1.0 - smoothstep(0.78, 0.84, vMeters / 4.1));
-            float shopMask = sWinX * sWinY * lodFade;
-            vec3 podiumStone = diffuseColor.rgb * 0.84;
-            vec3 shopGlass = vec3(0.15, 0.21, 0.27);
-            float shopHash = fract(sin(dot(vec2(floor(sGx), styleId), vec2(127.1, 311.7))) * 43758.5453);
-            vec3 shopGlow = mix(vec3(1.0, 0.84, 0.58), vec3(0.88, 0.94, 1.0), step(0.65, shopHash));
-            diffuseColor.rgb = mix(podiumStone, shopGlass, shopMask);
-            roughnessFactor = mix(0.74, 0.18, shopMask);
-            metalnessFactor = mix(0.14, 0.55, shopMask);
-            float shopLit = step(0.22, shopHash) * (0.28 + 0.72 * clamp(uNightEmissive, 0.0, 1.4));
-            totalEmissiveRadiance += shopGlow * shopMask * shopLit * 0.55;
-          } else {
-            // Upper-floor architectural facade grid + recessed spandrels + sky-reflective windows
-            float xMargin = (1.0 - winW) * 0.5;
-            float yBot = (1.0 - winH) * 0.55;
-            float yTop = yBot + winH;
-            float wx = smoothstep(xMargin - dgrid.x, xMargin + dgrid.x, fuv.x) *
-                       (1.0 - smoothstep(1.0 - xMargin - dgrid.x, 1.0 - xMargin + dgrid.x, fuv.x));
-            float wy = smoothstep(yBot - dgrid.y, yBot + dgrid.y, fuv.y) *
-                       (1.0 - smoothstep(yTop - dgrid.y, yTop + dgrid.y, fuv.y));
-            float winMask = wx * wy * lodFade;
+          // Screen-space micro-bump normal relief on masonry/mullions (fades smoothly at distance)
+          float lum = dot(facadeRgb, vec3(0.299, 0.587, 0.114));
+          float dLx = clamp(dFdx(lum), -0.08, 0.08);
+          float dLy = clamp(dFdy(lum), -0.08, 0.08);
+          float uvGrad = max(fwidth(uRep), fwidth(vRep));
+          float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
+          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask)));
 
-            // Spandrel horizontal shadow groove & vertical mullion articulation
-            float spandrelBand = smoothstep(0.0, 0.08, fuv.y) * (1.0 - smoothstep(yBot - 0.06, yBot, fuv.y));
-            float mullionLine = 1.0 - smoothstep(0.0, max(0.04, dgrid.x * 1.5), min(fuv.x, 1.0 - fuv.x));
-            vec3 wallTone = diffuseColor.rgb * (1.0 - 0.14 * spandrelBand * lodFade - 0.10 * mullionLine * lodFade);
+          // PBR Roughness & Metalness modulated by pixel-accurate window glass mask
+          float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;
+          roughnessFactor = mix(mix(0.78, 0.40, isCurtain), 0.14, winMask);
+          metalnessFactor = mix(mix(0.06, 0.46, isCurtain), 0.68, winMask);
 
-            // Per-room deterministic hash for blinds, interior depth, and night lighting
-            float hRoom = fract(sin(dot(cellId + vec2(styleId * 17.0, 3.0), vec2(127.1, 311.7))) * 43758.5453);
-            float hFloor = fract(sin(cellId.y * 91.7 + styleId * 23.3) * 43758.5453);
-
-            float altGrad = clamp(vMeters / 90.0, 0.0, 1.0);
-            vec3 glassBase = mix(vec3(0.11, 0.18, 0.26), vec3(0.24, 0.39, 0.54), altGrad);
-            float sheen = 0.07 * sin(uMeters * 0.22 + vMeters * 0.16);
-            vec3 glassDay = glassBase + vec3(sheen * 0.7, sheen * 0.9, sheen * 1.2) + diffuseColor.rgb * 0.14;
-            // Subtle blinds/curtain variation in daytime
-            glassDay = mix(glassDay, glassDay * 1.22 + vec3(0.06, 0.06, 0.05), step(0.72, hRoom) * 0.45);
-
-            diffuseColor.rgb = mix(wallTone, glassDay, winMask);
-            roughnessFactor = mix(0.72, 0.15, winMask);
-            metalnessFactor = mix(0.10, 0.68, winMask);
-
-            // Night / dusk interior room lighting
-            float nightLevel = clamp((uNightEmissive - 0.05) / 1.15, 0.0, 1.0);
-            float litProb = mix(0.12, 0.52, nightLevel) * (0.65 + 0.35 * step(0.25, hFloor));
+          // Per-window interior lighting strictly at sunset and night (0 at noon)
+          float nightLevel = clamp((uNightEmissive - 0.15) / 1.15, 0.0, 1.0);
+          if (nightLevel > 0.001 && winMask > 0.02) {
+            float isRetail = (abs(texLayer - 17.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;
+            float gridBays = (
+              abs(texLayer - 6.0) < 0.5 || abs(texLayer - 15.0) < 0.5 ||
+              abs(texLayer - 17.0) < 0.5 || abs(texLayer - 18.0) < 0.5 ||
+              abs(texLayer - 20.0) < 0.5 || abs(texLayer - 21.0) < 0.5 ||
+              abs(texLayer - 22.0) < 0.5
+            ) ? 3.0 : 4.0;
+            float gridFloors = (isRetail > 0.5) ? 1.0 : (
+              (abs(texLayer - 15.0) < 0.5 || abs(texLayer - 21.0) < 0.5 || abs(texLayer - 23.0) < 0.5) ? 2.0 : (
+                (abs(texLayer - 6.0) < 0.5 || abs(texLayer - 19.0) < 0.5) ? 3.0 : 4.0
+              )
+            );
+            vec2 winGrid = vec2(uRep * gridBays, vRep * gridFloors);
+            vec2 winCell = floor(winGrid);
+            vec2 cellFract = fract(winGrid);
+            float cellEdge = smoothstep(0.0, 0.07, cellFract.x) * smoothstep(1.0, 0.93, cellFract.x) *
+                             smoothstep(0.0, 0.08, cellFract.y) * smoothstep(1.0, 0.92, cellFract.y);
+            float wallSeed = floor((vWorldNorm.x * 19.0 + vWorldNorm.z * 31.0) * 8.0);
+            float hRoom = fract(sin(dot(winCell + vec2(texLayer * 13.0, wallSeed * 7.0), vec2(127.1, 311.7))) * 43758.5453);
+            float litProb = mix(0.44 * nightLevel, 0.78 * nightLevel, isRetail);
             float isLit = step(1.0 - litProb, hRoom);
-            vec3 roomCol = mix(vec3(1.0, 0.82, 0.52), vec3(0.78, 0.91, 1.0), step(0.62, fract(hRoom * 13.7)));
-            totalEmissiveRadiance += roomCol * winMask * isLit * (0.06 + uNightEmissive * 0.72);
+
+            vec3 warmAmber = vec3(1.0, 0.76, 0.42);
+            vec3 coolOffice = vec3(0.76, 0.89, 1.0);
+            vec3 roomCol = mix(warmAmber, coolOffice, step(0.66, fract(hRoom * 13.7)));
+            vec3 interiorTex = roomCol * (0.38 + 0.62 * facadeRgb) * (0.72 + 0.28 * fract(hRoom * 7.3));
+            totalEmissiveRadiance += interiorTex * winMask * cellEdge * isLit * (uNightEmissive * 0.72);
           }
         }
         totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uNightEmissive;`
@@ -606,7 +702,8 @@ function signedAreaXZ(pts) {
  * Creates a step-able incremental chunk build task (`step(budgetMs)`) so streaming chunks can be
  * constructed across multiple frames without blocking the main thread.
  */
-export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility) {
+export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility, worldOrigin = null) {
+  const regionTag = resolveRegionTag(worldOrigin);
   const root = new THREE.Group();
   root.position.set(ox, 0, oz);
   root.name = `chunk_${cx}_${cz}`;
@@ -699,7 +796,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           mats,
           buildingColliders,
           roadSegments,
-          buildingEntities
+          buildingEntities,
+          regionTag
         );
         stage = 2;
         if (performance.now() - t0 >= budgetMs) {
@@ -749,8 +847,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 /**
  * Builds a complete 1km x 1km chunk 3D Group + spatial collision/elevation index synchronously.
  */
-export function buildChunkMeshGroup(cx, cz, ox, oz, data, mats, layerVisibility) {
-  const task = createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility);
+export function buildChunkMeshGroup(cx, cz, ox, oz, data, mats, layerVisibility, worldOrigin = null) {
+  const task = createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility, worldOrigin);
   task.step(Infinity);
   return task.root;
 }
@@ -2152,7 +2250,7 @@ function buildRailways(railways, ox, oz, railGroup, mats) {
   }
 }
 
-function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingColliders, roadSegments = [], entityTable = []) {
+function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingColliders, roadSegments = [], entityTable = [], regionTag = 'beijing') {
   const wfcPos = [];
   const wfcNorm = [];
   const wfcCol = [];
@@ -2411,6 +2509,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             baseY: minH,
             topY: h,
             wallOutOffset,
+            region: regionTag,
           },
           wfcPos,
           wfcNorm,
@@ -2421,8 +2520,9 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         );
 
         if (wfcMeta && wfcMeta.arch) {
-          entityRecord.styleDisplay = `${wfcMeta.arch.shortName} · ${wfcMeta.arch.category}`;
+          entityRecord.styleDisplay = `${wfcMeta.facadeId || wfcMeta.arch.shortName} · ${wfcMeta.arch.category}`;
           entityRecord.styleId = wfcMeta.styleId;
+          entityRecord.facadeId = wfcMeta.facadeId;
         }
 
         // If this building is a stadium with an inner courtyard bowl (e.g. Workers' Stadium, Bird's Nest),
@@ -2879,8 +2979,8 @@ const WORKER_DUMMY_MATS = {
  * Computes all chunk geometry and vertex normals inside a Web Worker and returns a transferable payload
  * along with its flat ArrayBuffer transfer list.
  */
-export function computeChunkWorkerPayload(cx, cz, ox, oz, data) {
-  const root = buildChunkMeshGroup(cx, cz, ox, oz, data, WORKER_DUMMY_MATS, null);
+export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = null) {
+  const root = buildChunkMeshGroup(cx, cz, ox, oz, data, WORKER_DUMMY_MATS, null, worldOrigin);
   const meshPayloads = [];
   const transferSet = new Set();
 
