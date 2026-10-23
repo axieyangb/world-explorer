@@ -261,7 +261,7 @@ function prepareTile(layers, z, x, y) {
   const prep = {
     z, x, y,
     water: [], park: [], wood: [], residential: [], industrial: [], buildings: [],
-    waterways: [], roads: [], roadNames: [], places: [], driveLines: [],
+    waterways: [], roads: [], roadNames: [], places: [], driveLines: [], rails: [], // [feature/rail-transit] rails
   };
 
   for (const f of layers.water || []) {
@@ -315,6 +315,18 @@ function prepareTile(layers, z, x, y) {
     }
   }
   prep.roads.sort((a, b) => a.rank - b.rank);
+  // [feature/rail-transit] rail / transit lines (drawn thin and quiet; tunnels faint)
+  for (const f of layers.transportation || []) {
+    if (f.type !== 2) continue;
+    const c = f.tags.class || '';
+    if (c !== 'rail' && c !== 'transit' && c !== 'aerialway') continue;
+    if (f.tags.service) continue;
+    const tunnel = f.tags.brunnel === 'tunnel';
+    for (const line of f.geom) {
+      const pts = ringToLocal(line, n, x, y);
+      prep.rails.push({ tunnel, pts, bb: bboxOf(pts) });
+    }
+  }
 
   for (const f of layers.transportation_name || []) {
     if (f.type !== 2) continue;
@@ -527,6 +539,24 @@ function renderRaster(prep, z, x, y) {
   if (bridges.length) {
     drawPass(bridges, true);
     drawPass(bridges, false);
+  }
+  // [feature/rail-transit] rails on top of roads, subtle
+  if (z >= 11 && prep.rails && prep.rails.length) {
+    for (const tunnel of [true, false]) {
+      ctx.beginPath();
+      let any = false;
+      for (const r of prep.rails) {
+        if (r.tunnel !== tunnel || !visible(r.bb, ox, oy, span, m)) continue;
+        pathLine(ctx, r.pts, s, ox, oy);
+        any = true;
+      }
+      if (!any) continue;
+      ctx.strokeStyle = tunnel ? 'rgba(120,150,190,0.28)' : 'rgba(150,170,200,0.6)';
+      ctx.lineWidth = Math.max(0.7, 1.1 * Math.pow(1.4, z - 14));
+      if (tunnel) ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
   return canvas;
 }

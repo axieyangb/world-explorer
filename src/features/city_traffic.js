@@ -576,6 +576,7 @@ export class CityTraffic {
     } else {
       this.playerObs = -1;
     }
+    if (app.railTransit) app.railTransit.addTrafficObstacles(this); // [feature/rail-transit] cars brake for trams/trains
   }
 
   _updateCar(c, dt, now) {

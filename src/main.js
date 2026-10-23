@@ -42,6 +42,7 @@ import { PlacesSystem } from "./features/places.js"; // feature/places
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
+import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
 import {
   getLang,
   setLang,
@@ -468,6 +469,7 @@ class WorldExplorerApp {
     }
 
     this.places = new PlacesSystem(this.scene); // feature/places
+    this.railTransit = new RailTransit(this); // [feature/rail-transit]
     this._animate();
   }
 
@@ -2686,6 +2688,7 @@ class WorldExplorerApp {
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
+    if (this.railTransit) this.railTransit.update(dt); // [feature/rail-transit]
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
