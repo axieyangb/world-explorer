@@ -107,7 +107,8 @@ function streetRunning(l, wp, ox, oz, inChunk, roadAt) {
 //   - road bridge of a higher layer (bridge_profile clears the nominal viaduct) -> raises stay below it
 // Raises spread along the rail graph at a rail grade (3 % heavy, 4.5 % light) so tracks climb smoothly.
 const RAIL_CLEAR = 6.2;   // track ground over road surface (deck underside ~4.8 m above the road)
-const ROAD_OVER = 7.5;    // keep the track this far below a higher-layer road bridge
+const ROAD_OVER = 6.8;    // keep the track this far below a higher-layer road bridge
+const MIN_CLEAR = 4.8;    // [rail-road-clearance] least track-over-road height that still passes traffic under the deck
 const FOOT_CLS = new Set(['footway', 'pedestrian', 'cycleway', 'path', 'steps', 'bridleway', 'corridor']);
 const NO_LEVEL_CLS = /^(motorway|trunk)/; // never level crossings (and their lifted ramps must not drag tracks up)
 
@@ -156,7 +157,7 @@ function crossingRoads(roadSegments, ox, oz) {
         segs.push({
           ax: flat[i * 3] + ox, az: flat[i * 3 + 2] + oz, bx: flat[i * 3 + 3] + ox, bz: flat[i * 3 + 5] + oz,
           ra: rawOf(flat[i * 3 + 1]), rb: rawOf(flat[i * 3 + 4]), la: prof ? prof[i] : NaN, lb: prof ? prof[i + 1] : NaN,
-          layer, bridge: Boolean(t[7]), cls: t[1],
+          layer, bridge: Boolean(t[7]), cls: t[1], hw: Math.max(1, (Number(t[5]) || 0) * 0.5),
         });
       }
     }
@@ -170,16 +171,27 @@ function crossingRoads(roadSegments, ox, oz) {
   return segs;
 }
 
+// [rail-road-clearance] chunk_builder's per-class road lift above the ground (ROAD_Y_BIAS + up to 0.14 per-way micro bias)
+const ROAD_BIAS = {
+  footway: 0.28, cycleway: 0.31, pedestrian: 0.34, service: 0.38, residential: 0.43, tertiary_link: 0.48, tertiary: 0.52,
+  secondary_link: 0.57, secondary: 0.62, primary_link: 0.68, primary: 0.74, trunk_link: 0.80, trunk: 0.86,
+  motorway_link: 0.83, motorway: 0.92,
+};
+
 /** Road surface at parameter u (same rule as chunk_builder: max(terrain + raw, lift ramp) + bias). */
 function roadYAt(s, u, wx, wz) {
   if (s.ya !== undefined) return s.ya + (s.yb - s.ya) * u;
-  let y = railGroundY(wx, wz) + s.ra + (s.rb - s.ra) * u;
+  // ground under the carriageway: centre and both edges (chunk_builder sampleGroundTerr)
+  const L = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1, nx = -(s.bz - s.az) / L * s.hw, nz = (s.bx - s.ax) / L * s.hw;
+  const g = Math.max(railGroundY(wx, wz), getChunkTerrainMeshElevation(wx + nx, wz + nz) + 0.35,
+    getChunkTerrainMeshElevation(wx - nx, wz - nz) + 0.35);
+  let y = g + s.ra + (s.rb - s.ra) * u;
   if (!Number.isNaN(s.la) || !Number.isNaN(s.lb)) {
     const A = Number.isNaN(s.la) ? railGroundY(s.ax, s.az) + s.ra : s.la;
     const B = Number.isNaN(s.lb) ? railGroundY(s.bx, s.bz) + s.rb : s.lb;
     y = Math.max(y, A + (B - A) * u);
   }
-  return y + 0.1;
+  return y + (ROAD_BIAS[s.cls] || 0.43) + 0.14;
 }
 
 function segCross(ax, az, bx, bz, cx, cz, dx, dz) {
@@ -189,6 +201,27 @@ function segCross(ax, az, bx, bz, cx, cz, dx, dz) {
   const qx = cx - ax, qz = cz - az;
   const t = (qx * sZ - qz * sX) / den, u = (qx * rZ - qz * rX) / den;
   return t < 0 || t > 1 || u < 0 || u > 1 ? null : [t, u];
+}
+
+// [rail-road-clearance] Vertex spacing for the road-separation solve. Offsets live on vertices, so on a long OSM
+// segment a raise (or a cap under a low road bridge) seeded at its two ends spreads over the whole segment and can
+// cancel a neighbouring crossing. Splitting is road-independent (deterministic) so seam chunks agree.
+const SEP_STEP = 12;
+function densifyLine(l) {
+  if (l.tn || l.k === 'aerial') return l;
+  const p = l.p, n = p.length / 2;
+  let extra = 0;
+  for (let i = 0; i + 1 < n; i++) extra += Math.max(0, Math.ceil(Math.hypot(p[i * 2 + 2] - p[i * 2], p[i * 2 + 3] - p[i * 2 + 1]) / SEP_STEP) - 1);
+  if (!extra) return l;
+  const q = new Float64Array(p.length + extra * 2);
+  let o = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    const ax = p[i * 2], az = p[i * 2 + 1], bx = p[i * 2 + 2], bz = p[i * 2 + 3];
+    const k = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / SEP_STEP));
+    for (let j = 0; j < k; j++) { q[o++] = ax + (bx - ax) * j / k; q[o++] = az + (bz - az) * j / k; }
+  }
+  q[o++] = p[(n - 1) * 2]; q[o++] = p[(n - 1) * 2 + 1];
+  return { ...l, p: q };
 }
 
 /** Raises per-vertex offsets `elev` (in place) so tracks clear / meet the roads they cross. */
@@ -220,7 +253,7 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
       v[i] = node(p[i * 2], p[i * 2 + 1]);
       base[v[i]] = Math.max(base[v[i]], g[i] + e[i]);
     }
-    const G = RAIL_FAMILY[l.k] === 'heavy' ? 0.03 : 0.045;
+    const G = l.k === 'rail' ? 0.035 : 0.045; // [rail-road-clearance] metro / light rail climb 4.5 %, main line 3.5 %
     for (let i = 0; i + 1 < n; i++) {
       if (v[i] === v[i + 1]) continue;
       const w = G * Math.hypot(p[i * 2 + 2] - p[i * 2], p[i * 2 + 3] - p[i * 2 + 1]);
@@ -234,13 +267,13 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
   const seedUp = (id, y) => { if (y > up[id] + 1e-6 && y > base[id] + 0.05) { up[id] = y; hUp.push(y, id); } };
   const seedCap = (id, y) => { if (y < cap[id] - 1e-6) { cap[id] = y; hCap.push(-y, id); } };
 
+  const xs = []; // [rail-road-clearance] viaduct crossings over lower roads (checked again after the solve)
   lines.forEach((l, li) => {
     const I = info[li]; if (!I) return;
     const p = l.p, n = p.length / 2, e = elev[li];
-    let maxE = 0;
-    for (let i = 0; i < n; i++) if (e[i] > maxE) maxE = e[i];
-    const viaduct = Boolean(l.br) && maxE > 2;
-    if (l.br && !viaduct) return; // short bridges / culverts only follow their neighbours
+    // [rail-road-clearance] every rail bridge clears the roads it crosses (short ones too: a < 80 m span over a
+    // street is the typical overbridge); culverts cross no roads, so they still only follow their neighbours
+    const viaduct = Boolean(l.br);
     const RL = viaduct ? Math.max(1, Math.min(3, l.ly || 1)) : 0;
     for (let i = 0; i + 1 < n; i++) {
       const ax = p[i * 2] + ox, az = p[i * 2 + 1] + oz, bx = p[i * 2 + 2] + ox, bz = p[i * 2 + 3] + oz;
@@ -262,11 +295,18 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
           const roadY = roadYAt(s, u, x, z);
           // the track interpolates offsets between vertices: compensate terrain that dips at the crossing
           const comp = Math.max(0, I.g[i] + (I.g[i + 1] - I.g[i]) * t - gc);
-          if (s.bridge && s.layer > RL) { // road above: never push the track into it
-            seedCap(I.v[i], roadY - ROAD_OVER); seedCap(I.v[i + 1], roadY - ROAD_OVER);
+          // [rail-road-clearance] a higher-layer road bridge rendered below the viaduct deck + train cannot pass over
+          // it (its lift profile cleared another way): the viaduct clears it like a lower road instead
+          if (s.bridge && s.layer > RL && !(viaduct && roadY < railY + MIN_CLEAR)) { // road above: never push the track into it
+            // a road bridge already too low over the track cannot push it down: ramp from where the track is
+            seedCap(I.v[i], Math.max(roadY - ROAD_OVER, base[I.v[i]])); seedCap(I.v[i + 1], Math.max(roadY - ROAD_OVER, base[I.v[i + 1]]));
           } else if (viaduct) {
             const need = roadY + RAIL_CLEAR;
             if (railY < need && roadY - gc < 30) { seedUp(I.v[i], need + comp); seedUp(I.v[i + 1], need + comp); }
+            if (roadY - gc < 30) {
+              xs.push({ a: I.v[i], b: I.v[i + 1], t, ga: I.g[i], gb: I.g[i + 1], gc, roadY, comp,
+                level: !s.bridge && s.layer === 0 && !NO_LEVEL_CLS.test(s.cls || '') });
+            }
           } else if (!s.bridge && s.layer === 0 && !FOOT_CLS.has(s.cls) && !NO_LEVEL_CLS.test(s.cls || '')) {
             const dy = roadY - railY;
             if (dy > 0.5 && dy < 7.5) { seedUp(I.v[i], roadY - 0.4 + comp); seedUp(I.v[i + 1], roadY - 0.4 + comp); }
@@ -275,7 +315,7 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
       }
     }
   });
-  if (!hUp.size) return;
+  if (!hUp.size && !xs.length) return;
   while (hUp.size) {
     const v = hUp.pop(), uv = hUp.top;
     if (uv < up[v] - 1e-6) continue;
@@ -294,12 +334,40 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
       if (c < cap[nb] - 1e-6 && c < up[nb]) { cap[nb] = c; hCap.push(-c, nb); }
     }
   }
+  const Y = new Float64Array(N);
+  for (let v = 0; v < N; v++) Y[v] = Math.max(base[v], Math.min(up[v], cap[v]));
+  // [rail-road-clearance] a viaduct ramp end that still cannot clear a ground street (the climb is capped by a road
+  // bridge above, or the ramp is too short at the rail grade) comes down to a level crossing on the street surface
+  // instead of leaving the deck at head height over the carriageway. Repeated: lowering can expose the next street.
+  const down = new Float64Array(N).fill(Infinity), hDn = new RHeap();
+  for (let it = 0; it < 6; it++) {
+    let added = 0;
+    for (const c of xs) {
+      if (!c.level) continue;
+      const ry = c.gc + (Y[c.a] - c.ga) * (1 - c.t) + (Y[c.b] - c.gb) * c.t;
+      if (ry >= c.roadY + MIN_CLEAR || ry <= c.roadY + 0.3) continue; // clears it / already level
+      const y = c.roadY - 0.4 + c.comp;
+      for (const id of [c.a, c.b]) if (y < down[id] - 1e-6) { down[id] = y; hDn.push(-y, id); added++; }
+    }
+    if (!added) break;
+    while (hDn.size) {
+      const v = hDn.pop(), dv = -hDn.top;
+      if (dv > down[v] + 1e-6) continue;
+      const a = adj[v];
+      for (let j = 0; j < a.length; j += 2) {
+        const nb = a[j], c = dv + a[j + 1];
+        if (c < down[nb] - 1e-6 && c < Y[nb]) { down[nb] = c; hDn.push(-c, nb); }
+      }
+    }
+    for (let v = 0; v < N; v++) if (down[v] < Y[v]) Y[v] = down[v];
+  }
   lines.forEach((l, li) => {
     const I = info[li]; if (!I) return;
     const e = elev[li];
     for (let i = 0; i < e.length; i++) {
-      const y = Math.min(up[I.v[i]], cap[I.v[i]]);
+      const y = Y[I.v[i]];
       if (y > I.g[i] + e[i] + 0.01) e[i] = y - I.g[i];
+      else if (down[I.v[i]] < Infinity && y < I.g[i] + e[i] - 0.01) e[i] = Math.max(0, y - I.g[i]);
     }
   });
 }
@@ -423,7 +491,7 @@ function densify(wpts, e) {
 export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
   const out = { lines: [], stops: [] };
   if (!rail || !rail.lines) return out;
-  const lines = rail.lines;
+  const lines = rail.lines.map(densifyLine); // [rail-road-clearance] crossing raises / caps act locally
   const elev = computeElevations(lines);
   const roadAt = makeRoadLookup(roadSegments);
   const sink = new GeoSink();
