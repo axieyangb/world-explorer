@@ -851,6 +851,12 @@ export class HeliFlight {
         if (px * px + py * py + pz * pz <= 2.4 * 2.4) { best = along; hit.ref = null; hit.kind = 'car'; }
       }
     }
+    // [feature/ferries-ships] ships & ferries
+    const sea = this.app.maritime;
+    if (sea) {
+      const sd = sea.raycast(o, d, best);
+      if (sd < best) { best = sd; hit.ref = null; hit.kind = 'vessel'; }
+    }
     hit.dist = best;
     return hit.kind ? best : Infinity;
   }
@@ -1092,6 +1098,7 @@ export class HeliFlight {
       });
       this.weaponStats.trafficHits += hits;
     }
+    if (this.app.maritime) this.app.maritime.impact(hit.x, hit.y, hit.z, isRocket); // [feature/ferries-ships]
   }
 
   _updateWeapons(dt) {

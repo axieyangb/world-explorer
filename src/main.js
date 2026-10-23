@@ -72,6 +72,7 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
+import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
@@ -277,6 +278,7 @@ class WorldExplorerApp {
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
     this.cityTraffic = this.traffic;
+    this.maritime = new Maritime(this); // [feature/ferries-ships] piers, ferries, ships
     this._punchTimer = 0;
     this._punchDuration = 0.32;
     this._punchHand = "L";
@@ -2683,6 +2685,7 @@ class WorldExplorerApp {
     this._updateStreamingChunks(false);
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
+    if (this.maritime) this.maritime.update(dt); // [feature/ferries-ships]
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
