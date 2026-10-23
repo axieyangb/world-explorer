@@ -424,7 +424,18 @@ export class HeliFlight {
     this._wl = new Float32Array(N);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(this._wp, 3));
-    this._washMat = new THREE.PointsMaterial({ color: 0xc8b89a, size: 1.6, transparent: true, opacity: 0, depthWrite: false });
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const cx = cv.getContext('2d');
+    const grd = cx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.5, 'rgba(255,255,255,0.45)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    cx.fillStyle = grd;
+    cx.fillRect(0, 0, 64, 64);
+    this._washMat = new THREE.PointsMaterial({
+      color: 0xc8b89a, size: 2.2, map: new THREE.CanvasTexture(cv), transparent: true, opacity: 0, depthWrite: false,
+    });
     this._wash = new THREE.Points(g, this._washMat);
     this._wash.frustumCulled = false;
     this._wash.visible = false;
@@ -435,7 +446,7 @@ export class HeliFlight {
   _updateWash(dt, groundY) {
     const s = this.state, p = this.app.pos, N = this._washN;
     const k = s.rpm * clamp(1 - s.agl / 30, 0, 1) * (0.5 + 0.5 * s.throttle);
-    this._washMat.opacity = approach(this._washMat.opacity, k * 0.55, 3, dt);
+    this._washMat.opacity = approach(this._washMat.opacity, k * 0.45, 3, dt);
     if (this._washMat.opacity < 0.01 && k === 0) { this._wash.visible = false; return; }
     this._wash.visible = true;
     const w = this.app.water;
