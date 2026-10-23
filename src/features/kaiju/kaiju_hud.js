@@ -69,8 +69,39 @@ export class KaijuHud {
     this.warnPill = el("div", "kj-warn-pill", root);
     this.toast = el("div", "kj-toast", root);
     this.msg = el("div", "kj-msg", root);
-    this.hint = this._txt(el("div", "kj-hint on", root), "kaiju_hint");
+    this.hint = this._txt(el("div", "kj-hint on", root), "kaiju_hint_heli");
     this.hint.id = "kaiju-hint";
+
+    // Playable Unit Selector Bar
+    const unitPicker = (this.unitPicker = el("div", "kj-unit-picker", root));
+    unitPicker.id = "kaiju-unit-picker";
+
+    const unitSpecs = [
+      { id: "heli", num: "1", icon: "🚁", labelKey: "kaiju_unit_heli" },
+      { id: "tank", num: "2", icon: "🛡️", labelKey: "kaiju_unit_tank" },
+      { id: "soldier", num: "3", icon: "🪖", labelKey: "kaiju_unit_soldier" },
+    ];
+
+    this.unitBtns = {};
+    for (const spec of unitSpecs) {
+      const btn = el("button", `kj-unit-btn ${spec.id === "heli" ? "active" : ""}`, unitPicker);
+      btn.id = `kaiju-unit-${spec.id}`;
+      btn.type = "button";
+      btn.dataset.unit = spec.id;
+
+      el("span", "kj-unit-key", btn, spec.num);
+      el("span", "kj-unit-icon", btn, ` ${spec.icon} `);
+      const txtSpan = el("span", "kj-unit-txt", btn);
+      this._txt(txtSpan, spec.labelKey);
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        btn.blur();
+        this.K.setPlayableUnit?.(spec.id);
+      });
+
+      this.unitBtns[spec.id] = btn;
+    }
 
     // Center crosshair + missile cooldown ring.
     const cross = (this.cross = document.createElementNS(SVG_NS, "svg"));
@@ -98,8 +129,10 @@ export class KaijuHud {
     // Bottom right status.
     const st = el("div", "kj-status", root);
     const hullRow = el("div", "kj-srow", st);
-    this._txt(el("span", "kj-label kj-label-dim", hullRow), "kaiju_hull");
+    this.hullLabel = this._txt(el("span", "kj-label kj-label-dim", hullRow), "kaiju_hp_heli");
+    this.hullLabel.id = "kaiju-hull-label";
     const segs = el("div", "kj-segs", hullRow);
+    segs.id = "kaiju-heli-hp-fill";
     this.segs = [];
     for (let i = 0; i < CFG.HELI_SEGMENTS; i++) this.segs.push(el("i", "", segs));
 
@@ -168,8 +201,34 @@ export class KaijuHud {
     }
   }
 
+  setUnit(unit) {
+    this.activeUnit = unit;
+    if (this.unitBtns) {
+      for (const [id, btn] of Object.entries(this.unitBtns)) {
+        btn.classList.toggle("active", id === unit);
+      }
+    }
+    if (this.hullLabel) {
+      const key = unit === "tank" ? "kaiju_hp_tank" : unit === "soldier" ? "kaiju_hp_soldier" : "kaiju_hp_heli";
+      this.hullLabel.textContent = t(key) || (unit === "tank" ? "TANK HP" : unit === "soldier" ? "SOLDIER HP" : "HELI HP");
+    }
+    if (this.hint) {
+      const hintKey = unit === "tank" ? "kaiju_hint_tank" : unit === "soldier" ? "kaiju_hint_soldier" : "kaiju_hint_heli";
+      this.hint.textContent = t(hintKey);
+    }
+    if (this.cross) {
+      this.cross.style.display = unit === "heli" ? "block" : "none";
+    }
+    if (this.lock) {
+      this.lock.style.display = unit === "heli" ? "block" : "none";
+    }
+    const wr = document.getElementById("walker-reticle");
+    if (wr) wr.style.display = unit !== "heli" ? "block" : "none";
+  }
+
   _applyText() {
     for (const [e, key] of this._i18n) e.textContent = t(key);
+    this.setUnit(this.activeUnit || "heli");
     this._applyMute();
     if (this._lastResults) this.showResults(this._lastResults);
   }
@@ -321,9 +380,10 @@ export class KaijuHud {
       this.cityBar.classList.toggle("kj-red", lvl === 2);
     }
 
-    // Heli hull segments + lives.
+    // Unit hull segments + lives.
     const h = K.heli;
-    const hf = Math.max(0, Math.min(1, h.health / CFG.HELI_HP));
+    const maxHp = (K.unitMaxHealth && K.unitMaxHealth[K.activeUnit]) || CFG.HELI_HP;
+    const hf = Math.max(0, Math.min(1, h.health / maxHp));
     const segOn = Math.ceil(hf * CFG.HELI_SEGMENTS - 1e-6);
     if (this._chg("seg", segOn)) {
       for (let i = 0; i < this.segs.length; i++) {

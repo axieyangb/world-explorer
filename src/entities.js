@@ -710,10 +710,10 @@ export function createPlayerAvatarModel() {
   const style = bit(OPT.HAIR_SHORT) | bit(OPT.ZIPPER) | bit(OPT.BACKPACK);
   const colors = {
     [MAT.SKIN]: 0xe8b88a,
-    [MAT.TOP]: 0x3a86ff,
-    [MAT.PANTS]: 0x2b3442,
+    [MAT.TOP]: 0x48583c,    // Olive drab tactical army combat top
+    [MAT.PANTS]: 0x33402c,  // Camo military fatigue combat pants
     [MAT.HAIR]: 0x1b1410,
-    [MAT.ACC]: 0x2b2d42,
+    [MAT.ACC]: 0x242e20,    // Dark tactical webbing
   };
   const groups = {};
   const mkPivot = (x, y) => {
@@ -759,6 +759,19 @@ export function createPlayerAvatarModel() {
     mesh.receiveShadow = true;
     pivots[G.part].add(mesh);
   }
+    // Military Combat Helmet (Olive Drab Kevlar + Tactical Goggles)
+  const helmetMat = new THREE.MeshStandardMaterial({ color: 0x3d4a36, roughness: 0.65, metalness: 0.30 });
+  const helmetMesh = new THREE.Mesh(new THREE.SphereGeometry(0.145, 10, 8), helmetMat);
+  helmetMesh.scale.set(0.96, 0.92, 1.06);
+  helmetMesh.position.set(0, 1.63, 0);
+  root.add(helmetMesh);
+
+  // Tactical Body Armor / Plate Carrier Vest
+  const vestMat = new THREE.MeshStandardMaterial({ color: 0x2e3826, roughness: 0.80, metalness: 0.20 });
+  const vestMesh = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.44, 0.26), vestMat);
+  vestMesh.position.set(0, 1.18, 0);
+  root.add(vestMesh);
+
   root.scale.setScalar(1.04);
 
   // Kept for API compatibility with updateEntityNitroVfx (no sci-fi effects on a normal person).
