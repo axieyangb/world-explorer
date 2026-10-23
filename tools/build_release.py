@@ -510,8 +510,10 @@ await (async function bootstrapWorldExplorer() {
   html = html.replace('<script type="module" src="src/main.js"></script>', embedded_payload)
 
   OUT_FILE.write_text(html, encoding='utf-8')
+  root_out = ROOT / 'world_explorer.html'
+  root_out.write_text(html, encoding='utf-8')
   print(
-      f'  -> Wrote {OUT_FILE} ({OUT_FILE.stat().st_size / (1024*1024):.2f} MB) in {round(time.time() - t0, 2)}s',
+      f'  -> Wrote {OUT_FILE} and {root_out} ({root_out.stat().st_size / (1024*1024):.2f} MB) in {round(time.time() - t0, 2)}s',
       flush=True,
   )
 
