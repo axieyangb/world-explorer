@@ -33,6 +33,8 @@ import {
 } from "./entities.js";
 import { RoadNavigator } from "./navigation.js";
 import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
+import { CAR_TYPES } from "./features/traffic_models.js"; // [feature/vehicles]
+import { playVehicleHornOrSiren, stopVehicleSirenAudio, showVehicleToast } from "./features/vehicles.js"; // [feature/vehicles]
 import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
@@ -377,6 +379,9 @@ class WorldExplorerApp {
         }
         return null;
       },
+      selectVehicleById: (id, opts = {}) => this.selectVehicleById(id, opts),
+      hijackNearestTrafficCar: (maxDist = 16) => this.hijackNearestTrafficCar(maxDist),
+      triggerHornOrSiren: () => this.triggerHornOrSiren(),
       getState: () => ({
         lang: getLang(),
         city: this.currentCityName,
@@ -387,6 +392,7 @@ class WorldExplorerApp {
         camNear: Number(this.camera.near.toFixed(2)),
         vehicleId: VEHICLE_SPECS[this.vehicleIdx] ? VEHICLE_SPECS[this.vehicleIdx].id : "",
         vehicleName: VEHICLE_SPECS[this.vehicleIdx] ? VEHICLE_SPECS[this.vehicleIdx].name : "",
+        sirenActive: Boolean(this.sirenActive),
         speedMps: Number(this.speed.toFixed(1)),
         speedKmh: Math.round(Math.abs(this.speed) * 3.6),
         mach: Number((Math.abs(this.speed) / 340.3).toFixed(2)),
@@ -1662,13 +1668,16 @@ class WorldExplorerApp {
       if (isHeli && this.heli) this.heli.cameraPivot(this.camPivot, dt); // feature/heli-gta: lagged chase pivot
       const spec = VEHICLE_SPECS[this.vehicleIdx];
       const isBus = !isWalk && !isHeli && spec && spec.id === "bus";
+      const isUtility = !isWalk && !isHeli && spec && (spec.id === "ambulance" || spec.id === "tow_truck" || spec.id === "cybertruck");
       const rawBaseDist = isHeli
         ? this.camMode === "street" ? 12.5 : 18.5
         : isWalk
           ? this.camMode === "street" ? 3.8 : 6.4
           : isBus
             ? this.camMode === "street" ? 13.5 : 19.5
-            : this.camMode === "street" ? 6.8 : 13.5;
+            : isUtility
+              ? this.camMode === "street" ? 8.2 : 15.2
+              : this.camMode === "street" ? 6.8 : 13.5;
       const baseDist = rawBaseDist * (this.camZoom || 1.0);
       const pivotH = isHeli
         ? 2.45
@@ -1676,7 +1685,9 @@ class WorldExplorerApp {
           ? 1.55
           : isBus
             ? this.camMode === "street" ? 3.85 : 4.25
-            : this.camMode === "street" ? 1.65 : 1.95;
+            : isUtility
+              ? this.camMode === "street" ? 2.05 : 2.35
+              : this.camMode === "street" ? 1.65 : 1.95;
       const pitch = THREE.MathUtils.clamp(this.camPitch, 0.05, 1.18);
       const viewYaw = this.camYaw + this.camYawOffset;
 
@@ -1847,10 +1858,18 @@ class WorldExplorerApp {
       } else if (e.code === "Digit4" && !e.repeat) {
         this.setMode("kaiju");
       } else if (e.code === "KeyV") {
-        this.cycleCameraMode();
+        if (this.mode === "drive" && !e.shiftKey) {
+          this.cycleVehicle();
+        } else {
+          this.cycleCameraMode();
+        }
       } else if (e.code === "KeyG") {
         if (this.mode !== "drive") this.setMode("drive");
         this.cycleVehicle();
+      } else if (e.code === "KeyE" && !e.repeat && (this.mode === "walk" || this.mode === "drive")) {
+        this.handleVehicleInteract();
+      } else if (e.code === "KeyH") {
+        this.triggerHornOrSiren();
       } else if (e.code === "KeyM") {
         if (this.mapSystem) this.mapSystem.toggleModal();
       } else if (e.code === "Escape") {
@@ -1933,8 +1952,8 @@ class WorldExplorerApp {
           ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · L 降落 · F 下机"
           : "W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · L Land · F Exit"
         : zh
-          ? "WASD 移动 · Shift 加速 · 空格 刹车 · F 步行/驾驶 · C 直升机 · G 换车 · / 搜索"
-          : "WASD Move · Shift Boost · Space Brake · F Walk/Drive · C Helicopter · G Switch Car · / Search";
+          ? "WASD 驾驶 · Shift 加速 · 空格 刹车 · V 换车 · E 夺车/上下车 · H 警笛/喇叭 · C 直升机"
+          : "WASD Drive · Shift Boost · Space Brake · V Vehicle · E Hijack/Exit · H Siren/Horn · C Heli";
     if (hint.textContent !== text) hint.textContent = text;
     hint.classList.remove("faded");
     this._hintShownAt = performance.now();
@@ -2107,11 +2126,13 @@ class WorldExplorerApp {
     this._updateModeAndCamBadges();
   }
 
-  selectVehicle(idx) {
+  selectVehicle(idx, options = {}) {
+    stopVehicleSirenAudio();
+    this.sirenActive = false;
     this.vehicleIdx = ((idx % VEHICLE_SPECS.length) + VEHICLE_SPECS.length) % VEHICLE_SPECS.length;
     this.scene.remove(this.vehicleMesh);
     const spec = VEHICLE_SPECS[this.vehicleIdx];
-    this.vehicleMesh = createVehicleModel(spec.id);
+    this.vehicleMesh = createVehicleModel(spec.id, options);
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
     if (this.mode !== "drive") {
@@ -2121,10 +2142,102 @@ class WorldExplorerApp {
     }
     this.scene.add(this.vehicleMesh);
     this._updateModeAndCamBadges();
+    if (options.toast !== false) {
+      const vName = getVehicleName(spec.id, spec.name);
+      const subtitle = options.toastSub || `${Math.round(spec.maxSpeed * 3.6)} km/h`;
+      showVehicleToast(vName, subtitle);
+    }
+  }
+
+  selectVehicleById(typeId, options = {}) {
+    const idx = VEHICLE_SPECS.findIndex((s) => s.id === typeId);
+    if (idx >= 0) {
+      this.selectVehicle(idx, options);
+      return VEHICLE_SPECS[idx];
+    }
+    return null;
   }
 
   cycleVehicle() {
     this.selectVehicle(this.vehicleIdx + 1);
+  }
+
+  hijackNearestTrafficCar(maxDist = 16) {
+    if (!this.traffic || !Array.isArray(this.traffic.cars)) return null;
+    let bestCar = null;
+    let bestD = maxDist;
+    for (const c of this.traffic.cars) {
+      if (!c.active || c.kWreck) continue;
+      const d = Math.hypot(c.x - this.pos.x, c.z - this.pos.z);
+      if (d < bestD && Math.abs((c.y || 0) - this.pos.y) < 4.5) {
+        bestD = d;
+        bestCar = c;
+      }
+    }
+    if (!bestCar) return null;
+
+    const trafficType = CAR_TYPES[bestCar.type] || CAR_TYPES[0];
+    const specId =
+      trafficType.id === "sedan"
+        ? "taxi"
+        : trafficType.id === "coupe"
+          ? "supercar"
+          : trafficType.id;
+    const specIdx = Math.max(0, VEHICLE_SPECS.findIndex((s) => s.id === specId));
+
+    this.pos.set(bestCar.x, bestCar.y, bestCar.z);
+    this.yaw = bestCar.ryaw != null ? bestCar.ryaw : Math.atan2(bestCar.ux || 0, bestCar.uz || 1);
+    this.camYaw = this.yaw;
+    this.speed = bestCar.v || 0;
+    bestCar.active = false;
+
+    this.selectVehicle(specIdx, {
+      paintColor: bestCar.paint ? bestCar.paint.getHex() : undefined,
+      hideTaxiSign: trafficType.id === "sedan",
+      toastSub: getLang() === "zh" ? "已接管街头车辆" : "CLAIMED",
+    });
+    return { typeId: trafficType.id, specId };
+  }
+
+  handleVehicleInteract() {
+    if (this.mode === "helicopter" || (this.kaiju && this.kaiju.active)) return;
+    if (this.mode === "walk") {
+      if (this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
+        this.setMode("helicopter");
+      } else if (!this.hijackNearestTrafficCar(16)) {
+        this.setMode("drive");
+      }
+    } else if (this.mode === "drive") {
+      if (!this.hijackNearestTrafficCar(10.5)) {
+        stopVehicleSirenAudio();
+        this.sirenActive = false;
+        this.setMode("walk");
+      }
+    }
+  }
+
+  triggerHornOrSiren() {
+    if (this.mode !== "drive") return false;
+    const spec = VEHICLE_SPECS[this.vehicleIdx];
+    if (!spec) return false;
+    const vName = getVehicleName(spec.id, spec.name);
+    if (spec.id === "ambulance" || spec.id === "tow_truck" || spec.id === "police") {
+      this.sirenActive = !this.sirenActive;
+      if (this.vehicleMesh && this.vehicleMesh.userData) {
+        this.vehicleMesh.userData.sirenActive = this.sirenActive;
+      }
+      playVehicleHornOrSiren(spec.id, this.sirenActive);
+      const sub = this.sirenActive
+        ? spec.id === "tow_truck"
+          ? getLang() === "zh" ? "工程警示灯开启" : "BEACON ON"
+          : getLang() === "zh" ? "急救警笛开启" : "SIREN ON"
+        : getLang() === "zh" ? "警报关闭" : "SIREN OFF";
+      showVehicleToast(vName, sub);
+    } else {
+      playVehicleHornOrSiren(spec.id, false);
+      showVehicleToast(vName, getLang() === "zh" ? "鸣笛" : "HORN");
+    }
+    return Boolean(this.sirenActive);
   }
 
   setTimeOfDay(preset) {

@@ -48,6 +48,7 @@ MOD_ID_MAP = {
     'src/features/building_collision.js': '__MOD_building_collision',
     'src/chunk_builder.js': '__MOD_chunk_builder',
     'src/chunk_worker.js': '__MOD_chunk_worker',
+    'src/features/vehicles.js': '__MOD_vehicles',
     'src/entities.js': '__MOD_entities',
     # Main-thread feature modules.
     'src/features/daylight.js': '__MOD_daylight',

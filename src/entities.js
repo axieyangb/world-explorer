@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.module.js';
 import { personParts, PART, MAT, OPT, bit, HIP_Y, SHOULDER_Y } from './features/person_model.js'; // [feature/people]
+import { NEW_VEHICLE_SPECS, isCustomFleetVehicle, buildFleetVehicleModel, applyVehiclePaint, updateVehicleEffects } from './features/vehicles.js';
 
 export const VEHICLE_SPECS = [
   {
@@ -28,7 +29,7 @@ export const VEHICLE_SPECS = [
   },
   {
     id: 'supercar',
-    name: 'GT Coupe',
+    name: 'Sports Car',
     maxSpeed: 64.0,      // ~230 km/h -> 368 km/h on Nitro
     nitroMult: 1.60,
     accel: 36.0,
@@ -38,6 +39,7 @@ export const VEHICLE_SPECS = [
     length: 4.6,
     width: 2.05,
   },
+  ...NEW_VEHICLE_SPECS,
   {
     id: 'taxi',
     name: 'City Taxi',
@@ -137,7 +139,10 @@ function createSpeedTrailRibbon(width, length, hexColor, opacity = 0.72) {
  * Builds a multi-part 3D vehicle model pivoted at bottom-center (y = 0 at tire contact).
  * Local forward is +Z, right is +X, up is +Y.
  */
-export function createVehicleModel(typeId = 'cyber_mach1') {
+export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
+  if (isCustomFleetVehicle(typeId)) {
+    return buildFleetVehicleModel(typeId, options);
+  }
   const group = new THREE.Group();
   const chassis = new THREE.Group();
   group.add(chassis);
@@ -558,7 +563,7 @@ export function createVehicleModel(typeId = 'cyber_mach1') {
 
     // Type-specific roof & aerodynamic accents
     const roofY = 0.35 + bodyH + cabinH * 0.92;
-    if (typeId === 'taxi') {
+    if (typeId === 'taxi' && !options.hideTaxiSign) {
       const signMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
       const taxiSign = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.22, 0.24), signMat);
       taxiSign.position.set(0, roofY + 0.11, 0.05);
@@ -571,14 +576,21 @@ export function createVehicleModel(typeId = 'cyber_mach1') {
         new THREE.BoxGeometry(0.48, 0.14, 0.22),
         new THREE.MeshBasicMaterial({ color: 0xff1e1e })
       );
+      redBeacon.userData = { emitCode: 4 };
       redBeacon.position.set(-0.3, roofY + 0.12, -0.05);
       chassis.add(redBeacon);
       const blueBeacon = new THREE.Mesh(
         new THREE.BoxGeometry(0.48, 0.14, 0.22),
         new THREE.MeshBasicMaterial({ color: 0x1e88ff })
       );
+      blueBeacon.userData = { emitCode: 5 };
       blueBeacon.position.set(0.3, roofY + 0.12, -0.05);
       chassis.add(blueBeacon);
+      group.userData.lightbarParts = {
+        typeId: 'police',
+        phaseAMeshes: [redBeacon],
+        phaseBMeshes: [blueBeacon],
+      };
     } else if (typeId === 'supercar') {
       // Rear spoiler wing
       const wingBlade = new THREE.Mesh(new THREE.BoxGeometry(bodyW * 0.94, 0.07, 0.34), darkMetal);
@@ -590,6 +602,7 @@ export function createVehicleModel(typeId = 'cyber_mach1') {
         chassis.add(strut);
       }
     }
+    group.userData.paintMeshes = [lowerBody, upperBody, cabinRoof];
 
     // Headlights & Taillights
     for (const sx of [-bodyW * 0.36, bodyW * 0.36]) {
@@ -643,6 +656,7 @@ export function createVehicleModel(typeId = 'cyber_mach1') {
   });
 
   group.userData = {
+    ...group.userData,
     typeId,
     chassis,
     wheels,
@@ -650,6 +664,9 @@ export function createVehicleModel(typeId = 'cyber_mach1') {
     nitroVfx,
     vfxParts,
   };
+  if (options.paintColor != null) {
+    applyVehiclePaint(group, options.paintColor);
+  }
   return group;
 }
 
@@ -955,6 +972,7 @@ export function createHelicopterModel() {
  */
 export function updateEntityNitroVfx(entityRoot, isActive, speedMps, timeSec) {
   if (!entityRoot || !entityRoot.userData) return;
+  updateVehicleEffects(entityRoot, timeSec, Boolean(entityRoot.userData.sirenActive));
   const { nitroVfx, vfxParts, typeId } = entityRoot.userData;
   if (!nitroVfx || !vfxParts) return;
 
