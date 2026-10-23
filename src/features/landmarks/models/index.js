@@ -38,6 +38,22 @@ import * as m_khufu from "./khufu.js";
 import * as m_khafre from "./khafre.js";
 import * as m_menkaure from "./menkaure.js";
 import * as m_sphinx from "./sphinx.js";
+import * as m_tiananmen from "./tiananmen.js"; // feature/beijing-landmarks
+import * as m_forbiddencity from "./forbiddencity.js"; // feature/beijing-landmarks
+import * as m_heroesmonument from "./heroesmonument.js"; // feature/beijing-landmarks
+import * as m_greathall from "./greathall.js"; // feature/beijing-landmarks
+import * as m_natmuseum from "./natmuseum.js"; // feature/beijing-landmarks
+import * as m_maomausoleum from "./maomausoleum.js"; // feature/beijing-landmarks
+import * as m_taflagpole from "./taflagpole.js"; // feature/beijing-landmarks
+import * as m_zhengyangmen from "./zhengyangmen.js"; // feature/beijing-landmarks
+import * as m_qianmenarrow from "./qianmenarrow.js"; // feature/beijing-landmarks
+import * as m_qiniandian from "./qiniandian.js"; // feature/beijing-landmarks
+import * as m_jingshan from "./jingshan.js"; // feature/beijing-landmarks
+import * as m_beihaidagoba from "./beihaidagoba.js"; // feature/beijing-landmarks
+import * as m_birdsnest from "./birdsnest.js"; // feature/beijing-landmarks
+import * as m_watercube from "./watercube.js"; // feature/beijing-landmarks
+import * as m_cctv from "./cctv.js"; // feature/beijing-landmarks
+import * as m_chinazun from "./chinazun.js"; // feature/beijing-landmarks
 
 export const MODELS = {
   liberty: m_liberty,
@@ -75,4 +91,20 @@ export const MODELS = {
   khafre: m_khafre,
   menkaure: m_menkaure,
   sphinx: m_sphinx,
+  tiananmen: m_tiananmen,
+  forbiddencity: m_forbiddencity,
+  heroesmonument: m_heroesmonument,
+  greathall: m_greathall,
+  natmuseum: m_natmuseum,
+  maomausoleum: m_maomausoleum,
+  taflagpole: m_taflagpole,
+  zhengyangmen: m_zhengyangmen,
+  qianmenarrow: m_qianmenarrow,
+  qiniandian: m_qiniandian,
+  jingshan: m_jingshan,
+  beihaidagoba: m_beihaidagoba,
+  birdsnest: m_birdsnest,
+  watercube: m_watercube,
+  cctv: m_cctv,
+  chinazun: m_chinazun,
 };
