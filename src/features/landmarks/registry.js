@@ -5,6 +5,8 @@
  * that the model's local -Z "front" faces), real height (m, ground to tip), and the suppression footprint
  * in model-local metres: { r } circle or { hw, hd } box (rotated by heading). OSM buildings whose centroid
  * falls inside the footprint are dropped so the hand-built model replaces them. `on: false` = not built yet.
+ * Optional `ele` = real ground elevation (m ASL) at the centre: the DEM is lifted there with a smooth summit bump
+ * when the coarse/misregistered DEM is too low (e.g. Corcovado).
  */
 export const LANDMARKS = [
   // --- New York
@@ -32,7 +34,7 @@ export const LANDMARKS = [
   { id: "spaceneedle", name: "Space Needle", nameZh: "太空针塔", lat: 47.62051, lon: -122.3493, heading: 0, height: 184, supp: { r: 24 }, on: true },
   { id: "gatewayarch", name: "Gateway Arch", nameZh: "圣路易斯拱门", lat: 38.62468, lon: -90.1849, heading: 108, height: 192, supp: { hw: 104, hd: 26 }, on: true },
   { id: "cntower", name: "CN Tower", nameZh: "加拿大国家电视塔", lat: 43.64257, lon: -79.38706, heading: 0, height: 553, supp: { r: 34 }, on: true },
-  { id: "christ", name: "Christ the Redeemer", nameZh: "基督救世主像", lat: -22.95192, lon: -43.21244, heading: 100, height: 38, supp: { r: 16 }, yOff: 12, on: true },
+  { id: "christ", name: "Christ the Redeemer", nameZh: "基督救世主像", lat: -22.9519, lon: -43.2105, heading: 100, height: 38, supp: { r: 30 }, ele: 710, on: true }, // ele: real ground ASL; Terrarium puts Corcovado ~150 m west and ~60 m low, so fetchGlobalDem lifts terrain here
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },

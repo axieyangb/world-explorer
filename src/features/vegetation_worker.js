@@ -9,7 +9,7 @@
  *    group and returns a compact tree/bush instance table that `VegetationSystem` renders with InstancedMesh.
  */
 import * as THREE from '../../vendor/three.module.js';
-import { getBeijingTerrainElevation } from '../environment.js';
+import { getBeijingTerrainElevation, snowCover } from '../environment.js';
 import {
   LC_RESIDENTIAL,
   LC_COMMERCIAL,
@@ -20,6 +20,7 @@ import {
   LC_SCRUB,
   LC_WETLAND,
   LC_SAND,
+  LC_ROCK,
   LC_WOOD,
   LC_ORCHARD,
   LC_PITCH,
@@ -814,8 +815,19 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
       const yb = getBeijingTerrainElevation(ox + bx, oz + bz) + yOff;
       const yc = getBeijingTerrainElevation(ox + cx, oz + cz) + yOff;
       const cross = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
-      if (cross > 0) pushTri(surfBuf, ax, ya, az, cx, yc, cz, bx, yb, bz, 0, 1, 0, polyRgb, pattern, kind);
-      else pushTri(surfBuf, ax, ya, az, bx, yb, bz, cx, yc, cz, 0, 1, 0, polyRgb, pattern, kind);
+      let triRgb = polyRgb, triPat = pattern;
+      if (kind === LC_ROCK || kind === LC_GRASS || kind === LC_SCRUB) {
+        // open natural cover above the snowline gets the same snow as the bare terrain (steep faces stay bare)
+        const ux = bx - ax, uy = yb - ya, uz = bz - az, vx = cx - ax, vy = yc - ya, vz = cz - az;
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const t = snowCover((ya + yb + yc) / 3, Math.hypot(nx, nz) / Math.max(1e-6, Math.abs(ny)));
+        if (t > 0) {
+          triRgb = [polyRgb[0] + (0.93 - polyRgb[0]) * t, polyRgb[1] + (0.95 - polyRgb[1]) * t, polyRgb[2] + (0.98 - polyRgb[2]) * t];
+          if (t > 0.5) triPat = 10; // glacier/snow texture
+        }
+      }
+      if (cross > 0) pushTri(surfBuf, ax, ya, az, cx, yc, cz, bx, yb, bz, 0, 1, 0, triRgb, triPat, kind);
+      else pushTri(surfBuf, ax, ya, az, bx, yb, bz, cx, yc, cz, 0, 1, 0, triRgb, triPat, kind);
     }
 
     // --- Rich 3D details for Track 2 landuse kinds ---

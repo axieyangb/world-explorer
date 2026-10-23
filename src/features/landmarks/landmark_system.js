@@ -116,7 +116,7 @@ export class LandmarkSystem {
       const a = (i / 8) * Math.PI * 2;
       y = Math.min(y, getChunkTerrainMeshElevation(it.x + Math.cos(a) * r, it.z + Math.sin(a) * r));
     }
-    return (Number.isFinite(y) ? y : 0) + (it.L.yOff || 0);
+    return Number.isFinite(y) ? y : 0;
   }
 
   /** local (model) xz -> world xz */

@@ -121,15 +121,22 @@ export function getBeijingTerrainElevation(wx, wz) {
 /**
  * Computes terrain vertex color based on real DEM elevation, slope, and urban distance.
  */
-// [terrain-roads] Coarse DEM snowcaps: snowline falls with latitude (~5000 m ASL in the tropics, ~1500 m at 60°);
+// [terrain-roads] Coarse DEM snowcaps: snowline falls with latitude (~5000 m ASL in the tropics, ~3500 m at Fuji 35°,
+// ~2450 m at Rainier/Alps 46°, ~1700 m at 60°);
 // steep faces stay bare rock.
+/** Snow cover 0..1 at world elevation `elev` (m over the DEM base) and slope (rise/run). Also used by landcover overlays. */
+export function snowCover(elev, slope) {
+  if (!demState || !Number.isFinite(demState.centerLat)) return 0;
+  const asl = elev + (demState.baseAslM || 0);
+  const line = Math.max(700, Math.min(5000, 5000 - Math.max(0, Math.abs(demState.centerLat) - 20) * 95));
+  if (asl < line - 200) return 0;
+  return THREE.MathUtils.smoothstep(asl, line - 200, line + 250) * (1 - THREE.MathUtils.smoothstep(slope, 0.75, 1.3));
+}
+
 function sampleTerrainBiomeColor(wx, wz, elev, slope) {
   const rgb = sampleTerrainBiomeColorBase(wx, wz, elev, slope);
-  if (!demState || !Number.isFinite(demState.centerLat)) return rgb;
-  const asl = elev + (demState.baseAslM || 0);
-  const line = Math.max(700, Math.min(5000, 5000 - Math.max(0, Math.abs(demState.centerLat) - 25) * 95));
-  if (asl < line - 200) return rgb;
-  const t = THREE.MathUtils.smoothstep(asl, line - 200, line + 250) * (1 - THREE.MathUtils.smoothstep(slope, 0.75, 1.3));
+  const t = snowCover(elev, slope);
+  if (t <= 0) return rgb;
   return [rgb[0] + (0.93 - rgb[0]) * t, rgb[1] + (0.95 - rgb[1]) * t, rgb[2] + (0.98 - rgb[2]) * t];
 }
 

@@ -523,7 +523,7 @@ export class HeliFlight {
         }
         p.set(
           clamp(nx, -this.halfWorld + 20, this.halfWorld - 20),
-          Math.min(CFG.MAX_ALT, ny),
+          Math.min(Math.max(CFG.MAX_ALT, sup2 + 800), ny), // ceiling stays above high summits (Rainier, Fuji: >2600 m over the local base)
           clamp(nz, -this.halfWorld + 20, this.halfWorld - 20)
         );
         if (grounded) break;

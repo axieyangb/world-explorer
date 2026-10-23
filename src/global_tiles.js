@@ -4,7 +4,7 @@ import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
 import { extractVenues } from "./features/venues.js"; // [venues]
-import { makeLandmarkSuppressor } from "./features/landmarks/registry.js"; // feature/famous-landmarks
+import { makeLandmarkSuppressor, LANDMARKS, landmarkWorldXZ } from "./features/landmarks/registry.js"; // feature/famous-landmarks
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -1465,7 +1465,34 @@ export async function fetchGlobalDem(centerLat, centerLon) {
     }
   }
 
+  // Max-preserving summits: point-sampling at 200 m shaves narrow peaks (e.g. Matterhorn, Corcovado). At each grid
+  // node that is a local maximum, keep the highest raw DEM sample within its +-100 m cell instead.
+  const raw = elevations.slice();
+  for (let iz = 1; iz < gridSize - 1; iz++) {
+    for (let ix = 1; ix < gridSize - 1; ix++) {
+      const i = iz * gridSize + ix, e = raw[i];
+      if (e < 30) continue;
+      let isMax = true;
+      for (let dz = -1; dz <= 1 && isMax; dz++) for (let dx = -1; dx <= 1; dx++) if ((dx || dz) && raw[i + dz * gridSize + dx] > e) { isMax = false; break; }
+      if (!isMax) continue;
+      const wz = minWorld + iz * stepM, wx = minWorld + ix * stepM;
+      let m = e;
+      for (let sz = -100; sz <= 100; sz += 20) {
+        for (let sx = -100; sx <= 100; sx += 20) {
+          m = Math.max(m, sampleRawAsl(centerLat - (wz + sz) / mPerDegLat, centerLon + (wx + sx) / mPerDegLon) - baseAslM);
+        }
+      }
+      elevations[i] = Math.round(m * 10) / 10;
+    }
+  }
+
   const osmPeaks = [];
+  // Landmarks with a known ground elevation (registry `ele`) get a summit bump where the DEM is too low/misplaced.
+  for (const l of LANDMARKS) {
+    if (!l.on || !Number.isFinite(l.ele)) continue;
+    const p = landmarkWorldXZ(l, origin);
+    if (p) osmPeaks.push([l.name, p[0], p[1], l.ele - baseAslM]);
+  }
   if (Math.abs(centerLat - 37.82) < 0.35 && Math.abs(centerLon - -122.44) < 0.35) {
     const addPeak = (name, pLat, pLon, relEle) => {
       const wx = Math.round((pLon - centerLon) * mPerDegLon);

@@ -11,6 +11,7 @@ import {
   getChunkTerrainMeshElevation,
   buildChunkTerrainMesh,
   buildChunkTerrainArrays,
+  snowCover, // [fix/terrain-landmark-qa]
 } from './environment.js';
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
@@ -1478,7 +1479,13 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
       const yb = getBeijingTerrainElevation(ox + bx, oz + bz) + yOff;
       const yc = getBeijingTerrainElevation(ox + cx, oz + cz) + yOff;
       parkPos.push(ax, ya, az, cx, yc, cz, bx, yb, bz);
-      parkCol.push(...rgb, ...rgb, ...rgb);
+      // alpine grass above the snowline gets the terrain's snow (steep faces stay bare)
+      let triRgb = rgb;
+      const ux = bx - ax, uy = yb - ya, uz = bz - az, vx = cx - ax, vy = yc - ya, vz = cz - az;
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const snow = snowCover((ya + yb + yc) / 3, Math.hypot(nx, nz) / Math.max(1e-6, Math.abs(ny)));
+      if (snow > 0) triRgb = [rgb[0] + (0.93 - rgb[0]) * snow, rgb[1] + (0.95 - rgb[1]) * snow, rgb[2] + (0.98 - rgb[2]) * snow];
+      parkCol.push(...triRgb, ...triRgb, ...triRgb);
     }
   }
   if (parkPos.length > 0) {
