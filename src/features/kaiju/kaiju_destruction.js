@@ -989,7 +989,7 @@ export class KaijuDestruction {
       for (let r = 0; r < rec.n; r++) {
         if (rec.root[r] !== r || st.flags[r] & F_DEAD) continue;
         const x = (rec.rMinX[r] + rec.rMaxX[r]) * 0.5, z = (rec.rMinZ[r] + rec.rMaxZ[r]) * 0.5;
-        const v = st.vol[r] * (1 - 0.5 * st.damage[r]);
+        const v = st.vol[r] * (1 - 0.75 * st.damage[r]);
         const k = cellKey(Math.floor(x / cs), Math.floor(z / cs));
         let c = m.get(k);
         if (!c) { c = [0, 0, 0]; m.set(k, c); }
@@ -1000,7 +1000,9 @@ export class KaijuDestruction {
     for (const c of m.values()) {
       if (c[0] <= 0) continue;
       const x = c[1] / c[0], z = c[2] / c[0];
-      const s = c[0] / (1 + Math.hypot(x - fromX, z - fromZ) / 1500);
+      const d = Math.hypot(x - fromX, z - fromZ);
+      if (d < 22) continue;
+      const s = c[0] / (1 + Math.pow(d / 140, 1.65));
       if (s > bestS) { bestS = s; best = c; }
     }
     if (!best) return null;

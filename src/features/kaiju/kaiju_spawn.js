@@ -32,7 +32,7 @@ function collectBuildings(app) {
 export function densestBuildingCell(app, fromX, fromZ, exclude = 0) {
   const B = collectBuildings(app);
   if (!B.length) return null;
-  const C = 200;
+  const C = 120;
   const cells = new Map();
   for (let i = 0; i < B.length; i += 3) {
     const k = Math.floor(B[i] / C) * 100003 + Math.floor(B[i + 1] / C);
@@ -45,7 +45,7 @@ export function densestBuildingCell(app, fromX, fromZ, exclude = 0) {
     const x = c.x / c.v, z = c.z / c.v;
     const d = Math.hypot(x - fromX, z - fromZ);
     if (d < exclude) continue;
-    const s = c.v / (1 + d / 2500);
+    const s = c.v / (1 + Math.pow(d / 160, 1.65));
     if (s > bs) { bs = s; best = { x, z }; }
   }
   return best;
@@ -193,65 +193,59 @@ function findWater(app, px, pz) {
     for (let i = 0; i < N * N; i++) {
       if (!g[i]) continue;
       const depth = D[i] * CELL;
-      if (depth < minDepthM || areas[lab[i]] < minArea) continue;
+      if (depth < minDepthM || depth > 75 || areas[lab[i]] < minArea) continue;
       const r = (i / N) | 0, c = i - r * N;
       const x = x0 + (c + 0.5) * CELL, z = z0 + (r + 0.5) * CELL;
       const d = Math.hypot(x - px, z - pz);
-      if (d < 600 || d > CFG.SPAWN_WATER_SEARCH) continue;
-      const s = Math.min(depth, 160) - Math.abs(d - CFG.SPAWN_DIST) * 0.06;
+      if (d < 220 || d > CFG.SPAWN_WATER_SEARCH) continue;
+      // Prefer near-shore water (~30-50m from land) near SPAWN_DIST so the Kaiju steps onto land into buildings quickly
+      const s = 55 - Math.abs(depth - 36) * 0.8 - Math.abs(d - CFG.SPAWN_DIST) * 0.12;
       if (s > bs) { bs = s; best = i; }
     }
     if (best < 0) return null;
     const r = (best / N) | 0, c = best - r * N;
     return { x: x0 + (c + 0.5) * CELL, z: z0 + (r + 0.5) * CELL, depth: D[best] * CELL, area: areas[lab[best]] };
   };
-  return pick(45, 250000) || pick(28, 120000);
+  return pick(22, 90000);
 }
 
-// Map-edge fallback: direction (of 16) with the least building volume between 500 m and 2.2 km.
+// Urban spawn fallback: direction (of 16) with high nearby building density at ~CFG.SPAWN_DIST so the Kaiju
+// immediately marches through city blocks.
 function findEdge(app, px, pz) {
   const B = collectBuildings(app);
   const SECT = 16;
   const vol = new Float64Array(SECT);
   for (let i = 0; i < B.length; i += 3) {
     const dx = B[i] - px, dz = B[i + 1] - pz, d = Math.hypot(dx, dz);
-    if (d < 500 || d > 2200) continue;
+    if (d < 180 || d > 650) continue;
     let a = Math.atan2(dx, dz);
     if (a < 0) a += Math.PI * 2;
     vol[Math.floor((a / (Math.PI * 2)) * SECT) % SECT] += B[i + 2];
   }
-  let bi = 0, bv = Infinity;
+  let bi = 0, bv = -Infinity;
   for (let s = 0; s < SECT; s++) {
     const v = vol[s] * 0.5 + vol[(s + 1) % SECT] * 0.25 + vol[(s + SECT - 1) % SECT] * 0.25;
-    if (v < bv) { bv = v; bi = s; }
+    if (v > bv) { bv = v; bi = s; }
   }
   const a = ((bi + 0.5) / SECT) * Math.PI * 2;
-  let x = px + Math.sin(a) * CFG.SPAWN_DIST, z = pz + Math.cos(a) * CFG.SPAWN_DIST;
-  // nudge to the nearby spot with the fewest buildings
-  let best = { x, z }, bc = Infinity;
-  for (let ring = 0; ring <= 3; ring++) {
-    for (let k = 0; k < (ring ? 8 : 1); k++) {
-      const qx = x + Math.sin((k / 8) * Math.PI * 2) * ring * 70, qz = z + Math.cos((k / 8) * Math.PI * 2) * ring * 70;
-      let c = 0;
-      for (let i = 0; i < B.length; i += 3) {
-        const dx = B[i] - qx, dz = B[i + 1] - qz;
-        if (dx * dx + dz * dz < 60 * 60) c += B[i + 2];
-      }
-      if (c < bc) { bc = c; best = { x: qx, z: qz }; }
-    }
-  }
-  return best;
+  const x = px + Math.sin(a) * CFG.SPAWN_DIST, z = pz + Math.cos(a) * CFG.SPAWN_DIST;
+  return { x, z };
 }
 
 export function pickSpawn(K) {
   const app = K.app;
   const p = K.getHeliPos?.() || app?.pos || { x: 0, z: 0 };
-  let target = null;
-  try { target = K.destruction?.getDensestTarget?.(p.x, p.z) || null; } catch (e) { target = null; }
-  if (!target) target = densestBuildingCell(app, p.x, p.z, 0) || { x: p.x, z: p.z };
   let w = null;
   try { w = findWater(app, p.x, p.z); } catch (e) { console.warn("[kaiju] water search failed", e); }
-  if (w) return { x: w.x, z: w.z, fromWater: true, targetX: target.x, targetZ: target.z, kind: "water", depth: w.depth, area: w.area };
-  const e = findEdge(app, p.x, p.z);
-  return { x: e.x, z: e.z, fromWater: false, targetX: target.x, targetZ: target.z, kind: "edge" };
+  // Only use water spawn if there is a dense building cluster within 220m of the water spawn point
+  if (w) {
+    const nearB = densestBuildingCell(app, w.x, w.z, 20);
+    if (!nearB || Math.hypot(nearB.x - w.x, nearB.z - w.z) > 220) w = null;
+  }
+  const sp = w ? { x: w.x, z: w.z, fromWater: true, kind: "water", depth: w.depth, area: w.area }
+               : { ...findEdge(app, p.x, p.z), fromWater: false, kind: "edge" };
+  let target = null;
+  try { target = K.destruction?.getDensestTarget?.(sp.x, sp.z) || null; } catch (e) { target = null; }
+  if (!target) target = densestBuildingCell(app, sp.x, sp.z, 35) || { x: p.x, z: p.z };
+  return { ...sp, targetX: target.x, targetZ: target.z };
 }

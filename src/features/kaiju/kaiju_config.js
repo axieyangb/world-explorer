@@ -2,8 +2,8 @@
 export const CFG = {
   // Intro / spawn
   SPAWN_HELI_ALT: 200,          // m above terrain when the mode starts
-  SPAWN_WATER_SEARCH: 2500,     // m, search radius for a large water body
-  SPAWN_DIST: 1500,             // m from the player
+  SPAWN_WATER_SEARCH: 900,     // m, search radius for a large water body
+  SPAWN_DIST: 420,             // m from the player
   ALERT_SECONDS: 3.0,
   RISE_SECONDS: 7.0,
 
@@ -11,12 +11,12 @@ export const CFG = {
   KAIJU_HEIGHT_MIN: 60,
   KAIJU_HEIGHT_MAX: 80,
   KAIJU_HP: 6000,
-  KAIJU_WALK_SPEED: 10.0,        // m/s
+  KAIJU_WALK_SPEED: 13.5,        // m/s
   KAIJU_ENRAGE_FRACTION: 0.3,
   KAIJU_ENRAGE_SPEED_MULT: 1.45,
   KAIJU_RETARGET_PLAYER_DMG: 3000, // damage within 10 s that makes it turn on the player
-  BREATH_INTERVAL_MIN: 12,
-  BREATH_INTERVAL_MAX: 20,
+  BREATH_INTERVAL_MIN: 7,
+  BREATH_INTERVAL_MAX: 11,
   BREATH_INTERVAL_ENRAGED_MULT: 0.6,
   BREATH_TELEGRAPH: 2.0,
   BREATH_DURATION: 4.0,
@@ -24,13 +24,13 @@ export const CFG = {
   BREATH_HALF_ANGLE_DEG: 12.5,  // 25 deg cone
   BREATH_SWEEP_DEG: 50,         // total yaw sweep while breathing
   BREATH_PLAYER_DPS: 18,        // heli HP per second inside the cone
-  BREATH_BUILDING_DPS: 0.7,     // building damage (0..1) per second inside the cone
+  BREATH_BUILDING_DPS: 1.1,     // building damage (0..1) per second inside the cone
   TAIL_SWIPE_TRIGGER_DIST: 160, // heli behind kaiju within this => tail swipe
   TAIL_SWIPE_COOLDOWN: 9,
   TAIL_SWIPE_DAMAGE: 55,
   TAIL_SWIPE_RADIUS: 95,
-  STOMP_RADIUS: 22,             // per footfall building damage radius (scaled by kaiju size)
-  BODY_RADIUS: 18,              // continuous body overlap radius
+  STOMP_RADIUS: 28,             // per footfall building damage radius (scaled by kaiju size)
+  BODY_RADIUS: 24,              // continuous body overlap radius
 
   // Player
   HELI_HP: 400,                 // [player] boosted hull durability
@@ -68,8 +68,8 @@ export const CFG = {
   AIM_ASSIST_DEG: 14.0,
 
   // City damage
-  CITY_TRACK_RADIUS: 2000,
-  CITY_FALL_FRACTION: 0.35,     // City Damage 100% == this fraction of tracked building volume destroyed
+  CITY_TRACK_RADIUS: 1500,
+  CITY_FALL_FRACTION: 0.28,     // City Damage 100% == this fraction of tracked building volume destroyed
   HUD_WARN_AMBER: 0.5,
   HUD_WARN_RED: 0.8,
 
@@ -88,7 +88,7 @@ export const CFG = {
   BURN_DAMAGE_PER_SEC: 0.25,     // scorch growth while burning
   CITY_TRACK_GROW_SECONDS: 10,   // chunks registering within this window after beginTracking join the denominator
   DESTRUCTION_MAX_EMITTERS: 36,  // fire/smoke emitters owned by destruction
-  DENSEST_CELL: 200,             // m, getDensestTarget cell size
+  DENSEST_CELL: 120,             // m, getDensestTarget cell size
 
   // Perf caps
   MAX_PARTICLES: 6000,

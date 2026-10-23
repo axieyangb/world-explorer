@@ -124,12 +124,12 @@ export class Kaiju {
     this._dmgB.fill(0);
     this._dmgSec = 0;
     Object.assign(this.pose, { walkPhase: 0, walkAmt: 0, crouch: 0, lean: 0, headYaw: 0, headPitch: -0.3, jaw: 0, roar: 0, charge: 0, breath: 0, flinch: 0, death: 0, tailBend: 0, tailLift: 0 });
-    this.nextBreath = rand(CFG.BREATH_INTERVAL_MIN, CFG.BREATH_INTERVAL_MAX);
+    this.nextBreath = rand(2.5, 4.5);
     this.tailCd = 3;
     this.bodyT = 0;
     this.threatT = 0;
     this.fxT = 0;
-    this.targetT = 10;
+    this.targetT = 0;
     this.chaseT = 0;
     this.flinchT = 0;
     this.fade = 1;
@@ -418,22 +418,10 @@ export class Kaiju {
   _walkCore(dt, speedMul) {
     const P = this.pose;
     this._updateTarget(dt);
-    let desired = Math.atan2(this.target.x - this.position.x, this.target.z - this.position.z);
-    let aggroTurn = false;
-    if (this.aggro) {
-      // turn to face the helicopter when aggroed
-      const h = this._heli();
-      if (h) {
-        const hb = Math.atan2(h.x - this.position.x, h.z - this.position.z);
-        if (Math.abs(wrap(hb - this.yaw)) > 15 * DEG) {
-          desired = hb;
-          aggroTurn = true;
-        }
-      }
-    }
+    const desired = Math.atan2(this.target.x - this.position.x, this.target.z - this.position.z);
     P.jaw += (0 - P.jaw) * Math.min(1, dt * 3);
     const dy = wrap(desired - this.yaw);
-    const rate = (aggroTurn ? 0.65 : 0.24) * (this.enraged ? 1.35 : 1);
+    const rate = 0.65 * (this.enraged ? 1.35 : 1);
     this.yaw = wrap(this.yaw + clamp(dy, -rate * dt, rate * dt));
     const want = (Math.abs(dy) > 1.2 ? 0.5 : 1) * speedMul;
     P.walkAmt += (want - P.walkAmt) * Math.min(1, dt * 0.8);
@@ -479,28 +467,19 @@ export class Kaiju {
 
   _updateTarget(dt) {
     const K = this.K;
-    this.chaseT -= dt;
-    if (this.chaseT <= 0 && this._recentDamage() >= CFG.KAIJU_RETARGET_PLAYER_DMG) {
-      this.chaseT = 14;
-      this._dmgB.fill(0);
-    }
-    if (this.chaseT > 0) {
-      const h = this._heli();
-      if (h) { this.target.set(h.x, 0, h.z); return; }
-    }
     this.targetT -= dt;
     const dx = this.target.x - this.position.x, dz = this.target.z - this.position.z;
-    const near = dx * dx + dz * dz < (60 * this.scale) ** 2;
+    const near = dx * dx + dz * dz < (38 * this.scale) ** 2;
     if (this.targetT > 0 && !near) return;
-    this.targetT = 10;
+    this.targetT = 4.0;
     let t = K.destruction?.getDensestTarget?.(this.position.x, this.position.z) || null;
-    if (!t || (t.x - this.position.x) ** 2 + (t.z - this.position.z) ** 2 < (80 * this.scale) ** 2) {
-      t = densestBuildingCell(K.app, this.position.x, this.position.z, 120 * this.scale);
+    if (!t || (t.x - this.position.x) ** 2 + (t.z - this.position.z) ** 2 < (24 * this.scale) ** 2) {
+      t = densestBuildingCell(K.app, this.position.x, this.position.z, 35 * this.scale);
     }
     if (t) this.target.set(t.x, 0, t.z);
     else {
-      const a = this.yaw + rand(-1, 1);
-      this.target.set(this.position.x + Math.sin(a) * 400, 0, this.position.z + Math.cos(a) * 400);
+      const a = this.yaw + rand(-0.7, 0.7);
+      this.target.set(this.position.x + Math.sin(a) * 260, 0, this.position.z + Math.cos(a) * 260);
     }
   }
 
@@ -592,42 +571,23 @@ export class Kaiju {
   }
 
   _startCharge() {
-    const h = this._heli();
+    this._updateTarget(0);
     this.breathAtPlayer = false;
     this.breathAimed = false;
-    if (h) {
-      const dx = h.x - this.position.x, dz = h.z - this.position.z;
-      const d = Math.hypot(dx, dz);
-      const rel = Math.abs(wrap(Math.atan2(dx, dz) - this.yaw));
-      if (d < CFG.BREATH_AIM_RANGE && rel < CFG.BREATH_AIM_SECTOR_DEG * 0.5 * DEG && this.K.heli?.alive !== false) {
-        this.breathAtPlayer = true;
-        this.breathAimed = true;
-      } else if (d < CFG.BREATH_RANGE * 1.15) this.breathAtPlayer = true;
-    }
-    this.breathTelegraph = this.breathAimed ? CFG.BREATH_TELEGRAPH_AIMED : CFG.BREATH_TELEGRAPH;
-    this.breathLen = this.breathAimed ? Math.max(CFG.BREATH_RANGE, CFG.BREATH_AIM_RANGE) : CFG.BREATH_RANGE;
+    this.breathTelegraph = CFG.BREATH_TELEGRAPH;
+    this.breathLen = CFG.BREATH_RANGE;
     this._aimBreath(true);
     this._enter("breathCharge");
     this.K.audio?.play?.("roar", { pos: this.position, gain: 0.8 });
   }
 
-  // sets aimYaw/aimPitch (pitch: positive = down)
+  // sets aimYaw/aimPitch (pitch: positive = down toward city buildings)
   _aimBreath(init) {
-    const h = this._heli();
-    const mouthY = this.position.y + this.height * 0.86;
-    if (this.breathAimed && h) {
-      // true 3D aim from the mouth (pitch includes altitude)
-      const o = this.breathOrigin;
-      const dx = h.x - o.x, dz = h.z - o.z;
-      this.aimYaw = Math.atan2(dx, dz);
-      this.aimPitch = clamp(-Math.atan2(h.y - o.y, Math.max(1, Math.hypot(dx, dz))), -1.2, 0.9);
-    } else if (this.breathAtPlayer && h) {
-      const dx = h.x - this.position.x, dz = h.z - this.position.z;
-      this.aimYaw = Math.atan2(dx, dz);
-      this.aimPitch = clamp(-Math.atan2(h.y - mouthY, Math.max(1, Math.hypot(dx, dz))), -0.7, 0.75);
-    } else if (init) {
-      this.aimYaw = this.yaw;
-      this.aimPitch = Math.atan2(this.height * 0.86, 170 * this.scale);
+    if (init) {
+      const tx = this.target.x - this.position.x, tz = this.target.z - this.position.z;
+      const tb = tx * tx + tz * tz > 25 ? Math.atan2(tx, tz) : this.yaw;
+      this.aimYaw = wrap(this.yaw + clamp(wrap(tb - this.yaw), -0.75, 0.75));
+      this.aimPitch = Math.atan2(this.height * 0.86, 150 * this.scale);
     }
   }
 
@@ -785,8 +745,9 @@ export class Kaiju {
     if (this.bodyT <= 0) {
       this.bodyT = 0.25;
       const hs = this.hitSpheres;
-      const hips = hs[6], t1 = hs[11], t2 = hs[12];
+      const chest = hs[3], hips = hs[6], t1 = hs[11], t2 = hs[12];
       if (this.state !== "rising" || this.stateT > CFG.RISE_SECONDS * 0.25) {
+        if (chest) K.destruction?.damageSphere?.(chest.center.x, chest.center.y, chest.center.z, CFG.BODY_RADIUS * 1.15 * s, 1.0, { source: "body" });
         K.destruction?.damageSphere?.(hips.center.x, hips.center.y, hips.center.z, CFG.BODY_RADIUS * s, 1.0, { source: "body" });
         K.destruction?.damageSphere?.(t1.center.x, t1.center.y, t1.center.z, t1.radius * 1.4, 0.8, { source: "body" });
         K.destruction?.damageSphere?.(t2.center.x, t2.center.y, t2.center.z, t2.radius * 1.6, 0.6, { source: "body" });
@@ -861,14 +822,20 @@ export class Kaiju {
     this.dangerRadius = this.enraged ? CFG.AGGRO_RADIUS_ENRAGED : CFG.AGGRO_RADIUS;
     const h = this._heli();
     let inside = false;
+    let combatRange = false;
     if (h && this.alive && this.state !== "rising" && this.K.heli?.alive !== false) {
       const dx = h.x - this.position.x, dy = h.y - (this.position.y + this.height * 0.5), dz = h.z - this.position.z;
-      inside = dx * dx + dy * dy + dz * dz < this.dangerRadius * this.dangerRadius;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      inside = d2 < this.dangerRadius * this.dangerRadius;
+      combatRange = d2 < 650 * 650;
     }
     this.inDanger = inside;
-    if (inside) {
-      if (!this.aggro) { this.aggro = true; this.nextLaser = Math.min(this.nextLaser, CFG.LASER_FIRST_DELAY); }
-      this._lastHitT = this.time; // keeps aggro alive
+    if (inside || combatRange) {
+      if (!this.aggro) {
+        this.aggro = true;
+        this.nextLaser = Math.min(this.nextLaser, inside ? CFG.LASER_FIRST_DELAY : 5.5);
+      }
+      this._lastHitT = this.time; // keeps retaliatory laser cadence active while heli is in combat range
     }
   }
 
@@ -943,8 +910,7 @@ export class Kaiju {
     if (!h || this.K.heli?.alive === false) return false;
     const dx = h.x - this.position.x, dz = h.z - this.position.z;
     const d2 = dx * dx + dz * dz;
-    if (d2 > CFG.LASER_RANGE * CFG.LASER_RANGE || d2 < (40 * this.scale) ** 2) return false;
-    return Math.abs(wrap(Math.atan2(dx, dz) - this.yaw)) < 100 * DEG;
+    return d2 <= CFG.LASER_RANGE * CFG.LASER_RANGE && d2 >= (32 * this.scale) ** 2;
   }
 
   _startLaser() {
@@ -981,7 +947,8 @@ export class Kaiju {
     const dx = ax - this.position.x, dz = az - this.position.z;
     const bear = Math.atan2(dx, dz);
     const rel = wrap(bear - this.yaw);
-    if (Math.abs(rel) > 0.35) this.yaw = wrap(this.yaw + clamp(rel - Math.sign(rel) * 0.35, -0.7 * dt, 0.7 * dt));
+    const turnRate = L.phase === "lock" && !L.frozen ? 2.4 : 0.7;
+    if (Math.abs(rel) > 0.15) this.yaw = wrap(this.yaw + clamp(rel, -turnRate * dt, turnRate * dt));
     const k = Math.min(1, dt * 5);
     P.headYaw += (clamp(wrap(bear - this.yaw), -0.9, 0.9) - P.headYaw) * k;
     const tp = clamp(-Math.atan2(ay - (this.position.y + this.height * 0.88), Math.max(1, Math.hypot(dx, dz))), -0.6, 0.45);
@@ -1042,7 +1009,10 @@ export class Kaiju {
       this.nextLaser = rand(CFG.LASER_INTERVAL_MIN, CFG.LASER_INTERVAL_MAX) * (this.enraged ? CFG.LASER_INTERVAL_ENRAGED_MULT : 1);
       this.nextBreath = Math.max(this.nextBreath, 2.5);
     }
-    if (this.state === "laser") this._enter("walk");
+    if (this.state === "laser") {
+      this.targetT = 0;
+      this._enter("walk");
+    }
   }
 
   _stopLaserAudio() {
