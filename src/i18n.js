@@ -1084,7 +1084,7 @@ function englishRoadClass(s) {
   const key = m ? m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase() : "";
   if (!m || !PINYIN_ROAD_CLASS[key] || (m[2] !== key && m[2] !== m[2].toUpperCase() && m[2] !== m[2].toLowerCase())) return s;
   const en = PINYIN_ROAD_CLASS[key];
-  return `${m[1]} ${m[2] === key ? en : en.toUpperCase()}`;
+  return `${m[1]} ${m[2] === m[2].toUpperCase() ? en.toUpperCase() : en}`;
 }
 
 // [road-names-en] Labels chunk_builder generates for unnamed ways; English never falls back to pinyin here.
