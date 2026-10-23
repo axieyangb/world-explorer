@@ -826,6 +826,24 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       }
     }
 
+    // [terrain-roads] One-way arrows: one per lane every 60 m of run, mid-block, pointing the legal direction
+    if (s.oneway && !isLink && cls !== 'motorway' && cls !== 'trunk' && s.len >= 6) {
+      const laneW = (hw * 2) / effLanes;
+      const aw = Math.min(1.8, laneW * 0.55);
+      const padT = 4.0 / s.len;
+      for (let k = Math.ceil((segAcc - 30) / 60) * 60 + 30; k < segAcc + s.len; k += 60) {
+        const t = (k - segAcc) / s.len;
+        if (t < 0 || !ivs.some(([a, b]) => t > a + padT && t < b - padT)) continue;
+        const cx = s.x1 + (s.x2 - s.x1) * t, cz = s.z1 + (s.z2 - s.z1) * t;
+        if (!inChunk(cx, cz)) continue;
+        const sampleY = (px, pz) => roadY(s.id, cls, px, pz) + 0.06;
+        for (let l = 0; l < effLanes; l++) {
+          const off = -hw + laneW * (l + 0.5);
+          decals.add(cx - s.dz * off, cz + s.dx * off, s.dx, s.dz, aw, 4.0, DECAL_CELLS.STENCIL_ARROW_STRAIGHT, sampleY);
+        }
+      }
+    }
+
     // Edge lines on major roads
     if (cls === 'motorway' || cls === 'trunk' || cls === 'primary' || isLink) {
       for (const [a, b] of ivs) {

@@ -1,5 +1,6 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
+import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
@@ -443,7 +444,7 @@ const ROAD_CLASS_MAP = {
   street: { cls: "residential", linkCls: "residential", lanes: 1, width: 5.5, oneway: 0 },
   residential: { cls: "residential", linkCls: "residential", lanes: 1, width: 5.5, oneway: 0 },
   service: { cls: "service", linkCls: "service", lanes: 1, width: 3.8, oneway: 0 },
-  track: { cls: "service", linkCls: "service", lanes: 1, width: 3.5, oneway: 0 },
+  track: { cls: "footway", linkCls: "footway", lanes: 1, width: 3.0, oneway: 0 }, // [terrain-roads] trail, no cars
   path: { cls: "footway", linkCls: "footway", lanes: 1, width: 2.2, oneway: 0 },
   pedestrian: { cls: "pedestrian", linkCls: "pedestrian", lanes: 1, width: 4.5, oneway: 0 },
 };
@@ -665,6 +666,10 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         else if (subCls === "cycleway") cls = "cycleway";
         else cls = "footway";
       }
+      // [terrain-roads] trail surface: OMT `surface` is paved/unpaved; tracks, bridleways & hiking paths default to dirt
+      const surf = String(f.tags.surface || "");
+      const isTrail = cls === "footway" || cls === "cycleway";
+      const unpaved = isTrail && (surf ? surf === "unpaved" : rawCls === "track" || subCls === "bridleway" || subCls === "path") ? 1 : 0;
       const linkSpec = LINK_SPECS[cls];
       const lanes = Number(f.tags.lanes) || (linkSpec ? linkSpec.lanes : baseSpec.lanes);
       const widthM = linkSpec ? linkSpec.width : baseSpec.width;
@@ -714,6 +719,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           ptsXZ,
           startKey,
           endKey,
+          unpaved, // [terrain-roads]
         });
       }
     }
@@ -724,7 +730,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   const intersectionNodes = new Map();
 
   for (const r of rawRoads) {
-    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey } = r;
+    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, unpaved } = r;
 
     const isPedOrService = cls === "footway" || cls === "pedestrian" || cls === "steps" || cls === "cycleway" || cls === "service";
     if (!isPedOrService && (!name || !ref) && namedRoadSamples.length > 0) {
@@ -805,7 +811,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       }
     }
 
-    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ];
+    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]; // [11] unpaved [terrain-roads]
     roads.push(roadTuple);
   }
 
@@ -1161,7 +1167,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       if (f.type !== 2) continue;
       if (f.tags.brunnel === "tunnel" || Number(f.tags.layer) < 0) continue;
       const wCls = f.tags.class || "river";
-      const widthM = wCls === "river" ? 26.0 : wCls === "canal" ? 15.0 : 8.0;
+      const widthM = waterwayWidth(wCls, f.tags); // [terrain-roads] per-class widths
       for (const line of f.geom) {
         const flatXZ = [];
         let inChunk = false;
@@ -1444,6 +1450,7 @@ export async function fetchGlobalDem(centerLat, centerLon) {
     stepM,
     minWorld,
     baseAslM: Math.round(baseAslM * 10) / 10,
+    centerLat, // [terrain-roads] latitude-dependent snowline
     elevations,
     osmPeaks,
     isBeijing,

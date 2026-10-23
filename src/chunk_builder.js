@@ -12,6 +12,7 @@ import {
 } from './environment.js';
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
+import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
@@ -812,8 +813,9 @@ const ROAD_COLORS = {
   service:        [0.38, 0.40, 0.44],
   pedestrian:     [0.52, 0.50, 0.47],
   footway:        [0.50, 0.48, 0.45],
-  cycleway:       [0.32, 0.44, 0.38],
+  cycleway:       [0.30, 0.50, 0.36], // [terrain-roads] green bike lanes
 };
+const UNPAVED_TRAIL_RGB = [0.52, 0.43, 0.31]; // [terrain-roads] dirt trails (roads[11] = unpaved)
 
 // Widened vertical separation between road classes to prevent Z-fighting at all altitudes
 const ROAD_Y_BIAS = {
@@ -1569,40 +1571,9 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     appendPolyShoreUv(waterUv, keptSubTris, flatOuter, chunkHoleRings.length > 0 ? chunkHoleRings : flatHoles); // feature/atmosphere
   }
 
-  for (let lIdx = 0; lIdx < (data.water_lines || []).length; lIdx++) {
-    const wl = data.water_lines[lIdx];
-    const [osmId, , , widthM, flat] = wl;
-    if (!flat || flat.length < 4) continue;
-    const halfW = (widthM || 10) * 0.5;
-    const wyOff = 0.25 + ((osmId || lIdx) % 17) * 0.002;
-    for (let i = 0; i < flat.length - 2; i += 2) {
-      const x1 = flat[i], z1 = flat[i + 1];
-      const x2 = flat[i + 2], z2 = flat[i + 3];
-      const mx = (x1 + x2) * 0.5;
-      const mz = (z1 + z2) * 0.5;
-      if (mx < -500.0 || mx >= 500.0 || mz < -500.0 || mz >= 500.0) continue;
-      const dx = x2 - x1, dz = z2 - z1;
-      const len = Math.hypot(dx, dz);
-      if (len < 0.2) continue;
-      const nx = (-dz / len) * halfW;
-      const nz = (dx / len) * halfW;
-      const y1 = getBeijingTerrainElevation(ox + x1, oz + z1) + wyOff;
-      const y2 = getBeijingTerrainElevation(ox + x2, oz + z2) + wyOff;
-      waterPos.push(
-        x1 + nx, y1, z1 + nz,
-        x2 + nx, y2, z2 + nz,
-        x2 - nx, y2, z2 - nz,
-        x1 + nx, y1, z1 + nz,
-        x2 - nx, y2, z2 - nz,
-        x1 - nx, y1, z1 - nz
-      );
-      waterNorm.push(
-        0, 1, 0, 0, 1, 0, 0, 1, 0,
-        0, 1, 0, 0, 1, 0, 0, 1, 0
-      );
-      appendRibbonShoreUv(waterUv, halfW); // feature/atmosphere
-    }
-  }
+  // [terrain-roads] waterway lines: draped mitered ribbons with downstream flow (features/waterways.js)
+  const waterwayMesh = buildWaterwayMesh(data.water_lines, ox, oz, getBeijingTerrainElevation, mats);
+  if (waterwayMesh) targetGroup.add(waterwayMesh);
 
   if (waterPos.length > 0) {
     const geom = new THREE.BufferGeometry();
@@ -1810,7 +1781,7 @@ function buildRoadsAndBridges(
     const wayHash = ((wid * 2654435761) >>> 0);
     const wayMicroBias = ((wayHash % 997) / 997.0) * 0.14;
     const yBias = (ROAD_Y_BIAS[cls] || 0.43) + wayMicroBias;
-    const baseRgb = ROAD_COLORS[cls] || [0.30, 0.32, 0.36];
+    const baseRgb = r[11] ? UNPAVED_TRAIL_RGB : ROAD_COLORS[cls] || [0.30, 0.32, 0.36]; // [terrain-roads]
     const nPts = flat.length / 3;
     const leftPts = [];
     const rightPts = [];
