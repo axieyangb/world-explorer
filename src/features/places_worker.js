@@ -492,6 +492,7 @@ export function computePlacesPayload(ctx) {
 
   // ---------------------------------------------------------------- 2. POIs: infrastructure, civic, awnings, signs, transit, labels
   const awnings = [];
+  const signTexts = []; // places-info: storefront name text for the fascia signs
   const placedFuel = [];
   const placedEv = [];
   const placedBike = [];
@@ -778,6 +779,7 @@ export function computePlacesPayload(ctx) {
           const pal = FOOD.has(cls) ? AWNING_FOOD : AWNING_SHOP;
           push('awning', ox + best.qx + nx * 0.12, gy + 2.6, oz + best.qz + nz * 0.12, rotY, w, 0.7, depth, pal[Math.floor(rng() * pal.length)]);
           push('sign', ox + best.qx + nx * 0.14, gy + 3.45, oz + best.qz + nz * 0.14, rotY, w * 0.86, 0.75, 0.14, SIGN_COLORS[Math.floor(rng() * SIGN_COLORS.length)]);
+          if (name) signTexts.push([ox + best.qx + nx * 0.3, gy + 3.825, oz + best.qz + nz * 0.3, rotY, w * 0.86 - 0.14, name, nameEn || name]); // places-info
           labelY = gy + 5.0;
         }
       }
@@ -1207,7 +1209,7 @@ export function computePlacesPayload(ctx) {
 
   const inst = {};
   for (const [k, arr] of Object.entries(out)) inst[k] = new Float32Array(arr);
-  return { inst, labels, geo, rails, runways, beacons: new Float32Array(beacons) };
+  return { inst, labels, geo, rails, runways, beacons: new Float32Array(beacons), signTexts }; // places-info: signTexts
 }
 
 /** Adds the transferable buffers of a places payload to a worker transfer set. */

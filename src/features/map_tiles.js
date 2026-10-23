@@ -337,6 +337,16 @@ function prepareTile(layers, z, x, y) {
       v: latToMy(p[0]) * n - y,
     });
   }
+  // places-info: country (2) / state (4) borders, land only, drawn as quiet dashes
+  prep.borders = [];
+  for (const f of layers.boundary || []) {
+    const lvl = Number(f.tags.admin_level);
+    if (f.type !== 2 || (lvl !== 2 && lvl !== 4) || Number(f.tags.maritime) === 1) continue;
+    for (const line of f.geom) {
+      const pts = ringToLocal(line, n, x, y);
+      prep.borders.push({ lvl, pts, bb: bboxOf(pts) });
+    }
+  }
   return prep;
 }
 
@@ -527,6 +537,18 @@ function renderRaster(prep, z, x, y) {
   if (bridges.length) {
     drawPass(bridges, true);
     drawPass(bridges, false);
+  }
+  // places-info: subtle dashed admin borders
+  for (const lvl of [4, 2]) {
+    const list = (prep.borders || []).filter((bd) => bd.lvl === lvl && visible(bd.bb, ox, oy, span, m));
+    if (!list.length) continue;
+    ctx.beginPath();
+    for (const bd of list) pathLine(ctx, bd.pts, s, ox, oy);
+    ctx.strokeStyle = lvl === 2 ? 'rgba(206, 192, 240, 0.7)' : 'rgba(206, 192, 240, 0.55)';
+    ctx.lineWidth = lvl === 2 ? 2 : 1.4;
+    ctx.setLineDash(lvl === 2 ? [8, 5] : [5, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
   return canvas;
 }

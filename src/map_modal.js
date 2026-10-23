@@ -101,6 +101,7 @@ import {
   pickName,
 } from './features/map_tiles.js';
 import { formatDistance } from './navigation.js';
+import { drawPlaceIcons } from './features/places_info/pi_map.js'; // places-info
 
 const MIN_ZOOM = 3;
 const MAX_ZOOM = 18.5;
@@ -586,6 +587,7 @@ export class MapSystem {
 
     this._drawTrafficOverlay(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), true);
     this._drawRoute(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), 6.5, 4, true);
+    drawPlaceIcons(ctx, this, W, H); // places-info: POI icons at street zooms
     this._drawLabels(ctx, W, H, ws);
 
     // Search / selection pin

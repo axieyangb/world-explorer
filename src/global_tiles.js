@@ -219,6 +219,7 @@ const INTERESTING_LAYERS = new Set([
   "poi", // feature/places
   "housenumber",
   "aeroway", // feature/places
+  "boundary", // places-info: admin borders (minimap dashes + crossing toast)
 ]);
 
 export function decodeMvtTile(arrayBuffer, z, tx, ty) {
