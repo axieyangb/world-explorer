@@ -151,6 +151,18 @@ export class KaijuWeapons {
     }
     const bh = K.destruction?.raycast?.(_ro, ray.dir, best);
     if (bh && bh.dist < best) { best = bh.dist; kh = null; }
+    const cars = K.app?.traffic?.cars;
+    if (cars) {
+      for (let i = 0; i < cars.length; i++) {
+        const c = cars[i];
+        if (!c.active) continue;
+        const cx = (c.rx ?? c.x) - _ro.x, cy = (c.ry ?? c.y ?? 0) + 0.9 - _ro.y, cz = (c.rz ?? c.z) - _ro.z;
+        const along = cx * ray.dir.x + cy * ray.dir.y + cz * ray.dir.z;
+        if (along <= 0 || along >= best) continue;
+        const px = cx - ray.dir.x * along, py = cy - ray.dir.y * along, pz = cz - ray.dir.z * along;
+        if (px * px + py * py + pz * pz <= 2.2 * 2.2) { best = along; kh = null; }
+      }
+    }
     const td = this._terrainRay(_ro, ray.dir, best, 30);
     if (td < best) { best = td; kh = null; }
     this.aimPoint.copy(_ro).addScaledVector(ray.dir, best);
@@ -223,6 +235,20 @@ export class KaijuWeapons {
     }
     const bh = K.destruction?.raycast?.(from, _seg, best);
     if (bh && bh.dist < best) { best = bh.dist; kind = "building"; this._hitInfo = bh; }
+    const carsSeg = K.app?.traffic?.cars;
+    if (carsSeg) {
+      for (let i = 0; i < carsSeg.length; i++) {
+        const c = carsSeg[i];
+        if (!c.active) continue;
+        const cx = (c.rx ?? c.x) - from.x, cy = (c.ry ?? c.y ?? 0) + 0.9 - from.y, cz = (c.rz ?? c.z) - from.z;
+        const along = cx * _seg.x + cy * _seg.y + cz * _seg.z;
+        if (along <= 0 || along >= best) continue;
+        const px = cx - _seg.x * along, py = cy - _seg.y * along, pz = cz - _seg.z * along;
+        if (px * px + py * py + pz * pz <= 2.2 * 2.2) {
+          best = along; kind = "car"; this._hitInfo = { point: new THREE.Vector3(c.rx ?? c.x, (c.ry ?? c.y ?? 0) + 0.9, c.rz ?? c.z), car: c };
+        }
+      }
+    }
     const ge = getBeijingTerrainElevation(to.x, to.z);
     if (to.y < ge) {
       const gs = getBeijingTerrainElevation(from.x, from.z);

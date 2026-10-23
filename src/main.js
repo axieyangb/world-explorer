@@ -1581,6 +1581,10 @@ class WorldExplorerApp {
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
       return;
     }
+    if (this.vehicleDamage && this.vehicleDamage.updateDrive(dt)) { // [car-explosions] car destroyed -> respawn
+      this.nitroActive = false;
+      return;
+    }
     const spec = VEHICLE_SPECS[this.vehicleIdx];
     const throttle =
       (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) -

@@ -672,6 +672,7 @@ export class RailTransit {
           car.kvx = (car.kvx || 0) + nx * 5 + c.hx * c.v * 0.5;
           car.kvz = (car.kvz || 0) + nz * 5 + c.hz * c.v * 0.5;
           car.v = 0; car.bumpT = Math.max(car.bumpT || 0, 2.0);
+          if (c.v > 8 && traffic.damage) traffic.damage.hit(car, 30, c.x, c.y, c.z, 'train', 0); // [car-explosions]
         }
       }
     }
