@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
 import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
+import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
 import {
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
@@ -761,6 +762,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
       if (stage === 0) {
         isPointInWater = createWaterMaskChecker(data);
+        root.userData.waterMask = buildWaterMask(data); // fix/water: bit raster for car/walk/heli water physics
         isPointInSunkenTrench = createSunkenTrenchChecker(data.roads || []);
 
         // 0. 3D Heightfield Terrain Mesh for this 1km x 1km chunk (with open-trench cutouts for sunken roads)
@@ -2481,7 +2483,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         };
         entityTable.push(entityRecord);
 
-        if (rawMinH <= 2.0 && !isPart) {
+        if (rawMinH <= 2.0) { // fix/water: include ground-level parts (tiles flag any min_height > 0 as a part)
           buildingColliders.push({
             minX: minX + ox,
             maxX: maxX + ox,
@@ -3050,6 +3052,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       street: root.userData.street || null, // [feature/street]
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
       places: root.userData.places || null, // feature/places
+      waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
     },
     transferList: (collectPlacesTransfer(root.userData.places, transferSet), Array.from(transferSet)), // feature/places
   };
@@ -3121,6 +3124,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     street: payload.street || null, // [feature/street]
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
     places: payload.places || null, // feature/places
+    waterMask: payload.waterMask || null, // fix/water
   };
 
   return root;

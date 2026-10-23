@@ -65,6 +65,8 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 }
 
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
+import { WaterPhysics } from "./features/water_physics.js"; // fix/water
+import { BuildingCollision } from "./features/building_collision.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -258,6 +260,9 @@ class WorldExplorerApp {
     this.heliMesh.rotation.y = this.yaw;
     this.scene.add(this.heliMesh);
 
+    this.water = new WaterPhysics(this); // fix/water
+    this.collision = new BuildingCollision(this); // fix/water
+
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
     this.navigator = new RoadNavigator(this.scene);
 
@@ -444,6 +449,7 @@ class WorldExplorerApp {
 
     this.teleportGeneration = (this.teleportGeneration || 0) + 1;
     this.isTeleporting = true;
+    this.water.reset(); // fix/water
     const isBj =
       Math.abs(numLat - BEIJING_DEFAULT_ORIGIN.centerLat) < 0.06 &&
       Math.abs(numLon - BEIJING_DEFAULT_ORIGIN.centerLon) < 0.06;
@@ -1311,6 +1317,7 @@ class WorldExplorerApp {
   }
 
   async teleportToWorld(wx, wz, label = "", snapToRoad = true) {
+    this.water.reset(); // fix/water
     const clampedX = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wx));
     const clampedZ = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wz));
     const initTerrY = getBeijingTerrainElevation(clampedX, clampedZ);
@@ -1404,6 +1411,7 @@ class WorldExplorerApp {
 
   _updatePhysics(dt) {
     this.vfxTime += dt;
+    this.water.tick(dt); // fix/water: splash particles
     if (this.camYawOffset !== 0) {
       this.camYaw += this.camYawOffset;
       this.camYawOffset = 0;
@@ -1444,13 +1452,24 @@ class WorldExplorerApp {
       const targetVelY = climbInput * maxClimb;
       this.heliVelY = THREE.MathUtils.lerp(this.heliVelY, targetVelY, Math.min(1, 7.5 * dt));
 
-      const nx = this.pos.x + Math.sin(this.yaw) * this.speed * dt;
-      const nz = this.pos.z + Math.cos(this.yaw) * this.speed * dt;
+      let nx = this.pos.x + Math.sin(this.yaw) * this.speed * dt;
+      let nz = this.pos.z + Math.cos(this.yaw) * this.speed * dt;
       let ny = this.pos.y + this.heliVelY * dt;
 
+      // fix/water: building sides block the helicopter (below roof level); it can still settle on roofs
+      const heliCol = this.collision.resolve(nx, ny - 0.5, nz, this.yaw, 4.5, [0], null, this.pos.x, this.pos.z);
+      if (heliCol.hit) {
+        nx = heliCol.x;
+        nz = heliCol.z;
+        this.collision.applyImpact(heliCol.nx, heliCol.nz);
+      }
       const terrY = getBeijingTerrainElevation(nx, nz);
-      const bldgCeil = this.getBuildingCeilingAt(nx, ny - 2.0, nz, 2.2);
-      const minSafeY = Math.max(terrY + 1.5, bldgCeil !== null ? bldgCeil + 1.5 : -Infinity);
+      const roofB = this.collision.insideAny(nx, nz, ny - 2.0);
+      const minSafeY = Math.max(
+        terrY + 1.5,
+        roofB ? roofB.h + 1.5 : -Infinity,
+        this.water.heliMinY(nx, nz) // fix/water: may hover over water, never land on it
+      );
       if (ny < minSafeY) {
         ny = minSafeY;
         if (this.heliVelY < 0) this.heliVelY = 0;
@@ -1507,9 +1526,10 @@ class WorldExplorerApp {
         this.yaw += diff * Math.min(1, 12 * dt);
         const nx = this.pos.x + Math.sin(this.yaw) * this.speed * dt;
         const nz = this.pos.z + Math.cos(this.yaw) * this.speed * dt;
-        const col = this.resolveBuildingCollisions(nx, this.pos.y, nz, 0.55);
-        this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.x));
-        this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
+        const col = this.collision.resolve(nx, this.pos.y, nz, this.yaw, 0.45, [0], null, this.pos.x, this.pos.z); // fix/water
+        const wk = this.water.resolveWalk(this.pos.x, this.pos.z, col.x, col.z, this.pos.y); // fix/water: stop at the shore
+        this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.x));
+        this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.z));
       }
 
       if (this.keys.has("Space") && this.isGrounded) {
@@ -1561,6 +1581,11 @@ class WorldExplorerApp {
     }
 
     // DRIVE MODE
+    if (this.water.updateDrive(dt)) { // fix/water: sinking + respawn sequence, engine input disabled
+      this.nitroActive = false;
+      updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
+      return;
+    }
     const spec = VEHICLE_SPECS[this.vehicleIdx];
     const throttle =
       (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) -
@@ -1629,22 +1654,25 @@ class WorldExplorerApp {
       };
     };
 
+    // fix/water: swept collision in <= 0.75 m sub-steps (no tunnelling at 230 km/h+); road/terrain support
+    // is sampled every ~4 m as before, and the water check runs before the terrain floor clamp.
     const totalMove = this.speed * dt;
-    const steps = Math.max(1, Math.min(6, Math.ceil(Math.abs(totalMove) / 4.0)));
+    const steps = Math.max(1, Math.min(32, Math.ceil(Math.abs(totalMove) / 0.75)));
+    const supportSteps = Math.max(1, Math.min(6, Math.ceil(Math.abs(totalMove) / 4.0)));
+    const supportEvery = Math.max(1, Math.floor(steps / supportSteps));
     const stepDt = dt / steps;
     for (let s = 0; s < steps; s++) {
       const nx = this.pos.x + Math.sin(this.yaw) * this.speed * stepDt;
       const nz = this.pos.z + Math.cos(this.yaw) * this.speed * stepDt;
-      const col = this.resolveBuildingCollisions(nx, this.pos.y, nz, spec.width * 0.55);
+      const col = this.collision.resolveCar(nx, this.pos.y, nz, this.yaw, spec, this.pos.x, this.pos.z);
       this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.x));
       this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
+      if (col.hit) this.collision.applyImpact(col.nx, col.nz);
+      if ((s + 1) % supportEvery !== 0 && s !== steps - 1) continue;
       const stepCenter = evalSupportAt(this.pos.x, this.pos.z, this.pos.y);
+      if (this.water.tryEnterWater(stepCenter.surf)) return;
       if (this.pos.y < stepCenter.y) {
         this.pos.y = stepCenter.y;
-      }
-      if (col.hit) {
-        this.speed *= 0.65;
-        break;
       }
     }
 
@@ -1663,6 +1691,7 @@ class WorldExplorerApp {
       this.pos.y = Math.max(minSupportY, THREE.MathUtils.lerp(this.pos.y, minSupportY, Math.min(1, 20 * dt)));
     }
 
+    this.water.recordSafe(dt, centerSup.surf); // fix/water: respawn pose
     if (centerSup.surf) {
       this.currentRoadName = centerSup.surf.seg.name;
       this.currentLayer = centerSup.surf.seg.layer;
@@ -2013,6 +2042,7 @@ class WorldExplorerApp {
 
   setMode(rawMode) {
     const newMode = rawMode === "freecam" ? "helicopter" : rawMode;
+    if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
     this.mode = newMode;
     this.camYaw += this.camYawOffset;
@@ -2373,6 +2403,7 @@ class WorldExplorerApp {
     const dt = Math.min(0.05, this.clock.getDelta());
     this._updatePhysics(dt);
     this._updateCamera(dt);
+    this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
     // [integration] atmosphere first: daylight/sun/weather are then current for traffic, street, places and shadows
     if (this.atmosphere) this.atmosphere.update(dt); // feature/atmosphere
     this._updateStreamingChunks(false);
