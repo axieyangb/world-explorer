@@ -1,17 +1,19 @@
-// GTA V-style helicopter: flight model, camera assist, rotor wash and procedural rotor audio.
+// GTA V-style / intuitive arcade helicopter: flight model, auto-land, rooftop landing, camera assist, rotor wash and procedural rotor audio.
 //
 // Controls (keyboard / gamepad standard mapping):
-//   W / S, Up / Down, Numpad 8 / 5   forward / back (pitch nose down / up)   (left stick Y)
-//   A / D  (LB / RB)                 turn left / right (yaw)
-//   Q / E  (LT / RT)                 down / up (collective); released -> altitude hold
-//   Left / Right, Numpad 4 / 6       strafe left / right (roll)               (left stick X)
-//   Mouse drag / right stick    free-look; camera recenters behind the heli after ~1.5 s
-//   Shift                       mild boost
+//   W / S, Up / Down, Numpad 8 / 5   forward / back in horizontal plane (+55 / -25 m/s)
+//   A / D  (LB / RB)                 turn left / right (yaw) with subtle bank
+//   Q / E  (LT / RT)                 down / up (-16 / +18 m/s); released -> automatic altitude hold
+//   Left / Right, Numpad 4 / 6       strafe left / right (±28 m/s)
+//   L                                one-key auto-land (or auto-takeoff when landed)
+//   Mouse drag / right stick         free-look; camera recenters behind the heli after ~1.5 s
+//   Shift                            mild boost
 //
 // Public API (app.heli):
 //   heli.state        live flight state (see constructor); position is app.pos (shared Vector3)
 //   heli.getAimRay(ndcX = 0, ndcY = 0) -> { origin: Vector3, dir: Vector3 } through the crosshair
 //   heli.place(x, y, z, yaw)  teleport + reset (velocity, attitude, rotor at speed)
+//   heli.toggleAutoLand()     toggle automatic vertical landing (or takeoff when landed)
 //   heli.inputEnabled  false -> flight inputs ignored (heli keeps hovering / falling)
 //   heli.onDamage(amount, info) / heli.onImpact(info) / heli.onLand(info)   assignable hooks
 //   heli.config        tunables (CFG)
@@ -22,41 +24,49 @@ const D2R = Math.PI / 180;
 export const CFG = {
   G: 9.81,
   HOVER_THR: 0.5,
-  THR_RESP: 2.6,          // 1/s throttle response
+  THR_RESP: 5.0,          // 1/s throttle response
   THRUST_MIN: 0.3,        // x g at throttle 0
   THRUST_MAX: 1.75,       // x g at throttle 1
-  BOOST: 1.15,            // Shift: thrust and top speed multiplier (mild)
-  HORIZ_GAIN: 1.45,       // arcade: horizontal share of rotor thrust
-  DRAG_L: 0.03, DRAG_Q: 0.0024,        // horizontal drag -> ~250 km/h at full pitch (altitude held)
-  VDRAG_L: 0.55, VDRAG_Q: 0.004,       // vertical drag
-  IDLE_HDRAG: 0.16,       // extra horizontal bleed with no cyclic input
-  MAX_VY_UP: 16, MAX_VY_DOWN: 20,
+  BOOST: 1.18,            // Shift: thrust and top speed multiplier
+  HORIZ_GAIN: 1.45,
+  DRAG_L: 0.03, DRAG_Q: 0.0024,
+  VDRAG_L: 0.55, VDRAG_Q: 0.004,
+  IDLE_HDRAG: 0.16,
+  FWD_SPEED: 55,          // m/s max forward speed (W)
+  BACK_SPEED: 25,         // m/s max reverse speed (S)
+  STRAFE_SPEED: 28,       // m/s max lateral strafe speed (Left/Right)
+  MAX_VY_UP: 18,          // m/s max climb rate (E)
+  MAX_VY_DOWN: 16,        // m/s max descent rate (Q)
+  AUTO_LAND_VY: 12,       // m/s auto-land descent speed (L)
+  FWD_PITCH: 0.22,        // rad nose-down pitch at full forward input
+  BACK_PITCH: 0.18,       // rad nose-up pitch at full reverse input
+  STRAFE_ROLL: 0.30,      // rad roll tilt at full strafe input
+  TURN_BANK: 0.14,        // rad subtle bank into yaw turns
+  HORIZ_DAMP: 2.8,        // 1/s forward/back damping when W/S released
+  STRAFE_DAMP: 3.2,       // 1/s lateral damping when Left/Right released
+  VERT_DAMP: 6.0,         // 1/s vertical damping when Q/E released
   MAX_PITCH: 40 * D2R, MAX_ROLL: 45 * D2R,
-  ATT_GAIN: 2.2,          // attitude command -> angular rate
-  PITCH_RATE: 1.5, ROLL_RATE: 1.8, YAW_RATE: 1.0, MAX_YAW_RATE: 1.4,
-  ANG_RESP: 3.2,          // angular inertia (1/s)
-  BRAKE_K: 0.011, BRAKE_MAX: 0.28,     // auto-stabiliser tilts against drift
-  COORD_TURN: 0.9,        // banked-turn yaw tendency
-  COORD_MAX: 0.7,         // rad/s cap on the banked-turn yaw rate
+  ATT_GAIN: 2.2,
+  PITCH_RATE: 1.5, ROLL_RATE: 1.8, YAW_RATE: 1.35, MAX_YAW_RATE: 1.6,
+  ANG_RESP: 6.0,
+  BRAKE_K: 0.011, BRAKE_MAX: 0.28,
+  COORD_TURN: 0.9,
+  COORD_MAX: 0.7,
   GROUND_EFFECT_H: 8, GROUND_EFFECT: 0.12,
   LAND_ASSIST_H: 15,      // descent is cushioned below this AGL
-  HARD_LANDING: 7.0,      // m/s vertical impact before damage
+  HARD_LANDING: 8.5,      // m/s vertical impact before damage
   HARD_IMPACT: 6.0,       // m/s impact into a wall before damage
   DAMAGE_PER_MPS: 5.0,
   RADIUS: 4.2,            // body/rotor collision radius
-  SPINUP_S: 2.6,
+  SPINUP_S: 2.2,
   CAM_RECENTER_S: 1.5,
   CAM_LAG: 9.0,           // 1/s pivot follow rate
   FOV_ADD: 8.0,
-  WIND: 0.35,             // m/s^2 buffeting
-  ALT_KP: 1.2, ALT_KD: 1.7, ALT_KI: 0.15, ALT_ACC_MAX: 6.0, // altitude hold (no Q/E input)
+  WIND: 0.25,
+  ALT_KP: 1.2, ALT_KD: 1.7, ALT_KI: 0.15, ALT_ACC_MAX: 6.0,
   MAX_ALT: 2600,
 };
 
-const thrustRatio = (t) =>
-  t <= CFG.HOVER_THR
-    ? CFG.THRUST_MIN + (1 - CFG.THRUST_MIN) * (t / CFG.HOVER_THR)
-    : 1 + (CFG.THRUST_MAX - 1) * ((t - CFG.HOVER_THR) / (1 - CFG.HOVER_THR));
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const approach = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 const angDiff = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
@@ -77,6 +87,8 @@ export class HeliFlight {
     this.halfWorld = halfWorld;
     this.config = CFG;
     this.inputEnabled = true;
+    this.autoLanding = false;
+    this._autoTakeoffTargetY = null;
     this.onDamage = null;
     this.onImpact = null;
     this.onLand = null;
@@ -89,16 +101,20 @@ export class HeliFlight {
       throttle: CFG.HOVER_THR,
       rpm: 1,
       grounded: false,
+      autoLanding: false,
+      altitudeHold: true,
       agl: 0,
       speedKmh: 0,
       lastImpact: 0,
     };
     this._euler = new THREE.Euler(0, 0, 0, 'YXZ');
-    this._up = new THREE.Vector3();
+    this._up = new THREE.Vector3(0, 1, 0);
     this._lastPos = app.pos.clone();
     this._camPivot = app.pos.clone();
     this._shake = 0;
     this._t = 0;
+    this._holdY = app.pos.y;
+    this._holdI = 0;
     this._aim = { origin: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1) };
     this._ray = new THREE.Raycaster();
     this._ndc = new THREE.Vector2();
@@ -127,9 +143,18 @@ export class HeliFlight {
     s.yaw = yaw; s.pitch = 0; s.roll = 0;
     s.throttle = CFG.HOVER_THR;
     s.rpm = 1;
+    s.grounded = false;
+    s.autoLanding = false;
+    this.autoLanding = false;
+    this._autoTakeoffTargetY = null;
     this._holdY = y;
     this._holdI = 0;
     this.app.yaw = yaw;
+    this.app.heliSpeed = 0;
+    this.app.heliStrafeSpeed = 0;
+    this.app.heliVelY = 0;
+    this.app.heliLanded = false;
+    this.app.heliAutoLanding = false;
     this._lastPos.copy(this.app.pos);
     this._camPivot.copy(this.app.pos);
   }
@@ -138,11 +163,40 @@ export class HeliFlight {
   onEnter() {
     const app = this.app, s = this.state;
     this.place(app.pos.x, app.pos.y, app.pos.z, app.yaw);
-    const sup = this._support(app.pos.x, app.pos.z, app.pos.y + 0.3);
-    s.grounded = app.pos.y - sup < 0.3;
-    s.rpm = s.grounded ? 0.12 : 1; // spin up when starting on the ground
-    if (s.grounded) s.throttle = 0;
+    const sup = this._support(app.pos.x, app.pos.z, app.pos.y + 0.6);
+    s.grounded = app.pos.y - sup < 0.45;
+    s.rpm = s.grounded ? 0.25 : 1;
+    if (s.grounded) {
+      this.app.pos.y = sup;
+      s.throttle = 0.15;
+    }
+    app.heliLanded = s.grounded;
+    app.heliAutoLanding = false;
     app.camYaw = app.yaw;
+  }
+
+  /** Toggle automatic vertical landing (`KeyL`), or initiate auto-takeoff if currently landed. */
+  toggleAutoLand() {
+    const s = this.state, p = this.app.pos;
+    if (s.grounded) {
+      s.grounded = false;
+      this.autoLanding = false;
+      s.autoLanding = false;
+      this.app.heliLanded = false;
+      this.app.heliAutoLanding = false;
+      s.rpm = Math.max(s.rpm, 0.85);
+      this._autoTakeoffTargetY = p.y + 18;
+      this._holdY = this._autoTakeoffTargetY;
+      return false;
+    }
+    this._autoTakeoffTargetY = null;
+    this.autoLanding = !this.autoLanding;
+    s.autoLanding = this.autoLanding;
+    this.app.heliAutoLanding = this.autoLanding;
+    if (!this.autoLanding) {
+      this._holdY = p.y;
+    }
+    return this.autoLanding;
   }
 
   // ---------------------------------------------------------------- input
@@ -177,19 +231,18 @@ export class HeliFlight {
 
   // ---------------------------------------------------------------- world queries
   _forBoxes(x, z, r, fn) {
-    const app = this.app, seen = new Set();
-    for (const [ox, oz] of [[-r, -r], [r, -r], [-r, r], [r, r]]) {
-      const [cx, cz] = app.worldToChunk(x + ox, z + oz);
-      const key = `${cx},${cz}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const ch = app.loadedChunks.get(key);
-      const boxes = ch && ch.userData.buildingColliders;
-      if (!boxes) continue;
-      for (let i = 0; i < boxes.length; i++) {
-        const b = boxes[i];
-        if (x + r < b.minX || x - r > b.maxX || z + r < b.minZ || z - r > b.maxZ) continue;
-        fn(b);
+    const app = this.app;
+    const [cx0, cz0] = app.worldToChunk(x, z);
+    for (let dcx = -1; dcx <= 1; dcx++) {
+      for (let dcz = -1; dcz <= 1; dcz++) {
+        const ch = app.loadedChunks.get(`${cx0 + dcx},${cz0 + dcz}`);
+        const boxes = ch && ch.userData && ch.userData.buildingColliders;
+        if (!boxes) continue;
+        for (let i = 0; i < boxes.length; i++) {
+          const b = boxes[i];
+          if (x + r < b.minX || x - r > b.maxX || z + r < b.minZ || z - r > b.maxZ) continue;
+          fn(b);
+        }
       }
     }
   }
@@ -203,13 +256,21 @@ export class HeliFlight {
     return Math.max(getChunkTerrainMeshElevation(x, z), getBeijingTerrainElevation(x, z));
   }
 
-  /** Highest landable surface at (x,z) not above refY: terrain, elevated roads, roofs. */
+  /** Highest landable surface at (x,z) not above refY: terrain, elevated roads/bridges, building rooftops. */
   _support(x, z, refY) {
     let y = this._terrain(x, z);
     const s = this.app.sampleRoadSurface(x, refY, z);
-    if (s && Number.isFinite(s.y) && s.y <= refY + 0.3 && s.y > y) y = s.y;
-    this._forBoxes(x, z, 0.6, (b) => {
-      if (b.h <= refY + 0.3 && b.h > y && this._inside(b, x, z)) y = b.h;
+    if (s && Number.isFinite(s.y) && s.y <= refY + 0.6 && s.y > y) y = s.y;
+    this._forBoxes(x, z, 1.4, (b) => {
+      if (b.h <= refY + 0.6 && b.h > y && (
+        this._inside(b, x, z) ||
+        this._inside(b, x + 1.0, z) ||
+        this._inside(b, x - 1.0, z) ||
+        this._inside(b, x, z + 1.0) ||
+        this._inside(b, x, z - 1.0)
+      )) {
+        y = b.h;
+      }
     });
     const w = this.app.water;
     if (w && typeof w.heliMinY === 'function') y = Math.max(y, w.heliMinY(x, z) || -Infinity);
@@ -258,113 +319,197 @@ export class HeliFlight {
     if (p.distanceTo(this._lastPos) > 3 + v.length() * dt * 3) this.place(p.x, p.y, p.z, app.yaw);
 
     const inp = this._readInput();
-    const cyclic = Math.abs(inp.pitch) + Math.abs(inp.roll) > 0.01;
+    const boostMul = boost ? CFG.BOOST : 1;
 
-    // Rotor spin-up and throttle.
-    s.rpm = Math.min(1, s.rpm + dt / CFG.SPINUP_S);
-
-    // Horizontal velocity in the heading frame.
-    const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw); // forward
-    const rx = -fz, rz = fx;                          // right
-    const vF = v.x * fx + v.z * fz, vR = v.x * rx + v.z * rz;
-    const hs = Math.hypot(v.x, v.z);
-
-    // Attitude command (GTA feel): stick -> target angle; no stick -> self-level and brake drift.
-    let tP, tR;
-    if (s.grounded) { tP = 0; tR = 0; }
-    else {
-      tP = cyclic ? inp.pitch * CFG.MAX_PITCH * (inp.pitch < 0 ? 0.6 : 1) : -clamp(vF * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
-      tR = cyclic ? inp.roll * CFG.MAX_ROLL : -clamp(vR * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
-      if (cyclic && !inp.pitch) tP = -clamp(vF * CFG.BRAKE_K * 0.3, -0.1, 0.1);
-      if (cyclic && !inp.roll) tR = -clamp(vR * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
+    // Pressing E (ascend) cancels auto-land and lifts off immediately if grounded.
+    if (inp.collective > 0) {
+      this.autoLanding = false;
+      this._autoTakeoffTargetY = null;
+      if (s.grounded) {
+        s.grounded = false;
+        s.rpm = Math.max(s.rpm, 0.85);
+        this._holdY = p.y;
+      }
     }
-    const w = s.angularVelocity;
-    const gain = s.grounded ? 8 : CFG.ATT_GAIN;
-    w.x = approach(w.x, clamp((tP - s.pitch) * gain, -CFG.PITCH_RATE, CFG.PITCH_RATE), CFG.ANG_RESP, dt);
-    w.z = approach(w.z, clamp((tR - s.roll) * gain, -CFG.ROLL_RATE, CFG.ROLL_RATE), CFG.ANG_RESP, dt);
-    const coord = s.grounded ? 0 : clamp(-Math.tan(s.roll) * CFG.G / Math.max(hs, 18) * Math.min(1, hs / 12) * CFG.COORD_TURN, -CFG.COORD_MAX, CFG.COORD_MAX);
-    const yawAuth = s.grounded ? (s.rpm > 0.6 ? 0.4 : 0) : 1;
-    w.y = approach(w.y, clamp(inp.yaw * CFG.YAW_RATE * yawAuth + coord, -CFG.MAX_YAW_RATE, CFG.MAX_YAW_RATE), CFG.ANG_RESP * 0.9, dt);
-    s.pitch = clamp(s.pitch + w.x * dt, -CFG.MAX_PITCH, CFG.MAX_PITCH);
-    s.roll = clamp(s.roll + w.z * dt, -CFG.MAX_ROLL, CFG.MAX_ROLL);
-    s.yaw += w.y * dt;
-    s.yaw -= Math.round(s.yaw / (Math.PI * 2)) * Math.PI * 2; // keep bounded
-    // tiny buffeting in attitude
-    const gust = CFG.WIND * (Math.sin(this._t * 0.9) * 0.6 + Math.sin(this._t * 2.3 + 1.7) * 0.4);
-    this._euler.set(s.pitch + gust * 0.004, s.yaw, s.roll + gust * 0.006, 'YXZ');
-    s.quaternion.setFromEuler(this._euler);
-    const up = this._up.set(0, 1, 0).applyQuaternion(s.quaternion);
 
-    // Forces.
-    const sup0 = this._support(p.x, p.z, p.y + 0.3);
+    // Handle one-key auto-takeoff when L was pressed while landed.
+    if (this._autoTakeoffTargetY !== null) {
+      if (inp.collective < 0 || this.autoLanding) {
+        this._autoTakeoffTargetY = null;
+      } else if (p.y < this._autoTakeoffTargetY - 0.35) {
+        inp.collective = 0.75;
+      } else {
+        this._holdY = this._autoTakeoffTargetY;
+        this._autoTakeoffTargetY = null;
+      }
+    }
+
+    const sup0 = this._support(p.x, p.z, p.y + 0.5);
     s.agl = Math.max(0, p.y - sup0);
-    const ge = s.agl < CFG.GROUND_EFFECT_H ? CFG.GROUND_EFFECT * (1 - s.agl / CFG.GROUND_EFFECT_H) : 0;
 
-    // Throttle: Q/E drive the collective; with no input, hold the altitude where Q/E was released
-    // (PID on vertical acceleration, compensating for lift lost to pitch/roll).
-    const liftPerRatio = CFG.G * s.rpm * s.rpm * (1 + ge) * (boost ? CFG.BOOST : 1);
-    if (inp.collective !== 0 || s.grounded || this._holdY === undefined) {
-      const thrTarget = clamp(CFG.HOVER_THR + inp.collective * 0.5, 0, 1);
-      s.throttle = approach(s.throttle, s.grounded && inp.collective <= 0 ? Math.min(thrTarget, 0.35) : thrTarget, CFG.THR_RESP, dt);
-      this._holdY = p.y + v.y * 0.6; // capture with a little anticipation of the current climb/sink
-      this._holdI = 0;
+    // Yaw (A/D): smooth turn left/right.
+    const w = s.angularVelocity;
+    const yawAuth = s.grounded ? 0 : 1;
+    w.y = approach(w.y, inp.yaw * CFG.YAW_RATE * yawAuth, CFG.ANG_RESP, dt);
+    s.yaw += w.y * dt;
+    s.yaw -= Math.round(s.yaw / (Math.PI * 2)) * Math.PI * 2;
+
+    // Heading-frame horizontal velocity: forward (fx, fz) and right (rx, rz).
+    const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);
+    const rx = -fz, rz = fx;
+    let vF = v.x * fx + v.z * fz;
+    let vR = v.x * rx + v.z * rz;
+
+    // 1. W / S -> Forward (+55 m/s) / Backward (-25 m/s) in horizontal plane + visual pitch.
+    let tP = 0;
+    if (s.grounded || this.autoLanding) {
+      vF *= Math.exp(-(s.grounded ? 10.0 : 4.0) * dt);
+      if (Math.abs(vF) < 0.05) vF = 0;
+      tP = 0;
+    } else if (inp.pitch > 0) {
+      const targetVF = CFG.FWD_SPEED * boostMul * inp.pitch;
+      if (vF < 0) vF = Math.min(0, vF + 48 * dt);
+      vF = approach(vF, targetVF, 1.35, dt);
+      tP = CFG.FWD_PITCH * inp.pitch;
+    } else if (inp.pitch < 0) {
+      const targetVF = CFG.BACK_SPEED * inp.pitch;
+      if (vF > 0) vF = Math.max(0, vF - 48 * dt);
+      vF = approach(vF, targetVF, 1.8, dt);
+      tP = CFG.BACK_PITCH * inp.pitch;
+    } else {
+      vF *= Math.exp(-CFG.HORIZ_DAMP * dt);
+      if (Math.abs(vF) < 0.05) vF = 0;
+      tP = 0;
+    }
+
+    // 2. ArrowLeft / ArrowRight -> Strafe Left / Right (±28 m/s) + visual roll tilt.
+    let tR = 0;
+    if (s.grounded || this.autoLanding) {
+      vR *= Math.exp(-(s.grounded ? 10.0 : 4.0) * dt);
+      if (Math.abs(vR) < 0.05) vR = 0;
+      tR = 0;
+    } else if (inp.roll !== 0) {
+      const targetVR = CFG.STRAFE_SPEED * boostMul * inp.roll;
+      if (vR * inp.roll < 0) vR += Math.sign(inp.roll) * 48 * dt;
+      vR = approach(vR, targetVR, 2.0, dt);
+      tR = CFG.STRAFE_ROLL * inp.roll - CFG.TURN_BANK * inp.yaw * 0.5;
+    } else {
+      vR *= Math.exp(-CFG.STRAFE_DAMP * dt);
+      if (Math.abs(vR) < 0.05) vR = 0;
+      tR = -CFG.TURN_BANK * inp.yaw;
+    }
+
+    v.x = fx * vF + rx * vR;
+    v.z = fz * vF + rz * vR;
+
+    // Smooth visual pitch & roll attitude.
+    w.x = (tP - s.pitch) * 8.0;
+    w.z = (tR - s.roll) * 8.0;
+    s.pitch = approach(s.pitch, tP, 8.0, dt);
+    s.roll = approach(s.roll, tR, 8.0, dt);
+    this._euler.set(s.pitch, s.yaw, s.roll, 'YXZ');
+    s.quaternion.setFromEuler(this._euler);
+    this._up.set(0, 1, 0).applyQuaternion(s.quaternion);
+
+    // 3. Q / E -> Descend (-16 m/s) / Ascend (+18 m/s), automatic altitude hold when released, or L auto-land.
+    if (s.grounded) {
+      s.rpm = approach(s.rpm, 0.25, 1.8, dt);
+      s.throttle = approach(s.throttle, 0.15, 3.0, dt);
+      v.set(0, 0, 0);
+      vF = 0;
+      vR = 0;
+      p.y = sup0;
+      this._holdY = p.y;
+      s.altitudeHold = false;
+    } else if (this.autoLanding) {
+      s.rpm = approach(s.rpm, 0.85, 2.5, dt);
+      const landRate = clamp(2.2 + s.agl * 0.65, 2.2, CFG.AUTO_LAND_VY);
+      v.y = approach(v.y, -landRate, 5.0, dt);
+      s.throttle = approach(s.throttle, 0.32, 4.0, dt);
+      this._holdY = p.y;
+      s.altitudeHold = false;
+    } else if (inp.collective > 0) {
+      s.rpm = approach(s.rpm, 1.0, 3.5, dt);
+      v.y = approach(v.y, CFG.MAX_VY_UP * boostMul * inp.collective, 5.0, dt);
+      s.throttle = approach(s.throttle, 0.5 + 0.5 * inp.collective, 5.0, dt);
+      this._holdY = p.y;
+      s.altitudeHold = false;
+    } else if (inp.collective < 0) {
+      s.rpm = approach(s.rpm, 0.9, 3.0, dt);
+      let targetVy = CFG.MAX_VY_DOWN * inp.collective;
+      if (s.agl < CFG.LAND_ASSIST_H) {
+        targetVy = Math.max(targetVy, -(2.0 + s.agl * 0.75));
+      }
+      v.y = approach(v.y, targetVy, 5.0, dt);
+      s.throttle = approach(s.throttle, 0.5 + 0.4 * inp.collective, 5.0, dt);
+      this._holdY = p.y;
       s.altitudeHold = false;
     } else {
-      const err = this._holdY - p.y;
-      this._holdI = clamp(this._holdI + err * dt, -20, 20);
-      const aDes = clamp(CFG.ALT_KP * err - CFG.ALT_KD * v.y + CFG.ALT_KI * this._holdI, -CFG.ALT_ACC_MAX, CFG.ALT_ACC_MAX);
-      const ratio = (CFG.G + aDes) / Math.max(0.35, up.y) / Math.max(0.05, liftPerRatio);
-      const thr = ratio <= 1
-        ? ((ratio - CFG.THRUST_MIN) / (1 - CFG.THRUST_MIN)) * CFG.HOVER_THR
-        : CFG.HOVER_THR + ((ratio - 1) / (CFG.THRUST_MAX - 1)) * (1 - CFG.HOVER_THR);
-      s.throttle = approach(s.throttle, clamp(thr, 0, 1), 8, dt);
+      // Automatic altitude hold when neither Q nor E is pressed.
+      s.rpm = approach(s.rpm, 1.0, 2.5, dt);
+      s.throttle = approach(s.throttle, CFG.HOVER_THR, 5.0, dt);
+      if (this._holdY === undefined) this._holdY = p.y;
+      v.y *= Math.exp(-CFG.VERT_DAMP * dt);
+      if (Math.abs(v.y) < 0.05) {
+        v.y = 0;
+        p.y = this._holdY;
+      } else {
+        this._holdY = p.y;
+      }
       s.altitudeHold = true;
     }
-    const T = thrustRatio(s.throttle) * liftPerRatio;
-    let ax = up.x * T * CFG.HORIZ_GAIN, az = up.z * T * CFG.HORIZ_GAIN, ay = up.y * T - CFG.G;
-    const hd = CFG.DRAG_L + CFG.DRAG_Q * hs / (boost ? CFG.BOOST * CFG.BOOST : 1) + (cyclic ? 0 : CFG.IDLE_HDRAG);
-    ax -= v.x * hd; az -= v.z * hd;
-    ay -= v.y * (CFG.VDRAG_L + CFG.VDRAG_Q * Math.abs(v.y));
-    if (!s.grounded) {
-      ax += gust * Math.sin(this._t * 0.37);
-      az += gust * Math.cos(this._t * 0.29);
-      ay += gust * 0.3 * Math.sin(this._t * 1.3);
-    }
-    v.x += ax * dt; v.y += ay * dt; v.z += az * dt;
-    v.y = clamp(v.y, -CFG.MAX_VY_DOWN, CFG.MAX_VY_UP);
-    if (s.agl < CFG.LAND_ASSIST_H && inp.collective <= 0 && v.y < 0) v.y = Math.max(v.y, -(1.5 + s.agl * 0.55));
 
-    // Integrate with swept sub-steps (never tunnel through walls).
+    // Integrate with swept sub-steps (never tunnel through walls or roofs).
     const steps = Math.min(10, Math.max(1, Math.ceil((v.length() * dt) / 1.5)));
     const h = dt / steps, wallOut = {};
-    let grounded = false, impact = 0, landV = 0;
-    for (let i = 0; i < steps; i++) {
-      const prevY = p.y;
-      let nx = p.x + v.x * h, ny = p.y + v.y * h, nz = p.z + v.z * h;
-      const sup = this._support(nx, nz, Math.max(prevY, ny) + 0.3);
-      if (ny < sup) ny = sup;
-      this._walls(nx, ny, nz, wallOut);
-      if (wallOut.hit) {
-        nx = wallOut.x; nz = wallOut.z;
-        const vn = -(v.x * wallOut.nx + v.z * wallOut.nz);
-        if (vn > 0) {
-          impact = Math.max(impact, vn);
-          v.x += wallOut.nx * vn * 1.35; v.z += wallOut.nz * vn * 1.35;
-          v.x *= 0.85; v.z *= 0.85;
+    let grounded = s.grounded, impact = 0, landV = 0;
+    if (!s.grounded) {
+      for (let i = 0; i < steps; i++) {
+        const prevY = p.y;
+        let nx = p.x + v.x * h, ny = p.y + v.y * h, nz = p.z + v.z * h;
+        const sup = this._support(nx, nz, Math.max(prevY, ny) + 0.5);
+        if (ny < sup) ny = sup;
+        this._walls(nx, ny, nz, wallOut);
+        if (wallOut.hit) {
+          nx = wallOut.x; nz = wallOut.z;
+          const vn = -(v.x * wallOut.nx + v.z * wallOut.nz);
+          if (vn > 0) {
+            impact = Math.max(impact, vn);
+            v.x += wallOut.nx * vn * 1.15;
+            v.z += wallOut.nz * vn * 1.15;
+            v.x *= 0.75;
+            v.z *= 0.75;
+          }
         }
+        const sup2 = this._support(nx, nz, Math.max(prevY, ny) + 0.5);
+        if (ny <= sup2 + 0.06 && (inp.collective < 0 || this.autoLanding || v.y <= 0)) {
+          ny = sup2;
+          if (v.y < 0) landV = Math.max(landV, -v.y);
+          if (inp.collective < 0 || this.autoLanding || ny <= sup2 + 0.02) {
+            v.set(0, 0, 0);
+            vF = 0;
+            vR = 0;
+            s.pitch = 0;
+            s.roll = 0;
+            grounded = true;
+            this.autoLanding = false;
+            this._holdY = ny;
+          }
+        }
+        p.set(
+          clamp(nx, -this.halfWorld + 20, this.halfWorld - 20),
+          Math.min(CFG.MAX_ALT, ny),
+          clamp(nz, -this.halfWorld + 20, this.halfWorld - 20)
+        );
+        if (grounded) break;
       }
-      const sup2 = this._support(nx, nz, Math.max(prevY, ny) + 0.3);
-      if (ny <= sup2 + 0.02) {
-        ny = sup2;
-        if (v.y < 0) { landV = Math.max(landV, -v.y); v.y = -v.y > CFG.HARD_LANDING ? -v.y * 0.25 : 0; }
-        grounded = true;
-        const f = Math.exp(-6 * h);
-        v.x *= f; v.z *= f;
-      }
-      p.set(clamp(nx, -this.halfWorld + 20, this.halfWorld - 20), Math.min(CFG.MAX_ALT, ny), clamp(nz, -this.halfWorld + 20, this.halfWorld - 20));
     }
+
     if (grounded && !s.grounded && this.onLand) this.onLand({ speed: landV, position: p });
-    s.grounded = grounded && v.y <= 0.01;
+    s.grounded = grounded;
+    s.autoLanding = this.autoLanding;
+    s.agl = Math.max(0, p.y - this._support(p.x, p.z, p.y + 0.5));
+
     if (impact > 0) {
       this._shake = Math.min(1, this._shake + impact / 20);
       s.lastImpact = impact;
@@ -377,10 +522,14 @@ export class HeliFlight {
     }
     this._lastPos.copy(p);
 
-    // App compatibility fields (HUD, minimap, kaiju).
+    // App compatibility fields (HUD, minimap, kaiju, tests).
     app.yaw = s.yaw;
     app.speed = Math.hypot(v.x, v.z);
+    app.heliSpeed = vF;
+    app.heliStrafeSpeed = vR;
     app.heliVelY = v.y;
+    app.heliLanded = s.grounded;
+    app.heliAutoLanding = this.autoLanding;
     app.nitroActive = boost && app.speed > 5;
     s.speedKmh = app.speed * 3.6;
 

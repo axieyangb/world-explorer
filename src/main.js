@@ -235,7 +235,12 @@ class WorldExplorerApp {
     this.camPitch = 0.20;
     this.camPivot = this.pos.clone();
     this.walkVelY = 0;
+    this.heliSpeed = 0;
+    this.heliStrafeSpeed = 0;
     this.heliVelY = 0;
+    this.heliLanded = false;
+    this.heliAutoLanding = false;
+    this.parkedHeli = null;
     this.isGrounded = true;
     this.lastMouseOrbitTime = 0;
     this.topDownHeight = 145;
@@ -384,6 +389,8 @@ class WorldExplorerApp {
         speedKmh: Math.round(Math.abs(this.speed) * 3.6),
         mach: Number((Math.abs(this.speed) / 340.3).toFixed(2)),
         nitroActive: Boolean(this.nitroActive),
+        heliLanded: Boolean(this.heliLanded),
+        heliAutoLanding: Boolean(this.heliAutoLanding),
         x: Math.round(this.pos.x),
         y: Number(this.pos.y.toFixed(2)),
         groundY: Number(getBeijingTerrainElevation(this.pos.x, this.pos.z).toFixed(2)), // [integration] test probe
@@ -1214,6 +1221,26 @@ class WorldExplorerApp {
     return sampleRoadSurfaceIndexed(this, wx, wy, wz);
   }
 
+  getRoofSupportAt(wx, wy, wz) {
+    const [cx0, cz0] = this.worldToChunk(wx, wz);
+    let maxH = -Infinity;
+    for (let dcx = -1; dcx <= 1; dcx++) {
+      for (let dcz = -1; dcz <= 1; dcz++) {
+        const chunk = this.loadedChunks.get(`${cx0 + dcx},${cz0 + dcz}`);
+        const boxes = chunk && chunk.userData && chunk.userData.buildingColliders;
+        if (!boxes) continue;
+        for (let i = 0; i < boxes.length; i++) {
+          const b = boxes[i];
+          if (b.h > wy + 0.65 || b.h <= maxH) continue;
+          if (wx < b.minX - 0.5 || wx > b.maxX + 0.5 || wz < b.minZ - 0.5 || wz > b.maxZ + 0.5) continue;
+          if (b.flatOuter && b.flatOuter.length >= 6 && !pointInRing2D(wx - b.ox, wz - b.oz, b.flatOuter)) continue;
+          maxH = b.h;
+        }
+      }
+    }
+    return maxH;
+  }
+
   getBuildingCeilingAt(wx, wy, wz, margin = 0.0) {
     const [cx, cz] = this.worldToChunk(wx, wz);
     const chunk = this.loadedChunks.get(`${cx},${cz}`);
@@ -1416,7 +1443,7 @@ class WorldExplorerApp {
         this.yaw += diff * Math.min(1, 12 * dt);
         const nx = this.pos.x + Math.sin(this.yaw) * this.speed * dt;
         const nz = this.pos.z + Math.cos(this.yaw) * this.speed * dt;
-        const col = this.collision.resolve(nx, this.pos.y, nz, this.yaw, 0.45, [0], null, this.pos.x, this.pos.z); // fix/water
+        const col = this.collision.resolve(nx, this.pos.y + 0.6, nz, this.yaw, 0.45, [0], null, this.pos.x, this.pos.z); // fix/water
         const wk = this.water.resolveWalk(this.pos.x, this.pos.z, col.x, col.z, this.pos.y); // fix/water: stop at the shore
         this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.x));
         this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.z));
@@ -1435,7 +1462,8 @@ class WorldExplorerApp {
         getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.16,
         getChunkTerrainMeshElevation(this.pos.x, this.pos.z) + 0.08
       );
-      const groundY = surf ? Math.max(surf.y, minTerrY) : minTerrY;
+      const roofY = this.getRoofSupportAt(this.pos.x, this.pos.y, this.pos.z);
+      const groundY = Math.max(surf ? Math.max(surf.y, minTerrY) : minTerrY, roofY + 0.12);
       if (surf) {
         this.currentRoadName = surf.seg.name;
         this.currentLayer = surf.seg.layer;
@@ -1734,7 +1762,13 @@ class WorldExplorerApp {
       } else if (this.nitroActive) {
         gearBadgeEl.textContent = "BOOST";
       } else if (this.mode === "helicopter") {
-        gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m`;
+        if (this.heliLanded) {
+          gearBadgeEl.textContent = getLang() === "zh" ? "已降落" : "LANDED";
+        } else if (this.heliAutoLanding) {
+          gearBadgeEl.textContent = getLang() === "zh" ? `降落 ${Math.round(this.pos.y)}m` : `LAND ${Math.round(this.pos.y)}m`;
+        } else {
+          gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m`;
+        }
       } else if (this.mode === "walk") {
         gearBadgeEl.textContent = getLang() === "zh" ? "步行" : "WALK";
       } else {
@@ -1784,14 +1818,32 @@ class WorldExplorerApp {
 
       this.keys.add(e.code);
 
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "Space"].includes(e.code)) {
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyE", "KeyQ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
         fadeControlsHint();
       }
 
-      if (e.code === "KeyF") {
-        this.setMode(this.mode === "drive" ? "walk" : "drive");
-      } else if (e.code === "KeyC") {
-        this.setMode(this.mode === "helicopter" ? "drive" : "helicopter");
+      if (e.code === "KeyL" && !e.repeat && this.mode === "helicopter") {
+        this._ensureHeli().toggleAutoLand();
+      } else if (e.code === "KeyF" && !e.repeat) {
+        if (this.mode === "helicopter") {
+          this.setMode(this.heliLanded ? "walk" : "drive");
+        } else if (this.mode === "walk" && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
+          this.setMode("helicopter");
+        } else {
+          this.setMode(this.mode === "drive" ? "walk" : "drive");
+        }
+      } else if (e.code === "KeyE" && !e.repeat && this.mode === "walk" && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
+        this.setMode("helicopter");
+      } else if (e.code === "KeyC" && !e.repeat) {
+        this.setMode(this.mode === "helicopter" ? (this.heliLanded ? "walk" : "drive") : "helicopter");
+      } else if (e.code === "Digit1" && !e.repeat) {
+        this.setMode("drive");
+      } else if (e.code === "Digit2" && !e.repeat) {
+        this.setMode("walk");
+      } else if (e.code === "Digit3" && !e.repeat) {
+        this.setMode("helicopter");
+      } else if (e.code === "Digit4" && !e.repeat) {
+        this.setMode("kaiju");
       } else if (e.code === "KeyV") {
         this.cycleCameraMode();
       } else if (e.code === "KeyG") {
@@ -1876,8 +1928,8 @@ class WorldExplorerApp {
     const text =
       this.mode === "helicopter"
         ? zh
-          ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · 拖动看"
-          : "W/S Forward/Back · A/D Turn · Q/E Down/Up · ←/→ Strafe · Drag Look"
+          ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · L 降落 · F 下机"
+          : "W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · L Land · F Exit"
         : zh
           ? "WASD 移动 · Shift 加速 · 空格 刹车 · F 步行/驾驶 · C 直升机 · G 换车 · / 搜索"
           : "WASD Move · Shift Boost · Space Brake · F Walk/Drive · C Helicopter · G Switch Car · / Search";
@@ -1948,6 +2000,7 @@ class WorldExplorerApp {
 
   _refreshLocalizedUi() {
     this._updateModeAndCamBadges();
+    this._showControlsHint();
     this._renderQuickDestinationChips();
     const searchInput = document.getElementById("location-input");
     if (searchInput) {
@@ -1964,7 +2017,7 @@ class WorldExplorerApp {
   setMode(rawMode) {
     if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
     if (this.kaiju && this.kaiju.active) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
-    const newMode = rawMode === "freecam" ? "helicopter" : rawMode;
+    const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
     this.mode = newMode;
@@ -1978,6 +2031,7 @@ class WorldExplorerApp {
     if (newMode === "drive") {
       this.avatarMesh.visible = false;
       this.heliMesh.visible = false;
+      this.parkedHeli = null;
       this.vehicleMesh.visible = true;
       const surf = this.sampleRoadSurface(this.pos.x, this.pos.y, this.pos.z);
       if (surf) this.pos.y = surf.y;
@@ -1988,10 +2042,29 @@ class WorldExplorerApp {
     } else if (newMode === "walk") {
       this.avatarMesh.visible = true;
       this.vehicleMesh.visible = false;
-      this.heliMesh.visible = false;
+      const exitedLandedHeli = prevMode === "helicopter" && (this.heliLanded || (this.heli && this.heli.state.grounded));
+      if (exitedLandedHeli) {
+        this.parkedHeli = { x: this.pos.x, y: this.pos.y, z: this.pos.z, yaw: this.yaw };
+        this.heliMesh.visible = true;
+        this.heliMesh.position.set(this.parkedHeli.x, this.parkedHeli.y, this.parkedHeli.z);
+        this.heliMesh.rotation.set(0, this.parkedHeli.yaw, 0);
+        // Step out beside the landed helicopter if the same surface supports it
+        const sideX = this.pos.x - Math.cos(this.yaw) * 2.8;
+        const sideZ = this.pos.z + Math.sin(this.yaw) * 2.8;
+        const sideRoof = this.getRoofSupportAt(sideX, this.pos.y + 0.6, sideZ);
+        const curRoof = this.getRoofSupportAt(this.pos.x, this.pos.y + 0.6, this.pos.z);
+        if (curRoof <= -1e4 || Math.abs(sideRoof - curRoof) < 1.0) {
+          this.pos.x = sideX;
+          this.pos.z = sideZ;
+        }
+      } else if (!this.parkedHeli) {
+        this.heliMesh.visible = false;
+      }
       const surf = this.sampleRoadSurface(this.pos.x, this.pos.y, this.pos.z);
-      if (surf) this.pos.y = surf.y;
-      else this.pos.y = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.12;
+      const minTerrY = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.12;
+      const roofY = this.getRoofSupportAt(this.pos.x, this.pos.y + 0.5, this.pos.z);
+      const baseGroundY = surf ? Math.max(surf.y, minTerrY) : minTerrY;
+      this.pos.y = Math.max(baseGroundY, roofY + 0.12);
       this.walkVelY = 0;
       this.isGrounded = true;
       this.avatarMesh.position.copy(this.pos);
@@ -2002,10 +2075,20 @@ class WorldExplorerApp {
       this.vehicleMesh.visible = false;
       this.heliMesh.visible = true;
       if (prevMode !== "helicopter") {
-        const minHeliY = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 150.0;
-        this.pos.y = Math.max(this.pos.y + 150.0, minHeliY);
-        this.heliVelY = 0;
-        this._ensureHeli().onEnter(); // feature/heli-gta
+        if (this.parkedHeli && prevMode === "walk" && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 15) {
+          this.pos.set(this.parkedHeli.x, this.parkedHeli.y, this.parkedHeli.z);
+          this.yaw = this.parkedHeli.yaw;
+          this.camYaw = this.yaw;
+          this.parkedHeli = null;
+          this.heliVelY = 0;
+          this._ensureHeli().onEnter();
+        } else {
+          this.parkedHeli = null;
+          const minHeliY = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 150.0;
+          this.pos.y = Math.max(this.pos.y + 150.0, minHeliY);
+          this.heliVelY = 0;
+          this._ensureHeli().onEnter(); // feature/heli-gta
+        }
       }
       this.heliMesh.position.copy(this.pos);
       this.heliMesh.rotation.y = this.yaw;

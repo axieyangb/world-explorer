@@ -417,7 +417,7 @@ export const I18N = {
       kaiju_mute: 'Mute',
       kaiju_unmute: 'Unmute',
       kaiju_down: 'Helicopter down',
-      kaiju_hint: 'Space / LMB Cannon · F / RMB Missiles · W/S Forward/Back · A/D Turn · Q/E Down/Up · ←/→ Strafe · Esc Pause',
+      kaiju_hint: 'Space / LMB Cannon · F / RMB Missiles · W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · Esc Pause',
       default_road: "Chang'an Ave · Tiananmen Sq",
       urban_road_fallback: 'Beijing Urban Road',
       chunks_unit: 'chunks',
