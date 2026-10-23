@@ -1411,6 +1411,12 @@ class WorldExplorerApp {
 
   _updatePhysics(dt) {
     this.vfxTime += dt;
+    const wrapA = (a) => a - Math.round(a / (Math.PI * 2)) * Math.PI * 2;
+    this.yaw = wrapA(this.yaw);
+    this.camYaw = wrapA(this.camYaw);
+    // Typing in the search box (or any field) must not leave movement keys held.
+    const ae = document.activeElement;
+    if (this.keys.size && ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) this.keys.clear();
     if (this.camYawOffset !== 0) {
       this.camYaw += this.camYawOffset;
       this.camYawOffset = 0;
@@ -1552,8 +1558,8 @@ class WorldExplorerApp {
         ) {
           this.camYaw += turnRate * dt * 0.85;
         }
-        const targetCamYaw = this.speed >= -0.5 ? this.yaw : this.yaw + Math.PI;
-        this.camYaw += this._angleDiff(this.camYaw, targetCamYaw) * Math.min(1, 2.6 * dt);
+        // Stay behind the car even when reversing (GTA): a reverse-facing camera mirrors A/D on screen.
+        this.camYaw += this._angleDiff(this.camYaw, this.yaw) * Math.min(1, 2.6 * dt);
       }
     }
 
@@ -1637,9 +1643,12 @@ class WorldExplorerApp {
   _updateCamera(dt) {
     let activeOrbitDist = this.topDownHeight;
     if (this.camMode === "topdown") {
-      const targetX = this.pos.x;
+      // Heading-up: screen-up follows camYaw, so camera-relative and vehicle-relative input agree with the screen.
+      const viewYaw = this.camYaw + this.camYawOffset;
+      const back = this.topDownHeight * 0.24;
+      const targetX = this.pos.x - Math.sin(viewYaw) * back;
       const targetY = this.pos.y + this.topDownHeight;
-      const targetZ = this.pos.z + this.topDownHeight * 0.24;
+      const targetZ = this.pos.z - Math.cos(viewYaw) * back;
       this.camera.position.set(targetX, targetY, targetZ);
       this.camera.lookAt(this.pos.x, this.pos.y, this.pos.z);
     } else {
@@ -1830,6 +1839,11 @@ class WorldExplorerApp {
     window.addEventListener("keyup", (e) => {
       this.keys.delete(e.code);
     });
+    // A key released while the page/canvas lost focus never sends keyup; drop all held keys instead.
+    const releaseAll = () => this.keys.clear();
+    window.addEventListener("blur", releaseAll);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAll(); });
+
 
     let pointerDownX = 0, pointerDownY = 0;
     let isDragging = false;
@@ -1978,6 +1992,8 @@ class WorldExplorerApp {
     this.mode = newMode;
     this.camYaw += this.camYawOffset;
     this.camYawOffset = 0;
+    // Vehicle controls are vehicle-relative: put the camera behind it so A/D match screen left/right.
+    if (newMode !== prevMode && newMode !== "walk") this.camYaw = this.yaw;
 
     this._updateModeAndCamBadges();
 
