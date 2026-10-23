@@ -40,6 +40,8 @@ MOD_ID_MAP = {
     'src/features/traffic_graph.js': '__MOD_traffic_graph',
     'src/features/water_shore.js': '__MOD_water_shore',
     'src/features/street_worker.js': '__MOD_street_worker',
+    'src/features/koppen_grid.js': '__MOD_koppen_grid',  # [feature/climate-flora]
+    'src/features/flora_climate.js': '__MOD_flora_climate',  # [feature/climate-flora]
     'src/features/vegetation_worker.js': '__MOD_vegetation_worker',
     'src/features/places_worker.js': '__MOD_places_worker',
     'src/features/water_physics.js': '__MOD_water_physics',
@@ -57,6 +59,8 @@ MOD_ID_MAP = {
     'src/features/heli_flight.js': '__MOD_heli_flight',
     'src/features/fullscreen.js': '__MOD_fullscreen',
     'src/features/city_traffic.js': '__MOD_city_traffic',
+    'src/features/vehicle_damage.js': '__MOD_vehicle_damage',  # [car-explosions]
+    'src/features/walker_weapons.js': '__MOD_walker_weapons',  # [walker-weapons]
     'src/features/map_tiles.js': '__MOD_map_tiles',
     'src/features/route_graph.js': '__MOD_route_graph',
     'src/features/street_furniture.js': '__MOD_street_furniture',
@@ -113,6 +117,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/index.js': '__MOD_landmarks_models_index',  # [release-6]
     'src/features/landmarks/models/liberty.js': '__MOD_landmarks_models_liberty',  # [release-6]
     'src/features/landmarks/kit.js': '__MOD_landmarks_kit',  # [release-6]
+    'src/features/landmarks/cn_arch.js': '__MOD_landmarks_cn_arch',  # [beijing-landmarks]
     'src/features/landmarks/models/empire.js': '__MOD_landmarks_models_empire',  # [release-6]
     'src/features/landmarks/models/chrysler.js': '__MOD_landmarks_models_chrysler',  # [release-6]
     'src/features/landmarks/models/onewtc.js': '__MOD_landmarks_models_onewtc',  # [release-6]
@@ -147,6 +152,23 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/khafre.js': '__MOD_landmarks_models_khafre',  # [release-6]
     'src/features/landmarks/models/menkaure.js': '__MOD_landmarks_models_menkaure',  # [release-6]
     'src/features/landmarks/models/sphinx.js': '__MOD_landmarks_models_sphinx',  # [release-6]
+    # [beijing-landmarks] Hand-built Beijing landmark ensemble models
+    'src/features/landmarks/models/tiananmen.js': '__MOD_landmarks_models_tiananmen',
+    'src/features/landmarks/models/taflagpole.js': '__MOD_landmarks_models_taflagpole',
+    'src/features/landmarks/models/heroesmonument.js': '__MOD_landmarks_models_heroesmonument',
+    'src/features/landmarks/models/maomausoleum.js': '__MOD_landmarks_models_maomausoleum',
+    'src/features/landmarks/models/greathall.js': '__MOD_landmarks_models_greathall',
+    'src/features/landmarks/models/natmuseum.js': '__MOD_landmarks_models_natmuseum',
+    'src/features/landmarks/models/zhengyangmen.js': '__MOD_landmarks_models_zhengyangmen',
+    'src/features/landmarks/models/qianmenarrow.js': '__MOD_landmarks_models_qianmenarrow',
+    'src/features/landmarks/models/forbiddencity.js': '__MOD_landmarks_models_forbiddencity',
+    'src/features/landmarks/models/jingshan.js': '__MOD_landmarks_models_jingshan',
+    'src/features/landmarks/models/beihaidagoba.js': '__MOD_landmarks_models_beihaidagoba',
+    'src/features/landmarks/models/qiniandian.js': '__MOD_landmarks_models_qiniandian',
+    'src/features/landmarks/models/birdsnest.js': '__MOD_landmarks_models_birdsnest',
+    'src/features/landmarks/models/watercube.js': '__MOD_landmarks_models_watercube',
+    'src/features/landmarks/models/chinazun.js': '__MOD_landmarks_models_chinazun',
+    'src/features/landmarks/models/cctv.js': '__MOD_landmarks_models_cctv',
     'src/main.js': '__MOD_main',
 }
 
@@ -319,6 +341,8 @@ def build_world_explorer_html():
   b64_dem = gz_b64((ROOT / 'data/beijing_dem.json').read_bytes())
   b64_nav = gz_b64((ROOT / 'data/nav_graph.json').read_bytes())
   b64_lod = gz_b64(pack_lod_soa())
+  sd_path = ROOT / 'data/street_detail_sf.json'  # [street-detail] precomputed OSM street nodes for the SF start
+  b64_sd = gz_b64(sd_path.read_bytes()) if sd_path.exists() else ''
   b64_fstrip = base64.b64encode((ROOT / 'assets/facades/facade_strip.jpg').read_bytes()).decode('ascii')
   b64_fmask = base64.b64encode((ROOT / 'assets/facades/facade_mask_strip.jpg').read_bytes()).decode('ascii')
   b64_dstrip = base64.b64encode((ROOT / 'assets/doors/door_strip.jpg').read_bytes()).decode('ascii')
@@ -437,6 +461,12 @@ await (async function bootstrapWorldExplorer() {
     if (url.includes('nav_graph.json')) {
       return new Response(navText, { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
+    if (url.includes('street_detail_sf.json')) {
+      const el = document.getElementById('b64-street-detail');
+      if (!el || !el.textContent.trim()) return new Response('', { status: 404 });
+      const sdBytes = await gunzipBase64ToBytes('b64-street-detail');
+      return new Response(sdBytes, { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (url.includes('city_buildings_lod.bin')) {
       return new Response(lodBuf, { status: 200, headers: { 'Content-Type': 'application/octet-stream' } });
     }
@@ -463,6 +493,7 @@ await (async function bootstrapWorldExplorer() {
   <script type="application/octet-stream" id="b64-nav">{b64_nav}</script>
   <script type="application/octet-stream" id="b64-lod-soa">{b64_lod}</script>
   <script type="application/octet-stream" id="b64-worker">{b64_worker}</script>
+  <script type="application/octet-stream" id="b64-street-detail">{b64_sd}</script>
   <script>
   window.__EMBEDDED_FACADE_STRIP__ = "data:image/jpeg;base64,{b64_fstrip}";
   window.__EMBEDDED_FACADE_MASK_STRIP__ = "data:image/jpeg;base64,{b64_fmask}";

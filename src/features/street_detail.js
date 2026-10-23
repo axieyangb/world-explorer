@@ -9,19 +9,30 @@
 //                   same night bulbs/halos/pools, same signal phase logic); nearby procedural duplicates are dropped.
 //   - crossings  -> one instanced zebra-stripe mesh (mid-block crossings only; junctions already have them).
 //   - a few real PointLights follow the nearest real lamps at night.
-// Requests: <= 1 in flight, mirror rotation + exponential backoff on 429/502/503/504, memory + IndexedDB cache.
+// Requests: ONE compact CSV query per missing area (the whole inner 3x3 in one bbox; split into rows, then single
+// tiles, only if the big query fails), mirror health tracking (Retry-After, per-mirror backoff, hedged second
+// mirror after HEDGE_MS), memory + IndexedDB cache, idle prefetch of the 3x3 ahead of travel, and a bundled
+// precomputed seed (data/street_detail_sf.json) for the default San Francisco start.
 // If Overpass is unreachable nothing changes: the procedural street furniture simply stays as it was.
 import * as THREE from '../../vendor/three.module.js';
 import { getDaylight } from './daylight.js';
 import { getBeijingTerrainElevation } from '../environment.js';
-import { INST_STRIDE, SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM } from './vegetation_worker.js';
+import { INST_STRIDE, SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_AUTO } from './vegetation_worker.js';
 import { resolveStreetRegion } from './street_worker.js';
 
+// Keyless + CORS (Access-Control-Allow-Origin: *) Overpass instances. Health is tracked per mirror at runtime.
 const MIRRORS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
+const CH_MIRROR = 'https://overpass.osm.ch/api/interpreter'; // Switzerland-only extract: used (first) inside CH only
+const inSwitzerland = (lat, lon) => lat > 45.8 && lat < 47.85 && lon > 5.9 && lon < 10.5;
+const REQ_TIMEOUT_MS = 90000; // busy public instances often queue a request 60-110 s before answering
+const HEDGE_MS = 12000; // no answer yet -> also ask the next healthy mirror; first answer wins, the other is aborted
+const SEED_URL = '/data/street_detail_sf.json';
+const SEED_NEAR = (lat, lon) => Math.abs(lat - 37.78) < 0.25 && Math.abs(lon + 122.42) < 0.3;
 const TZ = 15; // ~1 km tiles at mid latitudes
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 const DB_NAME = 'we_street_detail';
@@ -41,13 +52,34 @@ const LEFT_HAND = new Set(['jp', 'uk', 'au']);
 const MAX_STRIPES = 6000;
 const N_LIGHTS = 2;
 
+// CSV output with only the tags compactOsm() reads: ~5-10x smaller than JSON `out qt` with all tags.
+const COLS = [
+  '::lat', '::lon', 'natural', 'highway', 'emergency', 'amenity', 'genus', 'species', 'taxon', 'species:en', 'genus:en',
+  'taxon:en', 'leaf_type', 'height', 'est_height', 'crossing', 'crossing:markings', 'crossing_ref', 'fire_hydrant:type',
+  'traffic_signals',
+];
 const QUERY = (s, w, n, e) =>
-  `[out:json][timeout:25][bbox:${s},${w},${n},${e}];(` +
+  `[out:csv(${COLS.map((c) => (c.startsWith('::') ? c : `"${c}"`)).join(',')};false)][timeout:25][bbox:${s},${w},${n},${e}];(` +
   'node["natural"="tree"];' +
   'node["highway"~"^(street_lamp|traffic_signals|crossing)$"];' +
   'node["emergency"="fire_hydrant"];' +
   'node["amenity"~"^(bench|waste_basket)$"];' +
   ');out qt;';
+
+/** Overpass CSV (QUERY) -> [{ type, lat, lon, tags }] nodes for compactOsm(). */
+function parseCsv(text) {
+  const els = [];
+  for (const line of text.split('\n')) {
+    const p = line.split('\t');
+    if (p.length < COLS.length) continue;
+    const lat = parseFloat(p[0]), lon = parseFloat(p[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const tags = {};
+    for (let i = 2; i < COLS.length; i++) if (p[i]) tags[COLS[i]] = p[i];
+    els.push({ type: 'node', lat, lon, tags });
+  }
+  return els;
+}
 
 // ------------------------------------------------------------------------------------------------ tiles
 function lonToTileX(lon, z) { return Math.floor(((lon + 180) / 360) * 2 ** z); }
@@ -65,12 +97,15 @@ function tileBBox(x, y, z) {
 const PALM_RE = /palm|phoenix|washingtonia|syagrus|trachycarpus|archontophoenix|cocos|roystonea|butia|sabal|chamaerops/;
 const CONIFER_RE = /pinus|pine|cupressus|cypress|sequoia|redwood|cedrus|cedar|picea|spruce|abies|\bfir\b|junip|thuja|taxus|podocarpus|araucaria|cryptomeria|chamaecyparis|larix|larch/;
 const TALL_RE = /eucalyptus|platanus|plane|populus|poplar|lophostemon|ginkgo|liriodendron|melaleuca|sycamore|tulip/;
+const BROADLEAF_RE = /broadleaf|broadleaved|quercus|oak|acer|maple|fagus|beech|betula|birch|fraxinus|ash|ulmus|elm|tilia|lime|linden|castanea|chestnut|salix|willow|prunus|cherry|magnolia|citrus|ficus|jacaranda|sophora|malus|pyrus|alnus|carpinus|juglans|carya/;
+
 function treeSpecies(t) {
   const s = `${t.genus || ''} ${t.species || ''} ${t.taxon || ''} ${t['species:en'] || ''} ${t['genus:en'] || ''} ${t['taxon:en'] || ''}`.toLowerCase();
-  if (PALM_RE.test(s)) return SP_PALM;
+  if (PALM_RE.test(s) || t.leaf_type === 'palm') return SP_PALM;
   if (t.leaf_type === 'needleleaved' || CONIFER_RE.test(s)) return SP_CONIFER;
   if (TALL_RE.test(s)) return SP_TALL;
-  return SP_BROADLEAF;
+  if (t.leaf_type === 'broadleaved' || BROADLEAF_RE.test(s) || Boolean(t.genus || t.species || t.taxon)) return SP_BROADLEAF;
+  return SP_AUTO; // untagged OSM tree -> local climate palette
 }
 const num = (v) => {
   const f = parseFloat(v);
@@ -257,10 +292,18 @@ export class StreetDetail {
     this.mem = new Map(); // tileKey -> compact data (LRU by insertion)
     this.placed = new Map(); // tileKey -> placement (world coords for current origin)
     this.failed = new Map(); // tileKey -> retry-after timestamp
-    this.inflight = null;
-    this.mirror = 0;
+    this.inflight = null; // tile keys of the request in flight
+    this.mirrors = MIRRORS.map((url) => ({ url, until: 0, fails: 0, ok: 0, ms: 0 }));
+    this.chMirror = { url: CH_MIRROR, until: 0, fails: 0, ok: 0, ms: 0 };
+    this.group = 9; // tiles per request: 9 (whole 3x3) -> 3 (row) -> 1 after failures, grows back on success
+    this.okStreak = 0;
     this.backoff = 0;
     this.nextAt = 0;
+    this.seed = null; // tileKey -> compact data (bundled precomputed area)
+    this.seedState = 0; // 0 not tried, 1 loading, 2 done
+    this.ahead = []; // tiles to prefetch when idle (3x3 ahead of travel)
+    this._lastLL = null;
+    this._vel = [0, 0]; // smoothed tile-space velocity (tiles/s)
     this.active = [];
     this.originKey = '';
     this.version = 0;
@@ -302,61 +345,191 @@ export class StreetDetail {
     this._lampHeads = [];
     this._lightAcc = 0;
 
-    this.stats = { tiles: 0, pending: 0, fetches: 0, errors: 0, cached: 0, trees: 0, lamps: 0, hydrants: 0, benches: 0, bins: 0, signals: 0, crossings: 0, stripes: 0, mirror: MIRRORS[0], placeMs: 0, lastError: '' };
+    this.stats = { tiles: 0, pending: 0, fetches: 0, errors: 0, cached: 0, trees: 0, lamps: 0, hydrants: 0, benches: 0, bins: 0, signals: 0, crossings: 0, stripes: 0, mirror: '', placeMs: 0, lastError: '', seeded: 0, prefetched: 0, requests: 0 };
   }
 
   // ---------------------------------------------------------------------------------------------- fetching
   _pump(now) {
-    if (this.inflight || now < this.nextAt) return;
-    // active is ordered center-first; failed tiles are retried after their backoff
-    const key = this.active.find((k) => !this.mem.has(k) && (this.failed.get(k) || 0) <= now);
-    if (!key) return;
-    this.inflight = key;
-    this._load(key).finally(() => {
+    if (this.inflight || now < this.nextAt || this.seedState === 1) return;
+    const ready = (k) => !this.mem.has(k) && (this.failed.get(k) || 0) <= now;
+    let keys = this.active.filter(ready); // center-first
+    let prefetch = false;
+    if (!keys.length) {
+      keys = this.ahead.filter(ready);
+      prefetch = true;
+    }
+    if (!keys.length) return;
+    // One request for the whole missing area; after a failure shrink to the first key's row, then to one tile.
+    if (this.group === 3) keys = keys.filter((k) => k.split('/')[1] === keys[0].split('/')[1]);
+    else if (this.group === 1) keys = [keys[0]];
+    this.inflight = keys;
+    this._loadGroup(keys, prefetch).finally(() => {
       this.inflight = null;
     });
   }
 
-  async _load(key) {
-    const cached = await dbGet(key);
-    if (cached && Date.now() - cached.t < CACHE_TTL_MS) {
-      this.stats.cached++;
-      this._remember(key, cached.d);
+  async _loadGroup(keys, prefetch) {
+    const stale = new Map();
+    const need = [];
+    for (const k of keys) {
+      const sd = this.seed && this.seed.get(k);
+      if (sd) {
+        this.stats.seeded++;
+        this._remember(k, sd);
+        continue;
+      }
+      const c = await dbGet(k);
+      if (c && Date.now() - c.t < CACHE_TTL_MS) {
+        this.stats.cached++;
+        this._remember(k, c.d);
+        continue;
+      }
+      if (c) stale.set(k, c.d);
+      need.push(k);
+    }
+    if (!need.length) return;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const k of need) {
+      const [x, y] = k.split('/').map(Number);
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    const sw = tileBBox(x0, y1, TZ), ne = tileBBox(x1, y0, TZ);
+    const lat = (sw.s + ne.n) / 2, lon = (sw.w + ne.e) / 2;
+    const now = performance.now();
+    const mirrors = this._healthy(now, lat, lon);
+    if (!mirrors.length) {
+      // every mirror is cooling down: wait for the first one (not this area's fault, no split)
+      this.nextAt = Math.min(...this._mirrorsFor(lat, lon).map((m) => m.until));
+      for (const [k, d] of stale) this._remember(k, d); // stale cache beats nothing
       return;
     }
-    const [x, y] = key.split('/').map(Number);
-    const b = tileBBox(x, y, TZ);
-    const q = QUERY(b.s.toFixed(6), b.w.toFixed(6), b.n.toFixed(6), b.e.toFixed(6));
-    const url = MIRRORS[this.mirror];
+    const q = QUERY(sw.s.toFixed(6), sw.w.toFixed(6), ne.n.toFixed(6), ne.e.toFixed(6));
     this.stats.fetches++;
     try {
-      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timer = ctl ? setTimeout(() => ctl.abort(), 35000) : 0;
-      const res = await fetch(url, {
-        method: 'POST',
-        body: 'data=' + encodeURIComponent(q),
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal: ctl ? ctl.signal : undefined,
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      const d = compactOsm(json);
+      const text = await this._request(q, mirrors);
+      const buckets = new Map(need.map((k) => [k, []]));
+      for (const el of parseCsv(text)) {
+        const b = buckets.get(`${lonToTileX(el.lon, TZ)}/${latToTileY(el.lat, TZ)}`);
+        if (b) b.push(el);
+      }
+      const t = Date.now();
+      for (const [k, els] of buckets) {
+        const d = compactOsm({ elements: els });
+        this._remember(k, d);
+        dbPut(k, { t, d });
+        this.failed.delete(k);
+      }
+      if (prefetch) this.stats.prefetched += need.length;
       this.backoff = 0;
+      if (++this.okStreak >= 3 && this.group < 9) {
+        this.group *= 3;
+        this.okStreak = 0;
+      }
       this.nextAt = performance.now() + MIN_GAP_MS;
-      this._remember(key, d);
-      dbPut(key, { t: Date.now(), d });
     } catch (err) {
-      // Busy / rate limited / offline: rotate mirror, back off exponentially, retry the tile later.
       this.stats.errors++;
       this.stats.lastError = String((err && err.message) || err).slice(0, 80);
-      this.mirror = (this.mirror + 1) % MIRRORS.length;
-      this.stats.mirror = MIRRORS[this.mirror];
-      this.backoff = Math.min(60000, this.backoff ? this.backoff * 2 : 4000);
-      this.nextAt = performance.now() + this.backoff;
-      this.failed.set(key, performance.now() + this.backoff * 2);
-      if (cached) this._remember(key, cached.d); // stale cache beats nothing
+      this.okStreak = 0;
+      if (need.length > 1 && this.group > 1) {
+        // big area failed on every mirror: split it and retry soon
+        this.group = this.group === 9 ? 3 : 1;
+        this.nextAt = performance.now() + 1000;
+      } else {
+        this.backoff = Math.min(60000, this.backoff ? this.backoff * 2 : 4000);
+        this.nextAt = performance.now() + this.backoff;
+        for (const k of need) this.failed.set(k, performance.now() + this.backoff * 2);
+      }
+      for (const [k, d] of stale) this._remember(k, d); // stale cache beats nothing
     }
+  }
+
+  _mirrorsFor(lat, lon) {
+    return inSwitzerland(lat, lon) ? [this.chMirror, ...this.mirrors] : this.mirrors;
+  }
+
+  /** Mirrors not cooling down, best first (fewest recent failures, then fastest; CH mirror first inside CH). */
+  _healthy(now, lat, lon) {
+    const list = this._mirrorsFor(lat, lon).filter((m) => m.until <= now);
+    const ch = list[0] === this.chMirror ? [list.shift()] : [];
+    list.sort((a, b) => a.fails - b.fails || (a.ms || 9e9) - (b.ms || 9e9));
+    return ch.concat(list);
+  }
+
+  _penalize(m, err) {
+    const now = performance.now();
+    const ra = err && err.retryAfter;
+    m.fails++;
+    m.until = now + (ra > 0 ? Math.min(180, ra) * 1000 : Math.min(120000, 5000 * 2 ** (m.fails - 1)));
+  }
+
+  /**
+   * POSTs q to the best mirror; on failure rotates to the next one immediately, and if no answer arrives within
+   * HEDGE_MS also asks the next mirror in parallel. Resolves with the first good body, rejects when all failed.
+   */
+  _request(q, mirrors) {
+    return new Promise((resolve, reject) => {
+      let done = false, pending = 0, idx = 0, lastErr = null;
+      const ctls = [];
+      const finishFail = () => {
+        if (!done && pending === 0 && idx >= mirrors.length) {
+          done = true;
+          clearInterval(hedge);
+          reject(lastErr || new Error('no mirror'));
+        }
+      };
+      const launch = () => {
+        if (done || idx >= mirrors.length) return;
+        const m = mirrors[idx++];
+        pending++;
+        this.stats.requests++;
+        const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (ctl) ctls.push(ctl);
+        const t0 = performance.now();
+        const timer = ctl ? setTimeout(() => ctl.abort(), REQ_TIMEOUT_MS) : 0;
+        fetch(m.url, {
+          method: 'POST',
+          body: 'data=' + encodeURIComponent(q),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          signal: ctl ? ctl.signal : undefined,
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              const e = new Error(`HTTP ${res.status} ${new URL(m.url).hostname}`);
+              e.retryAfter = parseFloat(res.headers.get('Retry-After'));
+              throw e;
+            }
+            const text = await res.text();
+            if (/^\s*</.test(text)) throw new Error(`bad body ${new URL(m.url).hostname}`); // HTML error page
+            return text;
+          })
+          .then(
+            (text) => {
+              clearTimeout(timer);
+              pending--;
+              m.fails = 0;
+              m.ok++;
+              m.ms = m.ms ? m.ms * 0.6 + (performance.now() - t0) * 0.4 : performance.now() - t0;
+              if (done) return;
+              done = true;
+              clearInterval(hedge);
+              this.stats.mirror = new URL(m.url).hostname;
+              for (const c of ctls) if (c !== ctl) c.abort();
+              resolve(text);
+            },
+            (err) => {
+              clearTimeout(timer);
+              pending--;
+              if (done) return; // aborted because another mirror already answered
+              lastErr = err && err.name === 'AbortError' ? new Error(`timeout ${new URL(m.url).hostname}`) : err;
+              this._penalize(m, err);
+              launch(); // rotate on failure
+              finishFail();
+            },
+          );
+      };
+      const hedge = setInterval(launch, HEDGE_MS);
+      launch();
+    });
   }
 
   _remember(key, d) {
@@ -647,6 +820,8 @@ export class StreetDetail {
       this.active = active;
       this._dirty = true;
     }
+    if (!this.seedState && SEED_NEAR(lat, lon)) this._loadSeed();
+    this._updateAhead(lon, lat, tx, ty);
     this.stats.pending = active.filter((k) => !this.mem.has(k)).length;
 
     // (Re)place at most one tile per tick: new data, new origin, or its chunks changed
@@ -711,8 +886,55 @@ export class StreetDetail {
     }
   }
 
+  /** Bundled precomputed tiles for the default SF area (works offline and in the static bundle). */
+  _loadSeed() {
+    this.seedState = 1;
+    fetch(SEED_URL)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j && j.z === TZ && j.tiles) this.seed = new Map(Object.entries(j.tiles));
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.seedState = 2;
+      });
+  }
+
+  /** Tracks travel direction (tile space) and lists the 3x3 two tiles ahead for idle prefetch. */
+  _updateAhead(lon, lat, tx, ty) {
+    const n = 2 ** TZ;
+    const fx = ((lon + 180) / 360) * n;
+    const r = (lat * Math.PI) / 180;
+    const fy = ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n;
+    const now = performance.now();
+    if (this._lastLL) {
+      const dt = Math.max(0.05, (now - this._lastLL[2]) / 1000);
+      const k = 0.3;
+      this._vel[0] = this._vel[0] * (1 - k) + ((fx - this._lastLL[0]) / dt) * k;
+      this._vel[1] = this._vel[1] * (1 - k) + ((fy - this._lastLL[1]) / dt) * k;
+    }
+    this._lastLL = [fx, fy, now];
+    const [vx, vy] = this._vel;
+    const sp = Math.hypot(vx, vy);
+    this.ahead = [];
+    if (sp < 0.004 || sp > 2) return; // ~ <4 m/s (standing) or a teleport jump
+    const ux = Math.round(vx / sp), uy = Math.round(vy / sp);
+    const cx = tx + 2 * ux, cy = ty + 2 * uy;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const key = `${cx + dx}/${cy + dy}`;
+        if (!this.active.includes(key)) this.ahead.push(key);
+      }
+    }
+  }
+
   debugStats() {
-    return { ...this.stats, inflight: this.inflight, backoffMs: this.backoff, active: this.active.length, memTiles: this.mem.size };
+    const now = performance.now();
+    const mirrors = this.mirrors.map((m) => `${new URL(m.url).hostname.split('.').slice(-3, -1).join('.')}:${m.ok}/${m.fails}${m.until > now ? '*' : ''}`).join(' ');
+    return {
+      ...this.stats, inflight: this.inflight && this.inflight.length, group: this.group, backoffMs: this.backoff,
+      active: this.active.length, memTiles: this.mem.size, ahead: this.ahead.length, seedTiles: this.seed ? this.seed.size : 0, mirrors,
+    };
   }
 }
 

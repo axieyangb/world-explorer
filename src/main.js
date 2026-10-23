@@ -48,6 +48,7 @@ import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
 import { getWeaponSfx } from "./features/weapon_sfx.js";
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
 import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
+import { initWalkerWeapons } from "./features/walker_weapons.js";
 import {
   getLang,
   setLang,
@@ -276,6 +277,9 @@ class WorldExplorerApp {
     this.avatarMesh = createPlayerAvatarModel();
     this.avatarMesh.visible = false;
     this.scene.add(this.avatarMesh);
+    this.walker = this.avatarMesh;
+    this.createVehicleModel = createVehicleModel;
+    this.walkerWeapons = initWalkerWeapons(this);
 
     this.heliMesh = createHelicopterModel();
     this.heli = null; // feature/heli-gta: created once scene/camera exist (see _ensureHeli)
@@ -422,7 +426,7 @@ class WorldExplorerApp {
         y: Number(this.pos.y.toFixed(2)),
         groundY: Number(getBeijingTerrainElevation(this.pos.x, this.pos.z).toFixed(2)), // [integration] test probe
         z: Math.round(this.pos.z),
-        road: getLang() === "en" ? translateRoadName(this.currentRoadName) : this.currentRoadName,
+        road: this._roadDisplayName(this.currentRoadName),
         layer: this.currentLayer,
         loadedChunks: this.loadedChunks.size,
         pendingChunks: this.pendingChunks.size,
@@ -632,6 +636,7 @@ class WorldExplorerApp {
     }
     if (bestS) {
       this.currentRoadName = streetName || bestS.name || this.currentRoadName;
+      this._noteRoadZh(bestS);
       if (this.mode !== "helicopter") {
         this.pos.set(
           (bestS.x1 + bestS.x2) * 0.5,
@@ -1400,6 +1405,7 @@ class WorldExplorerApp {
         this.camYawOffset = 0;
         this.camPivot.copy(this.pos);
         this.currentRoadName = label || bestS.name;
+        this._noteRoadZh(bestS);
         this.currentLayer = bestS.layer;
       }
     } else {
@@ -1409,6 +1415,7 @@ class WorldExplorerApp {
       if (surf) {
         exactY = surf.y;
         this.currentRoadName = surf.seg.name || label || t("map_teleport_label");
+        this._noteRoadZh(surf.seg);
         this.currentLayer = surf.seg.layer;
       } else if (bldgCeil !== null) {
         exactY = Math.max(exactY, bldgCeil + 0.22);
@@ -1513,6 +1520,7 @@ class WorldExplorerApp {
       const groundY = Math.max(surf ? Math.max(surf.y, minTerrY) : minTerrY, roofY + 0.12);
       if (surf) {
         this.currentRoadName = surf.seg.name;
+        this._noteRoadZh(surf.seg);
         this.currentLayer = surf.seg.layer;
       }
       if (this.pos.y <= groundY) {
@@ -1530,16 +1538,22 @@ class WorldExplorerApp {
         const swing = Math.sin(this.walkAnimTime) * 0.65;
         if (leftLeg) leftLeg.rotation.x = swing;
         if (rightLeg) rightLeg.rotation.x = -swing;
-        if (leftArm) leftArm.rotation.x = -swing * 0.8;
-        if (rightArm) rightArm.rotation.x = swing * 0.8;
+        if (!this.walkerWeapons) {
+          if (leftArm) leftArm.rotation.x = -swing * 0.8;
+          if (rightArm) rightArm.rotation.x = swing * 0.8;
+        }
       } else {
         if (leftLeg) leftLeg.rotation.x = 0;
         if (rightLeg) rightLeg.rotation.x = 0;
-        if (leftArm) leftArm.rotation.x = 0;
-        if (rightArm) rightArm.rotation.x = 0;
+        if (!this.walkerWeapons) {
+          if (leftArm) leftArm.rotation.x = 0;
+          if (rightArm) rightArm.rotation.x = 0;
+        }
       }
-      if (leftArm) leftArm.rotation.z = 0;
-      if (rightArm) rightArm.rotation.z = 0;
+      if (!this.walkerWeapons) {
+        if (leftArm) leftArm.rotation.z = 0;
+        if (rightArm) rightArm.rotation.z = 0;
+      }
 
       if (this._punchTimer > 0) {
         this._punchTimer = Math.max(0, this._punchTimer - dt);
@@ -1579,6 +1593,10 @@ class WorldExplorerApp {
     if (this.water.updateDrive(dt)) { // fix/water: sinking + respawn sequence, engine input disabled
       this.nitroActive = false;
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
+      return;
+    }
+    if (this.vehicleDamage && this.vehicleDamage.updateDrive(dt)) { // [car-explosions] car destroyed -> respawn
+      this.nitroActive = false;
       return;
     }
     const spec = VEHICLE_SPECS[this.vehicleIdx];
@@ -1700,6 +1718,7 @@ class WorldExplorerApp {
     this.water.recordSafe(dt, centerSup.surf); // fix/water: respawn pose
     if (centerSup.surf) {
       this.currentRoadName = centerSup.surf.seg.name;
+      this._noteRoadZh(centerSup.surf.seg);
       this.currentLayer = centerSup.surf.seg.layer;
     } else {
       this.currentLayer = 0;
@@ -1772,7 +1791,7 @@ class WorldExplorerApp {
             : isUtility
               ? this.camMode === "street" ? 2.05 : 2.35
               : this.camMode === "street" ? 1.65 : 1.95;
-      const pitch = THREE.MathUtils.clamp(this.camPitch, 0.05, 1.18);
+      const pitch = THREE.MathUtils.clamp(this.camPitch, isWalk ? -0.55 : 0.05, 1.18);
       const viewYaw = this.camYaw + this.camYawOffset;
 
       let armScale = 1.0;
@@ -1829,9 +1848,20 @@ class WorldExplorerApp {
     }
   }
 
+  // [road-names-zh] remember the segment's native/Chinese name (only set when it differs from the EN-first name)
+  _noteRoadZh(seg) {
+    this._roadZh = seg && seg.nameZh ? { en: seg.name, zh: seg.nameZh } : null;
+  }
+
+  // [road-names-zh] pick the road label for the current language at display time
+  _roadDisplayName(raw) {
+    if (getLang() === "en") return translateRoadName(raw);
+    return this._roadZh && this._roadZh.en === raw ? this._roadZh.zh : raw;
+  }
+
   _updateHud() {
     const roadRaw = this.currentRoadName || t("urban_road_fallback");
-    const streetText = getLang() === "en" ? translateRoadName(roadRaw) : roadRaw;
+    const streetText = this._roadDisplayName(roadRaw);
     const cityText = this.currentCityName || "Beijing, CN";
 
     const pillTextEl = document.getElementById("location-pill-text");
@@ -1913,6 +1943,20 @@ class WorldExplorerApp {
         this._ensureHeli().toggleAutoLand();
       } else if (e.code === "KeyX" && !e.repeat && this.mode === "helicopter") {
         this._ensureHeli().fireRockets();
+      } else if (e.code === "KeyR" && !e.repeat && this.mode === "walk") {
+        if (this.walkerWeapons) this.walkerWeapons.cycleWeapon();
+      } else if (e.code === "KeyX" && !e.repeat) {
+        if (this.mode === "walk" && this.walkerWeapons) this.walkerWeapons.quickFireRpg();
+        else if (this.isDrivingTank() && this.walkerWeapons) this.walkerWeapons.fireTankCannon();
+      } else if (e.code === "Space") {
+        if (this.mode === "walk" && this.walkerWeapons) {
+          this.walkerWeapons.isFiring = true;
+          this.walkerWeapons.fireCurrentWeapon();
+        } else if (this.isDrivingTank() && this.walkerWeapons) {
+          this.walkerWeapons.fireTankCannon();
+        }
+      } else if (e.code === "KeyQ" && this.mode === "walk") {
+        this.camPitch = THREE.MathUtils.clamp(this.camPitch - 0.08, -0.55, 1.18);
       } else if (e.code === "KeyF" && !e.repeat) {
         if (this.mode === "helicopter") {
           if (this.heliLanded || (this.heli && this.heli.state.grounded)) {
@@ -1931,13 +1975,29 @@ class WorldExplorerApp {
       } else if (e.code === "KeyE" && !e.repeat && this.mode === "walk" && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
         this.setMode("helicopter");
       } else if (e.code === "KeyC" && !e.repeat) {
-        this.setMode(this.mode === "helicopter" ? (this.heliLanded ? "walk" : "drive") : "helicopter");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.cyclePlayableUnit();
+        } else {
+          this.setMode(this.mode === "helicopter" ? (this.heliLanded ? "walk" : "drive") : "helicopter");
+        }
       } else if (e.code === "Digit1" && !e.repeat) {
-        this.setMode("drive");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.setPlayableUnit("heli");
+        } else {
+          this.setMode("drive");
+        }
       } else if (e.code === "Digit2" && !e.repeat) {
-        this.setMode("walk");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.setPlayableUnit("tank");
+        } else {
+          this.setMode("walk");
+        }
       } else if (e.code === "Digit3" && !e.repeat) {
-        this.setMode("helicopter");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.setPlayableUnit("soldier");
+        } else {
+          this.setMode("helicopter");
+        }
       } else if (e.code === "Digit4" && !e.repeat) {
         this.setMode("kaiju");
       } else if (e.code === "KeyV") {
@@ -1968,6 +2028,9 @@ class WorldExplorerApp {
 
     window.addEventListener("keyup", (e) => {
       this.keys.delete(e.code);
+      if (e.code === "Space" && this.walkerWeapons) {
+        this.walkerWeapons.isFiring = false;
+      }
     });
     // A key released while the page/canvas lost focus never sends keyup; drop all held keys instead.
     const releaseAll = () => {
@@ -1990,6 +2053,13 @@ class WorldExplorerApp {
       isDragging = e.button === 0 || e.button === 2;
       if (e.button === 0 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
         this._ensureHeli().pressTrigger(e.clientX, e.clientY); // hold to fire the cannon
+      } else if (e.button === 0 && this.mode === "walk" && this.walkerWeapons) {
+        this.walkerWeapons.isFiring = true;
+        this.walkerWeapons.fireCurrentWeapon();
+      } else if (e.button === 2 && this.mode === "walk" && this.walkerWeapons) {
+        this.walkerWeapons.quickFireRpg();
+      } else if (e.button === 0 && this.isDrivingTank() && this.walkerWeapons) {
+        this.walkerWeapons.fireTankCannon();
       }
       const pop = document.getElementById("mode-vehicle-menu");
       if (pop) pop.classList.add("hidden");
@@ -2006,7 +2076,7 @@ class WorldExplorerApp {
       pointerDownY = e.clientY;
 
       this.camYaw -= dx * 0.005;
-      this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0042, 0.05, 1.18);
+      this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0042, this.mode === "walk" ? -0.55 : 0.05, 1.18);
       this.lastMouseOrbitTime = performance.now();
     });
 
@@ -2025,11 +2095,9 @@ class WorldExplorerApp {
 
     this.canvas.addEventListener("click", (e) => {
       if (e.button === 0 && this.mode === "walk") {
-        if (performance.now() - (this._lastPointerPunchAt || 0) > 80) {
-          const moveDist = Math.hypot((e.clientX || 0) - pointerStartX, (e.clientY || 0) - pointerStartY);
-          if (moveDist < 6) {
-            this.triggerPlayerPunch();
-          }
+        const moveDist = Math.hypot((e.clientX || 0) - pointerStartX, (e.clientY || 0) - pointerStartY);
+        if (moveDist < 6 && this.walkerWeapons) {
+          this.walkerWeapons.fireCurrentWeapon();
         }
       }
     });
@@ -2037,6 +2105,7 @@ class WorldExplorerApp {
     window.addEventListener("pointerup", () => {
       isDragging = false;
       if (this.heli) this.heli.cancelTrigger();
+      if (this.walkerWeapons) this.walkerWeapons.isFiring = false;
     });
 
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -2071,8 +2140,12 @@ class WorldExplorerApp {
         : "W/S Move · A/D Turn · Q/E Alt · ←/→ Strafe · Space Cannon · F Rockets · L Land";
     } else if (this.mode === "walk") {
       text = zh
-        ? "WASD 步行 · Shift 疾跑 · 空格 跳跃 · F/点击 出拳 · E 驾车 · C 直升机"
-        : "WASD Walk · Shift Run · Space Jump · F/Click Punch · E Drive · C Heli";
+        ? "WASD 移动 · Shift 疾跑 · 空格 射击 · X 火箭筒 · R 切枪 · F 出拳 · E 驾车"
+        : "WASD Walk · Shift Run · Space Shoot · X RPG · R Weapon · F Punch · E Drive";
+    } else if (this.isDrivingTank()) {
+      text = zh
+        ? "WASD 驾驶 · 空格/左键 120mm主炮 · Shift 加速 · V 换车 · E 下车"
+        : "WASD Drive · Space/LClick 120mm Cannon · Shift Boost · V Vehicle · E Exit";
     } else {
       text = zh
         ? "WASD 驾驶 · Shift 加速 · 空格 刹车 · V 换车 · H 喇叭/警笛 · E 夺车/下车 · C 直升机"
@@ -2157,9 +2230,9 @@ class WorldExplorerApp {
     }
   }
 
-  setMode(rawMode) {
+  setMode(rawMode, keepKaiju = false) {
     if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
-    if (this.kaiju && this.kaiju.active) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
+    if (this.kaiju && this.kaiju.active && !keepKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
@@ -2168,6 +2241,7 @@ class WorldExplorerApp {
     this.camYawOffset = 0;
     // Vehicle controls are vehicle-relative: put the camera behind it so A/D match screen left/right.
     if (newMode !== prevMode && newMode !== "walk") this.camYaw = this.yaw;
+    if (this.walkerWeapons) this.walkerWeapons.onModeChange(newMode, prevMode);
 
     this._updateModeAndCamBadges();
 
@@ -2336,6 +2410,10 @@ class WorldExplorerApp {
         this.setMode("walk");
       }
     }
+  }
+
+  isDrivingTank() {
+    return Boolean(this.mode === "drive" && this.vehicleMesh && this.vehicleMesh.userData && this.vehicleMesh.userData.isTank);
   }
 
   triggerPlayerPunch() {
@@ -2695,6 +2773,7 @@ class WorldExplorerApp {
     const dt = this.kaiju ? this.kaiju.scaleDt(rawDt) : rawDt; // [kaiju] pause / death slow-mo
     this._updatePhysics(dt);
     if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
+    if (this.walkerWeapons) this.walkerWeapons.update(dt);
     this._updateCamera(dt);
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
     if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]

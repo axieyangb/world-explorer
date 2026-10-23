@@ -4,7 +4,7 @@ import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
 import { extractVenues } from "./features/venues.js"; // [venues]
-import { makeLandmarkSuppressor } from "./features/landmarks/registry.js"; // feature/famous-landmarks
+import { makeLandmarkSuppressor, LANDMARKS, landmarkWorldXZ } from "./features/landmarks/registry.js"; // feature/famous-landmarks
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -552,7 +552,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   for (const t of tiles) {
     for (const f of t.transportation_name || []) {
       const nm = f.tags["name:en"] || f.tags.name_en || f.tags["name:latin"] || f.tags.name || "";
-      const nmZh = f.tags.name || nm;
+      const nmZh = f.tags["name:zh-Hans"] || f.tags["name:zh"] || f.tags.name || nm; // [road-names-zh] native/Chinese name
       const subCls = f.tags.subclass || "";
       const rawCls = f.tags.class || "";
       if (subCls === "junction" || rawCls === "junction") {
@@ -721,6 +721,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           cls,
           rawCls,
           name: f.tags["name:en"] || f.tags.name_en || f.tags.name || "",
+          nameZh: f.tags["name:zh-Hans"] || f.tags["name:zh"] || f.tags.name || "", // [road-names-zh]
           ref: f.tags.ref || "",
           lanes,
           widthM,
@@ -744,7 +745,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   const intersectionNodes = new Map();
 
   for (const r of rawRoads) {
-    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, isContext, unpaved } = r; // [fix/bridge-continuity] isContext, [terrain-roads] unpaved
+    let { id, cls, rawCls, name, nameZh, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, isContext, unpaved } = r; // [fix/bridge-continuity] isContext, [terrain-roads] unpaved
 
     const isPedOrService = cls === "footway" || cls === "pedestrian" || cls === "steps" || cls === "cycleway" || cls === "service";
     if (!isPedOrService && (!name || !ref) && namedRoadSamples.length > 0) {
@@ -770,7 +771,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         const d2 = Math.min(dMid, dQ1, dQ2);
         if (d2 < bestD2) {
           bestD2 = d2;
-          if (!name && ns.name) name = ns.name;
+          if (!name && ns.name) { name = ns.name; nameZh = ns.nameZh; }
           if (!ref && ns.ref) ref = ns.ref;
         }
       }
@@ -809,7 +810,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
 
     if (isContext) {
-      roadContext.push([id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]);
+      roadContext.push([id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0, nameZh && nameZh !== name ? nameZh : ""]);
       continue;
     }
 
@@ -830,7 +831,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       }
     }
 
-    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]; // [11] unpaved [terrain-roads]
+    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0, nameZh && nameZh !== name ? nameZh : ""]; // [11] unpaved [terrain-roads], [12] native/zh name when != name [road-names-zh]
     roads.push(roadTuple);
   }
 
@@ -1342,6 +1343,17 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   }
 
   const venues = extractVenues(tiles, toLocalXZ, buildings); // [venues] also drops stadium shell buildings
+  // feature/beijing-landmarks: a hand-built landmark (e.g. the Bird's Nest) replaces the generic stadium venue
+  if (lmSuppress && venues && venues.stadiums) {
+    venues.stadiums = venues.stadiums.filter((st) => {
+      const fo = st.outer;
+      if (!fo || fo.length < 6) return true;
+      let sx = 0, sz = 0;
+      for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
+      const n = fo.length / 2;
+      return !lmSuppress(ox + sx / n, oz + sz / n);
+    });
+  }
   return {
     roads,
     road_context: roadContext, // fix/bridge-continuity: approach context for computeRoadLiftProfiles only
@@ -1355,7 +1367,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     facilities,
     highwayJunctions,
     osm_trees: [],
-    vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
+    vegetation: { lat: centerLat, lon: centerLon, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
     places: extractPlaceFeatures(tiles, toLocalXZ, origin), // feature/places
     rail: extractRailFeatures(tiles, tileXY, toLocalXZ), // [feature/rail-transit]
   };
@@ -1464,7 +1476,34 @@ export async function fetchGlobalDem(centerLat, centerLon) {
     }
   }
 
+  // Max-preserving summits: point-sampling at 200 m shaves narrow peaks (e.g. Matterhorn, Corcovado). At each grid
+  // node that is a local maximum, keep the highest raw DEM sample within its +-100 m cell instead.
+  const raw = elevations.slice();
+  for (let iz = 1; iz < gridSize - 1; iz++) {
+    for (let ix = 1; ix < gridSize - 1; ix++) {
+      const i = iz * gridSize + ix, e = raw[i];
+      if (e < 30) continue;
+      let isMax = true;
+      for (let dz = -1; dz <= 1 && isMax; dz++) for (let dx = -1; dx <= 1; dx++) if ((dx || dz) && raw[i + dz * gridSize + dx] > e) { isMax = false; break; }
+      if (!isMax) continue;
+      const wz = minWorld + iz * stepM, wx = minWorld + ix * stepM;
+      let m = e;
+      for (let sz = -100; sz <= 100; sz += 20) {
+        for (let sx = -100; sx <= 100; sx += 20) {
+          m = Math.max(m, sampleRawAsl(centerLat - (wz + sz) / mPerDegLat, centerLon + (wx + sx) / mPerDegLon) - baseAslM);
+        }
+      }
+      elevations[i] = Math.round(m * 10) / 10;
+    }
+  }
+
   const osmPeaks = [];
+  // Landmarks with a known ground elevation (registry `ele`) get a summit bump where the DEM is too low/misplaced.
+  for (const l of LANDMARKS) {
+    if (!l.on || !Number.isFinite(l.ele)) continue;
+    const p = landmarkWorldXZ(l, origin);
+    if (p) osmPeaks.push([l.name, p[0], p[1], l.ele - baseAslM]);
+  }
   if (Math.abs(centerLat - 37.82) < 0.35 && Math.abs(centerLon - -122.44) < 0.35) {
     const addPeak = (name, pLat, pLon, relEle) => {
       const wx = Math.round((pLon - centerLon) * mPerDegLon);

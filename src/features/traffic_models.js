@@ -92,7 +92,7 @@ export function createCarMaterial(uniforms, matOpts = {}) {
       )
       .replace(
         '#include <color_vertex>',
-        '#include <color_vertex>\n  vColor.rgb = mix(vColor.rgb, iPaint.rgb * (aPaint > 0.85 ? 1.0 : 0.8), step(0.01, aPaint) * iPaint.a);\n  vEmit = aEmit;\n  vBrake = iBrake;'
+        '#include <color_vertex>\n  vColor.rgb = mix(vColor.rgb, iPaint.rgb * (aPaint > 0.85 ? 1.0 : 0.8), step(0.01, aPaint) * iPaint.a);\n  float vChar = clamp(-iBrake, 0.0, 1.0);\n  vColor.rgb *= 1.0 - 0.88 * vChar;\n  vEmit = vChar > 0.9 ? 0.0 : aEmit;\n  vBrake = max(iBrake, 0.0);'
       );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uLights;\nuniform float uStrobeTime;\nvarying float vEmit;\nvarying float vBrake;')
@@ -109,7 +109,7 @@ export function createCarMaterial(uniforms, matOpts = {}) {
   }`
       );
   };
-  mat.customProgramCacheKey = () => `we-traffic-car-v2-${roughness}-${metalness}`;
+  mat.customProgramCacheKey = () => `we-traffic-car-v3-${roughness}-${metalness}`;
   return mat;
 }
 

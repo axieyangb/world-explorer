@@ -55,6 +55,10 @@ export class KaijuMode {
     this.paused = false;
     this.time = 0;
     this.heli = { health: CFG.HELI_HP, lives: CFG.LIVES, alive: true, invuln: 0 };
+    this.activeUnit = 'heli';
+    this.unitHealth = { heli: CFG.HELI_HP, tank: CFG.HELI_HP * 1.5, soldier: CFG.HELI_HP * 0.6 };
+    this.unitMaxHealth = { heli: CFG.HELI_HP, tank: CFG.HELI_HP * 1.5, soldier: CFG.HELI_HP * 0.6 };
+    this._unitDeathT = 0;
     this.stats = { cannonShots: 0, cannonHits: 0, missilesFired: 0, missileHits: 0, weakHits: 0, startTime: 0 };
 
     this.fx = null;
@@ -65,6 +69,7 @@ export class KaijuMode {
     this.supply = null;
     this.super = null;
     this.kaiju = null;
+      this.monster = null;
     this._systemsReady = false;
 
     this._introT = 0;
@@ -97,6 +102,7 @@ export class KaijuMode {
     this._crash = { t: 0, impactT: -1, velY: 0, vx: 0, vz: 0, spin: 0, yaw: 0, smokeT: 0 };
     this._crashPos = new THREE.Vector3();
     this._tmpV = new THREE.Vector3();
+    this.config = CFG;
     this._aimRay = { origin: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1) };
     this._gunner = 0; // 0..1 blend
     this._aimPos = new THREE.Vector3();
@@ -244,7 +250,10 @@ export class KaijuMode {
       this._call(this.audio, "play", "heliHit", { pos: this.app.pos, gain: source === "breath" || source === "laser" ? 0.6 : 1 });
       this.shake(source === "tail" || source === "body" ? 0.55 : source === "laser" ? 0.3 : 0.18);
     }
-    if (this.heli.health <= 0) this._killHeli(source);
+    if (this.heli.health <= 0) {
+      if (this.activeUnit === "heli") this._killHeli(source);
+      else this._killGroundUnit(source);
+    }
   }
 
   // ---------------------------------------------------------------- dodge
@@ -515,6 +524,10 @@ export class KaijuMode {
     setTimeout(() => this._blurButtons(), 0);
     this._placeHeli(app.pos.x, app.pos.z, CFG.SPAWN_HELI_ALT, app.yaw);
     document.body.classList.add("kaiju-active");
+    this.activeUnit = "heli";
+    this.unitHealth = { heli: CFG.HELI_HP, tank: CFG.HELI_HP * 1.5, soldier: CFG.HELI_HP * 0.6 };
+    this.unitMaxHealth = { heli: CFG.HELI_HP, tank: CFG.HELI_HP * 1.5, soldier: CFG.HELI_HP * 0.6 };
+    this._call(this.hud, "setUnit", "heli");
     this._call(this.hud, "show");
     if (typeof app._updateModeAndCamBadges === "function") app._updateModeAndCamBadges();
     const pop = document.getElementById("mode-vehicle-menu");
@@ -614,6 +627,7 @@ export class KaijuMode {
       spawn = { x: app.pos.x + Math.sin(a) * CFG.SPAWN_DIST, z: app.pos.z + Math.cos(a) * CFG.SPAWN_DIST, fromWater: false, targetX: app.pos.x, targetZ: app.pos.z };
     }
     this.kaiju = safeNew(Kaiju, this, "Kaiju");
+    this.monster = this.kaiju;
     this._call(this.kaiju, "spawn", spawn);
     this._call(this.destruction, "beginTracking", spawn.x, spawn.z, CFG.CITY_TRACK_RADIUS);
     this._call(this.crowd, "activate");
@@ -629,6 +643,10 @@ export class KaijuMode {
     app.lastMouseOrbitTime = 0;
     this._camYaw = yaw;
     this._yawAimLead = 0;
+    this._userYawOffset = 0;
+    this._lastCamYawRecorded = yaw;
+    this._camLookTarget = null;
+    this._aimInit = false;
     app.heliMesh.rotation.y = yaw;
 
     this.state = "intro";
@@ -656,6 +674,92 @@ export class KaijuMode {
     this._call(this.audio, "stopAll");
     this._resetDodge();
     this._forcedCity = 0;
+  }
+
+  setPlayableUnit(unitId) {
+    if (!this.active || this.activeUnit === unitId) return;
+    if (unitId !== "heli" && unitId !== "tank" && unitId !== "soldier") return;
+
+    const prevUnit = this.activeUnit;
+    if (this.unitHealth) this.unitHealth[prevUnit] = this.heli.health;
+    this.activeUnit = unitId;
+
+    const maxHp = (this.unitMaxHealth && this.unitMaxHealth[unitId]) || CFG.HELI_HP;
+    this.heli.health = (this.unitHealth && this.unitHealth[unitId]) || maxHp;
+    this.heli.alive = true;
+    this._unitDeathT = 0;
+    this._releaseWeapons();
+
+    const app = this.app;
+    const k = this.kaiju;
+    const kp = k && k.position ? k.position : { x: app.pos.x, z: app.pos.z + 100 };
+    const curAngle = Math.atan2(app.pos.x - kp.x, app.pos.z - kp.z) || 0;
+
+    if (unitId === "tank") {
+      app.setMode("drive", true);
+      app.selectVehicleById("tank");
+      const dist = 95;
+      const tx = kp.x + Math.sin(curAngle) * dist;
+      const tz = kp.z + Math.cos(curAngle) * dist;
+      const ty = getBeijingTerrainElevation(tx, tz) + 0.22;
+      const yaw = Math.atan2(kp.x - tx, kp.z - tz);
+      app.pos.set(tx, ty, tz);
+      app.yaw = yaw;
+      app.camYaw = yaw;
+      app.camPitch = 0.24;
+      app.speed = 0;
+      if (app.vehicleMesh) {
+        app.vehicleMesh.visible = true;
+        app.vehicleMesh.position.copy(app.pos);
+        app.vehicleMesh.rotation.y = yaw;
+      }
+      if (app.heliMesh) app.heliMesh.visible = false;
+      if (app.avatarMesh) app.avatarMesh.visible = false;
+    } else if (unitId === "soldier") {
+      app.setMode("walk", true);
+      const dist = 75;
+      const sx = kp.x + Math.sin(curAngle) * dist;
+      const sz = kp.z + Math.cos(curAngle) * dist;
+      const sy = getBeijingTerrainElevation(sx, sz) + 0.12;
+      const yaw = Math.atan2(kp.x - sx, kp.z - sz);
+      app.pos.set(sx, sy, sz);
+      app.yaw = yaw;
+      app.camYaw = yaw;
+      app.camPitch = 0.18;
+      app.speed = 0;
+      if (app.avatarMesh) {
+        app.avatarMesh.visible = true;
+        app.avatarMesh.position.copy(app.pos);
+        app.avatarMesh.rotation.y = yaw;
+      }
+      if (app.heliMesh) app.heliMesh.visible = false;
+      if (app.vehicleMesh) app.vehicleMesh.visible = false;
+    } else if (unitId === "heli") {
+      app.setMode("helicopter", true);
+      if (typeof app._ensureHeli === "function") app._ensureHeli();
+      this._hookHeli();
+      const dist = 110;
+      const hx = kp.x + Math.sin(curAngle) * dist;
+      const hz = kp.z + Math.cos(curAngle) * dist;
+      const yaw = Math.atan2(kp.x - hx, kp.z - hz);
+      this._placeHeli(hx, hz, 90, yaw);
+      if (app.heliMesh) {
+        app.heliMesh.visible = true;
+        this._resetHeliMesh();
+      }
+      if (app.vehicleMesh) app.vehicleMesh.visible = false;
+      if (app.avatarMesh) app.avatarMesh.visible = false;
+    }
+
+    this._call(this.hud, "setUnit", unitId);
+    this._call(this.audio, "play", "equip", { gain: 0.65 });
+  }
+
+  cyclePlayableUnit() {
+    const order = ["heli", "tank", "soldier"];
+    const idx = order.indexOf(this.activeUnit || "heli");
+    const next = order[(idx + 1) % order.length];
+    this.setPlayableUnit(next);
   }
 
   _beginFight() {
@@ -849,6 +953,60 @@ export class KaijuMode {
     }
   }
 
+  _killGroundUnit(source) {
+    if (!this.active || !this.heli.alive) return;
+    if (this.state !== "intro" && this.state !== "fight") return;
+    this.heli.alive = false;
+    this.heli.health = 0;
+    this.heli.lives = Math.max(0, this.heli.lives - 1);
+    this._releaseWeapons();
+    this.app.keys?.clear?.();
+    this.app.speed = 0;
+    this._unitDeathT = 0;
+    if (this.activeUnit === "tank" && this.app.vehicleMesh) this.app.vehicleMesh.visible = false;
+    if (this.activeUnit === "soldier" && this.app.avatarMesh) this.app.avatarMesh.visible = false;
+    this._call(this.fx, "spawn", "bigExplosion", this.app.pos, { scale: 1.2 });
+    this._call(this.audio, "play", "explosion", { pos: this.app.pos, gain: 1.0 });
+    this._call(this.hud, "flashHit");
+    this.shake(0.85);
+  }
+
+  _respawnUnit() {
+    this.heli.alive = true;
+    const maxHp = (this.unitMaxHealth && this.unitMaxHealth[this.activeUnit]) || CFG.HELI_HP;
+    this.heli.health = maxHp;
+    this.heli.invuln = CFG.RESPAWN_INVULN;
+    if (this.activeUnit === "heli") {
+      this._respawn();
+      return;
+    }
+    const k = this.kaiju;
+    const kp = k && k.position ? k.position : { x: 0, z: 0 };
+    const a = Math.random() * Math.PI * 2;
+    const dist = this.activeUnit === "tank" ? 95 : 75;
+    const sx = kp.x + Math.sin(a) * dist;
+    const sz = kp.z + Math.cos(a) * dist;
+    const sy = getBeijingTerrainElevation(sx, sz) + (this.activeUnit === "tank" ? 0.22 : 0.12);
+    const yaw = Math.atan2(kp.x - sx, kp.z - sz);
+    this.app.pos.set(sx, sy, sz);
+    this.app.yaw = yaw;
+    this.app.camYaw = yaw;
+    this.app.speed = 0;
+    if (this.activeUnit === "tank") {
+      if (this.app.vehicleMesh) {
+        this.app.vehicleMesh.visible = true;
+        this.app.vehicleMesh.position.copy(this.app.pos);
+        this.app.vehicleMesh.rotation.y = yaw;
+      }
+    } else {
+      if (this.app.avatarMesh) {
+        this.app.avatarMesh.visible = true;
+        this.app.avatarMesh.position.copy(this.app.pos);
+        this.app.avatarMesh.rotation.y = yaw;
+      }
+    }
+  }
+
   _respawn() {
     const app = this.app;
     const k = this.kaiju;
@@ -884,7 +1042,7 @@ export class KaijuMode {
   _updateAmbient(dt) {
     if (!this.destruction) return;
     if (!this._ambient) {
-      if (this.app.mode !== "helicopter") return;
+      if (this.app.mode !== "helicopter" && this.app.mode !== "walk" && this.app.mode !== "drive") return;
       this._ambient = true;
       if (!this.fx) this.fx = safeNew(KaijuFx, this, "KaijuFx");
     }
@@ -903,11 +1061,26 @@ export class KaijuMode {
     if (!this.paused) {
       if (st === "intro" || st === "fight") this.time += dt;
       if (this.heli.invuln > 0) this.heli.invuln = Math.max(0, this.heli.invuln - dt);
-      this._updateDash(dt);
-      this._updateHeliFx(dt);
+      if (this.activeUnit === "heli") {
+        this._updateDash(dt);
+        this._updateHeliFx(dt);
+      }
 
-      if (!this.heli.alive && (st === "intro" || st === "fight")) this._updateCrash(dt);
-      else if (this.app.heliMesh && this.heli.alive) {
+      if (!this.heli.alive && (st === "intro" || st === "fight")) {
+        if (this.activeUnit === "heli") {
+          this._updateCrash(dt);
+        } else {
+          this._unitDeathT = (this._unitDeathT || 0) + dt;
+          if (this._unitDeathT >= CFG.RESPAWN_DELAY) {
+            this._unitDeathT = 0;
+            if (this.heli.lives <= 0) {
+              this._finish(false);
+              return;
+            }
+            this._respawnUnit();
+          }
+        }
+      } else if (this.activeUnit === "heli" && this.app.heliMesh && this.heli.alive) {
         const inv = this.heli.invuln;
         this.app.heliMesh.visible = inv <= 0 || Math.floor(inv * 12) % 2 === 0;
       }
@@ -960,41 +1133,181 @@ export class KaijuMode {
       ? (keys.has("KeyA") ? 1 : 0) - (keys.has("KeyD") ? 1 : 0)
       : 0;
 
+    // Track mouse camera orbit deltas (from main.js pointermove)
+    if (this._lastCamYawRecorded !== undefined) {
+      const userDyaw = wrap(this.app.camYaw - this._lastCamYawRecorded);
+      if (Math.abs(userDyaw) > 1e-4) {
+        this._userYawOffset = wrap((this._userYawOffset || 0) + userDyaw);
+      }
+    }
+    const mouseIdle = (performance.now() - (this.app.lastMouseOrbitTime || 0)) * 0.001;
+    if (mouseIdle > 2.8) {
+      this._userYawOffset = (this._userYawOffset || 0) * Math.exp(-2.2 * rawDt);
+    }
+    const userPitch = (this.app.camPitch !== undefined ? this.app.camPitch : 0.28) - 0.28;
+
+    const pivot = this.app.camPivot || this.app.pos;
+    const k = this.kaiju;
+    const hasKaiju = !!(k && (k.alive || this.state === "intro" || this.state === "fight" || this.state === "dying"));
+    let kTarget = null;
+    let distXZ = 140;
+    let frontFactor = 0;
+    let effectiveLock = 0;
+    let kaijuHeading = heliYaw;
+
+    if (hasKaiju) {
+      kTarget = (k.getLockPoint && k.getLockPoint()) || k._bound || k.target;
+      if (kTarget) {
+        const dx = kTarget.x - pivot.x;
+        const dy = kTarget.y - pivot.y;
+        const dz = kTarget.z - pivot.z;
+        distXZ = Math.hypot(dx, dz);
+        kaijuHeading = Math.atan2(dx, dz);
+        const yawDiff = wrap(kaijuHeading - heliYaw);
+        const coneCos = Math.cos(yawDiff);
+        // Kaiju in front hemisphere (within ~85 degrees)
+        frontFactor = Math.max(0, Math.min(1, (coneCos - 0.10) / 0.45));
+        const softWeight = CFG.SOFT_LOCK_WEIGHT > 0 ? CFG.SOFT_LOCK_WEIGHT : 0.65;
+        effectiveLock = softWeight * frontFactor;
+      }
+    }
+
     if (!this.paused && this.heli.alive) {
-      const kCam = 1 - Math.exp(-3.4 * Math.max(0.001, rawDt));
-      this._camYaw = wrap(this._camYaw + wrap(heliYaw - this._camYaw) * kCam);
+      const lockYawTarget = heliYaw + wrap(kaijuHeading - heliYaw) * (effectiveLock * 0.48);
+      const targetCamYaw = lockYawTarget + this._yawAimLead + (this._userYawOffset || 0);
+      const kCam = 1 - Math.exp(-4.2 * Math.max(0.001, rawDt));
+      this._camYaw = wrap(this._camYaw + wrap(targetCamYaw - this._camYaw) * kCam);
       this.app.camYaw = this._camYaw;
+      this._lastCamYawRecorded = this.app.camYaw;
 
       const targetLead = yawInput * 0.34;
       const kLead = 1 - Math.exp(-10.0 * Math.max(0.001, rawDt));
       this._yawAimLead += (targetLead - this._yawAimLead) * kLead;
     }
 
-    if (this.heli.alive && this.app.camMode !== "topdown") {
-      const pivot = this.app.camPivot || this.app.pos;
+    if (this.activeUnit === "heli") {
+      if (this.heli.alive && this.app.camMode !== "topdown") {
       const camDist = CFG.GUNNER_CAM_DIST || 16.5;
       const camUp = CFG.GUNNER_CAM_UP || 6.8;
       const cx = pivot.x - Math.sin(this._camYaw) * camDist;
       const cz = pivot.z - Math.cos(this._camYaw) * camDist;
       const cy = Math.max(getBeijingTerrainElevation(cx, cz) + 1.5, pivot.y + camUp);
       cam.position.set(cx, cy, cz);
-      cam.lookAt(
-        pivot.x + Math.sin(this._camYaw) * 100,
-        pivot.y + camUp + 2.4,
-        pivot.z + Math.cos(this._camYaw) * 100
-      );
+
+      // Camera look target with auto-focus & pitch elevation framing
+      const L = Math.max(70, Math.min(distXZ, 260));
+      const fwdX = pivot.x + Math.sin(this._camYaw) * L;
+      const fwdZ = pivot.z + Math.cos(this._camYaw) * L;
+      const fwdY = pivot.y + camUp + 2.0 - Math.tan(userPitch) * L;
+
+      let targetLookX = fwdX;
+      let targetLookY = fwdY;
+      let targetLookZ = fwdZ;
+
+      if (hasKaiju && kTarget && effectiveLock > 0) {
+        const kaijuLookY = kTarget.y + 4.5;
+        targetLookX = fwdX * (1 - effectiveLock) + kTarget.x * effectiveLock;
+        targetLookY = fwdY * (1 - effectiveLock) + kaijuLookY * effectiveLock;
+        targetLookZ = fwdZ * (1 - effectiveLock) + kTarget.z * effectiveLock;
+      }
+
+      if (!this._camLookTarget) {
+        this._camLookTarget = new THREE.Vector3(targetLookX, targetLookY, targetLookZ);
+      } else {
+        const kLook = 1 - Math.exp(-8.5 * Math.max(0.001, rawDt));
+        this._camLookTarget.x += (targetLookX - this._camLookTarget.x) * kLook;
+        this._camLookTarget.y += (targetLookY - this._camLookTarget.y) * kLook;
+        this._camLookTarget.z += (targetLookZ - this._camLookTarget.z) * kLook;
+      }
+      cam.lookAt(this._camLookTarget.x, this._camLookTarget.y, this._camLookTarget.z);
       cam.updateMatrixWorld();
 
-      const aimYaw = heliYaw + this._yawAimLead;
-      const aimDist = 140;
-      this.aimWorldPoint.set(
-        pivot.x + Math.sin(aimYaw) * aimDist,
-        pivot.y + camUp + 9.6,
-        pivot.z + Math.cos(aimYaw) * aimDist
-      );
+      // Crosshair & Aim Point
+      const camFwd = this._tmpCamFwd || (this._tmpCamFwd = new THREE.Vector3());
+      cam.getWorldDirection(camFwd);
+
+      const baseAimDir = this._tmpBaseAimDir || (this._tmpBaseAimDir = new THREE.Vector3());
+      baseAimDir.copy(camFwd);
+      const leadOffset = this._yawAimLead * 0.35;
+      if (Math.abs(leadOffset) > 1e-4) {
+        baseAimDir.applyAxisAngle(this._upVec || (this._upVec = new THREE.Vector3(0, 1, 0)), leadOffset);
+      }
+
+      // Check candidate target points: supply crates and Kaiju weak points / lock point
+      let bestTargetPt = null;
+      let bestAngle = (CFG.AIM_ASSIST_DEG || 8.5) * (Math.PI / 180);
+
+      // Check supply crates
+      if (this.supply?.drops) {
+        for (const d of this.supply.drops) {
+          if (!d.group || (!d.landed && d.y <= 0)) continue;
+          const dropPt = this._tmpCratePt || (this._tmpCratePt = new THREE.Vector3());
+          dropPt.set(d.x, d.y + 1.5, d.z);
+          const toDrop = this._tmpToTarget || (this._tmpToTarget = new THREE.Vector3());
+          toDrop.subVectors(dropPt, cam.position);
+          const dLen = toDrop.length();
+          if (dLen < 10 || dLen > 600) continue;
+          toDrop.multiplyScalar(1 / dLen);
+          const ang = Math.acos(Math.max(-1, Math.min(1, baseAimDir.dot(toDrop))));
+          if (ang < bestAngle) {
+            bestAngle = ang;
+            bestTargetPt = dropPt;
+          }
+        }
+      }
+
+      // Check Kaiju weak points
+      if (hasKaiju && k.hitSpheres) {
+        for (const s of k.hitSpheres) {
+          const toS = this._tmpToTarget || (this._tmpToTarget = new THREE.Vector3());
+          toS.subVectors(s.center, cam.position);
+          const sLen = toS.length();
+          if (sLen < 10 || sLen > CFG.CANNON_RANGE) continue;
+          toS.multiplyScalar(1 / sLen);
+          const bonus = s.weak ? 0.05 : 0;
+          const ang = Math.acos(Math.max(-1, Math.min(1, baseAimDir.dot(toS)))) - bonus;
+          if (ang < bestAngle) {
+            bestAngle = ang;
+            bestTargetPt = s.center;
+          }
+        }
+      }
+
+      // If no sphere selected, default to Kaiju lock point
+      if (!bestTargetPt && hasKaiju && frontFactor > 0.15) {
+        const lp = (k.getLockPoint && k.getLockPoint()) || kTarget;
+        if (lp) {
+          const toLp = this._tmpToTarget || (this._tmpToTarget = new THREE.Vector3());
+          toLp.subVectors(lp, cam.position);
+          const lpLen = toLp.length();
+          if (lpLen > 10) {
+            toLp.multiplyScalar(1 / lpLen);
+            const ang = Math.acos(Math.max(-1, Math.min(1, baseAimDir.dot(toLp))));
+            if (ang < (CFG.AIM_ASSIST_DEG || 8.5) * 1.6 * (Math.PI / 180)) {
+              bestTargetPt = lp;
+            }
+          }
+        }
+      }
+
+      const defaultAimDist = Math.max(80, Math.min(distXZ, 220));
+      const aimGoal = this._tmpAimGoal || (this._tmpAimGoal = new THREE.Vector3());
+      aimGoal.copy(cam.position).addScaledVector(baseAimDir, defaultAimDist);
+      if (bestTargetPt) {
+        aimGoal.lerp(bestTargetPt, 0.88);
+      }
+
+      if (!this._aimInit) {
+        this.aimWorldPoint.copy(aimGoal);
+        this._aimInit = true;
+      } else {
+        const kAim = 1 - Math.exp(-22.0 * Math.max(0.001, rawDt));
+        this.aimWorldPoint.lerp(aimGoal, kAim);
+      }
+
       const pr = this._projTmp.copy(this.aimWorldPoint).project(cam);
-      const ndcX = Math.max(-0.76, Math.min(0.76, pr.x));
-      const ndcY = Math.max(-0.50, Math.min(0.70, pr.y));
+      const ndcX = Math.max(-0.85, Math.min(0.85, pr.x));
+      const ndcY = Math.max(-0.70, Math.min(0.70, pr.y));
       const w = typeof window !== "undefined" ? window.innerWidth : 1280;
       const h = typeof window !== "undefined" ? window.innerHeight : 720;
       this.aimScreen.ndcX = ndcX;
@@ -1004,14 +1317,18 @@ export class KaijuMode {
       this.aimScreen.x = (this.aimScreen.xPct * 0.01) * w;
       this.aimScreen.y = (this.aimScreen.yPct * 0.01) * h;
       this._call(this.hud, "updateAim", this.aimScreen);
+      this._aimPos.copy(cam.position);
+      this._aimQuat.copy(cam.quaternion);
+      this._aimDir.copy(this.aimWorldPoint).sub(cam.position);
+      if (this._aimDir.lengthSq() > 1e-6) this._aimDir.normalize();
+      else cam.getWorldDirection(this._aimDir);
+      this._aimValid = true;
+    } else {
+      cam.getWorldDirection(this._aimDir);
+      this._aimPos.copy(cam.position);
+      this._aimValid = true;
     }
-
-    this._aimPos.copy(cam.position);
-    this._aimQuat.copy(cam.quaternion);
-    this._aimDir.copy(this.aimWorldPoint).sub(cam.position);
-    if (this._aimDir.lengthSq() > 1e-6) this._aimDir.normalize();
-    else cam.getWorldDirection(this._aimDir);
-    this._aimValid = true;
+    }
     if (this.paused) return;
     this._trauma = Math.max(0, this._trauma - rawDt * 0.9);
     if (this._trauma <= 0.001) return;
@@ -1046,6 +1363,23 @@ export class KaijuMode {
 
   _ptrSend(down) {
     const b = this._ptr.btn;
+    if (this.activeUnit === "tank") {
+      if (b === 0 && down && this.canFire) this.app.walkerWeapons?.fireTankCannon();
+      else if (b === 2 && down && this.canFire) this.app.walkerWeapons?.fireTankRocket();
+      return;
+    }
+    if (this.activeUnit === "soldier") {
+      if (b === 0) {
+        if (down && this.canFire) {
+          if (!this.app.walkerWeapons?.startFiring?.()) this.app.walkerWeapons?.fireCurrentWeapon();
+        } else {
+          this.app.walkerWeapons?.stopFiring?.();
+        }
+      } else if (b === 2 && down && this.canFire) {
+        this.app.walkerWeapons?.quickFireRpg();
+      }
+      return;
+    }
     const fn = down ? "onPointerDown" : "onPointerUp";
     this._call(this.weapons, fn, b);
     this._call(this.super, fn, b);
@@ -1095,6 +1429,75 @@ export class KaijuMode {
     if (!this.active) return;
     this._gesture();
     const code = e.code;
+
+    if (code === "Digit1" && down && !e.repeat) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      this.setPlayableUnit("heli");
+      return;
+    }
+    if (code === "Digit2" && down && !e.repeat) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      this.setPlayableUnit("tank");
+      return;
+    }
+    if (code === "Digit3" && down && !e.repeat) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      this.setPlayableUnit("soldier");
+      return;
+    }
+    if (code === "KeyC" && down && !e.repeat) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      this.cyclePlayableUnit();
+      return;
+    }
+
+    if (this.activeUnit === "tank") {
+      if (code === "Space") {
+        if (down && !e.repeat && this.canFire) this.app.walkerWeapons?.fireTankCannon();
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+      if (code === "KeyF" || code === "KeyX") {
+        if (down && !e.repeat && this.canFire) this.app.walkerWeapons?.fireTankRocket();
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+    } else if (this.activeUnit === "soldier") {
+      if (code === "Space") {
+        if (down && this.canFire) {
+          if (!this.app.walkerWeapons?.startFiring?.()) this.app.walkerWeapons?.fireCurrentWeapon();
+        } else {
+          this.app.walkerWeapons?.stopFiring?.();
+        }
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+      if (code === "KeyX") {
+        if (down && !e.repeat && this.canFire) this.app.walkerWeapons?.quickFireRpg();
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+      if (code === "KeyR") {
+        if (down && !e.repeat && this.canFire) this.app.walkerWeapons?.cycleWeapon();
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+      if (code === "KeyF") {
+        if (down && !e.repeat && this.canFire) this.app.triggerPunch?.();
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+    }
     if (!down) this.app.keys?.delete?.(code);
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "ArrowUp" || code === "ArrowDown") e.preventDefault(); // no page scroll; still reaches the heli
     if (down && !e.repeat && DASH_KEYS[code]) this._dashKey(code, e.shiftKey);

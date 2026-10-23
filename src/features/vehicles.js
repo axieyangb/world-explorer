@@ -76,6 +76,21 @@ export const NEW_VEHICLE_SPECS = [
     width: 2.32,
     hasSiren: true,
   },
+  {
+    id: 'tank',
+    name: 'Main Battle Tank',
+    massKg: 55000,
+    height: 2.60,
+    maxSpeed: 24.0,      // ~86 km/h heavy armored MBT
+    nitroMult: 1.50,
+    accel: 20.0,
+    brake: 50.0,
+    steerLow: 0.70,
+    steerHigh: 0.28,
+    length: 7.20,
+    width: 3.40,
+    isTank: true,
+  },
 ];
 
 const FLEET_IDS = new Set(NEW_VEHICLE_SPECS.map((s) => s.id));
@@ -951,6 +966,233 @@ export function buildFleetVehicleModel(typeId, options = {}) {
       nitroVfx.add(trail);
       vfxParts.trails.push(trail);
     }
+  } else if (typeId === 'tank') {
+    // =========================================================================
+    // 5. MAIN BATTLE TANK (MBT) — Heavy Armored Hull, Side Skirts, Continuous
+    //    Treads & Road Wheels, 360-deg Traversing Turret, 120mm Smoothbore Gun
+    // =========================================================================
+    const paintHex = options.paintColor != null ? options.paintColor : 0x47563c; // Olive Drab NATO armor green
+    const armorMat = new THREE.MeshStandardMaterial({ color: paintHex, roughness: 0.72, metalness: 0.32 });
+    const treadMat = new THREE.MeshStandardMaterial({ color: 0x181a1c, roughness: 0.88, metalness: 0.20 });
+    const trackGuardMat = new THREE.MeshStandardMaterial({ color: 0x343e2d, roughness: 0.70, metalness: 0.25 });
+    const gunMetalMat = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.40, metalness: 0.75 });
+    const opticMat = new THREE.MeshStandardMaterial({ color: 0x113344, roughness: 0.10, metalness: 0.90 });
+
+    // Lower armoured hull tub
+    const lowerHull = new THREE.Mesh(new THREE.BoxGeometry(2.40, 0.65, 5.80), armorMat);
+    lowerHull.position.set(0, 0.58, 0);
+    chassis.add(lowerHull);
+    paintMeshes.push(lowerHull);
+
+    // Front heavily sloped glacis plate
+    const glacis = new THREE.Mesh(new THREE.BoxGeometry(2.36, 0.38, 1.45), armorMat);
+    glacis.position.set(0, 0.88, 2.30);
+    glacis.rotation.x = -0.32;
+    chassis.add(glacis);
+    paintMeshes.push(glacis);
+
+    // Lower frontal plate (angled back under)
+    const lowerGlacis = new THREE.Mesh(new THREE.BoxGeometry(2.36, 0.42, 0.85), armorMat);
+    lowerGlacis.position.set(0, 0.42, 2.70);
+    lowerGlacis.rotation.x = 0.45;
+    chassis.add(lowerGlacis);
+
+    // Rear engine deck with exhaust louvers
+    const engineDeck = new THREE.Mesh(new THREE.BoxGeometry(2.32, 0.25, 2.20), armorMat);
+    engineDeck.position.set(0, 0.92, -1.75);
+    chassis.add(engineDeck);
+    paintMeshes.push(engineDeck);
+
+    // Exhaust grilles (twin round/slotted vents on rear deck)
+    for (const sx of [-0.65, 0.65]) {
+      const vent = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.08, 12), gunMetalMat);
+      vent.position.set(sx, 1.06, -2.10);
+      chassis.add(vent);
+    }
+
+    // Rear fuel storage drums / stowage bins
+    for (const sx of [-0.75, 0.75]) {
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.75, 10), trackGuardMat);
+      drum.rotation.z = Math.PI * 0.5;
+      drum.position.set(sx, 0.82, -3.05);
+      chassis.add(drum);
+    }
+
+    // Armored side skirts (hanging over tracks on left and right)
+    for (const sx of [-1.48, 1.48]) {
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.58, 6.00), trackGuardMat);
+      skirt.position.set(sx, 0.58, 0);
+      chassis.add(skirt);
+
+      // Top mudguard track cover
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.08, 6.20), trackGuardMat);
+      guard.position.set(sx > 0 ? sx - 0.20 : sx + 0.20, 0.88, 0);
+      chassis.add(guard);
+
+      // Front & rear rubber mudflaps
+      const flapF = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.42, 0.06), treadMat);
+      flapF.position.set(sx > 0 ? sx - 0.20 : sx + 0.20, 0.50, 3.12);
+      chassis.add(flapF);
+      const flapR = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.42, 0.06), treadMat);
+      flapR.position.set(sx > 0 ? sx - 0.20 : sx + 0.20, 0.50, -3.12);
+      chassis.add(flapR);
+    }
+
+    // Continuous caterpillar treads (left & right tread boxes)
+    for (const sx of [-1.28, 1.28]) {
+      const topTread = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.07, 5.80), treadMat);
+      topTread.position.set(sx, 0.82, 0);
+      chassis.add(topTread);
+      const botTread = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.07, 5.60), treadMat);
+      botTread.position.set(sx, 0.05, 0);
+      chassis.add(botTread);
+      const fCurve = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.07, 0.95), treadMat);
+      fCurve.position.set(sx, 0.44, 2.92);
+      fCurve.rotation.x = -0.78;
+      chassis.add(fCurve);
+      const rCurve = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.07, 0.95), treadMat);
+      rCurve.position.set(sx, 0.44, -2.92);
+      rCurve.rotation.x = 0.78;
+      chassis.add(rCurve);
+    }
+
+    // 12 Road Wheels (6 on each side)
+    const roadWheelZ = [2.2, 1.3, 0.4, -0.5, -1.4, -2.3];
+    for (const wz of roadWheelZ) {
+      for (const sx of [-1.28, 1.28]) {
+        const { pivot, wheelMesh } = buildDetailedWheel(0.38, 0.38, treadMat, rimMat, 'standard');
+        pivot.position.set(sx, 0.42, wz);
+        group.add(pivot);
+        wheels.push(wheelMesh);
+        if (wz === 2.2) frontSteerPivots.push(pivot);
+      }
+    }
+
+    // Headlights (armored brush-guarded LED clusters)
+    for (const sx of [-0.95, 0.95]) {
+      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 0.08), headLightMat);
+      hl.position.set(sx, 0.96, 2.84);
+      chassis.add(hl);
+    }
+    // Taillights
+    for (const sx of [-1.05, 1.05]) {
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.10, 0.06), tailLightMat);
+      tl.position.set(sx, 0.85, -2.96);
+      chassis.add(tl);
+    }
+
+    // =========================================================================
+    // TURRET (360-degree yaw rotation)
+    // =========================================================================
+    const turret = new THREE.Group();
+    turret.position.set(0, 1.05, -0.15);
+    chassis.add(turret);
+
+    const turretMain = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.62, 2.85), armorMat);
+    turretMain.position.set(0, 0.31, 0);
+    turret.add(turretMain);
+    paintMeshes.push(turretMain);
+
+    const cheekGeom = new THREE.BoxGeometry(1.05, 0.58, 1.25);
+    const leftCheek = new THREE.Mesh(cheekGeom, armorMat);
+    leftCheek.position.set(-0.62, 0.31, 1.38);
+    leftCheek.rotation.y = -0.22;
+    turret.add(leftCheek);
+    paintMeshes.push(leftCheek);
+
+    const rightCheek = new THREE.Mesh(cheekGeom, armorMat);
+    rightCheek.position.set(0.62, 0.31, 1.38);
+    rightCheek.rotation.y = 0.22;
+    turret.add(rightCheek);
+    paintMeshes.push(rightCheek);
+
+    const bustle = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.52, 1.20), trackGuardMat);
+    bustle.position.set(0, 0.34, -1.82);
+    turret.add(bustle);
+
+    const cupola = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.42, 0.20, 12), trackGuardMat);
+    cupola.position.set(0.55, 0.68, -0.20);
+    turret.add(cupola);
+
+    const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.05, 12), armorMat);
+    hatch.position.set(0.55, 0.79, -0.20);
+    turret.add(hatch);
+
+    const mgGroup = new THREE.Group();
+    mgGroup.position.set(0.55, 0.95, -0.05);
+    const mgBody = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.12, 0.48), gunMetalMat);
+    mgGroup.add(mgBody);
+    const mgBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.55, 8), gunMetalMat);
+    mgBarrel.rotation.x = Math.PI * 0.5;
+    mgBarrel.position.set(0, 0.02, 0.48);
+    mgGroup.add(mgBarrel);
+    const mgAmmo = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.16), trackGuardMat);
+    mgAmmo.position.set(-0.10, -0.02, 0.05);
+    mgGroup.add(mgAmmo);
+    turret.add(mgGroup);
+
+    const sightBox = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.28, 0.36), trackGuardMat);
+    sightBox.position.set(-0.62, 0.72, 0.65);
+    turret.add(sightBox);
+    const sightLens = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.14), opticMat);
+    sightLens.position.set(-0.62, 0.74, 0.84);
+    turret.add(sightLens);
+
+    for (const sx of [-0.85, 0.85]) {
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 2.20, 6), darkMetal);
+      ant.position.set(sx, 1.60, -1.80);
+      ant.rotation.x = -0.12;
+      turret.add(ant);
+    }
+
+    // =========================================================================
+    // 120mm SMOOTHBORE MAIN GUN (Gun mantlet & elevation barrel)
+    // =========================================================================
+    const barrelGroup = new THREE.Group();
+    barrelGroup.position.set(0, 0.32, 1.45);
+    turret.add(barrelGroup);
+
+    const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.42, 0.55), armorMat);
+    mantlet.position.set(0, 0, 0.15);
+    barrelGroup.add(mantlet);
+    paintMeshes.push(mantlet);
+
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 4.40, 16), gunMetalMat);
+    barrel.rotation.x = Math.PI * 0.5;
+    barrel.position.set(0, 0, 2.45);
+    barrelGroup.add(barrel);
+
+    const evacuator = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.65, 14), armorMat);
+    evacuator.rotation.x = Math.PI * 0.5;
+    evacuator.position.set(0, 0, 2.65);
+    barrelGroup.add(evacuator);
+    paintMeshes.push(evacuator);
+
+    const muzzleBrake = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.35, 14), gunMetalMat);
+    muzzleBrake.rotation.x = Math.PI * 0.5;
+    muzzleBrake.position.set(0, 0, 4.65);
+    barrelGroup.add(muzzleBrake);
+
+    const muzzlePoint = new THREE.Object3D();
+    muzzlePoint.position.set(0, 0, 4.85);
+    barrelGroup.add(muzzlePoint);
+
+    for (const sx of [-0.65, 0.65]) {
+      const plume = createThrusterFlameCone(0.36, 4.8, 0xffd060, 0xff5500);
+      plume.position.set(sx, 0.75, -3.20);
+      nitroVfx.add(plume);
+      vfxParts.plumes.push(plume);
+
+      const trail = createSpeedTrailRibbon(0.24, 11.0, 0xff8800, 0.8);
+      trail.position.set(sx, 1.05, -3.10);
+      nitroVfx.add(trail);
+      vfxParts.trails.push(trail);
+    }
+
+    group.userData.turret = turret;
+    group.userData.barrel = barrelGroup;
+    group.userData.muzzlePoint = muzzlePoint;
+    group.userData.isTank = true;
   }
 
   group.traverse((obj) => {
@@ -961,6 +1203,7 @@ export function buildFleetVehicleModel(typeId, options = {}) {
   });
 
   group.userData = {
+    ...group.userData,
     typeId,
     chassis,
     wheels,

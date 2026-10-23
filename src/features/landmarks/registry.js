@@ -5,6 +5,8 @@
  * that the model's local -Z "front" faces), real height (m, ground to tip), and the suppression footprint
  * in model-local metres: { r } circle or { hw, hd } box (rotated by heading). OSM buildings whose centroid
  * falls inside the footprint are dropped so the hand-built model replaces them. `on: false` = not built yet.
+ * Optional `ele` = real ground elevation (m ASL) at the centre: the DEM is lifted there with a smooth summit bump
+ * when the coarse/misregistered DEM is too low (e.g. Corcovado).
  */
 export const LANDMARKS = [
   // --- New York
@@ -32,7 +34,7 @@ export const LANDMARKS = [
   { id: "spaceneedle", name: "Space Needle", nameZh: "太空针塔", lat: 47.62051, lon: -122.3493, heading: 0, height: 184, supp: { r: 24 }, on: true },
   { id: "gatewayarch", name: "Gateway Arch", nameZh: "圣路易斯拱门", lat: 38.62468, lon: -90.1849, heading: 108, height: 192, supp: { hw: 104, hd: 26 }, on: true },
   { id: "cntower", name: "CN Tower", nameZh: "加拿大国家电视塔", lat: 43.64257, lon: -79.38706, heading: 0, height: 553, supp: { r: 34 }, on: true },
-  { id: "christ", name: "Christ the Redeemer", nameZh: "基督救世主像", lat: -22.95192, lon: -43.21244, heading: 100, height: 38, supp: { r: 16 }, yOff: 12, on: true },
+  { id: "christ", name: "Christ the Redeemer", nameZh: "基督救世主像", lat: -22.9519, lon: -43.2105, heading: 100, height: 38, supp: { r: 30 }, ele: 710, on: true }, // ele: real ground ASL; Terrarium puts Corcovado ~150 m west and ~60 m low, so fetchGlobalDem lifts terrain here
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },
@@ -47,6 +49,24 @@ export const LANDMARKS = [
   { id: "khafre", name: "Pyramid of Khafre", nameZh: "哈夫拉金字塔", lat: 29.97611, lon: 31.13083, heading: 0, height: 136, supp: { hw: 110, hd: 110 }, groundR: 115, on: true },
   { id: "menkaure", name: "Pyramid of Menkaure", nameZh: "孟卡拉金字塔", lat: 29.9725, lon: 31.12833, heading: 0, height: 61, supp: { hw: 54, hd: 54 }, groundR: 58, on: true },
   { id: "sphinx", name: "Great Sphinx", nameZh: "狮身人面像", lat: 29.97527, lon: 31.13764, heading: 90, height: 20, supp: { hw: 12, hd: 40 }, on: true },
+  // --- Beijing (feature/beijing-landmarks). WGS84 / OSM-aligned positions (NOT GCJ-02 map coords). `replaces` lists
+  // the old src/landmarks_40.js ids that are disabled while this entry is on (each landmark renders in one system only).
+  { id: "tiananmen", name: "Tiananmen Gate", nameZh: "天安门", lat: 39.907338, lon: 116.391265, heading: 178.25, height: 34.7, supp: { hw: 62, hd: 24 }, replaces: ["tiananmen_rostrum"], on: true, chip: true },
+  { id: "forbiddencity", name: "Forbidden City", nameZh: "故宫（紫禁城）", lat: 39.916662, lon: 116.390813, heading: 180, height: 35, supp: { hw: 378, hd: 482 }, replaces: ["wumen", "taihedian", "zhonghedian", "baohedian", "shenwumen"], on: true },
+  { id: "heroesmonument", name: "Monument to the People's Heroes", nameZh: "人民英雄纪念碑", lat: 39.902936, lon: 116.391492, heading: 180, height: 37.94, supp: { hw: 26, hd: 26 }, replaces: [], on: true },
+  { id: "greathall", name: "Great Hall of the People", nameZh: "人民大会堂", lat: 39.90344, lon: 116.387089, heading: 90, height: 46.5, supp: { hw: 160, hd: 105 }, replaces: ["great_hall_of_the_people"], on: true },
+  { id: "natmuseum", name: "National Museum of China", nameZh: "中国国家博物馆", lat: 39.903729, lon: 116.39579, heading: 270, height: 42.5, supp: { hw: 160, hd: 100 }, replaces: ["national_museum_of_china"], on: true },
+  { id: "maomausoleum", name: "Chairman Mao Memorial Hall", nameZh: "毛主席纪念堂", lat: 39.900774, lon: 116.391492, heading: 0, height: 33.6, supp: { hw: 52, hd: 52 }, replaces: [], on: true },
+  { id: "taflagpole", name: "Tiananmen Square Flagpole", nameZh: "天安门广场国旗", lat: 39.90643, lon: 116.39141, heading: 180, height: 32.6, supp: { r: 6 }, replaces: [], on: true },
+  { id: "zhengyangmen", name: "Zhengyangmen Gate", nameZh: "正阳门", lat: 39.899171, lon: 116.391492, heading: 180, height: 43.7, supp: { hw: 52, hd: 26 }, replaces: ["qianmen_gate"], on: true },
+  { id: "qianmenarrow", name: "Zhengyangmen Archery Tower", nameZh: "正阳门箭楼", lat: 39.898, lon: 116.391668, heading: 180, height: 35.4, supp: { hw: 34, hd: 20 }, replaces: ["zhengyangmen_arrow_tower"], on: true },
+  { id: "qiniandian", name: "Hall of Prayer for Good Harvests", nameZh: "祈年殿", lat: 39.882257, lon: 116.406623, heading: 180, height: 38, supp: { r: 50 }, replaces: ["temple_of_heaven_qiniandian"], on: true },
+  { id: "jingshan", name: "Wanchun Pavilion, Jingshan", nameZh: "景山万春亭", lat: 39.923524, lon: 116.390497, heading: 180, height: 62, supp: { r: 14 }, replaces: ["jingshan_wanchunting"], on: true },
+  { id: "beihaidagoba", name: "White Dagoba, Beihai", nameZh: "北海白塔", lat: 39.924425, lon: 116.383025, heading: 180, height: 35.9, supp: { r: 18 }, replaces: ["beihai_white_dagoba"], on: true },
+  { id: "birdsnest", name: "Beijing National Stadium (Bird's Nest)", nameZh: "国家体育场（鸟巢）", lat: 39.991459, lon: 116.390227, heading: 0, height: 69.2, supp: { hw: 165, hd: 150 }, replaces: ["birds_nest"], on: true },
+  { id: "watercube", name: "National Aquatics Center (Water Cube)", nameZh: "国家游泳中心（水立方）", lat: 39.991576, lon: 116.384172, heading: 0, height: 31, supp: { hw: 89, hd: 89 }, replaces: ["water_cube"], on: true },
+  { id: "cctv", name: "CCTV Headquarters", nameZh: "中央电视台总部大楼", lat: 39.913816, lon: 116.457966, heading: 0, height: 234, supp: { hw: 85, hd: 85 }, replaces: ["cctv_headquarters"], on: true },
+  { id: "chinazun", name: "CITIC Tower (China Zun)", nameZh: "中信大厦（中国尊）", lat: 39.911501, lon: 116.460238, heading: 0, height: 528, supp: { hw: 40, hd: 40 }, replaces: ["china_zun"], on: true },
 ];
 
 const _byId = new Map(LANDMARKS.map((l) => [l.id, l]));

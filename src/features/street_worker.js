@@ -372,12 +372,14 @@ class DecalBuf {
    * Emits a 2x2 subdivided road-surface decal centered at (cx, cz), oriented along unit tangent (tx, tz)
    * so cars drive right over it and drivers read it right-side up.
    */
-  add(cx, cz, tx, tz, widthM, lengthM, cellIdx, sampleY) {
+  add(cx, cz, tx, tz, widthM, lengthM, cellIdx, sampleY, mirror = false) {
     const col = cellIdx & 3;
     const row = (cellIdx >> 2) & 3;
     const pad = 0.01;
-    const u0 = (col + pad) * 0.25;
-    const u1 = (col + 1 - pad) * 0.25;
+    // mirror: flip the glyph left<->right (e.g. straight+right combo -> straight+left combo)
+    const uL = (col + pad) * 0.25, uR = (col + 1 - pad) * 0.25;
+    const u0 = mirror ? uR : uL;
+    const u1 = mirror ? uL : uR;
     const v1 = 1.0 - (row + pad) * 0.25;
     const v0 = 1.0 - (row + 1 - pad) * 0.25;
     const rx = -tz, rz = tx; // driver's right-hand vector
@@ -1019,19 +1021,29 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         }
 
         // Rule 3: White lane directional arrows ONLY ~14m before an actual intersection on primary/secondary roads
-        if ((arm.cls === 'primary' || arm.cls === 'secondary') && arm.total >= sl + 11.5) {
+        if ((arm.cls === 'primary' || arm.cls === 'secondary' || arm.cls === 'trunk') && arm.total >= sl + 11.5) {
           const arrowDist = Math.max(sl + 8.5, node.R + 14.0);
           if (arm.total >= arrowDist + 2.5) {
-            if (spanLat >= 5.0) {
-              const q1 = oa + spanLat * 0.26;
-              const q2 = oa + spanLat * 0.74;
-              const turnCell = style.left ? DECAL_CELLS.STENCIL_ONLY_RIGHT : DECAL_CELLS.STENCIL_ONLY_LEFT;
-              decals.add(node.x + ax * arrowDist + rx * q1, node.z + az * arrowDist + rz * q1, -ax, -az, 2.2, 3.3, turnCell, sampleArmY);
-              decals.add(node.x + ax * arrowDist + rx * q2, node.z + az * arrowDist + rz * q2, -ax, -az, 2.2, 3.3, DECAL_CELLS.STENCIL_ARROW_COMBO, sampleArmY);
-            } else {
-              const arX = node.x + ax * arrowDist + rx * midLat;
-              const arZ = node.z + az * arrowDist + rz * midLat;
-              decals.add(arX, arZ, -ax, -az, Math.min(2.4, spanLat * 0.72), 3.2, DECAL_CELLS.STENCIL_ARROW_COMBO, sampleArmY);
+            // Lateral offsets grow toward +r (outbound right) = the INBOUND driver's LEFT. So the lane with the
+            // highest offset is the driver's leftmost lane and the lowest is the rightmost, for both driving sides
+            // and for one-way streets. RHT: leftmost (by the centerline) = left-turn, curb = straight+right.
+            // LHT: curb (leftmost) = straight+left, lane by the centerline (rightmost) = right-turn.
+            const tagged = arm.lanes > 0 ? (arm.oneway ? arm.lanes : Math.max(1, Math.round(arm.lanes / 2))) : (spanLat >= 5.0 ? 2 : 1);
+            const nLanes = Math.max(1, Math.min(4, tagged, Math.floor(spanLat / 2.5)));
+            const laneW = spanLat / nLanes;
+            const aw = Math.min(2.2, laneW * 0.72);
+            for (let li = 0; li < nLanes; li++) {
+              const leftmost = li === nLanes - 1, rightmost = li === 0;
+              let cell = DECAL_CELLS.STENCIL_ARROW_STRAIGHT, mirror = false;
+              if (nLanes === 1) {
+                cell = DECAL_CELLS.STENCIL_ARROW_COMBO; mirror = style.left; // curb-side turn + straight
+              } else if (leftmost) {
+                if (style.left) { cell = DECAL_CELLS.STENCIL_ARROW_COMBO; mirror = true; } else cell = DECAL_CELLS.STENCIL_ONLY_LEFT;
+              } else if (rightmost) {
+                cell = style.left ? DECAL_CELLS.STENCIL_ONLY_RIGHT : DECAL_CELLS.STENCIL_ARROW_COMBO;
+              }
+              const q = oa + laneW * (li + 0.5);
+              decals.add(node.x + ax * arrowDist + rx * q, node.z + az * arrowDist + rz * q, -ax, -az, aw, 3.3, cell, sampleArmY, mirror);
             }
           }
         }

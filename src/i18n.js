@@ -119,6 +119,15 @@ export const I18N = {
       kaiju_unmute: '取消静音',
       kaiju_down: '直升机坠毁',
       kaiju_hint: 'W/S 移动 · A/D 转向 · Q/E 升降 · ←/→ 闪避 · 空格 开火 · F 导弹 · R 超武',
+      kaiju_unit_heli: '战机',
+      kaiju_unit_tank: '坦克',
+      kaiju_unit_soldier: '士兵',
+      kaiju_hp_heli: '战机生命',
+      kaiju_hp_tank: '坦克装甲',
+      kaiju_hp_soldier: '士兵生命',
+      kaiju_hint_heli: 'W/S 飞行 · A/D 转向 · Q/E 升降 · 空格 开火 · F 导弹 · C 切换单位 (1/2/3)',
+      kaiju_hint_tank: 'W/S 驾驶 · A/D 转向 · 空格 120mm主炮 · F/X 火箭 · C 切换单位 (1/2/3)',
+      kaiju_hint_soldier: 'W/S 移动 · Shift 冲刺 · 空格 开火 · X 火箭筒 · R 切枪 · C 切换单位 (1/2/3)',
       kaiju_lock: '锁定',
       kaiju_dodge: '闪避',
       kaiju_danger: '危险区域',
@@ -130,10 +139,12 @@ export const I18N = {
       kaiju_item_repair: '维修包',
       kaiju_item_coolant: '冷却剂',
       default_road: '长安街 · 天安门广场',
-      urban_road_fallback: '北京市区道路',
+      urban_road_fallback: '市区道路',
       chunks_unit: '区块',
       sonic_boom: '音爆',
       mode_walk_badge: '街头步行 (Shift 量子疾跑)',
+      mode_hint_walking: 'WASD 移动 · Shift 疾跑 · 空格 射击 · X 火箭筒 · R 切枪 · F 出拳 · E 驾车',
+      mode_hint_tank: 'WASD 驾驶 · 空格/左键 120mm主炮 · Shift 加速 · V 换车 · E 下车',
       mode_heli_badge: '涡轴直升机 (Shift 双发加力)',
       mode_drive_fallback: '实车驾驶',
       cam_chase: '3D 追尾',
@@ -176,6 +187,11 @@ export const I18N = {
       taxi: '城市出租车',
       police: '警用巡逻车',
       bus: '城市巴士',
+      tesla: 'Model S',
+      cybertruck: '赛博皮卡',
+      ambulance: '急救车',
+      tow_truck: '救援清障车',
+      tank: '主战坦克',
     },
     bookmarks: {
       tiananmen: {
@@ -428,6 +444,15 @@ export const I18N = {
       kaiju_unmute: 'Unmute',
       kaiju_down: 'Helicopter down',
       kaiju_hint: 'W/S Move · A/D Yaw · Q/E Alt · ←/→ Dodge · Space Fire · F Missiles · R Super',
+      kaiju_unit_heli: 'Heli',
+      kaiju_unit_tank: 'Tank',
+      kaiju_unit_soldier: 'Soldier',
+      kaiju_hp_heli: 'HELI HP',
+      kaiju_hp_tank: 'TANK HP',
+      kaiju_hp_soldier: 'SOLDIER HP',
+      kaiju_hint_heli: 'W/S Fly · A/D Yaw · Q/E Alt · Space Fire · F Missiles · C Unit (1/2/3)',
+      kaiju_hint_tank: 'W/S Drive · A/D Steer · Space 120mm Cannon · F/X Rockets · C Unit (1/2/3)',
+      kaiju_hint_soldier: 'W/S Walk · Shift Sprint · Space Fire · X RPG · R Weapon · C Unit (1/2/3)',
       kaiju_lock: 'LOCK',
       kaiju_dodge: 'Dodge',
       kaiju_danger: 'DANGER ZONE',
@@ -439,10 +464,12 @@ export const I18N = {
       kaiju_item_repair: 'Repair Kit',
       kaiju_item_coolant: 'Coolant',
       default_road: "Chang'an Ave · Tiananmen Sq",
-      urban_road_fallback: 'Beijing Urban Road',
+      urban_road_fallback: 'Road',
       chunks_unit: 'chunks',
       sonic_boom: 'Sonic Boom',
       mode_walk_badge: 'Walking (Shift Cyber-Sprint)',
+      mode_hint_walking: 'WASD Walk · Shift Run · Space Shoot · X RPG · R Weapon · F Punch · E Drive',
+      mode_hint_tank: 'WASD Drive · Space/LClick 120mm Cannon · Shift Boost · V Vehicle · E Exit',
       mode_heli_badge: 'Turbine Helicopter (Shift Afterburner)',
       mode_drive_fallback: 'Driving',
       cam_chase: '3D Chase',
@@ -485,6 +512,11 @@ export const I18N = {
       taxi: 'City Taxi',
       police: 'Police Cruiser',
       bus: 'City Bus',
+      tesla: 'Model S',
+      cybertruck: 'Cybertruck',
+      ambulance: 'Ambulance',
+      tow_truck: 'Tow Truck',
+      tank: 'Main Battle Tank',
     },
     bookmarks: {
       tiananmen: {
@@ -1000,7 +1032,6 @@ const PHRASE_REPLACEMENTS = [
 const EXACT_TRANSLATIONS = Object.fromEntries(PHRASE_REPLACEMENTS.map(([k, v]) => [k, v.trim()]));
 
 const ROAD_SUFFIXES = [
-  ["旁 · 人行步道", " · Footpath"], // [release-6-integ] chunk_builder: `${name}旁 · 人行步道` (sidewalk of a named road)
   ["高速辅路", " Expy Frontage Rd"],
   ["快速路", " Expy"],
   ["高速公路", " Expy"],
@@ -1023,7 +1054,8 @@ const ROAD_SUFFIXES = [
   ["南路辅路", " S Frontage Rd"],
   ["东路辅路", " E Frontage Rd"],
   ["西路辅路", " W Frontage Rd"],
-  ["辅路/内部通道", " Service Rd"], // [release-6-integ] chunk_builder: `${name}辅路/内部通道`
+  ["辅路/内部通道", " Service Road"], // chunk_builder: `${name}辅路/内部通道`
+  ["立交匝道", " Ramp"], // chunk_builder: `${name}立交匝道`
   ["辅路", " Frontage Rd"],
   ["中路", " Middle Rd"],
   ["北路", " N Rd"],
@@ -1033,7 +1065,7 @@ const ROAD_SUFFIXES = [
   ["立交桥", " Interchange"],
   ["跨线桥", " Overpass"],
   ["高架桥", " Viaduct"],
-  ["胡同", " Hutong"],
+  ["胡同", " Alley"],
   ["斜街", " Diagonal St"],
   ["地下隧道", " Tunnel"],
   ["隧道", " Tunnel"],
@@ -1043,9 +1075,66 @@ const ROAD_SUFFIXES = [
   ["路", " Rd"],
   ["街", " St"],
   ["巷", " Alley"],
-  ["条", " Tiao"],
-  ["里", " Li"]
+  ["条", " Lane"],
+  ["里", " Lane"]
 ];
+
+// [road-names-en] English for the generated road-class labels (chunk_builder ROAD_CLASS_ZH + fallback)
+const ROAD_CLASS_EN = {
+  "高速公路": "Expressway",
+  "高速互通立交匝道": "Expressway Ramp",
+  "城市快速路/环路": "Expressway",
+  "快速路/环路立交匝道": "Expressway Ramp",
+  "城市主干道": "Main Road",
+  "主干道立交匝道": "Main Road Ramp",
+  "城市次干道": "Secondary Road",
+  "次干道连接匝道": "Ramp",
+  "城市支路": "Local Road",
+  "支路连接线": "Connector Road",
+  "居住区街巷": "Side Street",
+  "慢行生活街巷": "Living Street",
+  "内部通道/辅路": "Service Road",
+  "城市街巷": "Side Street",
+  "步行街/广场步道": "Pedestrian Street",
+  "人行步道": "Footpath",
+  "非机动车道": "Cycleway",
+  "过街天桥/台阶步道": "Steps",
+  "城市道路": "Road",
+  "市区道路": "Road"
+};
+
+// [road-names-en] OSM name:en in China is often pinyin ("Tiyuguan Lu"); swap a trailing pinyin class word for English.
+const PINYIN_ROAD_CLASS = {
+  Lu: "Road", Jie: "Street", Dajie: "Avenue", Dadao: "Avenue", Dao: "Road", Xiang: "Lane", Hutong: "Alley",
+  Tiao: "Lane", Gonglu: "Highway", Gaosu: "Expressway", Huanlu: "Ring Road", Huandao: "Roundabout",
+  Beilu: "North Road", Nanlu: "South Road", Donglu: "East Road", Xilu: "West Road", Zhonglu: "Middle Road",
+  Beijie: "North Street", Nanjie: "South Street", Dongjie: "East Street", Xijie: "West Street",
+  Beixiang: "North Lane", Nanxiang: "South Lane", Dongxiang: "East Lane", Xixiang: "West Lane"
+};
+function englishRoadClass(s) {
+  const m = s.match(/^(.+\S)\s+([A-Za-z]+)$/);
+  const key = m ? m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase() : "";
+  if (!m || !PINYIN_ROAD_CLASS[key] || (m[2] !== key && m[2] !== m[2].toUpperCase() && m[2] !== m[2].toLowerCase())) return s;
+  const en = PINYIN_ROAD_CLASS[key];
+  return `${m[1]} ${m[2] === m[2].toUpperCase() ? en.toUpperCase() : en}`;
+}
+
+// [road-names-en] Labels chunk_builder generates for unnamed ways; English never falls back to pinyin here.
+function translateGeneratedRoadLabel(s) {
+  const m = s.match(/^(.*?)\s*(?:\((高架桥|隧道)\))?$/);
+  const core = m ? m[1].trim() : s;
+  const tail = m && m[2] ? (m[2] === "高架桥" ? " (Viaduct)" : " (Tunnel)") : "";
+  if (ROAD_CLASS_EN[core]) return ROAD_CLASS_EN[core] + tail;
+  const near = core.match(/^(.+?)旁\s*·\s*(.+)$/);
+  if (near) {
+    const cls = ROAD_CLASS_EN[near[2].trim()] || "Road";
+    return `${cls} near ${translateRoadName(near[1], "en")}${tail}`;
+  }
+  for (const [zh, en] of [["辅路/内部通道", " Service Road"], ["立交匝道", " Ramp"]]) {
+    if (core.endsWith(zh) && core.length > zh.length) return translateRoadName(core.slice(0, -zh.length), "en") + en + tail;
+  }
+  return null;
+}
 
 const BUILDING_SUFFIXES = [
   ["国际中心", " Int'l Center"],
@@ -1150,6 +1239,15 @@ const HANZI_PINYIN = {
   "健": "jian", "翔": "xiang", "慧": "hui", "忠": "zhong", "大": "da", "屯": "tun"
 };
 
+let romanizeLossy = false;
+
+// [road-names-en] Romanize, or return null when a character has no known reading (caller keeps the native name).
+function romanizeOrNull(str) {
+  romanizeLossy = false;
+  const out = romanizeChineseSpan(str);
+  return romanizeLossy || !out ? null : out;
+}
+
 function romanizeChineseSpan(str) {
   if (!str) return "";
   let s = str;
@@ -1169,7 +1267,7 @@ function romanizeChineseSpan(str) {
     "一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
     "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"
   };
-  s = s.replace(/([一二三四五六七八九十]+)条/g, (_, d) => (numMap[d] || d) + " Tiao ");
+  s = s.replace(/([一二三四五六七八九十]+)条/g, (_, d) => " Lane " + (numMap[d] || d) + " ");
 
   let out = "";
   let pyBuf = "";
@@ -1184,6 +1282,7 @@ function romanizeChineseSpan(str) {
     const code = ch.charCodeAt(0);
     if (code >= 0x4e00 && code <= 0x9fff) {
       const py = HANZI_PINYIN[ch] || "";
+      if (!py) romanizeLossy = true;
       pyBuf += py;
     } else {
       flushPy();
@@ -1205,8 +1304,12 @@ export function translateRoadName(name, lang = currentLang) {
   if (!trimmed) return "";
   if (EXACT_TRANSLATIONS[trimmed]) return EXACT_TRANSLATIONS[trimmed];
 
-  // [release-6-integ] "<road>旁 · <class>" suffixes are matched whole below, not split at "·"
-  if (trimmed.includes("·") && !ROAD_SUFFIXES.some(([zh]) => zh.includes("·") && trimmed.endsWith(zh))) {
+  if (!/[\u3400-\u9fff]/.test(trimmed)) return englishRoadClass(trimmed); // already latin (OSM name:en / native latin name)
+  const generated = translateGeneratedRoadLabel(trimmed);
+  if (generated) return generated;
+  if (/[\u3040-\u30ff\uac00-\ud7af]/.test(trimmed)) return trimmed; // Japanese/Korean: no Chinese pinyin, keep native
+
+  if (trimmed.includes("·")) {
     return trimmed
       .split("·")
       .map((part) => translateRoadName(part.trim(), "en"))
@@ -1217,11 +1320,13 @@ export function translateRoadName(name, lang = currentLang) {
     const [zhSuf, enSuf] = ROAD_SUFFIXES[i];
     if (trimmed.endsWith(zhSuf) && trimmed.length > zhSuf.length) {
       const stem = trimmed.slice(0, trimmed.length - zhSuf.length);
-      const stemEn = EXACT_TRANSLATIONS[stem] || romanizeChineseSpan(stem);
+      const nested = ROAD_SUFFIXES.some(([zh]) => zh.length >= 2 && stem.endsWith(zh) && stem.length > zh.length); // e.g. 东大街 + 辅路
+      const stemEn = EXACT_TRANSLATIONS[stem] || (nested ? translateRoadName(stem, "en") : /[\u3400-\u9fff]/.test(stem) ? romanizeOrNull(stem) : stem.trim());
+      if (!stemEn) return trimmed; // unknown characters: keep the native name rather than partial pinyin
       return (stemEn + enSuf).replace(/\s+/g, " ").trim();
     }
   }
-  return romanizeChineseSpan(trimmed);
+  return romanizeOrNull(trimmed) || trimmed;
 }
 
 export function translateBuildingName(name, lang = currentLang) {

@@ -11,6 +11,7 @@ import {
   getChunkTerrainMeshElevation,
   buildChunkTerrainMesh,
   buildChunkTerrainArrays,
+  snowCover, // [fix/terrain-landmark-qa]
 } from './environment.js';
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
@@ -1478,7 +1479,13 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
       const yb = getBeijingTerrainElevation(ox + bx, oz + bz) + yOff;
       const yc = getBeijingTerrainElevation(ox + cx, oz + cz) + yOff;
       parkPos.push(ax, ya, az, cx, yc, cz, bx, yb, bz);
-      parkCol.push(...rgb, ...rgb, ...rgb);
+      // alpine grass above the snowline gets the terrain's snow (steep faces stay bare)
+      let triRgb = rgb;
+      const ux = bx - ax, uy = yb - ya, uz = bz - az, vx = cx - ax, vy = yc - ya, vz = cz - az;
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const snow = snowCover((ya + yb + yc) / 3, Math.hypot(nx, nz) / Math.max(1e-6, Math.abs(ny)));
+      if (snow > 0) triRgb = [rgb[0] + (0.93 - rgb[0]) * snow, rgb[1] + (0.95 - rgb[1]) * snow, rgb[2] + (0.98 - rgb[2]) * snow];
+      parkCol.push(...triRgb, ...triRgb, ...triRgb);
     }
   }
   if (parkPos.length > 0) {
@@ -1745,6 +1752,7 @@ function buildRoadsAndBridges(
       const midIdx = Math.floor(rFlat.length / 6) * 3;
       namedChunkRoads.push({
         name: baseName,
+        nameZh: (rName && roads[i][12]) || baseName, // [road-names-zh]
         cls: rCls,
         mx: rFlat[midIdx],
         mz: rFlat[midIdx + 2],
@@ -1792,11 +1800,13 @@ function buildRoadsAndBridges(
     if (!flat || flat.length < 6) continue;
 
     let resolvedRoadName = name || ref;
+    let resolvedRoadNameZh = (name && r[12]) || ''; // [road-names-zh] only when it differs from the EN-first name
     if (!resolvedRoadName) {
       const midIdx = Math.floor(flat.length / 6) * 3;
       const mx = flat[midIdx];
       const mz = flat[midIdx + 2];
       let nearestName = '';
+      let nearestZh = '';
       let bestDist = 140.0;
       for (let k = 0; k < namedChunkRoads.length; k++) {
         const nr = namedChunkRoads[k];
@@ -1804,6 +1814,7 @@ function buildRoadsAndBridges(
         if (d < bestDist) {
           bestDist = d;
           nearestName = nr.name;
+          nearestZh = nr.nameZh;
         }
       }
       const clsZh = ROAD_CLASS_ZH[cls] || '城市道路';
@@ -1815,6 +1826,7 @@ function buildRoadsAndBridges(
         } else {
           resolvedRoadName = `${nearestName}旁 · ${clsZh}`;
         }
+        if (nearestZh && nearestZh !== nearestName) resolvedRoadNameZh = nearestZh + resolvedRoadName.slice(nearestName.length);
       } else {
         resolvedRoadName = `${clsZh}${isBridge ? ' (高架桥)' : isTunnel ? ' (隧道)' : ''}`;
       }
@@ -2094,6 +2106,7 @@ function buildRoadsAndBridges(
             lanes,
             cls,
             name: resolvedRoadName,
+            nameZh: resolvedRoadNameZh || undefined, // [road-names-zh]
             rawName: name || ref || '',
             signName: name || '',
             ref: ref || '',

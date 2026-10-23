@@ -572,7 +572,7 @@ export class PlacesSystem {
       if (!cur.includes(district)) {
         const parts = cur.split(' · ');
         if (parts.length >= 2) {
-          pillEl.textContent = `${parts[0]} · ${district} · ${parts.slice(1).join(' · ')}`;
+          pillEl.textContent = `${parts.slice(0, -1).join(' · ')} · ${district} · ${parts[parts.length - 1]}`; // [road-names-zh] road labels may contain ' · '
         } else {
           pillEl.textContent = `${district} · ${cur}`;
         }
