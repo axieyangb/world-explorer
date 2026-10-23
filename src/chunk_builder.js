@@ -18,6 +18,7 @@ const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalk
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues } from './features/venues.js'; // [venues]
+import { addPlacesInfo } from './features/places_info/pi_worker.js'; // places-info
 import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
 import {
   LANDMARKS_40,
@@ -1020,6 +1021,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
         });
         root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders }); // [venues] stadium bowls + theme-park rides
+        addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater, street: root.userData.street }); // places-info
 
         stage = 4;
         this.done = true;

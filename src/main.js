@@ -41,6 +41,7 @@ import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import { PlacesSystem } from "./features/places.js"; // feature/places
 import { VenueRides } from "./features/venue_rides.js"; // [venues]
+import { PlacesInfo } from "./features/places_info/index.js"; // places-info
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
@@ -480,6 +481,7 @@ class WorldExplorerApp {
     this.liveSky = initLiveSky(this); // [live-sky-weather] real aircraft (needs places' airliner geometry)
     this.liveWeather = initLiveWeather(this); // [live-sky-weather] real weather -> atmosphere
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
+    this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
   }
 
@@ -2703,6 +2705,7 @@ class WorldExplorerApp {
     if (this.liveSky) this.liveSky.update(dt); // [live-sky-weather] after places: may hide simulated jets
     if (this.liveWeather) this.liveWeather.update(dt); // [live-sky-weather]
     if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
+    if (this.placesInfo) this.placesInfo.update(dt); // places-info
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
