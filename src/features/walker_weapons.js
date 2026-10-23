@@ -515,8 +515,8 @@ export class WalkerWeaponsSystem {
       for (let i = 0; i < cars.length; i++) {
         const c = cars[i];
         if (!c.active) continue;
-        const cy = (c.y || 0) + 0.8;
-        const cx = c.x - o.x, cdy = cy - o.y, cz = c.z - o.z;
+        const cy = (c.ry ?? c.y ?? 0) + 0.8;
+        const cx = (c.rx ?? c.x) - o.x, cdy = cy - o.y, cz = (c.rz ?? c.z) - o.z;
         const along = cx * d.x + cdy * d.y + cz * d.z;
         if (along <= 1.0 || along >= bestDist) continue;
         const px = cx - d.x * along, py = cdy - d.y * along, pz = cz - d.z * along;
@@ -799,20 +799,31 @@ export class WalkerWeaponsSystem {
       }
     }
 
+    if (hit && hit.kind === 'car' && hit.car) {
+      if (this.app.vehicleDamage && typeof this.app.vehicleDamage.hit === 'function') {
+        const dmg = splashRadius > 0 ? 6 : 2.5;
+        this.app.vehicleDamage.hit(hit.car, dmg, hitPos.x, hitPos.y, hitPos.z, splashRadius > 0 ? 'rocket' : 'walkerWeapon');
+      }
+    }
+
     if (this.app.traffic && typeof this.app.traffic.triggerImpactSphere === 'function') {
       const radius = splashRadius > 0 ? splashRadius : 3.6;
       const force = splashRadius > 0 ? 2.4 : 1.2;
+      const dmg = splashRadius > 0 ? (splashRadius >= 7 ? 8 : 4) : 1.5;
+      const src = splashRadius > 0 ? 'rocket' : 'walkerWeapon';
       this.app.traffic.triggerImpactSphere(hitPos.x, hitPos.y, hitPos.z, radius, {
         vx: 0,
         vy: 4.5,
         vz: 0,
         force,
+        damage: dmg,
+        source: src,
       });
     }
 
     if (this.app.vehicleDamage) {
       if (typeof this.app.vehicleDamage.applyExplosionSplash === 'function' && splashRadius > 0) {
-        this.app.vehicleDamage.applyExplosionSplash(hitPos, splashRadius, 250);
+        this.app.vehicleDamage.applyExplosionSplash(hitPos, splashRadius, splashRadius >= 7 ? 8 : 4);
       }
     }
 
