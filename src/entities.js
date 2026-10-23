@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.module.js';
+import { personParts, PART, MAT, OPT, bit, HIP_Y, SHOULDER_Y } from './features/person_model.js'; // [feature/people]
 
 export const VEHICLE_SPECS = [
   {
@@ -674,136 +675,68 @@ function buildWheelAssembly(radius, width, tireMat, rimMat) {
  * Builds an articulated 3D pedestrian/player character model with Cyber-Sprint Nitro VFX (`nitroVfx`).
  */
 export function createPlayerAvatarModel() {
+  // [feature/people] Normal-looking person built from the shared person model (face on the front, hair at
+  // the back, toes forward, jacket zipper, backpack). Same userData contract as before for main.js.
   const root = new THREE.Group();
-
-  const jacketMat = new THREE.MeshStandardMaterial({ color: 0x3a86ff, roughness: 0.58 });
-  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x22272e, roughness: 0.78 });
-  const shoeMat = new THREE.MeshStandardMaterial({ color: 0xe9ecef, roughness: 0.65 });
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xf1c27d, roughness: 0.65 });
-  const hairMat = new THREE.MeshStandardMaterial({ color: 0x16191d, roughness: 0.8 });
-
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.66, 0.25), jacketMat);
-  torso.position.set(0, 1.11, 0);
-  root.add(torso);
-
-  const neck = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.10, 0.16), skinMat);
-  neck.position.set(0, 1.47, 0);
-  root.add(neck);
-
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), skinMat);
-  head.position.set(0, 1.66, 0);
-  root.add(head);
-
-  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.34), hairMat);
-  hair.position.set(0, 1.80, -0.01);
-  root.add(hair);
-
-  // Articulated hip pivots at y = 0.76 so legs swing from the hip joint
-  const leftLeg = new THREE.Group();
-  leftLeg.position.set(-0.125, 0.76, 0);
-  const leftLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.66, 0.20), pantsMat);
-  leftLegMesh.position.set(0, -0.33, 0);
-  leftLeg.add(leftLegMesh);
-  const leftShoe = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.11, 0.26), shoeMat);
-  leftShoe.position.set(0, -0.70, 0.03);
-  leftLeg.add(leftShoe);
-  root.add(leftLeg);
-
-  const rightLeg = new THREE.Group();
-  rightLeg.position.set(0.125, 0.76, 0);
-  const rightLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.66, 0.20), pantsMat);
-  rightLegMesh.position.set(0, -0.33, 0);
-  rightLeg.add(rightLegMesh);
-  const rightShoe = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.11, 0.26), shoeMat);
-  rightShoe.position.set(0, -0.70, 0.03);
-  rightLeg.add(rightShoe);
-  root.add(rightLeg);
-
-  // Articulated shoulder pivots at y = 1.40 so arms swing from the shoulder joint
-  const leftArm = new THREE.Group();
-  leftArm.position.set(-0.325, 1.40, 0);
-  const leftArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.50, 0.16), jacketMat);
-  leftArmMesh.position.set(0, -0.25, 0);
-  leftArm.add(leftArmMesh);
-  const leftHand = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.12, 0.14), skinMat);
-  leftHand.position.set(0, -0.55, 0);
-  leftArm.add(leftHand);
-  root.add(leftArm);
-
-  const rightArm = new THREE.Group();
-  rightArm.position.set(0.325, 1.40, 0);
-  const rightArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.50, 0.16), jacketMat);
-  rightArmMesh.position.set(0, -0.25, 0);
-  rightArm.add(rightArmMesh);
-  const rightHand = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.12, 0.14), skinMat);
-  rightHand.position.set(0, -0.55, 0);
-  rightArm.add(rightHand);
-  root.add(rightArm);
-
-  root.traverse((obj) => {
-    if (obj.isMesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
+  const style = bit(OPT.HAIR_SHORT) | bit(OPT.ZIPPER) | bit(OPT.BACKPACK);
+  const colors = {
+    [MAT.SKIN]: 0xe8b88a,
+    [MAT.TOP]: 0x3a86ff,
+    [MAT.PANTS]: 0x2b3442,
+    [MAT.HAIR]: 0x1b1410,
+    [MAT.ACC]: 0x2b2d42,
+  };
+  const groups = {};
+  const mkPivot = (x, y) => {
+    const g = new THREE.Group();
+    g.position.set(x, y, 0);
+    root.add(g);
+    return g;
+  };
+  const leftLeg = mkPivot(0, HIP_Y);
+  const rightLeg = mkPivot(0, HIP_Y);
+  const leftArm = mkPivot(0, SHOULDER_Y);
+  const rightArm = mkPivot(0, SHOULDER_Y);
+  const pivots = { [PART.STATIC]: root, [PART.LLEG]: leftLeg, [PART.RLEG]: rightLeg, [PART.LARM]: leftArm, [PART.RARM]: rightArm };
+  const pivotY = { [PART.STATIC]: 0, [PART.LLEG]: HIP_Y, [PART.RLEG]: HIP_Y, [PART.LARM]: SHOULDER_Y, [PART.RARM]: SHOULDER_Y };
+  for (const pt of personParts()) {
+    if (pt.opt && !(style & bit(pt.opt))) { pt.geom.dispose(); continue; }
+    const key = `${pt.part}_${pt.mat}`;
+    if (!groups[key]) groups[key] = { part: pt.part, mat: pt.mat, pos: [], nor: [], col: [] };
+    const G = groups[key];
+    const p = pt.geom.attributes.position, n = pt.geom.attributes.normal;
+    const oy = pivotY[pt.part];
+    for (let i = 0; i < p.count; i++) {
+      G.pos.push(p.getX(i), p.getY(i) - oy, p.getZ(i));
+      G.nor.push(n.getX(i), n.getY(i), n.getZ(i));
+      G.col.push(pt.rgb[0], pt.rgb[1], pt.rgb[2]);
     }
-  });
+    pt.geom.dispose();
+  }
+  for (const G of Object.values(groups)) {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(G.pos, 3));
+    geom.setAttribute('normal', new THREE.Float32BufferAttribute(G.nor, 3));
+    const fixed = G.mat === MAT.FIXED;
+    if (fixed) geom.setAttribute('color', new THREE.Float32BufferAttribute(G.col, 3));
+    const mat = new THREE.MeshStandardMaterial({
+      color: fixed ? 0xffffff : colors[G.mat],
+      vertexColors: fixed,
+      roughness: G.mat === MAT.TOP ? 0.6 : 0.78,
+      side: fixed ? THREE.DoubleSide : THREE.FrontSide,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    pivots[G.part].add(mesh);
+  }
+  root.scale.setScalar(1.04);
 
-  // === PEDESTRIAN CYBER-SPRINT NITRO VFX (Speed-Force Lightning Aura + Heel Jet Plumes + Afterimage Ribbons) ===
+  // Kept for API compatibility with updateEntityNitroVfx (no sci-fi effects on a normal person).
   const nitroVfx = new THREE.Group();
   nitroVfx.visible = false;
   root.add(nitroVfx);
-
   const vfxParts = { plumes: [], shockCones: [], rings: [], trails: [] };
-
-  // Twin heel micro-jet plumes attached to nitroVfx
-  for (const sx of [-0.14, 0.14]) {
-    const heelPlume = createThrusterFlameCone(0.14, 1.95, 0xffffff, 0x00f5ff);
-    heelPlume.position.set(sx, 0.16, -0.15);
-    nitroVfx.add(heelPlume);
-    vfxParts.plumes.push(heelPlume);
-  }
-
-  // Dorsal cyber-backpack booster plume
-  const backPlume = createThrusterFlameCone(0.20, 2.6, 0xffe066, 0x00f5ff);
-  backPlume.position.set(0, 1.15, -0.16);
-  nitroVfx.add(backPlume);
-  vfxParts.plumes.push(backPlume);
-
-  // Orbiting Speed-Force Lightning Rings around runner
-  for (const [ry, rRadius, colHex, tilt] of [
-    [0.12, 0.95, 0x00f5ff, 0.0],
-    [0.95, 0.78, 0xffbe0b, 0.55],
-    [1.25, 0.82, 0x00f5ff, -0.55],
-  ]) {
-    const ringGeo = new THREE.RingGeometry(rRadius * 0.82, rRadius, 18);
-    ringGeo.rotateX(Math.PI * 0.5 + tilt);
-    const ringMesh = new THREE.Mesh(
-      ringGeo,
-      new THREE.MeshBasicMaterial({
-        color: colHex,
-        transparent: true,
-        opacity: 0.78,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      })
-    );
-    ringMesh.position.set(0, ry, 0);
-    nitroVfx.add(ringMesh);
-    vfxParts.rings.push(ringMesh);
-  }
-
-  // Golden & Cyan Lightning Afterimage Streamers trailing 5.5m behind shoulders and heels
-  for (const [tx, ty, colHex] of [
-    [-0.28, 1.32, 0xffbe0b],
-    [0.28, 1.32, 0xffbe0b],
-    [-0.14, 0.22, 0x00f5ff],
-    [0.14, 0.22, 0x00f5ff],
-  ]) {
-    const ribbon = createSpeedTrailRibbon(0.12, 5.5, colHex, 0.82);
-    ribbon.position.set(tx, ty, -0.15);
-    nitroVfx.add(ribbon);
-    vfxParts.trails.push(ribbon);
-  }
 
   root.userData = { leftLeg, rightLeg, leftArm, rightArm, nitroVfx, vfxParts };
   return root;

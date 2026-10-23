@@ -11,6 +11,9 @@ import { buildTrafficGraph, isLeftHandTraffic } from './traffic_graph.js';
 import { getSignalPhase, getSignalInfo, approachAxis, signalTime } from './signals.js';
 import * as daylight from './daylight.js';
 import { CAR_TYPES, createCarMeshes, createPedMesh } from './traffic_models.js';
+import { randomPersonLook, bit, OPT } from './person_model.js'; // [feature/people]
+
+const UMBRELLA_BIT = bit(OPT.UMBRELLA);
 
 const MAX_CARS = 110;
 const MAX_PEDS = 140;
@@ -30,9 +33,6 @@ const PAINTS = [
   0xf2f2f0, 0xf2f2f0, 0xe8e8e6, 0x161719, 0x161719, 0x1f2124, 0xa7abb0, 0xa7abb0, 0x6c7177,
   0x41464d, 0x1d3557, 0x2b4c7e, 0x8d1b1b, 0xb3261e, 0xc9b79c, 0x2f4f3a, 0x5b3a29, 0x3a5f8f, 0xd9a62e,
 ].map((h) => new THREE.Color(h));
-const SHIRTS = [0x2b2d42, 0x8d99ae, 0xedf2f4, 0xd90429, 0x264653, 0x2a9d8f, 0xe9c46a, 0xf4a261, 0x1d3557, 0x6d597a, 0x3a3a3a, 0xffffff, 0x588157].map((h) => new THREE.Color(h));
-const PANTS = [0x1b1b1e, 0x22223b, 0x2f3e46, 0x3d405b, 0x4a4e69, 0x5c4033, 0xa39171, 0x14213d].map((h) => new THREE.Color(h));
-const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xf5cfa0].map((h) => new THREE.Color(h));
 
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -594,7 +594,7 @@ export class CityTraffic {
     ped.x = t.x - t.uz * lat;
     ped.z = t.z + t.ux * lat;
     ped.y = t.y + (ped.state === 2 || e.cls === 8 ? 0.02 : 0.06);
-    if (ped.state === 2) { ped.hx = t.uz * ped.side; ped.hz = -t.ux * ped.side; }
+    if (ped.state === 1 || ped.state === 2) { ped.hx = t.uz * ped.side; ped.hz = -t.ux * ped.side; }
     else { const sgn = ped.fwd ? 1 : -1; ped.hx = t.ux * sgn; ped.hz = t.uz * sgn; }
     ped.gux = t.ux; ped.guz = t.uz;
   }
@@ -611,12 +611,13 @@ export class CityTraffic {
       const d = Math.hypot(ped.x - p.x, ped.z - p.z);
       if (d > PED_R || d < (initial ? 8 : 25)) continue;
       if (!initial && d < 90 && this._visible(ped.x, ped.y, ped.z, 1.5)) continue;
-      ped.v = 1.05 + Math.random() * 0.55;
+      const o = this.app.worldOrigin || {};
+      ped.look = randomPersonLook(o.centerLat, o.centerLon);
+      ped.v = (1.05 + Math.random() * 0.55) * ped.look.speedMul;
       ped.phase = Math.random() * 6.28;
       ped.amp = 0.5;
-      ped.scale = 0.9 + Math.random() * 0.18;
-      ped.shirt = pick(SHIRTS); ped.pants = pick(PANTS); ped.skin = pick(SKINS);
       ped.ryaw = Math.atan2(ped.hx, ped.hz);
+      ped.px = ped.x; ped.pz = ped.z;
       ped.active = true;
       return true;
     }
@@ -686,7 +687,14 @@ export class CityTraffic {
     const v = ped.state === 2 ? ped.v : speed;
     ped.phase += dt * v * 5.0;
     ped.amp += ((moving ? 0.5 : 0) - ped.amp) * Math.min(1, dt * 6);
-    let dy = Math.atan2(ped.hx, ped.hz) - ped.ryaw;
+    // [feature/people] Face the actual direction of travel (covers stepping aside and crossing);
+    // fall back to the path heading when standing or after a discontinuity.
+    const mvx = ped.x - ped.px, mvz = ped.z - ped.pz;
+    const md = Math.hypot(mvx, mvz);
+    let tyaw = Math.atan2(ped.hx, ped.hz);
+    if (md > 0.12 * dt && md < 1.0) tyaw = Math.atan2(mvx, mvz);
+    ped.px = ped.x; ped.pz = ped.z;
+    let dy = tyaw - ped.ryaw;
     dy -= Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
     ped.ryaw += dy * Math.min(1, dt * 8);
   }
@@ -777,17 +785,24 @@ export class CityTraffic {
     let n = 0;
     if (showPeds) {
       const an = P.iAnim.array, sh = P.iShirt.array, pa = P.iPants.array, sk = P.iSkin.array;
+      const ha = P.iHair.array, ac = P.iAcc.array;
+      const rain = typeof daylight.getWeather === 'function' && daylight.getWeather() === 'rain';
       for (const ped of this.peds) {
         if (!ped.active) continue;
         q.setFromAxisAngle(this._up || (this._up = new THREE.Vector3(0, 1, 0)), ped.ryaw);
         v3.set(ped.x, ped.y, ped.z);
-        s3.set(ped.scale, ped.scale, ped.scale);
+        const L = ped.look;
+        s3.set(L.wScale, L.hScale, L.wScale);
         m4.compose(v3, q, s3);
         P.mesh.setMatrixAt(n, m4);
-        an[n * 2] = ped.phase; an[n * 2 + 1] = ped.amp;
-        sh[n * 3] = ped.shirt.r; sh[n * 3 + 1] = ped.shirt.g; sh[n * 3 + 2] = ped.shirt.b;
-        pa[n * 3] = ped.pants.r; pa[n * 3 + 1] = ped.pants.g; pa[n * 3 + 2] = ped.pants.b;
-        sk[n * 3] = ped.skin.r; sk[n * 3 + 1] = ped.skin.g; sk[n * 3 + 2] = ped.skin.b;
+        an[n * 3] = ped.phase; an[n * 3 + 1] = ped.amp;
+        an[n * 3 + 2] = L.style | (rain && L.umbRoll < 0.65 ? UMBRELLA_BIT : 0);
+        const i3 = n * 3;
+        sh[i3] = L.top.r; sh[i3 + 1] = L.top.g; sh[i3 + 2] = L.top.b;
+        pa[i3] = L.pants.r; pa[i3 + 1] = L.pants.g; pa[i3 + 2] = L.pants.b;
+        sk[i3] = L.skin.r; sk[i3 + 1] = L.skin.g; sk[i3 + 2] = L.skin.b;
+        ha[i3] = L.hair.r; ha[i3 + 1] = L.hair.g; ha[i3 + 2] = L.hair.b;
+        ac[i3] = L.acc.r; ac[i3 + 1] = L.acc.g; ac[i3 + 2] = L.acc.b;
         n++;
       }
     }
@@ -795,6 +810,7 @@ export class CityTraffic {
     if (n) {
       P.mesh.instanceMatrix.needsUpdate = true;
       P.iAnim.needsUpdate = true; P.iShirt.needsUpdate = true; P.iPants.needsUpdate = true; P.iSkin.needsUpdate = true;
+      P.iHair.needsUpdate = true; P.iAcc.needsUpdate = true;
     }
   }
 
