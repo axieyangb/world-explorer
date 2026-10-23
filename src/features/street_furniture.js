@@ -680,8 +680,8 @@ function buildGantryPanelTexture(region, isMotorway, refStr, mainText, subText, 
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const primary = String(mainText || 'The Embarcadero').slice(0, 19);
-    const pFont = primary.length > 14 ? 36 : 42;
+    const primary = String(mainText || 'The Embarcadero').slice(0, 22);
+    const pFont = primary.length > 17 ? 31 : primary.length > 14 ? 36 : 42;
     ctx.font = `900 ${pFont}px "Arial Black", sans-serif`;
     ctx.fillText(primary, 154, 66);
 

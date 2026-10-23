@@ -108,51 +108,11 @@ const REGION_HIGHWAY_REFS = {
   },
 };
 
-const REGION_STREETS = {
-  us: [
-    'The Embarcadero', 'Market St', 'Mission St', 'Howard St', 'Folsom St',
-    'Harrison St', 'Bryant St', 'Brannan St', 'King St', 'Montgomery St',
-    'California St', 'Broadway', 'Geary Blvd', 'Van Ness Ave', '3rd St',
-    '4th St', 'Main St', 'Spear St', 'Steuart St', 'Columbus Ave',
-  ],
-  eu: [
-    'Champs-Élysées', 'Rue de Rivoli', 'Bd Saint-Germain', 'Quai d\'Orsay',
-    'Av Montaigne', 'Rue Royale', 'Bd Haussmann', 'Friedrichstraße', 'Via del Corso',
-  ],
-  uk: [
-    'Whitehall', 'Victoria St', 'Piccadilly', 'Oxford St', 'Regent St',
-    'The Strand', 'Fleet St', 'Baker St', 'Parliament St', 'Park Ln',
-  ],
-  jp: [
-    'Meiji-dori', 'Aoyama-dori', 'Omotesando', 'Chuo-dori', 'Showa-dori',
-    'Yasukuni-dori', 'Harumi-dori', 'Sotobori-dori', 'Dogenzaka', 'Sakurada-dori',
-  ],
-  cn: [
-    'Chang\'an Ave', 'Jianguo Rd', 'East 3rd Ring Rd', 'Chaoyangmen Blvd',
-    'Fuxingmen Ave', 'Zhongguancun St', 'Xidan North St', 'Dongzhimen Ave',
-    'Ping\'an Blvd', 'Qianmen St',
-  ],
-  kr: [
-    'Sejong-daero', 'Teheran-ro', 'Gangnam-daero', 'Eulji-ro', 'Jong-ro', 'Hangang-daero',
-  ],
-  au: [
-    'George St', 'Pitt St', 'Collins St', 'Bourke St', 'Elizabeth St', 'Macquarie St',
-  ],
-  intl: [
-    'Central Ave', 'Harbor Blvd', 'Victoria Rd', 'Queen St', 'King St', 'Station Rd', 'Park Ave', 'High St',
-  ],
-};
+const GENERIC_STREETS = [
+  '1st St', '2nd St', '3rd St', '4th St', '5th St', 'Main St', 'Central Ave', 'Park Ave', 'Station Rd', 'High St',
+];
 
-const REGION_DESTINATIONS = {
-  us: ['Downtown', 'Bay Bridge', 'Civic Center', 'Financial Dist', 'South Beach', 'Golden Gate', 'Airport', 'Waterfront'],
-  eu: ['Centre-Ville', 'Gare Centrale', 'Aéroport', 'La Défense', 'Périphérique', 'Port'],
-  uk: ['Central London', 'Westminster', 'City', 'Victoria', 'Waterloo', 'Heathrow'],
-  jp: ['Shibuya', 'Shinjuku', 'Ginza', 'Tokyo Sta.', 'Roppongi', 'Odaiba'],
-  cn: ['CBD Guomao', 'Tiananmen', 'Financial St', 'Zhongguancun', 'Airport Exp', 'Chaoyang'],
-  kr: ['City Hall', 'Gangnam', 'Yeouido', 'Seoul Sta.', 'Incheon'],
-  au: ['City Centre', 'Harbour Bridge', 'Circular Quay', 'Airport'],
-  intl: ['City Center', 'Harbor Dist', 'Central Sta.', 'Airport', 'Midtown'],
-};
+const GENERIC_DIRECTIONS = ['NORTHBOUND', 'SOUTHBOUND', 'EASTBOUND', 'WESTBOUND', 'THRU TRAFFIC', 'CITY CENTER', 'LOCAL EXIT'];
 
 let currentOrigin = null;
 /** Set by chunk_worker.js (worker) / StreetFeatures.update (main-thread fallback) before chunk builds. */
@@ -191,35 +151,104 @@ function hash2(x, z) {
 
 function cleanOsmName(raw) {
   if (!raw || typeof raw !== 'string') return '';
-  const s = raw.trim();
-  if (!s || s.includes('旁 ·') || s.includes('立交匝道') || s.includes('辅路/内部通道') || s.includes('城市道路')) return '';
+  let s = raw.trim();
+  if (
+    !s || s.includes('...') || s.includes('Herb Caen') || s.includes('旁 ·') ||
+    s.includes('立交匝道') || s.includes('辅路/内部通道') || s.includes('城市道路') ||
+    s.includes('高速公路') || s.includes('快速路') || s.includes('主干道') ||
+    s.includes('次干道') || s.includes('支路') || s.includes('街巷') ||
+    s.includes('高架桥') || s.includes('隧道') || s.includes('步道')
+  ) return '';
+  if (/^[0-9]+[A-Z]?$/.test(s)) return '';
+  s = s
+    .replace(/\bStreet\b/gi, 'St')
+    .replace(/\bAvenue\b/gi, 'Ave')
+    .replace(/\bBoulevard\b/gi, 'Blvd')
+    .replace(/\bDrive\b/gi, 'Dr')
+    .replace(/\bRoad\b/gi, 'Rd')
+    .replace(/\bParkway\b/gi, 'Pkwy')
+    .replace(/\bHighway\b/gi, 'Hwy');
   return s;
 }
 
-function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz) {
+function cleanOsmRef(rawRef, baseCls, region) {
+  if (!rawRef || typeof rawRef !== 'string') return '';
+  const first = rawRef.split(';')[0].trim();
+  if (!first) return '';
+  if (/^[0-9]+[A-Z]$/.test(first)) return ''; // Exit numbers like '2C' are exit tags, not route shield numbers
+  if (region === 'us' && /^[0-9]+$/.test(first)) {
+    return baseCls === 'motorway' ? `I-${first}` : baseCls === 'trunk' ? `US ${first}` : `CA ${first}`;
+  }
+  return first;
+}
+
+function compassDirFromTangent(dx, dz) {
+  if (Math.abs(dx) >= Math.abs(dz)) return dx >= 0 ? 'EAST' : 'WEST';
+  return dz <= 0 ? 'NORTH' : 'SOUTH';
+}
+
+function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz, lx, lz, dx, dz, chunkNamedRoads) {
   const h = hashInt(id || 1, Math.round(wx * 0.05) * 31 + Math.round(wz * 0.05));
   const baseCls = cls.replace('_link', '');
-  const refTable = REGION_HIGHWAY_REFS[region] || REGION_HIGHWAY_REFS.intl;
-  const refList = refTable[baseCls] || refTable.primary;
-  let ref = (rawRef || '').trim();
-  if (ref) {
-    ref = ref.split(';')[0].trim();
-    if (region === 'us' && /^[0-9]+$/.test(ref)) {
-      ref = baseCls === 'motorway' ? `I-${ref}` : baseCls === 'trunk' ? `US ${ref}` : `CA ${ref}`;
+  const isTrueHighway = baseCls === 'motorway' || baseCls === 'trunk';
+  let ref = cleanOsmRef(rawRef, baseCls, region);
+  const hasRealRef = Boolean(ref);
+
+  // ONLY assign fallback highway route numbers on true highways (motorway / trunk)
+  if (!ref && isTrueHighway) {
+    const refTable = REGION_HIGHWAY_REFS[region] || REGION_HIGHWAY_REFS.intl;
+    const refList = refTable[baseCls] || refTable.motorway;
+    if (refList && refList.length > 0) {
+      ref = refList[h % refList.length];
     }
-  } else if (refList && refList.length > 0) {
-    ref = refList[h % refList.length];
   }
 
-  let name = cleanOsmName(rawName);
-  const streets = REGION_STREETS[region] || REGION_STREETS.intl;
-  if (!name) {
-    name = streets[h % streets.length];
+  const compass = compassDirFromTangent(dx || 0, dz || -1);
+  const realName = cleanOsmName(rawName);
+  const hasRealName = Boolean(realName);
+  let name = realName;
+
+  // On true highways / freeways, if the OSM name is a ceremonial long name (e.g. "Dwight D. Eisenhower Highway") or empty,
+  // use the nearest major arterial name in the chunk + compass direction for gantry signage
+  if (isTrueHighway && (!name || /eisenhower|memorial|freeway|turnpike/i.test(name))) {
+    let nearMajor = '';
+    if (chunkNamedRoads && chunkNamedRoads.length > 0) {
+      let bestD2 = Infinity;
+      for (let i = 0; i < chunkNamedRoads.length; i++) {
+        const nr = chunkNamedRoads[i];
+        if (!nr.name || /eisenhower|route /i.test(nr.name)) continue;
+        const d2 = (lx - nr.x) * (lx - nr.x) + (lz - nr.z) * (lz - nr.z);
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          nearMajor = nr.name;
+        }
+      }
+    }
+    name = nearMajor ? (nearMajor.length <= 12 ? `${nearMajor} ${compass}` : nearMajor) : `${ref || 'HWY'} ${compass}`;
+  } else if (!name && (isTrueHighway || hasRealRef)) {
+    name = `${ref} ${compass}`;
   }
-  const dests = REGION_DESTINATIONS[region] || REGION_DESTINATIONS.intl;
-  const dest2 = dests[(h >>> 4) % dests.length];
-  const exitNum = `EXIT ${12 + (h % 85)}${(h & 3) === 0 ? 'B' : (h & 3) === 1 ? 'A' : ''}`;
-  return { ref, name, dest2, exitNum };
+
+  // Pick nearest distinct cross-street / nearby street name from actual OpenFreeMap roads in this chunk
+  let dest2 = '';
+  if (chunkNamedRoads && chunkNamedRoads.length > 0) {
+    let bestCrossD2 = Infinity;
+    for (let i = 0; i < chunkNamedRoads.length; i++) {
+      const nr = chunkNamedRoads[i];
+      if (!nr.name || nr.name === name || nr.name === realName || /eisenhower|route /i.test(nr.name)) continue;
+      const d2 = (lx - nr.x) * (lx - nr.x) + (lz - nr.z) * (lz - nr.z);
+      if (d2 < bestCrossD2) {
+        bestCrossD2 = d2;
+        dest2 = nr.name;
+      }
+    }
+  }
+  if (!dest2) {
+    dest2 = `${compass}BOUND`;
+  }
+  const rawExit = (rawRef && /^[0-9]+[A-Z]$/.test(String(rawRef).trim())) ? String(rawRef).trim() : `${1 + (h % 42)}${(h & 3) === 0 ? 'B' : (h & 3) === 1 ? 'A' : ''}`;
+  const exitNum = `EXIT ${rawExit}`;
+  return { ref, hasRealRef, realName, hasRealName, name, dest2, exitNum };
 }
 
 function chooseShieldCell(ref, id, cls, region) {
@@ -397,14 +426,36 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
   const segsW = ud.roadSegments || [];
   const colliders = ud.buildingColliders || [];
 
-  // ---- 1. Local segment list + spatial grid ----
+  // ---- 1. Local segment list + spatial grid + chunk-local real OpenFreeMap road names ----
   const segs = [];
   const segGrid = makeGrid(24);
+  const chunkNamedRoads = [];
+  const seenWayNames = new Set();
+  for (const r of (data.roads || [])) {
+    const [wid, rCls, rName, , , , , , , , flat] = r;
+    if (rCls === 'footway' || rCls === 'pedestrian' || rCls === 'steps' || rCls === 'cycleway' || rCls === 'service') continue;
+    const nm = cleanOsmName(rName);
+    if (nm && flat && flat.length >= 6 && !seenWayNames.has(`${wid}:${nm}`)) {
+      seenWayNames.add(`${wid}:${nm}`);
+      const midIdx = Math.floor(flat.length / 6) * 3;
+      chunkNamedRoads.push({ id: wid, name: nm, cls: rCls, x: flat[midIdx], z: flat[midIdx + 2] });
+    }
+  }
+  for (let i = 0; i < segsW.length; i++) {
+    const s = segsW[i];
+    if (s.cls === 'footway' || s.cls === 'pedestrian' || s.cls === 'steps' || s.cls === 'cycleway' || s.cls === 'service') continue;
+    const nm = cleanOsmName(s.signName || s.rawName || s.name);
+    if (nm && !seenWayNames.has(`${s.id}:${nm}`)) {
+      seenWayNames.add(`${s.id}:${nm}`);
+      chunkNamedRoads.push({ id: s.id, name: nm, cls: s.cls, x: (s.x1 + s.x2) * 0.5 - ox, z: (s.z1 + s.z2) * 0.5 - oz });
+    }
+  }
+
   const waySignCache = new Map();
-  const getWaySignage = (id, cls, rawName, rawRef, lx, lz) => {
+  const getWaySignage = (id, cls, rawName, rawRef, lx, lz, dx, dz) => {
     let info = waySignCache.get(id);
     if (!info) {
-      info = resolveRoadSignage(id, cls, rawName, rawRef, region, ox + lx, oz + lz);
+      info = resolveRoadSignage(id, cls, rawName, rawRef, region, ox + lx, oz + lz, lx, lz, dx, dz, chunkNamedRoads);
       waySignCache.set(id, info);
     }
     return info;
@@ -415,16 +466,19 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     const x1 = s.x1 - ox, z1 = s.z1 - oz, x2 = s.x2 - ox, z2 = s.z2 - oz;
     const len = Math.hypot(x2 - x1, z2 - z1);
     if (len < 0.05) continue;
-    const signInfo = getWaySignage(s.id, s.cls, s.signName || s.rawName || s.name, s.ref, (x1 + x2) * 0.5, (z1 + z2) * 0.5);
+    const dx = (x2 - x1) / len, dz = (z2 - z1) / len;
+    const signInfo = getWaySignage(s.id, s.cls, s.signName, s.ref, (x1 + x2) * 0.5, (z1 + z2) * 0.5, dx, dz);
     const ls = {
       x1, y1: s.y1, z1, x2, y2: s.y2, z2, len,
-      dx: (x2 - x1) / len, dz: (z2 - z1) / len,
+      dx, dz,
       hw: Math.max(1.0, s.width * 0.5),
       cls: s.cls, id: s.id, lanes: s.lanes, oneway: s.oneway, bridge: s.bridge,
-      ref: signInfo.ref, signName: signInfo.name, dest2: signInfo.dest2, exitNum: signInfo.exitNum,
+      ref: signInfo.ref, hasRealRef: signInfo.hasRealRef,
+      realName: signInfo.realName, hasRealName: signInfo.hasRealName,
+      signName: signInfo.name, dest2: signInfo.dest2, exitNum: signInfo.exitNum,
     };
     segs.push(ls);
-    const m = ls.hw + 1.0;
+    const m = ls.hw + 5.0;
     segGrid.insertBox(Math.min(x1, x2) - m, Math.min(z1, z2) - m, Math.max(x1, x2) + m, Math.max(z1, z2) + m, ls);
   }
 
@@ -454,13 +508,21 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     return getBeijingTerrainElevation(ox + x, oz + z) + (Y_BIAS[cls] || 0.43) + micro + 0.06;
   };
 
-  const onOtherRoad = (x, z, ownId, margin) => {
+  // Strict road-surface & curb clearance test against EVERY road segment at the same vertical level in the chunk
+  const onOtherRoad = (x, z, ownId, margin = 1.35, refY = null, ignoreOwn = false) => {
     const list = segGrid.query(x, z);
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
+      if (ignoreOwn && s.id === ownId) continue;
       const t = Math.max(0, Math.min(1, ((x - s.x1) * s.dx + (z - s.z1) * s.dz) / s.len));
+      if (refY !== null) {
+        const sy = s.y1 + (s.y2 - s.y1) * t;
+        if (Math.abs(sy - refY) > 2.8) continue;
+      }
       const px = s.x1 + (s.x2 - s.x1) * t, pz = s.z1 + (s.z2 - s.z1) * t;
-      const lim = s.id === ownId ? s.hw + 0.15 : s.hw + margin;
+      const isPed = s.cls === 'footway' || s.cls === 'pedestrian' || s.cls === 'steps' || s.cls === 'cycleway';
+      const reqMargin = isPed ? 0.55 : (ignoreOwn ? Math.max(0.25, margin) : Math.max(1.25, margin));
+      const lim = s.id === ownId ? s.hw + Math.min(1.15, reqMargin) : s.hw + reqMargin;
       if ((x - px) * (x - px) + (z - pz) * (z - pz) < lim * lim) return true;
     }
     return false;
@@ -492,10 +554,10 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     const n = flat.length / 3;
     const cum = new Float32Array(n);
     for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(flat[i * 3] - flat[i * 3 - 3], flat[i * 3 + 2] - flat[i * 3 - 1]);
-    const signInfo = getWaySignage(wid, cls, rName, rRef, flat[0], flat[2]);
+    const signInfo = getWaySignage(wid, cls, rName, rRef, flat[0], flat[2], flat[3] - flat[0], flat[5] - flat[2]);
     const w = {
       wid, cls, lanes, hw: Math.max(1.0, widthM * 0.5), oneway, flat, n, cum, total: cum[n - 1], idx: ways.length,
-      signName: signInfo.name, ref: signInfo.ref,
+      signName: signInfo.name, realName: signInfo.realName, ref: signInfo.ref,
     };
     ways.push(w);
     for (let i = 0; i < n - 1; i++) {
@@ -528,7 +590,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       if (!merged) {
         node.arms.push({
           ax: v[0], az: v[1], hw: w.hw, cls: w.cls, lanes: w.lanes, oneway: w.oneway,
-          forward: dir > 0, id: w.wid, total: avail, signName: w.signName, ref: w.ref,
+          forward: dir > 0, id: w.wid, total: avail, signName: w.signName, realName: w.realName, ref: w.ref,
         });
       }
     }
@@ -602,14 +664,15 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     }
     if (!dup) keptNodes.push(n);
   }
-  for (const n of keptNodes) {
-    const m = n.R + 6;
+  for (const n of nodes) {
+    const m = n.R + 20;
     nodeGrid.insertBox(n.x - m, n.z - m, n.x + m, n.z + m, n);
   }
-  const nearNode = (x, z, pad) => {
+  const nearNode = (x, z, pad, ignoreNode = null) => {
     const list = nodeGrid.query(x, z);
     for (let i = 0; i < list.length; i++) {
       const n = list[i];
+      if (n === ignoreNode) continue;
       const r = n.R + pad;
       if ((x - n.x) * (x - n.x) + (z - n.z) * (z - n.z) < r * r) return n;
     }
@@ -785,64 +848,36 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       }
     }
 
-    // ---- Road-Surface Painted Highway Shields & Pavement Stencils (y = roadY + 0.06m) ----
+    // ---- Road-Surface Painted Highway Shields (ONLY on true highways or roads with an explicit OpenFreeMap ref) ----
     const rx = -s.dz, rz = s.dx;
     const sampleDecalY = (px, pz) => roadY(s.id, s.cls, px, pz) + 0.06;
     const driveSign = style.left ? -1 : 1; // lateral side of forward traffic (+1 = right of segment)
+    const isTrueHighway = cls === 'motorway' || cls === 'trunk' || cls === 'motorway_link' || cls === 'trunk_link';
 
-    if (SHIELD_CLS.has(cls) || (cls === 'secondary' && hw >= 3.8)) {
-      const shieldSpacing = cls === 'motorway' || cls === 'trunk' ? 88 : 96;
-      const shieldPhase = 18;
+    if ((isTrueHighway || s.hasRealRef) && s.ref) {
+      const shieldSpacing = 75;
+      const shieldPhase = 16;
       let k0 = Math.ceil((segAcc - shieldPhase) / shieldSpacing);
       for (let d = k0 * shieldSpacing + shieldPhase; d < segAcc + s.len; k0++, d = k0 * shieldSpacing + shieldPhase) {
         const t = (d - segAcc) / s.len;
-        if (t < 0.05 || t > 0.95) continue;
+        if (t < 0.08 || t > 0.92) continue;
         const cx = s.x1 + (s.x2 - s.x1) * t, cz = s.z1 + (s.z2 - s.z1) * t;
-        if (!inChunk(cx, cz) || nearNode(cx, cz, 5.5)) continue;
+        if (!inChunk(cx, cz) || nearNode(cx, cz, 8.0)) continue;
 
         const shieldCell = chooseShieldCell(s.ref, s.id + k0, cls, region);
-        const decalW = Math.min(4.2, Math.max(2.6, (twoWay ? hw : hw * 2) * 0.68));
-        const decalL = 4.2;
+        const decalW = Math.min(3.8, Math.max(2.6, (twoWay ? hw : hw * 2) * 0.62));
+        const decalL = 4.0;
 
         if (twoWay) {
           const latOff = driveSign * (hw * 0.5);
           decals.add(cx + rx * latOff, cz + rz * latOff, s.dx, s.dz, decalW, decalL, shieldCell, sampleDecalY);
-          // Opposite direction carriageway shield
-          const oppCell = (k0 % 2 === 1 && region !== 'us') ? DECAL_CELLS.ROUNDEL_80 : shieldCell;
-          decals.add(cx - rx * latOff, cz - rz * latOff, -s.dx, -s.dz, decalW, decalL, oppCell, sampleDecalY);
+          decals.add(cx - rx * latOff, cz - rz * latOff, -s.dx, -s.dz, decalW, decalL, shieldCell, sampleDecalY);
         } else {
-          decals.add(cx, cz, s.dx, s.dz, decalW, decalL, shieldCell, sampleDecalY);
-          if (hw >= 5.2) {
-            const auxCell = region === 'us' ? DECAL_CELLS.STENCIL_ARROW_STRAIGHT : DECAL_CELLS.ROUNDEL_80;
-            const sideOff = hw * 0.52;
-            decals.add(cx + rx * sideOff, cz + rz * sideOff, s.dx, s.dz, 2.8, 3.6, auxCell, sampleDecalY);
-          }
-        }
-      }
-    }
-
-    // Mid-segment pavement stencils on primary / secondary / tertiary / residential roads
-    if (cls === 'primary' || cls === 'secondary' || cls === 'tertiary' || cls === 'residential') {
-      const stencilSpacing = cls === 'residential' ? 76 : 84;
-      const stencilPhase = 48;
-      let k1 = Math.ceil((segAcc - stencilPhase) / stencilSpacing);
-      for (let d = k1 * stencilSpacing + stencilPhase; d < segAcc + s.len; k1++, d = k1 * stencilSpacing + stencilPhase) {
-        const t = (d - segAcc) / s.len;
-        if (t < 0.08 || t > 0.92) continue;
-        const cx = s.x1 + (s.x2 - s.x1) * t, cz = s.z1 + (s.z2 - s.z1) * t;
-        if (!inChunk(cx, cz) || nearNode(cx, cz, 7.5)) continue;
-
-        const stencilPool = region === 'us'
-          ? [DECAL_CELLS.STENCIL_SPEED35, DECAL_CELLS.STENCIL_SLOW, DECAL_CELLS.STENCIL_ARROW_STRAIGHT, DECAL_CELLS.STENCIL_ONLY_LEFT]
-          : [DECAL_CELLS.ROUNDEL_50, DECAL_CELLS.STENCIL_SLOW, DECAL_CELLS.STENCIL_ARROW_STRAIGHT, DECAL_CELLS.STENCIL_ARROW_COMBO];
-        const cell = stencilPool[hashInt(s.id, k1) % stencilPool.length];
-        const w = Math.min(3.2, Math.max(2.1, (twoWay ? hw : hw * 2) * 0.62));
-        const l = 3.5;
-        if (twoWay && hw >= 2.6) {
-          const latOff = driveSign * (hw * 0.5);
-          decals.add(cx + rx * latOff, cz + rz * latOff, s.dx, s.dz, w, l, cell, sampleDecalY);
-        } else {
-          decals.add(cx, cz, s.dx, s.dz, w, l, cell, sampleDecalY);
+          // Center squarely inside a travel lane, never on a dashed lane divider line
+          const laneOff = (effLanes % 2 === 1) ? 0.0 : driveSign * (hw / effLanes);
+          const laneW = (hw * 2) / effLanes;
+          const fitW = Math.min(decalW, laneW * 0.78);
+          decals.add(cx + rx * laneOff, cz + rz * laneOff, s.dx, s.dz, fitW, decalL, shieldCell, sampleDecalY);
         }
       }
     }
@@ -876,18 +911,15 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     let anySignal = false;
     let sigStop = 0;
 
-    // Collect two distinct street names at this intersection for Green Street Name Blade Signs
+    // Collect two distinct REAL OpenFreeMap street names at this intersection for Green Street Name Blade Signs
     let streetA = '', streetB = '';
     for (const a of node.arms) {
-      const nm = a.signName || a.ref || '';
+      const nm = a.realName || '';
       if (!nm) continue;
       if (!streetA) streetA = nm;
       else if (nm !== streetA && !streetB) streetB = nm;
     }
-    if (!streetA) streetA = (REGION_STREETS[region] || REGION_STREETS.intl)[hashInt(Math.round(node.x), Math.round(node.z)) % 8];
-    if (!streetB) streetB = (REGION_STREETS[region] || REGION_STREETS.intl)[hashInt(Math.round(node.z), Math.round(node.x) + 19) % 8];
-    if (streetB === streetA) streetB = '1st Ave';
-
+    const hasTwoRealStreets = Boolean(streetA && streetB && streetA !== streetB);
     let bladesPlacedAtNode = 0;
 
     for (let aIdx = 0; aIdx < node.arms.length; aIdx++) {
@@ -923,6 +955,10 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       const inboundOnly = arm.oneway && !arm.forward;
       const sl = c1 + 0.9;
       const ys = roadY(arm.id, arm.cls, node.x + ax * sl, node.z + az * sl) + 0.035;
+      const isMinorUnsignalizedApproach = !signalized && (
+        arm.cls === 'residential' || arm.cls === 'tertiary' || arm.cls === 'unclassified' || arm.cls === 'living_street'
+      );
+
       if (!outboundOnly) {
         const oa = inboundOnly ? -hw + 0.2 : inboundSign > 0 ? 0.15 : -hw + 0.2;
         const ob = inboundOnly ? hw - 0.2 : inboundSign > 0 ? hw - 0.2 : -0.15;
@@ -934,65 +970,61 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
           WHITE
         );
 
-        // ---- Road-Surface Intersection Approach Stencils (STOP, ONLY + Turn Arrows, SLOW) ----
-        if (arm.total >= sl + 5.0) {
-          const sampleArmY = (px, pz) => roadY(arm.id, arm.cls, px, pz) + 0.06;
-          const stDist = sl + 3.1;
-          const midLat = (oa + ob) * 0.5;
-          const spanLat = Math.abs(ob - oa);
-          const stX = node.x + ax * stDist + rx * midLat;
-          const stZ = node.z + az * stDist + rz * midLat;
+        const sampleArmY = (px, pz) => roadY(arm.id, arm.cls, px, pz) + 0.06;
+        const midLat = (oa + ob) * 0.5;
+        const spanLat = Math.abs(ob - oa);
 
-          if (!signalized || arm.cls === 'residential' || arm.cls === 'tertiary' || arm.cls === 'unclassified') {
-            // Paint crisp white "STOP" stencil ahead of stop line
-            decals.add(stX, stZ, -ax, -az, Math.min(3.2, spanLat * 0.82), 3.0, DECAL_CELLS.STENCIL_STOP, sampleArmY);
-          } else if (spanLat >= 5.0) {
-            // Multi-lane signalized approach: paint ONLY + Turn Arrow in turn lane & Straight Arrow in through lane
-            const q1 = oa + spanLat * 0.26;
-            const q2 = oa + spanLat * 0.74;
-            const leftCell = style.left ? DECAL_CELLS.STENCIL_ONLY_RIGHT : DECAL_CELLS.STENCIL_ONLY_LEFT;
-            decals.add(node.x + ax * stDist + rx * q1, node.z + az * stDist + rz * q1, -ax, -az, 2.3, 3.4, leftCell, sampleArmY);
-            decals.add(node.x + ax * stDist + rx * q2, node.z + az * stDist + rz * q2, -ax, -az, 2.3, 3.4, DECAL_CELLS.STENCIL_ARROW_COMBO, sampleArmY);
-          } else {
-            decals.add(stX, stZ, -ax, -az, Math.min(2.8, spanLat * 0.8), 3.3, DECAL_CELLS.STENCIL_ARROW_COMBO, sampleArmY);
-          }
+        // Rule 2: White "STOP" pavement stencil ONLY at unsignalized minor/residential/tertiary intersection approaches (4.5m before stop bar)
+        if (isMinorUnsignalizedApproach && arm.total >= sl + 6.5) {
+          const stopDist = sl + 4.5;
+          const stX = node.x + ax * stopDist + rx * midLat;
+          const stZ = node.z + az * stopDist + rz * midLat;
+          decals.add(stX, stZ, -ax, -az, Math.min(3.0, spanLat * 0.78), 2.8, DECAL_CELLS.STENCIL_STOP, sampleArmY);
+        }
 
-          // Upstream approach warning / speed stencil (~12.5m before stop line)
-          if (arm.total >= sl + 15.0) {
-            const upDist = sl + 12.2;
-            const upX = node.x + ax * upDist + rx * midLat;
-            const upZ = node.z + az * upDist + rz * midLat;
-            const upCell = (aIdx % 2 === 0)
-              ? DECAL_CELLS.STENCIL_SLOW
-              : (region === 'us' ? DECAL_CELLS.STENCIL_SPEED35 : DECAL_CELLS.ROUNDEL_50);
-            decals.add(upX, upZ, -ax, -az, Math.min(3.1, spanLat * 0.78), 3.3, upCell, sampleArmY);
+        // Rule 3: White lane directional arrows ONLY ~14m before an actual intersection on primary/secondary roads
+        if ((arm.cls === 'primary' || arm.cls === 'secondary') && arm.total >= sl + 11.5) {
+          const arrowDist = Math.max(sl + 8.5, node.R + 14.0);
+          if (arm.total >= arrowDist + 2.5) {
+            if (spanLat >= 5.0) {
+              const q1 = oa + spanLat * 0.26;
+              const q2 = oa + spanLat * 0.74;
+              const turnCell = style.left ? DECAL_CELLS.STENCIL_ONLY_RIGHT : DECAL_CELLS.STENCIL_ONLY_LEFT;
+              decals.add(node.x + ax * arrowDist + rx * q1, node.z + az * arrowDist + rz * q1, -ax, -az, 2.2, 3.3, turnCell, sampleArmY);
+              decals.add(node.x + ax * arrowDist + rx * q2, node.z + az * arrowDist + rz * q2, -ax, -az, 2.2, 3.3, DECAL_CELLS.STENCIL_ARROW_COMBO, sampleArmY);
+            } else {
+              const arX = node.x + ax * arrowDist + rx * midLat;
+              const arZ = node.z + az * arrowDist + rz * midLat;
+              decals.add(arX, arZ, -ax, -az, Math.min(2.4, spanLat * 0.72), 3.2, DECAL_CELLS.STENCIL_ARROW_COMBO, sampleArmY);
+            }
           }
         }
       }
 
-      // Bollards at both crosswalk ends (sidewalk corners)
+      // Bollards at both crosswalk ends (sidewalk corners, well outside asphalt road & curb)
       if (MAJOR_CLS.has(arm.cls) && node.majors >= 2) {
         for (const side of [-1, 1]) {
-          for (const d of [c1 + 0.3]) {
-            const bx = node.x + ax * d + rx * side * (hw + 0.35);
-            const bz = node.z + az * d + rz * side * (hw + 0.35);
-            if (!inChunk(bx, bz) || onOtherRoad(bx, bz, arm.id, 0.25) || inBuilding(bx, bz)) continue;
-            push('bollard', bx, roadY(arm.id, arm.cls, bx, bz) + 0.04, bz, 0);
+          for (const d of [c1 + 0.8]) {
+            const bx = node.x + ax * d + rx * side * (hw + 1.45);
+            const bz = node.z + az * d + rz * side * (hw + 1.45);
+            const gy = roadY(arm.id, arm.cls, bx, bz) + 0.04;
+            if (!inChunk(bx, bz) || nearNode(bx, bz, 6.0, node) || onOtherRoad(bx, bz, arm.id, 1.35, gy) || inBuilding(bx, bz)) continue;
+            push('bollard', bx, gy, bz, 0);
           }
         }
       }
 
-      // Green Street Name Blade Signs at intersection corners
-      if (bladesPlacedAtNode < 2) {
+      // Rule 4A: Crossed Green Street Name Blade Signs ONLY where two distinct real OpenFreeMap road names meet
+      if (hasTwoRealStreets && bladesPlacedAtNode < 2) {
         const cornerSide = -inboundSign;
-        const bd = c0 + 0.4;
-        const bx = node.x + ax * bd + rx * cornerSide * (hw + 0.65);
-        const bz = node.z + az * bd + rz * cornerSide * (hw + 0.65);
-        if (inChunk(bx, bz) && !onOtherRoad(bx, bz, arm.id, 0.28) && !inBuilding(bx, bz) && isFree(bx, bz)) {
-          const gy = roadY(arm.id, arm.cls, bx, bz) + 0.04;
+        const bd = c1 + 1.2;
+        const bx = node.x + ax * bd + rx * cornerSide * (hw + 1.8);
+        const bz = node.z + az * bd + rz * cornerSide * (hw + 1.8);
+        const gy = roadY(arm.id, arm.cls, bx, bz) + 0.04;
+        if (inChunk(bx, bz) && !nearNode(bx, bz, 7.5, node) && !onOtherRoad(bx, bz, arm.id, 1.45, gy) && !inBuilding(bx, bz) && isFree(bx, bz)) {
           const rot = rotFor(ax, az);
           push('bladePost', bx, gy, bz, rot);
-          const bName1 = arm.signName || streetA;
+          const bName1 = arm.realName || streetA;
           const bName2 = bName1 === streetB ? streetA : streetB;
           blades.push([bx, gy + 2.85, bz, rot, bName1, bName2]);
           occupy(bx, bz);
@@ -1000,17 +1032,17 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         }
       }
 
-      // Traffic signal: pole at the near-side corner on the inbound driving side, mast arm over inbound lanes
+      // Traffic signal: pole at the near-side corner on the outer sidewalk (hw + 1.65m), mast arm over inbound lanes
       if (signalized && !outboundOnly) {
         const sideSign = inboundSign;
-        const pd = c1 + 1.6;
-        const px = node.x + ax * pd + rx * sideSign * (hw + 0.7);
-        const pz = node.z + az * pd + rz * sideSign * (hw + 0.7);
-        if (inChunk(px, pz) && !onOtherRoad(px, pz, arm.id, 0.3)) {
-          const gy = roadY(arm.id, arm.cls, px, pz) + 0.04;
+        const pd = c1 + 2.0;
+        const px = node.x + ax * pd + rx * sideSign * (hw + 1.65);
+        const pz = node.z + az * pd + rz * sideSign * (hw + 1.65);
+        const gy = roadY(arm.id, arm.cls, px, pz) + 0.04;
+        if (inChunk(px, pz) && !nearNode(px, pz, 7.5, node) && !onOtherRoad(px, pz, arm.id, 1.35, gy) && !inBuilding(px, pz)) {
           const uX = -rx * sideSign, uZ = -rz * sideSign;
           const inboundW = inboundOnly ? hw * 2 : hw;
-          const armLen = Math.max(2.5, Math.min(7.5, inboundW * 0.6 + 0.7));
+          const armLen = Math.max(3.2, Math.min(8.2, inboundW * 0.6 + 1.55));
           push('tlPole', px, gy, pz, rotFor(uX, uZ));
           push('tlArm', px, gy, pz, rotFor(uX, uZ), armLen);
           const hx = px + uX * armLen, hz = pz + uZ * armLen;
@@ -1024,15 +1056,15 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         }
       }
 
-      // Roadside Red Octagon STOP Sign at minor/secondary/tertiary/unsignalized intersection approaches
-      if (!outboundOnly && (!signalized || arm.cls === 'secondary' || arm.cls === 'tertiary' || arm.cls === 'residential')) {
+      // Rule 2: Curbside Red Octagon STOP Sign ONLY at unsignalized minor/residential/tertiary intersection approaches (hw + 1.8m)
+      if (!outboundOnly && isMinorUnsignalizedApproach) {
         const sideSign = inboundSign;
-        const sd = signalized ? c1 + 3.4 : c1 + 1.3;
-        const sx = node.x + ax * sd + rx * sideSign * (hw + 0.62);
-        const sz = node.z + az * sd + rz * sideSign * (hw + 0.62);
-        if (inChunk(sx, sz) && !onOtherRoad(sx, sz, arm.id, 0.28) && !inBuilding(sx, sz) && isFree(sx, sz)) {
-          const gy = roadY(arm.id, arm.cls, sx, sz) + 0.04;
-          // Face approaching traffic (which looks in direction -ax, -az, so sign normal points +ax, +az)
+        const sd = c1 + 2.2;
+        const sx = node.x + ax * sd + rx * sideSign * (hw + 1.8);
+        const sz = node.z + az * sd + rz * sideSign * (hw + 1.8);
+        const gy = roadY(arm.id, arm.cls, sx, sz) + 0.04;
+        if (inChunk(sx, sz) && !nearNode(sx, sz, 7.5, node) && !onOtherRoad(sx, sz, arm.id, 1.45, gy) && !inBuilding(sx, sz) && isFree(sx, sz)) {
+          // Face approaching traffic (which travels in direction -ax, -az, so sign normal points +ax, +az)
           push('signStop', sx, gy, sz, rotFor(ax, az));
           occupy(sx, sz);
         }
@@ -1065,29 +1097,88 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         fn(s.x1 + (s.x2 - s.x1) * t, s.y1 + (s.y2 - s.y1) * t, s.z1 + (s.z2 - s.z1) * t, k);
       }
     };
-    const ok = (x, z, pad = 3.0) => {
+    const ok = (x, z, pad = 10.0, refY = null) => {
       dbg.tries++;
       if (!inChunk(x, z)) return false;
       if (nearNode(x, z, pad)) return (dbg.node++, false);
-      if (onOtherRoad(x, z, s.id, 0.4)) return (dbg.road++, false);
+      if (onOtherRoad(x, z, s.id, 1.45, refY)) return (dbg.road++, false);
       if (inBuilding(x, z)) return (dbg.bldg++, false);
       if (!isFree(x, z)) return (dbg.occ++, false);
       return true;
     };
 
-    // ---- 5A. 3D Overhead Highway Gantry Signs on motorway, trunk, and primary avenues ----
-    if (GANTRY_CLS.has(s.cls)) {
-      const gantrySpacing = isHighway ? 145 : 155;
-      place(gantrySpacing, 32, (cx, cy, cz, k) => {
-        if (!inChunk(cx, cz) || nearNode(cx, cz, 7.5)) return;
-        const spanW = s.hw * 2 + 3.0; // roadWidth + 3m
+    // Check if an upper bridge deck sits directly above (x, z, cy) so lower decks of double-deck bridges never get 6.8m gantries/lamps clipping the upper deck
+    const hasOverheadDeck = (x, z, cy) => {
+      const list = segGrid.query(x, z);
+      for (let m = 0; m < list.length; m++) {
+        const os = list[m];
+        if (os.id === s.id) continue;
+        const t = Math.max(0, Math.min(1, ((x - os.x1) * os.dx + (z - os.z1) * os.dz) / os.len));
+        const oy = os.y1 + (os.y2 - os.y1) * t;
+        if (oy > cy + 2.2 && oy < cy + 10.5) {
+          const px = os.x1 + (os.x2 - os.x1) * t, pz = os.z1 + (os.z2 - os.z1) * t;
+          if ((x - px) * (x - px) + (z - pz) * (z - pz) < (os.hw + 3.5) * (os.hw + 3.5)) return true;
+        }
+      }
+      return false;
+    };
+
+    // ---- 5A. 3D Overhead Highway Gantry Signs ONLY on true highways (motorway/trunk) or primary/secondary roads with an explicit OpenFreeMap ref ----
+    const canHaveGantry = isHighway || (s.hasRealRef && (s.cls === 'primary' || s.cls === 'secondary'));
+    if (canHaveGantry && s.ref) {
+      const gantrySpacing = isHighway ? 150 : 210;
+      place(gantrySpacing, 28, (cx, cy, cz, k) => {
+        if (!inChunk(cx, cz)) return;
+        const onBridgeDeck = Boolean(s.bridge || (cy - terrMid > 2.0));
+        if (!onBridgeDeck && nearNode(cx, cz, 14.0)) return;
+        if (hasOverheadDeck(cx, cz, cy)) return;
+        // On elevated freeway bridges, bolt gantry legs directly onto the outer concrete bridge parapets (s.hw + 0.25m);
+        // on ground-level roads, place legs on the outer sidewalk/shoulder (s.hw + 1.7m)
+        const spanW = onBridgeDeck ? (s.hw * 2 + 0.5) : (s.hw * 2 + 3.4);
         const halfSpan = spanW * 0.5;
         const lx = cx - rx * halfSpan, lz = cz - rz * halfSpan;
         const rxp = cx + rx * halfSpan, rzp = cz + rz * halfSpan;
         if (!inChunk(lx, lz) || !inChunk(rxp, rzp)) return;
-        if (onOtherRoad(lx, lz, s.id, 0.2) || onOtherRoad(rxp, rzp, s.id, 0.2)) return;
+        if (onBridgeDeck) {
+          if (onOtherRoad(lx, lz, s.id, 0.25, cy, true) || onOtherRoad(rxp, rzp, s.id, 0.25, cy, true)) return;
+        } else {
+          if (onOtherRoad(lx, lz, s.id, 1.35, cy) || onOtherRoad(rxp, rzp, s.id, 1.35, cy)) return;
+        }
         if (inBuilding(lx, lz) || inBuilding(rxp, rzp)) return;
         if (!isFree(lx, lz) || !isFree(rxp, rzp)) return;
+
+        // Pick dynamic nearest real OpenFreeMap cross-street destinations near this exact gantry position (cx, cz)
+        const compass = compassDirFromTangent(s.dx, s.dz);
+        let mainBaseName = s.realName && !/eisenhower|route /i.test(s.realName) ? s.realName : '';
+        let localMainDest = s.signName;
+        let localDest2 = s.dest2;
+        if (chunkNamedRoads.length > 0) {
+          if (isHighway || !mainBaseName) {
+            let bestMainD2 = Infinity;
+            for (let nrIdx = 0; nrIdx < chunkNamedRoads.length; nrIdx++) {
+              const nr = chunkNamedRoads[nrIdx];
+              if (!nr.name || /eisenhower|route /i.test(nr.name)) continue;
+              if (isHighway && nr.cls !== 'primary' && nr.cls !== 'secondary' && nr.cls !== 'tertiary') continue;
+              const d2 = (cx - nr.x) * (cx - nr.x) + (cz - nr.z) * (cz - nr.z);
+              if (d2 < bestMainD2) {
+                bestMainD2 = d2;
+                mainBaseName = nr.name;
+                localMainDest = nr.name.length <= 12 ? `${nr.name} ${compass}` : nr.name;
+              }
+            }
+          }
+          let bestCrossD2 = Infinity;
+          for (let nrIdx = 0; nrIdx < chunkNamedRoads.length; nrIdx++) {
+            const nr = chunkNamedRoads[nrIdx];
+            if (!nr.name || /eisenhower|route /i.test(nr.name)) continue;
+            if (nr.name === mainBaseName || nr.name === localMainDest) continue;
+            const d2 = (cx - nr.x) * (cx - nr.x) + (cz - nr.z) * (cz - nr.z);
+            if (d2 < bestCrossD2) {
+              bestCrossD2 = d2;
+              localDest2 = nr.name;
+            }
+          }
+        }
 
         // Left & right steel gantry columns + overhead cross-braced box truss (height = 6.8m clearance)
         const faceRot = rotFor(rx, rz); // local +X spans across road (rx, rz), local +Z faces oncoming traffic (-s.dx, -s.dz)
@@ -1099,18 +1190,22 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         const isMoto = (s.cls === 'motorway' || s.cls === 'trunk') ? 1 : 0;
         gantries.push([
           cx, cy, cz, faceRot, spanW, s.oneway ? 1 : 0, isMoto,
-          s.ref, s.signName, s.dest2, s.exitNum,
+          s.ref, localMainDest, localDest2, s.exitNum,
         ]);
         dbg.gantries++;
       });
     }
 
-    // Highway lights: single-arm poles on the outer edge, plus roadside highway speed signs
+    // Highway lights: single-arm poles on the outer edge
     if (isHighway) {
-      place(42, 0, (cx, cy, cz) => {
+      const onBridgeDeck = Boolean(s.bridge || ((s.y1 + s.y2) * 0.5 - terrMid > 2.0));
+      const lampOff = onBridgeDeck ? (s.hw + 0.25) : (s.hw + 1.5);
+      place(45, 0, (cx, cy, cz) => {
+        if (hasOverheadDeck(cx, cz, cy)) return;
         for (const side of [-1, 1]) {
-          const x = cx + rx * side * (s.hw + 0.6), z = cz + rz * side * (s.hw + 0.6);
-          if (!inChunk(x, z) || onOtherRoad(x, z, s.id, 0.3) || inBuilding(x, z) || !isFree(x, z)) continue;
+          const x = cx + rx * side * lampOff, z = cz + rz * side * lampOff;
+          if (!inChunk(x, z) || nearNode(x, z, 10.0) || inBuilding(x, z) || !isFree(x, z)) continue;
+          if (onBridgeDeck ? onOtherRoad(x, z, s.id, 0.4, cy, true) : onOtherRoad(x, z, s.id, 1.35, cy)) continue;
           const ux = -rx * side, uz = -rz * side;
           const rot = rotFor(ux, uz);
           push('lampArm', x, cy, z, rot);
@@ -1118,45 +1213,25 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
           heads.push(x + ux * 2.3, cy + 8.35, z + uz * 2.3, rot, cy);
         }
       });
-      place(95, 21, (cx, cy, cz) => {
-        const side = driveSign;
-        const x = cx + rx * side * (s.hw + 0.65), z = cz + rz * side * (s.hw + 0.65);
-        if (!inChunk(x, z) || onOtherRoad(x, z, s.id, 0.3) || inBuilding(x, z) || !isFree(x, z)) return;
-        const signType = region === 'us' ? 'signSpeed35' : 'signSpeed60';
-        push(signType, x, cy, z, rotFor(-s.dx, -s.dz));
-        occupy(x, z);
-      });
       continue;
     }
 
     if (isElevated) continue;
 
-    // ---- 5B. Roadside Traffic Signs (Speed Limit, Warning Diamonds, STOP) along curbs ----
+    // ---- 5B. Roadside Speed Limit Signs (at most 1 per 220m along outer sidewalks at hw + 1.65m, facing oncoming traffic) ----
     const speedSignType = region === 'us'
       ? (s.cls === 'residential' || s.cls === 'tertiary' ? 'signSpeed25' : 'signSpeed35')
       : (s.cls === 'primary' ? 'signSpeed60' : 'signSpeed50');
 
-    place(68, 16, (cx, cy, cz, k) => {
+    place(220, 48, (cx, cy, cz, k) => {
       const side = (!s.oneway && k % 2 === 1) ? -driveSign : driveSign;
-      const off = s.hw + 0.55;
+      const off = s.hw + 1.65;
       const x = cx + rx * side * off, z = cz + rz * side * off;
-      if (!ok(x, z, 2.5)) return;
+      if (!ok(x, z, 18.0, cy)) return;
       // Face approaching traffic on this side of the road
       const faceDx = (!s.oneway && side === -driveSign) ? s.dx : -s.dx;
       const faceDz = (!s.oneway && side === -driveSign) ? s.dz : -s.dz;
       push(speedSignType, x, cy + 0.04, z, rotFor(faceDx, faceDz));
-      occupy(x, z);
-    });
-
-    place(88, 46, (cx, cy, cz, k) => {
-      const side = (!s.oneway && k % 2 === 0) ? -driveSign : driveSign;
-      const off = s.hw + 0.55;
-      const x = cx + rx * side * off, z = cz + rz * side * off;
-      if (!ok(x, z, 2.5)) return;
-      const warnType = (hashInt(s.id, k) % 2 === 0) ? 'signWarnPed' : 'signWarnCurve';
-      const faceDx = (!s.oneway && side === -driveSign) ? s.dx : -s.dx;
-      const faceDz = (!s.oneway && side === -driveSign) ? s.dz : -s.dz;
-      push(warnType, x, cy + 0.04, z, rotFor(faceDx, faceDz));
       occupy(x, z);
     });
 
@@ -1166,9 +1241,9 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     place(lampSpacing, 0, (cx, cy, cz, k) => {
       const sides = wide ? [-1, 1] : [k % 2 === 0 ? 1 : -1];
       for (const side of sides) {
-        const off = s.hw + 0.45;
+        const off = s.hw + 1.45;
         const x = cx + rx * side * off, z = cz + rz * side * off;
-        if (!ok(x, z)) continue;
+        if (!ok(x, z, 11.0, cy)) continue;
         const ux = -rx * side, uz = -rz * side;
         const rot = rotFor(ux, uz);
         const gy = cy + 0.04;
@@ -1186,13 +1261,13 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       }
     });
 
-    // Fire hydrants near the curb (dense in the US)
+    // Fire hydrants on the sidewalk (dense in the US)
     if (style.hydrant > 0) {
       place(90, 17, (cx, cy, cz, k) => {
         if (hash2(cx, cz) > style.hydrant) return;
         const side = k % 2 === 0 ? -1 : 1;
-        const x = cx + rx * side * (s.hw + 0.55), z = cz + rz * side * (s.hw + 0.55);
-        if (!ok(x, z, 2.0)) return;
+        const x = cx + rx * side * (s.hw + 1.45), z = cz + rz * side * (s.hw + 1.45);
+        if (!ok(x, z, 10.0)) return;
         push('hydrant', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));
         occupy(x, z);
       });
@@ -1227,7 +1302,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         if (s.oneway) side = style.left ? -1 : 1;
         const off = s.hw + swW - 0.75;
         const x = cx + rx * side * off, z = cz + rz * side * off;
-        if (!ok(x, z, 12.0)) return;
+        if (!ok(x, z, 12.0, cy)) return;
         const e1x = x + s.dx * 2.2, e1z = z + s.dz * 2.2, e2x = x - s.dx * 2.2, e2z = z - s.dz * 2.2;
         if (!ok(e1x, e1z, 12.0) || !ok(e2x, e2z, 12.0)) return;
         push('busStop', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));

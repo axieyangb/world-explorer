@@ -244,12 +244,15 @@ export function computePlacesPayload(ctx) {
   const lon = places ? places.lon : 0;
   const nyc = isNycRegion(lat, lon);
 
-  // Usable ground-level building footprints (local coords)
+  // Usable ground-level building footprints (local coords) — only include buildings actually extruded by WFC
   const blds = [];
   for (const b of buildingEntities) {
-    if (!b || b.kind !== 'building' || !b.flatOuter || b.flatOuter.length < 6) continue;
-    const bb = ringBBox(b.flatOuter);
-    blds.push({ e: b, flat: b.flatOuter, ...bb, area: ringArea(b.flatOuter) });
+    if (!b || b.kind !== 'building' || !b.extruded) continue;
+    const roofFlat = b.topRoofFlat && b.topRoofFlat.length >= 6 ? b.topRoofFlat : b.flatOuter;
+    if (!roofFlat || roofFlat.length < 6) continue;
+    if (b.topRoofHoles && b.topRoofHoles.length > 0) continue;
+    const bb = ringBBox(roofFlat);
+    blds.push({ e: b, flat: roofFlat, ...bb, area: ringArea(roofFlat) });
   }
 
   // ---------------------------------------------------------------- 1. Rooftop detail
