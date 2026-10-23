@@ -1011,7 +1011,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         root.userData.places = computePlacesPayload({
           data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
         });
-        addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater }); // places-info
+        addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater, street: root.userData.street }); // places-info
 
         stage = 4;
         this.done = true;

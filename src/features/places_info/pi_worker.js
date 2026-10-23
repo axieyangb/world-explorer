@@ -187,6 +187,7 @@ function build(places, ctx) {
   };
 
   const notable = [];
+  const realShelters = []; // local x,z of shelters placed at real bus_stop POIs
   const pois = src.pois || [];
   for (const q of pois) {
     const [px, pz, cls, sub, name, nameEn] = q;
@@ -303,6 +304,7 @@ function build(places, ctx) {
           const sx = r.qx + r.nx * (r.hw + 1.75) + r.ux * a, sz = r.qz + r.nz * (r.hw + 1.75) + r.uz * a;
           if (!inChunk(sx, sz) || !rectFree(sx, sz, r.ux, r.uz, 2.3, 0.7, 0.15, 0.3)) continue;
           push('shelter', sx, ty(sx, sz), sz, Math.atan2(-r.nx, -r.nz));
+          realShelters.push(sx, sz);
           bump('shelter');
           break;
         }
@@ -396,5 +398,22 @@ function build(places, ctx) {
   }
 
   for (const [k, arr] of Object.entries(out)) places.inst['pi_' + k] = new Float32Array(arr);
+
+  // Drop procedural street-furniture bus shelters (chunk-local, stride 5) near a real bus-stop shelter.
+  const st = ctx.street && ctx.street.types;
+  const proc = st && st.busStop;
+  if (proc && proc.length && realShelters.length) {
+    const stride = ctx.street.stride || 5;
+    const keep = [];
+    for (let i = 0; i < proc.length; i += stride) {
+      let near = false;
+      for (let j = 0; j < realShelters.length; j += 2) {
+        if (Math.hypot(proc[i] - realShelters[j], proc[i + 2] - realShelters[j + 1]) < 35) { near = true; break; }
+      }
+      if (!near) for (let k = 0; k < stride; k++) keep.push(proc[i + k]);
+    }
+    places.piDroppedBusStops = (proc.length - keep.length) / stride;
+    st.busStop = new Float32Array(keep);
+  }
   places.piNotable = notable;
 }

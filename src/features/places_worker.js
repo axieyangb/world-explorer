@@ -779,7 +779,7 @@ export function computePlacesPayload(ctx) {
           const pal = FOOD.has(cls) ? AWNING_FOOD : AWNING_SHOP;
           push('awning', ox + best.qx + nx * 0.12, gy + 2.6, oz + best.qz + nz * 0.12, rotY, w, 0.7, depth, pal[Math.floor(rng() * pal.length)]);
           push('sign', ox + best.qx + nx * 0.14, gy + 3.45, oz + best.qz + nz * 0.14, rotY, w * 0.86, 0.75, 0.14, SIGN_COLORS[Math.floor(rng() * SIGN_COLORS.length)]);
-          if (name) signTexts.push([ox + best.qx + nx * 0.3, gy + 3.825, oz + best.qz + nz * 0.3, rotY, w * 0.86 - 0.14, name, nameEn || name]); // places-info
+          if (name) { signTexts.push([ox + best.qx + nx * 0.3, gy + 3.825, oz + best.qz + nz * 0.3, rotY, w * 0.86 - 0.14, name, nameEn || name]); continue; } // places-info: sign text replaces the floating label
           labelY = gy + 5.0;
         }
       }
