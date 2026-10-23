@@ -1,6 +1,10 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
+import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
+import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
+import { extractVenues } from "./features/venues.js"; // [venues]
+import { makeLandmarkSuppressor } from "./features/landmarks/registry.js"; // feature/famous-landmarks
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -12,6 +16,7 @@ const MAX_CACHED_TILES = 160;
 
 export const QUICK_WORLD_DESTINATIONS = [
   { id: "nyc_times_sq", name: "New York · Times Square", nameZh: "纽约 · 时代广场", street: "Broadway & 7th Ave", city: "New York, US", cityZh: "美国 纽约", lat: 40.7580, lon: -73.9855 },
+  { id: "nyc_liberty", name: "New York · Statue of Liberty", nameZh: "纽约 · 自由女神像", street: "Liberty Island", city: "New York, US", cityZh: "美国 纽约", lat: 40.6892, lon: -74.0445 }, // feature/famous-landmarks
   { id: "tokyo_shibuya", name: "Tokyo · Shibuya", nameZh: "东京 · 涩谷十字路口", street: "Shibuya Crossing", city: "Tokyo, JP", cityZh: "日本 东京", lat: 35.6595, lon: 139.7004 },
   { id: "sf_embarcadero", name: "San Francisco · Embarcadero", nameZh: "旧金山 · 内河码头", street: "The Embarcadero", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.7955, lon: -122.3937 },
   { id: "sf_golden_gate", name: "San Francisco · Golden Gate", nameZh: "旧金山 · 金门大桥", street: "Golden Gate Bridge · US 101", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.8199, lon: -122.4783 },
@@ -219,6 +224,7 @@ const INTERESTING_LAYERS = new Set([
   "poi", // feature/places
   "housenumber",
   "aeroway", // feature/places
+  "boundary", // places-info: admin borders (minimap dashes + crossing toast)
 ]);
 
 export function decodeMvtTile(arrayBuffer, z, tx, ty) {
@@ -443,7 +449,7 @@ const ROAD_CLASS_MAP = {
   street: { cls: "residential", linkCls: "residential", lanes: 1, width: 5.5, oneway: 0 },
   residential: { cls: "residential", linkCls: "residential", lanes: 1, width: 5.5, oneway: 0 },
   service: { cls: "service", linkCls: "service", lanes: 1, width: 3.8, oneway: 0 },
-  track: { cls: "service", linkCls: "service", lanes: 1, width: 3.5, oneway: 0 },
+  track: { cls: "footway", linkCls: "footway", lanes: 1, width: 3.0, oneway: 0 }, // [terrain-roads] trail, no cars
   path: { cls: "footway", linkCls: "footway", lanes: 1, width: 2.2, oneway: 0 },
   pedestrian: { cls: "pedestrian", linkCls: "pedestrian", lanes: 1, width: 4.5, oneway: 0 },
 };
@@ -507,9 +513,11 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   const [tx1, ty1] = latLonToTileXY(minLat, maxLon, z);
 
   const tilePromises = [];
+  const tileXY = []; // [feature/rail-transit] tile coords for exact-extent rail clipping
   for (let tx = Math.min(tx0, tx1); tx <= Math.max(tx0, tx1); tx++) {
     for (let ty = Math.min(ty0, ty1); ty <= Math.max(ty0, ty1); ty++) {
       tilePromises.push(fetchDecodedMvtTile(z, tx, ty));
+      tileXY.push([z, tx, ty]); // [feature/rail-transit]
     }
   }
   const tiles = await Promise.all(tilePromises);
@@ -665,13 +673,19 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         else if (subCls === "cycleway") cls = "cycleway";
         else cls = "footway";
       }
+      // [terrain-roads] trail surface: OMT `surface` is paved/unpaved; tracks, bridleways & hiking paths default to dirt
+      const surf = String(f.tags.surface || "");
+      const isTrail = cls === "footway" || cls === "cycleway";
+      const unpaved = isTrail && (surf ? surf === "unpaved" : rawCls === "track" || subCls === "bridleway" || subCls === "path") ? 1 : 0;
       const linkSpec = LINK_SPECS[cls];
       const lanes = Number(f.tags.lanes) || (linkSpec ? linkSpec.lanes : baseSpec.lanes);
       const widthM = linkSpec ? linkSpec.width : baseSpec.width;
       const oneway = f.tags.oneway !== undefined ? (f.tags.oneway ? 1 : 0) : linkSpec ? linkSpec.oneway : baseSpec.oneway;
       const onewayRev = Number(f.tags.oneway) === -1; // OSM oneway=-1: traffic flows against the way geometry
       const isBridge = f.tags.brunnel === "bridge" || (f.tags.layer || 0) > 0 ? 1 : 0;
-      const isTunnel = f.tags.brunnel === "tunnel" || (f.tags.layer || 0) < 0 ? 1 : 0;
+      // [release-6-integ] a "tunnel" with layer > 0 is a building passage on a bridge (Tower Bridge towers): keep it a
+      // bridge deck, otherwise the deck graph loses the tower sections and the bascule span drops to the water (~6 m walls)
+      const isTunnel = (f.tags.brunnel === "tunnel" && !((f.tags.layer || 0) > 0)) || (f.tags.layer || 0) < 0 ? 1 : 0;
       const layer = f.tags.layer !== undefined ? Number(f.tags.layer) : isBridge ? 1 : isTunnel ? -1 : 0;
 
       for (const rawLine of f.geom) {
@@ -687,7 +701,10 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           if (lz < minZ) minZ = lz;
           if (lz > maxZ) maxZ = lz;
         }
-        if (maxX < -540 || minX > 540 || maxZ < -540 || minZ > 540) continue;
+        // fix/bridge-continuity: ways just outside the chunk are kept as `road_context` so bridge approach ramps
+        // that start in a neighbouring chunk are computed from the same ways in both chunks
+        if (maxX < -1000 || minX > 1000 || maxZ < -1000 || minZ > 1000) continue;
+        const isContext = maxX < -540 || minX > 540 || maxZ < -540 || minZ > 540;
 
         const startKey = `${Math.round(ptsXZ[0][0] / 2)},${Math.round(ptsXZ[0][1] / 2)}`;
         const endKey = `${Math.round(ptsXZ[ptsXZ.length - 1][0] / 2)},${Math.round(ptsXZ[ptsXZ.length - 1][1] / 2)}`;
@@ -714,6 +731,8 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           ptsXZ,
           startKey,
           endKey,
+          isContext,
+          unpaved, // [terrain-roads]
         });
       }
     }
@@ -721,10 +740,11 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
 
   // 3. Match road names & compute 3D elevation profile with smooth cosine ramps at bridge abutments
   const roads = [];
+  const roadContext = []; // fix/bridge-continuity
   const intersectionNodes = new Map();
 
   for (const r of rawRoads) {
-    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey } = r;
+    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, isContext, unpaved } = r; // [fix/bridge-continuity] isContext, [terrain-roads] unpaved
 
     const isPedOrService = cls === "footway" || cls === "pedestrian" || cls === "steps" || cls === "cycleway" || cls === "service";
     if (!isPedOrService && (!name || !ref) && namedRoadSamples.length > 0) {
@@ -788,6 +808,11 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       flatXYZ.push(Math.round(lx * 10) / 10, Math.round(y * 100) / 100, Math.round(lz * 10) / 10);
     }
 
+    if (isContext) {
+      roadContext.push([id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]);
+      continue;
+    }
+
     // Track major intersections for traffic lights & highway gantries
     if (!isTunnel && cls !== "footway" && cls !== "service") {
       for (const ep of [ptsXZ[0], ptsXZ[nPts - 1]]) {
@@ -805,7 +830,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       }
     }
 
-    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ];
+    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]; // [11] unpaved [terrain-roads]
     roads.push(roadTuple);
   }
 
@@ -1161,7 +1186,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       if (f.type !== 2) continue;
       if (f.tags.brunnel === "tunnel" || Number(f.tags.layer) < 0) continue;
       const wCls = f.tags.class || "river";
-      const widthM = wCls === "river" ? 26.0 : wCls === "canal" ? 15.0 : 8.0;
+      const widthM = waterwayWidth(wCls, f.tags); // [terrain-roads] per-class widths
       for (const line of f.geom) {
         const flatXZ = [];
         let inChunk = false;
@@ -1224,6 +1249,19 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     } else if (info.deg >= 3 && info.y === 0) {
       facilities.push(["tl", Math.round((info.lx + 5.5) * 10) / 10, 0, Math.round((info.lz + 5.5) * 10) / 10]);
       facilities.push(["cr", Math.round((info.lx - 4.5) * 10) / 10, 0, Math.round(info.lz * 10) / 10]);
+    }
+  }
+
+  // feature/famous-landmarks: drop generic OSM buildings inside hand-built landmark footprints
+  const lmSuppress = makeLandmarkSuppressor(origin);
+  if (lmSuppress) {
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      const fo = buildings[i][11];
+      if (!fo || fo.length < 6) continue;
+      let sx = 0, sz = 0;
+      for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
+      const n = fo.length / 2;
+      if (lmSuppress(ox + sx / n, oz + sz / n)) buildings.splice(i, 1);
     }
   }
 
@@ -1303,10 +1341,13 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
   }
 
+  const venues = extractVenues(tiles, toLocalXZ, buildings); // [venues] also drops stadium shell buildings
   return {
     roads,
+    road_context: roadContext, // fix/bridge-continuity: approach context for computeRoadLiftProfiles only
     railways,
     buildings,
+    venues, // [venues]
     water_polys,
     water_lines,
     island_holes,
@@ -1316,6 +1357,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     osm_trees: [],
     vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
     places: extractPlaceFeatures(tiles, toLocalXZ, origin), // feature/places
+    rail: extractRailFeatures(tiles, tileXY, toLocalXZ), // [feature/rail-transit]
   };
 }
 
@@ -1444,6 +1486,7 @@ export async function fetchGlobalDem(centerLat, centerLon) {
     stepM,
     minWorld,
     baseAslM: Math.round(baseAslM * 10) / 10,
+    centerLat, // [terrain-roads] latitude-dependent snowline
     elevations,
     osmPeaks,
     isBeijing,

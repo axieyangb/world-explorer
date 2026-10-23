@@ -28,6 +28,7 @@ export const LC_STEPS         = 21;
 
 // kind -> [rgb, height above terrain, shader pattern]
 // pattern: 0 plain, 1 field rows, 2 sand, 3 paving, 4 undergrowth/flowerbed, 5 crisp court, 6 turquoise pool water, 7 stone plaza/steps
+// [terrain-roads] 8 marsh pools, 9 rock/scree, 10 glacier ice, 11 orchard/vineyard rows
 // Heights stay below parks (0.08-0.15) for urban kinds and above them for natural cover & courts, all below roads (>= 0.28) except pools/steps.
 export const LC_STYLE = {
   [LC_RESIDENTIAL]:   [[0.47, 0.46, 0.43], 0.020, 3],
@@ -36,13 +37,13 @@ export const LC_STYLE = {
   [LC_INSTITUTION]:   [[0.51, 0.48, 0.43], 0.032, 3],
   [LC_CEMETERY]:      [[0.35, 0.45, 0.29], 0.036, 0],
   [LC_FARMLAND]:      [[0.60, 0.56, 0.35], 0.040, 1],
-  [LC_ORCHARD]:       [[0.44, 0.50, 0.29], 0.044, 1],
+  [LC_ORCHARD]:       [[0.44, 0.50, 0.29], 0.044, 11], // [terrain-roads] tree/vine rows
   [LC_GRASS]:         [[0.34, 0.51, 0.24], 0.060, 0],
   [LC_SCRUB]:         [[0.38, 0.44, 0.26], 0.160, 4],
-  [LC_WETLAND]:       [[0.31, 0.41, 0.31], 0.164, 4],
+  [LC_WETLAND]:       [[0.31, 0.41, 0.31], 0.164, 8], // [terrain-roads] marsh pools
   [LC_SAND]:          [[0.85, 0.78, 0.59], 0.168, 2],
-  [LC_ROCK]:          [[0.55, 0.53, 0.50], 0.172, 0],
-  [LC_ICE]:           [[0.92, 0.94, 0.97], 0.176, 0],
+  [LC_ROCK]:          [[0.55, 0.53, 0.50], 0.172, 9], // [terrain-roads] scree
+  [LC_ICE]:           [[0.92, 0.94, 0.97], 0.176, 10], // [terrain-roads] glacier
   [LC_WOOD]:          [[0.22, 0.31, 0.16], 0.180, 4],
   [LC_FLOWERBED]:     [[0.24, 0.50, 0.22], 0.184, 4],
   [LC_TRACK]:         [[0.74, 0.26, 0.20], 0.188, 5],

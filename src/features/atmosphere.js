@@ -114,6 +114,9 @@ class AtmosphereSystem {
 
     const qw = params.get('weather');
     this.weather = WEATHER[qw] ? qw : 'clear';
+    // [live-weather] live targets from live_weather.js; a manual pick (menu or ?weather=) wins
+    this.live = null;
+    this.manual = !!WEATHER[qw];
     const w0 = WEATHER[this.weather];
     this.cloud = w0.cloud;
     this.rain = w0.rain;
@@ -186,9 +189,17 @@ class AtmosphereSystem {
     this.targetHour = ((Number(h) % 24) + 24) % 24;
   }
 
+  /** [live-weather] Continuous targets {weather, cloud, rain, fog, label} from real weather. */
+  setLive(live) {
+    this.live = live;
+    if (!this.manual && live && WEATHER[live.weather]) this.weather = live.weather;
+    this._refreshUi();
+  }
+
   setWeather(w, instant = false) {
     if (!WEATHER[w]) return;
     this.weather = w;
+    this.manual = true; // [live-weather]
     if (instant) {
       const t = WEATHER[w];
       this.cloud = t.cloud;
@@ -238,7 +249,7 @@ class AtmosphereSystem {
     this._advanceClock(dt);
 
     // Weather easing (~6 s for sky/fog, wetness builds in ~15 s and dries in ~60 s)
-    const tgt = WEATHER[this.weather];
+    const tgt = (!this.manual && this.live) || WEATHER[this.weather]; // [live-weather]
     const k = 1 - Math.exp(-dt / 6);
     this.cloud = lerp(this.cloud, tgt.cloud, k);
     this.rain = lerp(this.rain, tgt.rain, k);
@@ -491,7 +502,8 @@ class AtmosphereSystem {
     const hh = Math.floor(this.hour);
     const mm = Math.floor((this.hour - hh) * 60);
     let txt = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-    if (this.weather !== 'clear') txt += ` · ${this._t(this.weather)}`;
+    if (!this.manual && this.live && this.live.label) txt += ` · ${this.live.label}`; // [live-weather]
+    else if (this.weather !== 'clear') txt += ` · ${this._t(this.weather)}`;
     if (this.labelEl.textContent !== txt) this.labelEl.textContent = txt;
   }
 }

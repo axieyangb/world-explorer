@@ -2,7 +2,9 @@ import * as THREE from '../vendor/three.module.js';
 import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
 import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
 import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
-import { buildBridgeDecks, levelWaterBridgeRawYs, collectMajorBridgeWays, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js'; // fix/water
+import { buildBridgeDecks, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js'; // fix/water
+import { computeRoadLiftProfiles } from './features/bridge_profile.js'; // fix/bridge-continuity
+import { clearBridgeDeckBuildings } from './features/bridge_deck_buildings.js'; // [release-6-integ] Tower Bridge deck blockers
 import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js'; // fix/water
 import {
   getBeijingTerrainElevation,
@@ -12,14 +14,19 @@ import {
 } from './environment.js';
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
+import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
+import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
+setVenueTerrainSampler(getBeijingTerrainElevation); // [release-6-integ] breaks environment<->venues import cycle
+import { addPlacesInfo } from './features/places_info/pi_worker.js'; // places-info
 import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
 } from './landmarks_40.js';
+import { buildRailTrack } from './features/rail_build.js'; // [feature/rail-transit]
 
 /**
  * Converts a float [0..1] RGB array into a compact normalized Uint8Array (3 bytes/vertex instead of 12).
@@ -812,8 +819,9 @@ const ROAD_COLORS = {
   service:        [0.38, 0.40, 0.44],
   pedestrian:     [0.52, 0.50, 0.47],
   footway:        [0.50, 0.48, 0.45],
-  cycleway:       [0.32, 0.44, 0.38],
+  cycleway:       [0.24, 0.56, 0.32], // [terrain-roads] green bike lanes
 };
+const UNPAVED_TRAIL_RGB = [0.52, 0.43, 0.31]; // [terrain-roads] dirt trails (roads[11] = unpaved)
 
 // Widened vertical separation between road classes to prevent Z-fighting at all altitudes
 const ROAD_Y_BIAS = {
@@ -945,7 +953,9 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           isPointInWater,
           isPointInSunkenTrench,
           roadEntities,
-          worldOrigin
+          worldOrigin,
+          data.railways || [],
+          data.road_context || []
         );
 
         // fix/water: fill gaps between parallel narrow bridge ways (deck strip + physics-only deck segments)
@@ -964,7 +974,10 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         }
 
         // 3. Railways & Elevated Subway Viaducts
-        buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
+        // [feature/rail-transit] real-geometry tracks (ballast/street/catenary/viaducts) + vehicle network payload
+        if (data.rail) root.userData.rail = buildRailTrack(data.rail, ox, oz, subGroups.railways, mats, roadSegments);
+        else buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
+        delete roadSegments.liftWays; // [release-6-integ]
 
         buildingTask = createBuildingBuildTask(
           data.buildings || [],
@@ -1010,6 +1023,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         root.userData.places = computePlacesPayload({
           data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
         });
+        root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders }); // [venues] stadium bowls + theme-park rides
+        addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater, street: root.userData.street }); // places-info
 
         stage = 4;
         this.done = true;
@@ -1493,6 +1508,8 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     return false;
   };
 
+  const SEA_DRAPE_MAX_M = 3.0; // [terrain-roads]
+  const seaWaterY = (t) => (t > 1.6 ? t : Math.min(0.42, t)); // sea level, or draped over low marsh/salt-pond ground
   for (let wIdx = 0; wIdx < (data.water_polys || []).length; wIdx++) {
     const wp = data.water_polys[wIdx];
     const [osmId, , flatOuter, flatHoles] = wp;
@@ -1545,7 +1562,9 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
         const hCount = (inAnyIslandHole(ax, az) ? 1 : 0) + (inAnyIslandHole(bx, bz) ? 1 : 0) + (inAnyIslandHole(cx, cz) ? 1 : 0);
         if (hCount >= 2) continue;
       }
-      if (isSeaLevelPoly && getBeijingTerrainElevation(ox + mx, oz + mz) > 1.6) {
+      // [terrain-roads] Low diked salt ponds / tidal marsh (DEM ~1.6-3 m, e.g. Palo Alto Baylands) are still OSM ocean:
+      // keep them (draped below) instead of leaving bare light-grey ground. Only clearly raised land is culled.
+      if (isSeaLevelPoly && getBeijingTerrainElevation(ox + mx, oz + mz) > SEA_DRAPE_MAX_M) {
         continue;
       }
       keptSubTris.push(ax, az, bx, bz, cx, cz);
@@ -1560,49 +1579,18 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
       const ta = getBeijingTerrainElevation(ox + ax, oz + az);
       const tb = getBeijingTerrainElevation(ox + bx, oz + bz);
       const tc = getBeijingTerrainElevation(ox + cx, oz + cz);
-      const ya = (isSeaLevelPoly ? Math.min(0.42, ta) : ta) + wyOff;
-      const yb = (isSeaLevelPoly ? Math.min(0.42, tb) : tb) + wyOff;
-      const yc = (isSeaLevelPoly ? Math.min(0.42, tc) : tc) + yOffWater(wyOff);
+      const ya = (isSeaLevelPoly ? seaWaterY(ta) : ta) + wyOff;
+      const yb = (isSeaLevelPoly ? seaWaterY(tb) : tb) + wyOff;
+      const yc = (isSeaLevelPoly ? seaWaterY(tc) : tc) + yOffWater(wyOff);
       waterPos.push(ax, ya, az, cx, yc, cz, bx, yb, bz);
       waterNorm.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
     }
     appendPolyShoreUv(waterUv, keptSubTris, flatOuter, chunkHoleRings.length > 0 ? chunkHoleRings : flatHoles); // feature/atmosphere
   }
 
-  for (let lIdx = 0; lIdx < (data.water_lines || []).length; lIdx++) {
-    const wl = data.water_lines[lIdx];
-    const [osmId, , , widthM, flat] = wl;
-    if (!flat || flat.length < 4) continue;
-    const halfW = (widthM || 10) * 0.5;
-    const wyOff = 0.25 + ((osmId || lIdx) % 17) * 0.002;
-    for (let i = 0; i < flat.length - 2; i += 2) {
-      const x1 = flat[i], z1 = flat[i + 1];
-      const x2 = flat[i + 2], z2 = flat[i + 3];
-      const mx = (x1 + x2) * 0.5;
-      const mz = (z1 + z2) * 0.5;
-      if (mx < -500.0 || mx >= 500.0 || mz < -500.0 || mz >= 500.0) continue;
-      const dx = x2 - x1, dz = z2 - z1;
-      const len = Math.hypot(dx, dz);
-      if (len < 0.2) continue;
-      const nx = (-dz / len) * halfW;
-      const nz = (dx / len) * halfW;
-      const y1 = getBeijingTerrainElevation(ox + x1, oz + z1) + wyOff;
-      const y2 = getBeijingTerrainElevation(ox + x2, oz + z2) + wyOff;
-      waterPos.push(
-        x1 + nx, y1, z1 + nz,
-        x2 + nx, y2, z2 + nz,
-        x2 - nx, y2, z2 - nz,
-        x1 + nx, y1, z1 + nz,
-        x2 - nx, y2, z2 - nz,
-        x1 - nx, y1, z1 - nz
-      );
-      waterNorm.push(
-        0, 1, 0, 0, 1, 0, 0, 1, 0,
-        0, 1, 0, 0, 1, 0, 0, 1, 0
-      );
-      appendRibbonShoreUv(waterUv, halfW); // feature/atmosphere
-    }
-  }
+  // [terrain-roads] waterway lines: draped mitered ribbons with downstream flow (features/waterways.js)
+  const waterwayMesh = buildWaterwayMesh(data.water_lines, ox, oz, getBeijingTerrainElevation, mats);
+  if (waterwayMesh) targetGroup.add(waterwayMesh);
 
   if (waterPos.length > 0) {
     const geom = new THREE.BufferGeometry();
@@ -1706,7 +1694,9 @@ function buildRoadsAndBridges(
   isPointInWater,
   isPointInSunkenTrench = null,
   entityTable = [],
-  worldOrigin = null
+  worldOrigin = null,
+  railways = [],
+  roadContext = []
 ) {
   const rPos = [];
   const rCol = [];
@@ -1733,7 +1723,18 @@ function buildRoadsAndBridges(
     pushColQuad(ax - nx, ay - rad, az - nz, ax - nx, ay + rad, az - nz, bx - nx, by + rad, bz - nz, bx - nx, by - rad, bz - nz, rgb);
     pushColQuad(ax + nx, ay + rad, az + nz, ax + nx, ay - rad, az + nz, bx + nx, by - rad, bz + nz, bx + nx, by + rad, bz + nz, rgb);
   };
-  let majorBridgeWays = null; // fix/water: lazily collected for levelWaterBridgeRawYs
+  // fix/bridge-continuity: one continuous height field for bridges + approach ramps (deterministic from world coords)
+  let liftProfiles = [];
+  try {
+    // context ways (just outside the chunk) only shape the height field; their own profiles are dropped
+    liftProfiles = computeRoadLiftProfiles(
+      roadContext.length ? roads.concat(roadContext) : roads, railways, ox, oz, getBeijingTerrainElevation, worldOrigin
+    );
+  } catch (err) {
+    console.warn('computeRoadLiftProfiles failed', err);
+  }
+  // [release-6-integ] same ways + lifted heights for rail_build crossings (removed again after buildRailTrack)
+  roadSegments.liftWays = { ways: roadContext.length ? roads.concat(roadContext) : roads, prof: liftProfiles };
 
   // Pre-collect named roads in this chunk so unnamed ramps/service ways can inherit nearby road names
   const namedChunkRoads = [];
@@ -1750,6 +1751,40 @@ function buildRoadsAndBridges(
       });
     }
   }
+
+  // [terrain-roads] Street sidewalks must not bury a parallel bike path running along the kerb (e.g. the Panhandle):
+  // index cycleway segments so the sidewalk strip on that side can be skipped.
+  const cycGrid = new Map();
+  const CYC_CELL = 16;
+  for (let i = 0; i < roads.length; i++) {
+    const [, cCls, , , , cW, , cBridge, cTunnel, , cFlat] = roads[i];
+    if (cCls !== 'cycleway' || cBridge || cTunnel || !cFlat || cFlat.length < 6) continue;
+    const hw = Math.max(1.0, cW * 0.5);
+    for (let k = 0; k + 5 < cFlat.length; k += 3) {
+      const seg = [cFlat[k], cFlat[k + 2], cFlat[k + 3], cFlat[k + 5], hw];
+      const gx0 = Math.floor((Math.min(seg[0], seg[2]) - 4) / CYC_CELL), gx1 = Math.floor((Math.max(seg[0], seg[2]) + 4) / CYC_CELL);
+      const gz0 = Math.floor((Math.min(seg[1], seg[3]) - 4) / CYC_CELL), gz1 = Math.floor((Math.max(seg[1], seg[3]) + 4) / CYC_CELL);
+      for (let gx = gx0; gx <= gx1; gx++) for (let gz = gz0; gz <= gz1; gz++) {
+        const key = gx * 4099 + gz;
+        let list = cycGrid.get(key);
+        if (!list) cycGrid.set(key, (list = []));
+        list.push(seg);
+      }
+    }
+  }
+  const sidewalkOverCycleway = (px, pz, dx, dz, swHalf) => {
+    if (cycGrid.size === 0) return false;
+    const list = cycGrid.get(Math.floor(px / CYC_CELL) * 4099 + Math.floor(pz / CYC_CELL));
+    if (!list) return false;
+    for (const [ax, az, bx, bz, hw] of list) {
+      const ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez;
+      if (l2 < 1e-6) continue;
+      if (Math.abs(ex * dx + ez * dz) / Math.sqrt(l2) < 0.85) continue; // only parallel paths
+      const t = Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / l2));
+      if (Math.hypot(ax + ex * t - px, az + ez * t - pz) < hw + swHalf) return true;
+    }
+    return false;
+  };
 
   for (let rIdx = 0; rIdx < roads.length; rIdx++) {
     const r = roads[rIdx];
@@ -1807,10 +1842,17 @@ function buildRoadsAndBridges(
 
     const halfW = Math.max(1.0, widthM * 0.5);
     // Deterministic prime-hash per-way offset (using ONLY wid, never chunk-local rIdx, so multi-chunk roads have identical yBias across chunks)
-    const wayHash = ((wid * 2654435761) >>> 0);
+    // fix/bridge-continuity: hash way attributes, not the per-chunk sequential id, so the same street (and its
+    // overlapping vector-tile pieces) gets the same micro-bias in every chunk (no 0-14 cm steps at chunk seams)
+    let wayHash = 2166136261;
+    {
+      const hs = `${cls}|${name || ''}|${ref || ''}|${layer || 0}|${isBridge ? 1 : 0}`;
+      for (let k = 0; k < hs.length; k++) wayHash = Math.imul(wayHash ^ hs.charCodeAt(k), 16777619);
+      wayHash >>>= 0;
+    }
     const wayMicroBias = ((wayHash % 997) / 997.0) * 0.14;
     const yBias = (ROAD_Y_BIAS[cls] || 0.43) + wayMicroBias;
-    const baseRgb = ROAD_COLORS[cls] || [0.30, 0.32, 0.36];
+    const baseRgb = r[11] ? UNPAVED_TRAIL_RGB : ROAD_COLORS[cls] || [0.30, 0.32, 0.36]; // [terrain-roads]
     const nPts = flat.length / 3;
     const leftPts = [];
     const rightPts = [];
@@ -1851,7 +1893,9 @@ function buildRoadsAndBridges(
           ((name || '').includes('桥') || maxWayY <= 2.2)
       );
     const isHighPedOverpass =
-      isBridge && (cls === 'footway' || cls === 'cycleway' || cls === 'pedestrian') && !isScenicArchBridge;
+      isBridge &&
+      (cls === 'footway' || cls === 'cycleway' || cls === 'pedestrian' || cls === 'steps' || cls === 'path') &&
+      !isScenicArchBridge;
 
     const rgb = isScenicArchBridge
       ? [0.92, 0.91, 0.88]
@@ -1864,7 +1908,6 @@ function buildRoadsAndBridges(
     const rawYs = new Float32Array(nPts);
     let minRawY = Infinity;
     let touchesMainSunken = false;
-    const bridgeLayerElev = Math.max(1, layer || 1) * 7.5;
     for (let i = 0; i < nPts; i++) {
       const rY = flat[i * 3 + 1];
       if (rY < minRawY) minRawY = rY;
@@ -1876,34 +1919,19 @@ function buildRoadsAndBridges(
       ) {
         touchesMainSunken = true;
       }
-      rawYs[i] = isScenicArchBridge
-        ? rY
-        : (isBridge || (layer || 0) >= 1)
-          ? Math.max(rY, bridgeLayerElev)
-          : isMinorWay
+      // fix/bridge-continuity: bridge decks get their height from liftProfiles (ground-relative raw 0 here)
+      rawYs[i] = (isBridge || (layer || 0) >= 1)
+        ? 0.0
+        : isMinorWay
             ? Math.max(-0.8, Math.min(0.2, rY * 0.14))
             : Math.min(0.2, rY);
     }
     const isGoldenGateBridge = Boolean(
       isBridge && isGoldenGateBridgeWay(name || resolvedRoadName, ox + flat[midIdx], oz + flat[midIdx + 2], worldOrigin)
     );
-    // fix/water: one consistent deck height for all water-crossing bridges (+ Golden Gate 64m suspension profile & Bay Bridge 52m profile)
-    if (isBridge && (isPointInWater || isGoldenGateBridge)) {
-      levelWaterBridgeRawYs(
-        flat,
-        rawYs,
-        nPts,
-        ox,
-        oz,
-        isScenicArchBridge || isMinorWay,
-        isPointInWater || (() => false),
-        getBeijingTerrainElevation,
-        majorBridgeWays || (majorBridgeWays = collectMajorBridgeWays(roads)),
-        name || resolvedRoadName,
-        cls,
-        worldOrigin
-      );
-    }
+    // fix/bridge-continuity: deck heights (water crossings, Golden Gate / Bay Bridge profiles, overpass clearance,
+    // approach ramps) all come from computeRoadLiftProfiles, shared by every way that touches the bridge.
+    const wayLift = liftProfiles[rIdx] || null;
     // Skip rendering 3D mesh for 1D topological _link connectors that dive directly into a sunken open-trench highway
     // (where the sunken highway and ground auxiliary road already touch at the trench retaining wall).
     if (cls.endsWith('_link') && !isBridge && minRawY < -1.0 && touchesMainSunken) {
@@ -1918,8 +1946,9 @@ function buildRoadsAndBridges(
         getBeijingTerrainElevation(ox + x, oz + z),
         getChunkTerrainMeshElevation(ox + x, oz + z) + 0.35
       );
-      const y = terrainY + rawRoadY + yBias;
-      centerPts.push([x, y, z, rawRoadY, terrainY]);
+      const liftY = wayLift ? wayLift[i] : NaN;
+      const y = Number.isNaN(liftY) ? terrainY + rawRoadY + yBias : Math.max(terrainY + rawRoadY, liftY) + yBias;
+      centerPts.push([x, y, z, rawRoadY, terrainY, liftY]);
 
       let tx = 0, tz = 0;
       if (i < nPts - 1) {
@@ -1951,8 +1980,13 @@ function buildRoadsAndBridges(
       const [origRx1, origRy1, origRz1] = rightPts[i];
       const [origLx2, origLy2, origLz2] = leftPts[i + 1];
       const [origRx2, origRy2, origRz2] = rightPts[i + 1];
-      const [origCx1, origCy1, origCz1, origRawY1, origTerrY1] = centerPts[i];
-      const [origCx2, origCy2, origCz2, origRawY2, origTerrY2] = centerPts[i + 1];
+      const [origCx1, origCy1, origCz1, origRawY1, origTerrY1, origLift1] = centerPts[i];
+      const [origCx2, origCy2, origCz2, origRawY2, origTerrY2, origLift2] = centerPts[i + 1];
+      // fix/bridge-continuity: absolute lifted height along the segment (NaN ends follow their natural ground height)
+      const hasLift = !Number.isNaN(origLift1) || !Number.isNaN(origLift2);
+      const liftA = Number.isNaN(origLift1) ? origTerrY1 + origRawY1 : origLift1;
+      const liftB = Number.isNaN(origLift2) ? origTerrY2 + origRawY2 : origLift2;
+      const liftAt = (u) => (hasLift ? liftA + (liftB - liftA) * u : -Infinity);
 
       const fullSegLen = Math.hypot(origCx2 - origCx1, origCz2 - origCz1);
       if (fullSegLen < 0.1) continue;
@@ -2015,14 +2049,14 @@ function buildRoadsAndBridges(
 
         const cx1 = origCx1 + cdx * u0;
         const cz1 = origCz1 + cdz * u0;
-        const rawY1 = origRawY1 + (origRawY2 - origRawY1) * u0;
+        const baseRawY1 = origRawY1 + (origRawY2 - origRawY1) * u0;
 
         const cx2 = origCx1 + cdx * u1;
         const cz2 = origCz1 + cdz * u1;
-        const rawY2 = origRawY1 + (origRawY2 - origRawY1) * u1;
+        const baseRawY2 = origRawY1 + (origRawY2 - origRawY1) * u1;
 
-        const isGroundSeg = !isBridge && !isTunnel && rawY1 >= -0.45 && rawY2 >= -0.45;
-        const useLocalTerr = isGroundSeg || (isBridge && !isScenicArchBridge);
+        const isGroundSeg = !isBridge && !isTunnel && baseRawY1 >= -0.45 && baseRawY2 >= -0.45;
+        const useLocalTerr = isGroundSeg || isBridge;
         const terrY1 = useLocalTerr
           ? sampleGroundTerr(cx1, cz1, lx1, lz1, rx1, rz1)
           : origTerrY1 + (origTerrY2 - origTerrY1) * u0;
@@ -2030,8 +2064,11 @@ function buildRoadsAndBridges(
           ? sampleGroundTerr(cx2, cz2, lx2, lz2, rx2, rz2)
           : origTerrY1 + (origTerrY2 - origTerrY1) * u1;
 
-        const cy1 = useLocalTerr ? terrY1 + rawY1 + yBias : origCy1 + (origCy2 - origCy1) * u0;
-        const cy2 = useLocalTerr ? terrY2 + rawY2 + yBias : origCy1 + (origCy2 - origCy1) * u1;
+        const cy1 = useLocalTerr ? Math.max(terrY1 + baseRawY1, liftAt(u0)) + yBias : origCy1 + (origCy2 - origCy1) * u0;
+        const cy2 = useLocalTerr ? Math.max(terrY2 + baseRawY2, liftAt(u1)) + yBias : origCy1 + (origCy2 - origCy1) * u1;
+        // effective height above local ground (drives parapets, piers, embankment walls, sidewalks)
+        const rawY1 = useLocalTerr ? cy1 - yBias - terrY1 : baseRawY1;
+        const rawY2 = useLocalTerr ? cy2 - yBias - terrY2 : baseRawY2;
         const ly1 = cy1;
         const ry1 = cy1;
         const ly2 = cy2;
@@ -2088,7 +2125,10 @@ function buildRoadsAndBridges(
           const swY1 = ly1 + 0.04;
           const swY2 = ly2 + 0.04;
           const swCol = [0.55, 0.57, 0.61];
+          const swMx = (lx1 + lx2 + rx1 + rx2) * 0.25, swMz = (lz1 + lz2 + rz1 + rz2) * 0.25;
+          const swHalfRoad = Math.hypot(lx1 - rx1, lz1 - rz1) * 0.5 + swW * 0.5;
           // Left sidewalk strip
+          if (!sidewalkOverCycleway(swMx + nx * swHalfRoad, swMz + nz * swHalfRoad, dx, dz, swW * 0.5)) {
           rPos.push(
             lx1 + nx * swW, swY1, lz1 + nz * swW,
             lx2, swY2, lz2,
@@ -2097,7 +2137,10 @@ function buildRoadsAndBridges(
             lx2 + nx * swW, swY2, lz2 + nz * swW,
             lx2, swY2, lz2
           );
+          for (let k = 0; k < 6; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          }
           // Right sidewalk strip
+          if (!sidewalkOverCycleway(swMx - nx * swHalfRoad, swMz - nz * swHalfRoad, dx, dz, swW * 0.5)) {
           rPos.push(
             rx1, swY1, rz1,
             rx2 - nx * swW, swY2, rz2 - nz * swW,
@@ -2106,7 +2149,8 @@ function buildRoadsAndBridges(
             rx2, swY2, rz2,
             rx2 - nx * swW, swY2, rz2 - nz * swW
           );
-          for (let k = 0; k < 12; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          for (let k = 0; k < 6; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          }
         }
 
         // Lane Markings: +0.025m above road surface + polygonOffset (-4, -6) + depthWrite: false
@@ -2180,21 +2224,26 @@ function buildRoadsAndBridges(
           mCol.push(...arrowCol, ...arrowCol, ...arrowCol);
         }
 
+        // fix/bridge-continuity: approach embankment (lifted non-bridge ramp) gets retaining walls down to the ground
+        if (!isBridge && !isTunnel && (rawY1 > 0.45 || rawY2 > 0.45)) {
+          pushQuad(bPos, lx1, terrY1 - 0.4, lz1, lx2, terrY2 - 0.4, lz2, lx2, ly2 - 0.02, lz2, lx1, ly1 - 0.02, lz1);
+          pushQuad(bPos, rx2, terrY2 - 0.4, rz2, rx1, terrY1 - 0.4, rz1, rx1, ry1 - 0.02, rz1, rx2, ry2 - 0.02, rz2);
+        }
+
         // Bridge 3D Structural Parapets, Unified Multi-Way Deck Seal, Box-Girder Soffit & Support Piers
         const onWater =
           isPointInWater && (isPointInWater(cx1, cz1, 0) || isPointInWater(cx2, cz2, 0));
         if (
           isScenicArchBridge ||
-          ((isBridge || onWater || rawY1 > 1.5 || rawY2 > 1.5) &&
-            cls !== 'pedestrian' &&
-            (cls !== 'footway' || isHighPedOverpass) &&
-            (cls !== 'cycleway' || isBridge))
+          isBridge ||
+          (onWater && cls !== 'pedestrian' && cls !== 'footway' && cls !== 'cycleway')
         ) {
-          const deckDepth = isScenicArchBridge ? 0.32 : 0.85;
-          const railH = isScenicArchBridge ? 0.52 : cls === 'cycleway' || cls === 'footway' ? 0.52 : 0.78;
+          const deckDepth = isScenicArchBridge ? 0.32 : isHighPedOverpass ? 0.5 : 0.85;
+          const railH = isScenicArchBridge ? 0.52 : isHighPedOverpass ? 1.05 : 0.78;
           const mx = (cx1 + cx2) * 0.5;
           const mz = (cz1 + cz2) * 0.5;
-          const midRawY = (rawY1 + rawY2) * 0.5;
+          // adjacency tests below compare against the raw (pre-lift) way heights of createSunkenTrenchChecker
+          const midRawY = (flat[i * 3 + 1] + flat[(i + 1) * 3 + 1]) * 0.5;
           const hasBridgeLeft =
             isBridge &&
             isPointInSunkenTrench &&
@@ -2348,15 +2397,19 @@ function buildRoadsAndBridges(
             }
           }
 
-          if (isHighPedOverpass && ((i === 0 && sStep === 0) || (i === nPts - 2 && sStep === subSteps - 1))) {
-            const px = i === 0 && sStep === 0 ? cx1 : cx2;
-            const pz = i === 0 && sStep === 0 ? cz1 : cz2;
-            const baseTerr = i === 0 && sStep === 0 ? terrY1 : terrY2;
-            const pyTop = (i === 0 && sStep === 0 ? cy1 : cy2) - effDeckDepth * 0.5;
-            if (pyTop > baseTerr + 0.5) {
-              pushBox(bPos, px, baseTerr, pz, 1.3, pyTop - baseTerr, 1.3);
+          if (isHighPedOverpass) {
+            // fix/bridge-continuity: footbridge on slim columns every 18 m wherever the deck clears the ground
+            if ((rawY1 + rawY2) * 0.5 > 2.2 && Math.floor((subAccumDist + segLen) / 18) > Math.floor(subAccumDist / 18)) {
+              const px = (cx1 + cx2) * 0.5;
+              const pz = (cz1 + cz2) * 0.5;
+              const baseTerr = Math.min(terrY1, terrY2);
+              const pyTop = (cy1 + cy2) * 0.5 - effDeckDepth * 0.5;
+              if (pyTop > baseTerr + 0.5) {
+                pushBox(bPos, px, baseTerr, pz, 0.55, pyTop - baseTerr, 0.55);
+              }
             }
           } else if (
+            isBridge &&
             !isHighPedOverpass &&
             !isScenicArchBridge &&
             !(isGoldenGateBridge && onWater) &&
@@ -2626,6 +2679,7 @@ function buildRailways(railways, ox, oz, railGroup, mats) {
 }
 
 function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingColliders, roadSegments = [], entityTable = [], regionTag = 'beijing') {
+  buildings = clearBridgeDeckBuildings(buildings, ox, oz, roadSegments, getBeijingTerrainElevation); // [release-6-integ] keep bridge carriageways clear
   const wfcPos = [];
   const wfcNorm = [];
   const wfcCol = [];
@@ -3484,6 +3538,8 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       street: root.userData.street || null, // [feature/street]
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
       places: root.userData.places || null, // feature/places
+      rail: root.userData.rail || null, // [feature/rail-transit]
+      venues: root.userData.venues || null, // [venues]
       waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
       deckSegments: root.userData.deckSegments || [], // fix/water
       roadGrid: roadGridTransfer(buildRoadGrid(root.userData.roadSegments, root.userData.deckSegments), transferSet), // fix/water
@@ -3560,6 +3616,8 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     street: payload.street || null, // [feature/street]
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
     places: payload.places || null, // feature/places
+    rail: payload.rail || null, // [feature/rail-transit]
+    venues: payload.venues || null, // [venues]
     waterMask: payload.waterMask || null, // fix/water
     deckSegments: payload.deckSegments || [], // fix/water
     roadGrid: payload.roadGrid !== undefined ? payload.roadGrid : undefined, // fix/water (built lazily if absent)

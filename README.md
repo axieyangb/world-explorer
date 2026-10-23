@@ -1,6 +1,6 @@
-# Beijing Explorer — 1:1 40km × 40km (1,600 km²) 3D Open-World Beijing
+# World Explorer — 1:1 40km × 40km (1,600 km²) 3D Open-World Beijing
 
-**`Beijing Explorer`** is a 1:1 physical metric scale ($40\text{ km} \times 40\text{ km} = 1,600\text{ km}^2$) real-time 3D Open-World web application built from real OpenStreetMap (`beijing-latest.osm.pbf`), Overture Maps (`2026-09-23.1`), and SRTM/Terrarium Digital Elevation Model (DEM) geographic data, rendered in WebGL2 with Three.js (`r161`).
+**`World Explorer`** is a 1:1 physical metric scale ($40\text{ km} \times 40\text{ km} = 1,600\text{ km}^2$) real-time 3D Open-World web application built from real OpenStreetMap (`beijing-latest.osm.pbf`), Overture Maps (`2026-09-23.1`), and SRTM/Terrarium Digital Elevation Model (DEM) geographic data, rendered in WebGL2 with Three.js (`r161`).
 
 ---
 
@@ -10,7 +10,7 @@ All three standalone single-file HTML bundles inline their ES modules and gzippe
 
 | Application | a static host URL | Local File Path |
 | :--- | :--- | :--- |
-| **Beijing Explorer (Main 3D World)** | `https://worldexplorer.jerxie.com/beijing_explorer.html` | `./beijing_explorer.html` (`28.08 MB`) |
+| **World Explorer (Main 3D World)** | `https://worldexplorer.jerxie.com/beijing_explorer.html` | `./beijing_explorer.html` (`28.08 MB`) |
 | **3D Architectural WFC Lab (24 Styles)** | `https://worldexplorer.jerxie.com/beijing_explorer_wfc_demo.html` | `./beijing_explorer_wfc_demo.html` (`1.45 MB`) |
 | **40 Landmarks 3-View + Isometric Workbench** | `https://worldexplorer.jerxie.com/landmark_workbench.html` | `./landmark_workbench.html` (`1.59 MB`) |
 

@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer - Landmark Batch 04 (BATCH_04)
+ * World Explorer - Landmark Batch 04 (BATCH_04)
  * High-Fidelity Procedural 3D Architectural Models:
  * 1. Imperial Vault of Heaven (天坛皇穹宇)
  * 2. Beihai White Dagoba (北海白塔)

@@ -330,6 +330,7 @@ export class KaijuWeapons {
       }
       fx?.spawn?.("spark", p, { dir: _a, count: 5, scale: sc });
       fx?.spawn?.("smoke", p, { count: 1, scale: 0.35 * sc, light: true, life: 2.5, speed: 1 });
+      K.audio?.play?.("spark", { pos: p, gain: 0.5 });
       if (Math.random() < 0.3) fx?.spawn?.("debris", p, { dir: _a, count: 1, scale: 0.5 });
     } else {
       fx?.spawn?.("spark", p, { dir: _a, count: 4, scale: sc });

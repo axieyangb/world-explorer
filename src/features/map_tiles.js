@@ -261,7 +261,8 @@ function prepareTile(layers, z, x, y) {
   const prep = {
     z, x, y,
     water: [], park: [], wood: [], residential: [], industrial: [], buildings: [],
-    waterways: [], roads: [], roadNames: [], places: [], driveLines: [],
+    waterways: [], roads: [], roadNames: [], places: [], driveLines: [], rails: [], // [feature/rail-transit] rails
+    ferries: [], piers: [], // [feature/ferries-ships]
   };
 
   for (const f of layers.water || []) {
@@ -301,6 +302,15 @@ function prepareTile(layers, z, x, y) {
       if (f.type === 3) prep.buildings.push(...polysToLocal(f.geom, n, x, y));
     }
   }
+  // [feature/ferries-ships] ferry routes (dashed) + pier decks
+  for (const f of layers.transportation || []) {
+    if (f.tags.class === 'ferry' && f.type === 2) {
+      for (const line of f.geom) { const pts = ringToLocal(line, n, x, y); prep.ferries.push({ pts, bb: bboxOf(pts) }); }
+    } else if (f.tags.class === 'pier') {
+      if (f.type === 3) prep.piers.push(...polysToLocal(f.geom, n, x, y));
+      else if (f.type === 2) for (const line of f.geom) { const pts = ringToLocal(line, n, x, y); prep.ferries.push({ pts, bb: bboxOf(pts), pier: true }); }
+    }
+  }
   for (const f of layers.transportation || []) {
     if (f.type !== 2) continue;
     const cls = roadClass(f.tags);
@@ -315,6 +325,18 @@ function prepareTile(layers, z, x, y) {
     }
   }
   prep.roads.sort((a, b) => a.rank - b.rank);
+  // [feature/rail-transit] rail / transit lines (drawn thin and quiet; tunnels faint)
+  for (const f of layers.transportation || []) {
+    if (f.type !== 2) continue;
+    const c = f.tags.class || '';
+    if (c !== 'rail' && c !== 'transit' && c !== 'aerialway') continue;
+    if (f.tags.service) continue;
+    const tunnel = f.tags.brunnel === 'tunnel';
+    for (const line of f.geom) {
+      const pts = ringToLocal(line, n, x, y);
+      prep.rails.push({ tunnel, pts, bb: bboxOf(pts) });
+    }
+  }
 
   for (const f of layers.transportation_name || []) {
     if (f.type !== 2) continue;
@@ -336,6 +358,16 @@ function prepareTile(layers, z, x, y) {
       u: lonToMx(p[1]) * n - x,
       v: latToMy(p[0]) * n - y,
     });
+  }
+  // places-info: country (2) / state (4) borders, land only, drawn as quiet dashes
+  prep.borders = [];
+  for (const f of layers.boundary || []) {
+    const lvl = Number(f.tags.admin_level);
+    if (f.type !== 2 || (lvl !== 2 && lvl !== 4) || Number(f.tags.maritime) === 1) continue;
+    for (const line of f.geom) {
+      const pts = ringToLocal(line, n, x, y);
+      prep.borders.push({ lvl, pts, bb: bboxOf(pts) });
+    }
   }
   return prep;
 }
@@ -469,6 +501,25 @@ function renderRaster(prep, z, x, y) {
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  // [feature/ferries-ships] piers + dashed ferry routes
+  if (prep.piers.length) fill(prep.piers, '#3a3f47');
+  if (prep.ferries.length) {
+    for (const fr of prep.ferries) {
+      if (!visible(fr.bb, ox, oy, span, m)) continue;
+      ctx.beginPath();
+      pathLine(ctx, fr.pts, s, ox, oy);
+      if (fr.pier) {
+        ctx.strokeStyle = '#3a3f47';
+        ctx.lineWidth = Math.max(1, 3 * Math.pow(1.55, z - 14));
+      } else {
+        ctx.strokeStyle = 'rgba(120, 180, 240, 0.85)';
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([5, 4]);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
   if (prep.waterways.length) {
     ctx.strokeStyle = st.water;
     for (const ww of prep.waterways) {
@@ -527,6 +578,36 @@ function renderRaster(prep, z, x, y) {
   if (bridges.length) {
     drawPass(bridges, true);
     drawPass(bridges, false);
+  }
+  // [feature/rail-transit] rails on top of roads, subtle
+  if (z >= 11 && prep.rails && prep.rails.length) {
+    for (const tunnel of [true, false]) {
+      ctx.beginPath();
+      let any = false;
+      for (const r of prep.rails) {
+        if (r.tunnel !== tunnel || !visible(r.bb, ox, oy, span, m)) continue;
+        pathLine(ctx, r.pts, s, ox, oy);
+        any = true;
+      }
+      if (!any) continue;
+      ctx.strokeStyle = tunnel ? 'rgba(120,150,190,0.28)' : 'rgba(150,170,200,0.6)';
+      ctx.lineWidth = Math.max(0.7, 1.1 * Math.pow(1.4, z - 14));
+      if (tunnel) ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  // places-info: subtle dashed admin borders
+  for (const lvl of [4, 2]) {
+    const list = (prep.borders || []).filter((bd) => bd.lvl === lvl && visible(bd.bb, ox, oy, span, m));
+    if (!list.length) continue;
+    ctx.beginPath();
+    for (const bd of list) pathLine(ctx, bd.pts, s, ox, oy);
+    ctx.strokeStyle = lvl === 2 ? 'rgba(206, 192, 240, 0.7)' : 'rgba(206, 192, 240, 0.55)';
+    ctx.lineWidth = lvl === 2 ? 2 : 1.4;
+    ctx.setLineDash(lvl === 2 ? [8, 5] : [5, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
   return canvas;
 }

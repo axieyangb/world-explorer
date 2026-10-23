@@ -21,6 +21,7 @@
 //   heli.config        tunables (CFG)
 import * as THREE from '../../vendor/three.module.js';
 import { getBeijingTerrainElevation, getChunkTerrainMeshElevation } from '../environment.js';
+import { getWeaponSfx } from './weapon_sfx.js'; // weapon sounds only (engine/rotor audio stays muted)
 
 const D2R = Math.PI / 180;
 export const CFG = {
@@ -682,6 +683,8 @@ export class HeliFlight {
   // ---------------------------------------------------------------- gunship weapons (30mm nose cannon + wing-pod rockets)
   _initWeapons() {
     this.weaponStats = { cannonShots: 0, rocketsFired: 0, explosions: 0, trafficHits: 0, buildingHits: 0, buildingsDestroyed: 0 };
+    this._sfx = getWeaponSfx(this.app);
+    this._sfxP = new THREE.Vector3();
     this._cannonCooldown = 0;
     this._trigger = null;               // held left mouse button (see pressTrigger)
     this._retShift = { x: 0, y: 0 };    // #heli-reticle sway offset (px)
@@ -851,6 +854,12 @@ export class HeliFlight {
         if (px * px + py * py + pz * pz <= 2.4 * 2.4) { best = along; hit.ref = null; hit.kind = 'car'; }
       }
     }
+    // [feature/ferries-ships] ships & ferries
+    const sea = this.app.maritime;
+    if (sea) {
+      const sd = sea.raycast(o, d, best);
+      if (sd < best) { best = sd; hit.ref = null; hit.kind = 'vessel'; }
+    }
     hit.dist = best;
     return hit.kind ? best : Infinity;
   }
@@ -929,6 +938,7 @@ export class HeliFlight {
     this._reticleFlash = 0.12;
     this._shake = Math.max(this._shake, 0.04);
     this.weaponStats.cannonShots++;
+    this._sfx.play('cannon', { pos: this._tmpW, gain: 0.5 });
     return true;
   }
 
@@ -957,6 +967,7 @@ export class HeliFlight {
     }
     this._reticleFlash = 0.25;
     this._shake = Math.max(this._shake, 0.16);
+    if (fired > 0) this._sfx.play('missileLaunch', { pos: this.app.pos, gain: 0.45 });
     return fired > 0;
   }
 
@@ -1061,6 +1072,8 @@ export class HeliFlight {
     this.lastImpact.set(hit.x, hit.y, hit.z);
     this.lastImpactKind = hit.kind;
     this._spawnExplosion(hit.x, hit.y, hit.z, isRocket);
+    this._sfxP.set(hit.x, hit.y, hit.z);
+    this._sfx.play(isRocket ? 'explosion' : 'spark', { pos: this._sfxP, gain: isRocket ? 0.7 : hit.kind === 'building' ? 0.55 : 0.35 });
     // Buildings: same destruction system as Kaiju Defense (HP scaled by building size).
     const D = this._destruction();
     if (D && typeof D.applyHeliHit === 'function') {
@@ -1092,6 +1105,7 @@ export class HeliFlight {
       });
       this.weaponStats.trafficHits += hits;
     }
+    if (this.app.maritime) this.app.maritime.impact(hit.x, hit.y, hit.z, isRocket); // [feature/ferries-ships]
   }
 
   _updateWeapons(dt) {

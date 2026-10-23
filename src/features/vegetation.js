@@ -348,12 +348,36 @@ export function createLandcoverMaterial() {
           float line = smoothstep(0.45, 0.5, max(g.x, g.y));
           float tileVar = (lcHash(floor(w * 0.65)) - 0.5) * 0.06;
           k = (0.96 + 0.07 * n + tileVar) * (1.0 - line * 0.09);
+        } else if (pat == 8.0) {
+          // [terrain-roads] Marsh: reed tussocks with dark open-water pools reflecting the sky
+          float pool = smoothstep(0.58, 0.66, lcNoise(w * 0.09 + 11.0) * 0.7 + lcNoise(w * 0.5) * 0.3);
+          k *= 0.85 + 0.3 * lcNoise(w * 0.8);
+          diffuseColor.rgb = mix(diffuseColor.rgb * k, vec3(0.12, 0.22, 0.26), pool);
+          k = 1.0;
+        } else if (pat == 9.0) {
+          // [terrain-roads] Bare rock / scree: blotchy boulders with dark cracks
+          float cr = abs(lcNoise(w * 0.35) - 0.5);
+          k = (0.78 + 0.4 * lcNoise(w * 0.6) + 0.12 * lcHash(floor(w * 1.6))) * (1.0 - 0.35 * smoothstep(0.04, 0.0, cr));
+        } else if (pat == 10.0) {
+          // [terrain-roads] Glacier: wind-streaked snow with blue crevasses
+          float cv = abs(sin(dot(w, vec2(0.21, 0.07)) + lcNoise(w * 0.05) * 6.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.76, 0.86), smoothstep(0.08, 0.0, cv) * 0.8);
+          k = 0.96 + 0.06 * n;
+        } else if (pat == 11.0) {
+          // [terrain-roads] Orchard / vineyard: canopy dots in straight rows on bare soil
+          vec2 cell = floor(w / 150.0);
+          float ang = lcHash(cell) * 3.14159;
+          vec2 r = vec2(dot(w, vec2(cos(ang), sin(ang))), dot(w, vec2(-sin(ang), cos(ang))));
+          vec2 g = fract(r / vec2(2.8, 4.5)) - 0.5;
+          float dotv = smoothstep(0.42, 0.22, length(g * vec2(1.0, 1.6)));
+          diffuseColor.rgb = mix(vec3(0.50, 0.43, 0.31), diffuseColor.rgb * 0.85, dotv);
+          k *= 0.95 + 0.1 * n;
         }
         diffuseColor.rgb *= k;
       }`
     );
   };
-  mat.customProgramCacheKey = () => 'landcover-v2';
+  mat.customProgramCacheKey = () => 'landcover-v3'; // [terrain-roads]
   return mat;
 }
 
@@ -434,6 +458,10 @@ export class VegetationSystem {
         }
       }
     }
+    if (this.streetDetail && this.streetDetail.version !== this._sdVersion) { // [feature/street-detail] real OSM trees
+      this._sdVersion = this.streetDetail.version;
+      changed = true;
+    }
     const dx = cp.x - this._lastX, dz = cp.z - this._lastZ;
     if (!changed && dx * dx + dz * dz < REBUILD_DIST * REBUILD_DIST && Math.abs(cp.y - this._lastY) < 25) return;
     if (changed) {
@@ -461,16 +489,20 @@ export class VegetationSystem {
       if (ddx * ddx + ddz * ddz > far2) continue;
       tables.push(v);
     }
+    const sd = this.streetDetail; // [feature/street-detail] real OSM trees + drop procedural street trees next to them
+    if (sd && sd.trees) tables.push(sd.trees);
+    const treeSup = sd ? sd.treeSuppress : null;
     // Pass 1: classify & count
     const cls = [];
     for (const v of tables) {
       const { inst, species, count } = v;
       const c = new Int8Array(count);
+      const nStreet = treeSup ? v.streetCount || 0 : 0; // [feature/street-detail]
       for (let i = 0; i < count; i++) {
         const o = i * INST_STRIDE;
         const hx = inst[o] - cp.x, hz = inst[o + 2] - cp.z;
         const h2 = hx * hx + hz * hz;
-        if (h2 > far2) {
+        if (h2 > far2 || (i < nStreet && treeSup.near(inst[o], inst[o + 2]))) {
           c[i] = -1;
           continue;
         }

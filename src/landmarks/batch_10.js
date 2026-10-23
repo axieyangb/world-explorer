@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer - Landmark Batch 10 (BATCH_10)
+ * World Explorer - Landmark Batch 10 (BATCH_10)
  * 
  * 1. national_museum_of_china (中国国家博物馆)
  * 2. central_radio_tv_tower (中央广播电视塔)

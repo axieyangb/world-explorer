@@ -323,8 +323,9 @@ export class KaijuDestruction {
     if (!loaded) return;
     const tag = originTag(app.worldOrigin);
     if (tag !== this.origin) {
-      if (this.origin) this._wipe();
-      this.origin = tag;
+      const had = this.origin;
+      this.origin = tag; // [feature/rail-transit] set first: _wipe → restoreAll → _sync(true) recursed forever on teleport
+      if (had) this._wipe();
     }
     this.syncT -= 1;
     if (!force && this.syncT > 0 && loaded.size === this.lastSize) return;

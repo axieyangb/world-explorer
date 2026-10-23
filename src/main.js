@@ -36,12 +36,18 @@ import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
 import { CAR_TYPES } from "./features/traffic_models.js"; // [feature/vehicles]
 import { playVehicleHornOrSiren, stopVehicleSirenAudio, showVehicleToast } from "./features/vehicles.js"; // [feature/vehicles]
 import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
+import { createWaterwayMaterial } from "./features/waterways.js"; // [terrain-roads]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
+import { StreetDetail } from "./features/street_detail.js"; // [feature/street-detail]
 import { PlacesSystem } from "./features/places.js"; // feature/places
+import { VenueRides } from "./features/venue_rides.js"; // [venues]
+import { PlacesInfo } from "./features/places_info/index.js"; // places-info
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
+import { getWeaponSfx } from "./features/weapon_sfx.js";
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
+import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
 import {
   getLang,
   setLang,
@@ -70,8 +76,12 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 }
 
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
+import { initLiveSky } from "./features/live_sky.js"; // [live-sky-weather]
+import { initLiveWeather } from "./features/live_weather.js"; // [live-sky-weather]
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
+import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
+import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
@@ -189,6 +199,8 @@ class WorldExplorerApp {
     this.mats = createSharedMaterials();
     this.streetFeatures = new StreetFeatures(this.scene, this.mats); // [feature/street]
     this.vegetation = new VegetationSystem(this.scene, this.mats); // [feature/vegetation] instanced trees + landcoverMat
+    this.mats.waterwayMat = createWaterwayMaterial(); // [terrain-roads] flowing rivers/streams
+    this.streetDetail = new StreetDetail(this.scene, this.streetFeatures, this.vegetation); // [feature/street-detail] real OSM trees/lamps/signals/...
     this.chunksRoot = new THREE.Group();
     this.scene.add(this.chunksRoot);
 
@@ -274,9 +286,11 @@ class WorldExplorerApp {
 
     this.water = new WaterPhysics(this); // fix/water
     this.collision = new BuildingCollision(this); // fix/water
+    this.landmarks = new LandmarkSystem(this); // feature/famous-landmarks
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
     this.cityTraffic = this.traffic;
+    this.maritime = new Maritime(this); // [feature/ferries-ships] piers, ferries, ships
     this._punchTimer = 0;
     this._punchDuration = 0.32;
     this._punchHand = "L";
@@ -468,6 +482,11 @@ class WorldExplorerApp {
     }
 
     this.places = new PlacesSystem(this.scene); // feature/places
+    this.railTransit = new RailTransit(this); // [feature/rail-transit]
+    this.liveSky = initLiveSky(this); // [live-sky-weather] real aircraft (needs places' airliner geometry)
+    this.liveWeather = initLiveWeather(this); // [live-sky-weather] real weather -> atmosphere
+    this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
+    this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
   }
 
@@ -2321,6 +2340,7 @@ class WorldExplorerApp {
 
   triggerPlayerPunch() {
     if (this.mode !== "walk") return 0;
+    getWeaponSfx(this).play("punch", { gain: 0.6 });
     this._punchDuration = 0.32;
     this._punchTimer = this._punchDuration;
     this._punchHand = this._punchHand === "L" ? "R" : "L";
@@ -2683,9 +2703,17 @@ class WorldExplorerApp {
     this._updateStreamingChunks(false);
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
+    if (this.maritime) this.maritime.update(dt); // [feature/ferries-ships]
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
+    this.streetDetail.update(dt, this.camera.position, this.loadedChunks, this.worldOrigin, this.layerVisibility); // [feature/street-detail]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
+    if (this.railTransit) this.railTransit.update(dt); // [feature/rail-transit]
+    if (this.liveSky) this.liveSky.update(dt); // [live-sky-weather] after places: may hide simulated jets
+    if (this.liveWeather) this.liveWeather.update(dt); // [live-sky-weather]
+    if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
+    if (this.placesInfo) this.placesInfo.update(dt); // places-info
+    if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
