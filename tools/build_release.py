@@ -59,6 +59,8 @@ MOD_ID_MAP = {
     'src/features/heli_flight.js': '__MOD_heli_flight',
     'src/features/fullscreen.js': '__MOD_fullscreen',
     'src/features/city_traffic.js': '__MOD_city_traffic',
+    'src/features/vehicle_damage.js': '__MOD_vehicle_damage',  # [car-explosions]
+    'src/features/walker_weapons.js': '__MOD_walker_weapons',  # [walker-weapons]
     'src/features/map_tiles.js': '__MOD_map_tiles',
     'src/features/route_graph.js': '__MOD_route_graph',
     'src/features/street_furniture.js': '__MOD_street_furniture',
@@ -115,6 +117,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/index.js': '__MOD_landmarks_models_index',  # [release-6]
     'src/features/landmarks/models/liberty.js': '__MOD_landmarks_models_liberty',  # [release-6]
     'src/features/landmarks/kit.js': '__MOD_landmarks_kit',  # [release-6]
+    'src/features/landmarks/cn_arch.js': '__MOD_landmarks_cn_arch',  # [beijing-landmarks]
     'src/features/landmarks/models/empire.js': '__MOD_landmarks_models_empire',  # [release-6]
     'src/features/landmarks/models/chrysler.js': '__MOD_landmarks_models_chrysler',  # [release-6]
     'src/features/landmarks/models/onewtc.js': '__MOD_landmarks_models_onewtc',  # [release-6]
@@ -149,6 +152,23 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/khafre.js': '__MOD_landmarks_models_khafre',  # [release-6]
     'src/features/landmarks/models/menkaure.js': '__MOD_landmarks_models_menkaure',  # [release-6]
     'src/features/landmarks/models/sphinx.js': '__MOD_landmarks_models_sphinx',  # [release-6]
+    # [beijing-landmarks] Hand-built Beijing landmark ensemble models
+    'src/features/landmarks/models/tiananmen.js': '__MOD_landmarks_models_tiananmen',
+    'src/features/landmarks/models/taflagpole.js': '__MOD_landmarks_models_taflagpole',
+    'src/features/landmarks/models/heroesmonument.js': '__MOD_landmarks_models_heroesmonument',
+    'src/features/landmarks/models/maomausoleum.js': '__MOD_landmarks_models_maomausoleum',
+    'src/features/landmarks/models/greathall.js': '__MOD_landmarks_models_greathall',
+    'src/features/landmarks/models/natmuseum.js': '__MOD_landmarks_models_natmuseum',
+    'src/features/landmarks/models/zhengyangmen.js': '__MOD_landmarks_models_zhengyangmen',
+    'src/features/landmarks/models/qianmenarrow.js': '__MOD_landmarks_models_qianmenarrow',
+    'src/features/landmarks/models/forbiddencity.js': '__MOD_landmarks_models_forbiddencity',
+    'src/features/landmarks/models/jingshan.js': '__MOD_landmarks_models_jingshan',
+    'src/features/landmarks/models/beihaidagoba.js': '__MOD_landmarks_models_beihaidagoba',
+    'src/features/landmarks/models/qiniandian.js': '__MOD_landmarks_models_qiniandian',
+    'src/features/landmarks/models/birdsnest.js': '__MOD_landmarks_models_birdsnest',
+    'src/features/landmarks/models/watercube.js': '__MOD_landmarks_models_watercube',
+    'src/features/landmarks/models/chinazun.js': '__MOD_landmarks_models_chinazun',
+    'src/features/landmarks/models/cctv.js': '__MOD_landmarks_models_cctv',
     'src/main.js': '__MOD_main',
 }
 
