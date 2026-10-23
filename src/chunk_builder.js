@@ -1011,7 +1011,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         root.userData.places = computePlacesPayload({
           data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
         });
-        root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats }); // [venues] stadium bowls + theme-park rides
+        root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders }); // [venues] stadium bowls + theme-park rides
 
         stage = 4;
         this.done = true;

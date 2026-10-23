@@ -141,6 +141,16 @@ function groupPieces(pieces, gap) {
 const inChunk = (x, z) => x >= -HALF && x < HALF && z >= -HALF && z < HALF;
 const round1 = (v) => Math.round(v * 10) / 10;
 const toFlat = (pts) => { const f = []; for (const [x, z] of pts) f.push(round1(x), round1(z)); return f; };
+// Long thin footprint (e.g. the projection of Wembley's arch): fills < 25% of its bbox and spans > 120m
+const isThin = (pts, a) => { const b = bboxOf(pts); const w = b.maxX - b.minX, d = b.maxZ - b.minZ; return Math.max(w, d) > 120 && a < 0.25 * w * d; };
+function farthestPair(pts) {
+  let best = -1, A = pts[0], B = pts[0];
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const d = (pts[i][0] - pts[j][0]) ** 2 + (pts[i][1] - pts[j][1]) ** 2;
+    if (d > best) { best = d; A = pts[i]; B = pts[j]; }
+  }
+  return [A, B];
+}
 
 // ------------------------------------------------------------------ ride classification
 const RIDE_RULES = [
@@ -220,7 +230,14 @@ export function extractVenues(tiles, toLocalXZ, buildings) {
     const La = area(L);
     if (La < 6000) continue;
     // Stadium building ring(s) inside the landuse: start from the biggest piece, absorb touching pieces
-    const cand = bpieces.filter((b) => { const [x, z] = centroid(b.pts); return inPoly(x, z, L) && b.h >= 6; });
+    const inside = bpieces.filter((b) => { const [x, z] = centroid(b.pts); return inPoly(x, z, L) && b.h >= 6; });
+    const cand = inside.filter((b) => !isThin(b.pts, b.a));
+    const arches = [];
+    for (const b of inside) {
+      if (!isThin(b.pts, b.a) || b.h < 50) continue;
+      const [A, B] = farthestPair(b.pts);
+      if (!arches.some((q) => Math.hypot(q[0] - A[0], q[1] - A[1]) < 20 || Math.hypot(q[0] - B[0], q[1] - B[1]) < 20)) arches.push([round1(A[0]), round1(A[1]), round1(B[0]), round1(B[1]), Math.round(b.h)]);
+    }
     let cluster = [];
     if (cand.length) {
       cand.sort((a, b) => b.a - a.a);
@@ -256,7 +273,7 @@ export function extractVenues(tiles, toLocalXZ, buildings) {
     // Closed roof (dome / arena): the field centre is covered by a building (and not by one of its holes)
     const covered = cluster.some((c) => inPoly(cx, cz, c.pts) && !c.holes.some((h) => inPoly(cx, cz, h)));
     if (covered) continue;
-    removeHulls.push(outer);
+    removeHulls.push({ outer, keepH: height > 0 ? height * 1.5 : Infinity });
     const [ocx, ocz] = centroid(outer);
     if (!inChunk(ocx, ocz)) continue;
     // Sport: pitch POIs inside, then stadium POI subclass, then name, then region default
@@ -272,6 +289,7 @@ export function extractVenues(tiles, toLocalXZ, buildings) {
       field: fieldHull ? toFlat(fieldHull) : null,
       sport: sport || 'auto',
       height: Math.round(height),
+      arches,
     });
   }
   // Remove stadium shell buildings (their footprint centroid lies inside an open bowl)
@@ -285,7 +303,11 @@ export function extractVenues(tiles, toLocalXZ, buildings) {
         let sx = 0, sz = 0;
         for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
         const n = fo.length / 2;
-        drop = removeHulls.some((h) => inPoly(sx / n, sz / n, h));
+        const pts = [];
+        for (let k = 0; k < fo.length; k += 2) pts.push([fo[k], fo[k + 1]]);
+        const thinTall = isThin(pts, area(pts)) && b[4] >= 50; // arches are redrawn by buildStadium
+        // Only the ring shell goes; clearly taller non-shell structures (towers) stay with the generic extruder
+        drop = removeHulls.some((h) => inPoly(sx / n, sz / n, h.outer) && (thinTall || b[4] < h.keepH));
       }
       if (!drop) buildings[w++] = b;
     }
@@ -479,10 +501,49 @@ const TURF_EDGE = [0.18, 0.42, 0.20];
 const DIRT = [0.66, 0.45, 0.30];
 const PATH = [0.80, 0.72, 0.58];
 const TEAM = [[0.70, 0.12, 0.14], [0.12, 0.28, 0.62], [0.10, 0.45, 0.28], [0.85, 0.60, 0.10], [0.45, 0.15, 0.50]];
+// Seat colours [primary, secondary] for a few famous venues; others get a colour from a hash of the name
+const VENUE_COLOURS = [
+  [/levi/i, [0.67, 0.0, 0.05], [0.72, 0.60, 0.36]],
+  [/oracle park|giants/i, [0.99, 0.36, 0.0], [0.12, 0.12, 0.12]],
+  [/wembley/i, [0.78, 0.08, 0.14], [0.85, 0.85, 0.85]],
+  [/dodger/i, [0.0, 0.35, 0.65], [0.9, 0.9, 0.9]],
+  [/yankee/i, [0.05, 0.15, 0.35], [0.75, 0.75, 0.78]],
+  [/fenway/i, [0.10, 0.35, 0.22], [0.70, 0.10, 0.15]],
+  [/old trafford/i, [0.80, 0.05, 0.10], [0.12, 0.12, 0.12]],
+  [/anfield/i, [0.78, 0.06, 0.12], [0.95, 0.95, 0.95]],
+  [/camp nou|spotify/i, [0.0, 0.30, 0.60], [0.65, 0.0, 0.20]],
+  [/bernab/i, [0.92, 0.92, 0.92], [0.25, 0.20, 0.50]],
+  [/allianz arena/i, [0.85, 0.05, 0.12], [0.92, 0.92, 0.92]],
+  [/sofi/i, [0.0, 0.20, 0.55], [0.95, 0.75, 0.10]],
+  [/metlife/i, [0.10, 0.20, 0.45], [0.0, 0.45, 0.25]],
+  [/lambeau/i, [0.10, 0.30, 0.20], [0.98, 0.72, 0.10]],
+  [/maracan/i, [0.10, 0.40, 0.70], [0.95, 0.80, 0.10]],
+];
+function venueColours(name, rnd) {
+  for (const [re, a, b] of VENUE_COLOURS) if (re.test(name || '')) return [a, b];
+  const t = TEAM[Math.floor(rnd() * TEAM.length)];
+  return [t, [t[0] * 0.55 + 0.3, t[1] * 0.55 + 0.3, t[2] * 0.55 + 0.3]];
+}
+// World-space collider in the format of chunk buildingColliders (footprint ring local to the chunk)
+let venueColliderSeq = 0;
+function pushCollider(cols, ox, oz, ring, topY) {
+  if (!cols || ring.length < 3) return;
+  const flat = [];
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const [x, z] of ring) {
+    flat.push(x, z);
+    if (x < minX) minX = x; if (x > maxX) maxX = x; if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  cols.push({ minX: minX + ox, maxX: maxX + ox, minZ: minZ + oz, maxZ: maxZ + oz, h: topY, flatOuter: flat, ox, oz, id: 970000000 + (venueColliderSeq++ % 1000000), venue: true });
+}
+function rectRing(x, z, hl, hw, yaw) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return [[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]].map(([u, v]) => [x + u * c - v * s, z + u * s + v * c]);
+}
 const BRIGHT = [[0.92, 0.18, 0.16], [0.10, 0.55, 0.90], [0.98, 0.78, 0.10], [0.20, 0.72, 0.30], [0.80, 0.25, 0.75], [0.98, 0.50, 0.10]];
 
 // ------------------------------------------------------------------ stadium
-function buildStadium(acc, s, ox, oz) {
+function buildStadium(acc, s, ox, oz, cols) {
   const outer = [];
   for (let i = 0; i < s.outer.length; i += 2) outer.push([s.outer[i], s.outer[i + 1]]);
   const fieldPts = [];
@@ -503,7 +564,7 @@ function buildStadium(acc, s, ox, oz) {
   const W = (u, v) => [cx + u * ux - v * uz, cz + u * uz + v * ux];
   const gy = getBeijingTerrainElevation(ox + cx, oz + cz);
   const rnd = rng32(s.name ? hashStr(s.name) : hashXZ(ox + cx, oz + cz, 5));
-  const team = TEAM[Math.floor(rnd() * TEAM.length)];
+  const [team, team2] = venueColours(s.name, rnd);
 
   // Playing area dims (scaled to fit)
   let L = sport === 'american_football' ? 109.7 : 105, Wd = sport === 'american_football' ? 48.8 : 68;
@@ -566,7 +627,7 @@ function buildStadium(acc, s, ox, oz) {
     return [cx + Math.cos(t) * r, gy + yk, cz + Math.sin(t) * r];
   };
   for (let k = 0; k < N; k++) {
-    const sec = Math.floor(k / 4) % 2 === 0 ? team : [team[0] * 0.55 + 0.3, team[1] * 0.55 + 0.3, team[2] * 0.55 + 0.3];
+    const sec = Math.floor(k / 4) % 2 === 0 ? team : team2;
     for (let j = 0; j + 1 < prof.length; j++) {
       const [f0, y0] = prof[j], [f1, y1, kind] = prof[j + 1];
       const rgb = kind === 0 ? sec : kind === 1 ? CONCRETE_DK : kind === 2 || kind === 4 ? GLASS : CONCRETE;
@@ -594,6 +655,27 @@ function buildStadium(acc, s, ox, oz) {
       const top = gy + Hk[k] + 18;
       acc.beam([q[0], gy, q[2]], [q[0], top, q[2]], 0.7, 0.7, [0.55, 0.57, 0.6]);
       acc.box(q[0], q[2], top, top + 4, 4.5, 0.6, ang + Math.PI / 2, [0.35, 0.36, 0.38], [1, 0.97, 0.85]);
+    }
+  }
+
+  // Stand colliders: 18 sectors x 2 bands (lower tier / upper tier), so vehicles and the heli hit the bowl
+  for (let k = 0; k < N; k += 4) {
+    for (const [f0, f1, yF] of [[0, 0.5, 0.45], [0.5, 1.0, 1.0]]) {
+      const ring = [];
+      let hMax = 0;
+      for (let j = k; j <= k + 4; j++) { const q = P(j, f0, 0); ring.push([q[0], q[2]]); hMax = Math.max(hMax, Hk[j % N]); }
+      for (let j = k + 4; j >= k; j--) { const q = P(j, f1, 0); ring.push([q[0], q[2]]); }
+      pushCollider(cols, ox, oz, ring, gy + hMax * yF);
+    }
+  }
+  // Arches (e.g. Wembley): parabolic lattice tube between the footprint's far ends
+  for (const [x1, z1, x2, z2, ah] of s.arches || []) {
+    const ya = getBeijingTerrainElevation(ox + x1, oz + z1), yb = getBeijingTerrainElevation(ox + x2, oz + z2);
+    const A = (t) => [x1 + (x2 - x1) * t, ya + (yb - ya) * t + ah * 4 * t * (1 - t), z1 + (z2 - z1) * t];
+    for (let i = 0; i < 32; i++) {
+      const a = A(i / 32), b = A((i + 1) / 32);
+      acc.beam(a, b, 2.2, 2.2, WHITE);
+      if (i % 2 === 0) acc.beam([a[0], a[1] - 2.2, a[2]], [a[0], a[1] + 2.2, a[2]], 2.6, 0.3, [0.8, 0.8, 0.82]);
     }
   }
 
@@ -716,7 +798,7 @@ function coasterCurve(r, ox, oz) {
   return { pts, gy };
 }
 
-function buildRide(acc, r, ox, oz, anim) {
+function buildRide(acc, r, ox, oz, anim, cols) {
   const rnd = rng32(r.seed || 1);
   const col = BRIGHT[Math.floor(rnd() * BRIGHT.length)];
   const gy = getBeijingTerrainElevation(ox + r.x, oz + r.z);
@@ -750,6 +832,7 @@ function buildRide(acc, r, ox, oz, anim) {
     acc.box(st[0], st[2], sg + 4.2, sg + 4.6, 9.5, 4, yaw, col, col);
     const arr = new Float32Array(n * 3);
     pts.forEach((p, i) => { arr[i * 3] = ox + p[0]; arr[i * 3 + 1] = p[1] + 0.35; arr[i * 3 + 2] = oz + p[2]; });
+    pushCollider(cols, ox, oz, rectRing(st[0], st[2], 9.5, 4, yaw), sg + 4.6);
     anim.push({ t: 'coaster', pts: arr, cars: r.a < 26 ? 4 : 6, col, cx: ox + r.x, cz: oz + r.z });
     return;
   }
@@ -767,6 +850,7 @@ function buildRide(acc, r, ox, oz, anim) {
     }
     acc.beam([r.x - ax * 2.8, hub, r.z - az * 2.8], [r.x + ax * 2.8, hub, r.z + az * 2.8], 0.6, 0.6, CONCRETE_DK);
     acc.box(r.x, r.z, gy, gy + 1.2, 4, 3, yaw, CONCRETE, col);
+    pushCollider(cols, ox, oz, rectRing(r.x, r.z, R + 1, 4.5, Math.atan2(pz, px)), hub + R + 1);
     anim.push({ t: 'wheel', x: ox + r.x, y: hub, z: oz + r.z, r: R, yaw, col });
     return;
   }
@@ -776,6 +860,7 @@ function buildRide(acc, r, ox, oz, anim) {
     acc.box(r.x, r.z, gy, gy + 2, 6, 6, 0, CONCRETE);
     acc.box(r.x, r.z, gy, gy + H, 1.6, 1.6, 0, [0.85, 0.85, 0.85]);
     acc.box(r.x, r.z, gy + H, gy + H + 3, 2.6, 2.6, 0, col, col);
+    pushCollider(cols, ox, oz, rectRing(r.x, r.z, 3.5, 3.5, 0), gy + H + 3);
     anim.push({ t: 'tower', x: ox + r.x, y0: gy + 2.5, y1: gy + H - 5, z: oz + r.z, col });
     return;
   }
@@ -784,6 +869,7 @@ function buildRide(acc, r, ox, oz, anim) {
     pad(R + 3);
     acc.disc(r.x, r.z, R + 0.6, gy + 0.6, CONCRETE, 18);
     if (r.k === 'swing') acc.box(r.x, r.z, gy, gy + 17, 0.8, 0.8, 0, WHITE);
+    pushCollider(cols, ox, oz, rectRing(r.x, r.z, R + 0.6, R + 0.6, 0), gy + (r.k === 'swing' ? 17 : r.k === 'carousel' ? R * 0.95 : 4));
     anim.push({ t: r.k, x: ox + r.x, y: gy + 0.65, z: oz + r.z, r: R, col });
     return;
   }
@@ -803,7 +889,7 @@ function kiosk(acc, x, z, gy, col, yaw) {
 
 // ------------------------------------------------------------------ build (worker, stage 3)
 export function buildVenues(ctx) {
-  const { data, ox, oz, groups, mats } = ctx;
+  const { data, ox, oz, groups, mats, colliders } = ctx;
   const v = data && data.venues;
   if (!v) return null;
   const acc = new Accum();
@@ -812,9 +898,9 @@ export function buildVenues(ctx) {
   const lon = data.places ? data.places.lon : 0;
   const us = lat > 18 && lat < 72 && lon > -170 && lon < -50;
   for (const s of v.stadiums || []) {
-    try { buildStadium(acc, { ...s, us }, ox, oz); } catch (e) { /* malformed footprint: skip */ }
+    try { buildStadium(acc, { ...s, us }, ox, oz, colliders); } catch (e) { /* malformed footprint: skip */ }
   }
-  for (const r of v.rides || []) buildRide(acc, r, ox, oz, anim);
+  for (const r of v.rides || []) buildRide(acc, r, ox, oz, anim, colliders);
   for (const [x1, z1, x2, z2] of v.paths || []) {
     const l = Math.hypot(x2 - x1, z2 - z1), n = Math.max(1, Math.ceil(l / 20));
     for (let i = 0; i < n; i++) {
