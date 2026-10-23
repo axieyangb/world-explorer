@@ -152,7 +152,7 @@ export class KaijuMode {
   _ensureSystems() {
     if (this._systemsReady) return;
     this._systemsReady = true;
-    this.fx = safeNew(KaijuFx, this, "KaijuFx");
+    this.fx = this.fx || safeNew(KaijuFx, this, "KaijuFx"); // may already exist from Fly mode (_updateAmbient)
     this.audio = safeNew(KaijuAudio, this, "KaijuAudio");
     this.crowd = safeNew(KaijuCrowd, this, "KaijuCrowd");
     this.weapons = safeNew(KaijuWeapons, this, "KaijuWeapons");
@@ -880,8 +880,20 @@ export class KaijuMode {
   }
 
   // ---------------------------------------------------------------- frame
+  // Outside a round (Fly mode): heli cannon/rockets still wreck buildings through the same destruction system + fx.
+  _updateAmbient(dt) {
+    if (!this.destruction) return;
+    if (!this._ambient) {
+      if (this.app.mode !== "helicopter") return;
+      this._ambient = true;
+      if (!this.fx) this.fx = safeNew(KaijuFx, this, "KaijuFx");
+    }
+    this._call(this.destruction, "update", dt);
+    this._call(this.fx, "update", dt);
+  }
+
   update(dt, rawDt = dt) {
-    if (!this.active) return;
+    if (!this.active) { this._updateAmbient(dt); return; }
     const st = this.state;
     if (this._hitCooldown > 0) this._hitCooldown -= rawDt;
     if (this.app.heli && this._heliHooked !== this.app.heli) this._hookHeli();

@@ -324,7 +324,10 @@ export class KaijuWeapons {
         this._hitSoundT = weak ? 0.09 : 0.06;
       }
     } else if (kind === "building") {
-      if (info?.ref !== undefined) K.destruction?.applyHit?.(info.ref, CFG.CANNON_BUILDING_DAMAGE, { point: p });
+      if (info?.ref !== undefined) {
+        if (K.destruction?.applyHeliHit) K.destruction.applyHeliHit(info.ref, CFG.CANNON_BUILDING_UNITS);
+        else K.destruction?.applyHit?.(info.ref, CFG.CANNON_BUILDING_DAMAGE, { point: p });
+      }
       fx?.spawn?.("spark", p, { dir: _a, count: 5, scale: sc });
       fx?.spawn?.("smoke", p, { count: 1, scale: 0.35 * sc, light: true, life: 2.5, speed: 1 });
       if (Math.random() < 0.3) fx?.spawn?.("debris", p, { dir: _a, count: 1, scale: 0.5 });

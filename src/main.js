@@ -449,13 +449,21 @@ class WorldExplorerApp {
 
     this.navigator.init();
 
-    // Load initial 3x3 chunks around starting location
-    await this._updateStreamingChunks(true);
-    const initSurf = this.sampleRoadSurface(this.pos.x, this.pos.y, this.pos.z);
-    if (initSurf && this.mode !== "helicopter") {
-      this.pos.y = initSurf.y;
-      this.currentRoadName = initSurf.seg.name || this.currentRoadName;
-      this.vehicleMesh.position.copy(this.pos);
+    // Default start: flying (Fly mode) over San Francisco's Embarcadero, facing the downtown skyline.
+    // ?lat=..&lon=.. (optional &name=..) in the URL starts there instead.
+    const q = new URLSearchParams(window.location.search);
+    const qLat = parseFloat(q.get("lat"));
+    const qLon = parseFloat(q.get("lon"));
+    this.setMode("helicopter");
+    if (Number.isFinite(qLat) && Number.isFinite(qLon)) {
+      await this.teleportToLocation(qLat, qLon, q.get("name") || "", "");
+    } else {
+      const sf = QUICK_WORLD_DESTINATIONS.find((d) => d.id === "sf_embarcadero");
+      await this.teleportToLocation(sf.lat, sf.lon, sf.city, sf.street);
+      this.pos.x += 260; // just off the waterfront
+      this.yaw = -Math.PI * 0.5; // facing west over downtown
+      this._ensureHeli().place(this.pos.x, this.pos.y, this.pos.z, this.yaw);
+      this.camYaw = this.yaw;
       this.camPivot.copy(this.pos);
     }
 
@@ -577,6 +585,8 @@ class WorldExplorerApp {
     this.avatarMesh.rotation.set(0, this.yaw, 0);
     this.heliMesh.position.copy(this.pos);
     this.heliMesh.rotation.set(0, this.yaw, 0);
+
+    if (this.mode === "helicopter" && this.heli) this.heli.place(this.pos.x, this.pos.y, this.pos.z, this.yaw);
 
     // Load immediate 3x3 chunks synchronously and queue outer ring
     await this._updateStreamingChunks(true);
@@ -1401,6 +1411,7 @@ class WorldExplorerApp {
     if (this.mode === "helicopter") {
       this.pos.y = Math.max(this.pos.y + 150.0, initTerrY + 150.0);
       this.camPivot.copy(this.pos);
+      if (this.heli) this.heli.place(this.pos.x, this.pos.y, this.pos.z, this.yaw);
     }
     this.heliMesh.position.copy(this.pos);
     this.heliMesh.rotation.set(0, this.yaw, 0);
@@ -1940,7 +1951,10 @@ class WorldExplorerApp {
       this.keys.delete(e.code);
     });
     // A key released while the page/canvas lost focus never sends keyup; drop all held keys instead.
-    const releaseAll = () => this.keys.clear();
+    const releaseAll = () => {
+      this.keys.clear();
+      if (this.heli) this.heli.cancelTrigger();
+    };
     window.addEventListener("blur", releaseAll);
     document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAll(); });
 
@@ -1955,6 +1969,9 @@ class WorldExplorerApp {
       pointerStartX = e.clientX;
       pointerStartY = e.clientY;
       isDragging = e.button === 0 || e.button === 2;
+      if (e.button === 0 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
+        this._ensureHeli().pressTrigger(e.clientX, e.clientY); // hold to fire the cannon
+      }
       const pop = document.getElementById("mode-vehicle-menu");
       if (pop) pop.classList.add("hidden");
       const panel = document.getElementById("location-search-panel");
@@ -1962,6 +1979,7 @@ class WorldExplorerApp {
     });
 
     this.canvas.addEventListener("pointermove", (e) => {
+      if (this.heli) this.heli.moveTrigger(e.clientX, e.clientY); // a drag orbits the camera instead of firing
       if (!isDragging || (e.buttons & 3) === 0) return;
       const dx = e.clientX - pointerDownX;
       const dy = e.clientY - pointerDownY;
@@ -1980,9 +1998,9 @@ class WorldExplorerApp {
           this._lastPointerPunchAt = performance.now();
           this.triggerPlayerPunch();
         }
-      } else if (this.mode === "helicopter" && moveDist < 6) {
-        if (e.button === 0) this._ensureHeli().fireCannon();
-        else if (e.button === 2) this._ensureHeli().fireRockets();
+      } else if (this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
+        if (e.button === 0) this._ensureHeli().releaseTrigger(); // quick tap = one round
+        else if (e.button === 2 && moveDist < 6) this._ensureHeli().fireRockets();
       }
     });
 
@@ -1999,6 +2017,7 @@ class WorldExplorerApp {
 
     window.addEventListener("pointerup", () => {
       isDragging = false;
+      if (this.heli) this.heli.cancelTrigger();
     });
 
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());

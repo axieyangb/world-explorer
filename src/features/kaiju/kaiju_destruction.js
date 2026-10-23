@@ -980,6 +980,58 @@ export class KaijuDestruction {
     return this._damageRoot(rec, ref.r, amount, Boolean(opts && opts.fire));
   }
 
+  // ---------------------------------------------------------------- helicopter weapons (Fly mode + Kaiju)
+  /** Hit points in rockets, scaled by size: houses ~1-2 rockets (a few seconds of cannon), towers up to 10. */
+  heliHp(rec, r) {
+    const h = Math.max(3, rec.rTop[r] - rec.rGround[r]);
+    const foot = Math.sqrt(Math.max(1, (rec.rMaxX[r] - rec.rMinX[r]) * (rec.rMaxZ[r] - rec.rMinZ[r])));
+    return Math.min(10, Math.max(1, 0.5 + h / 25 + foot / 45));
+  }
+
+  _heliDamage(rec, r, units) {
+    return this._damageRoot(rec, r, (units / this.heliHp(rec, r)) * rec.rTough[r], false);
+  }
+
+  /** Direct helicopter hit on a raycast `ref`, worth `units` rockets. True when the building collapses. */
+  applyHeliHit(ref, units) {
+    if (!ref || !(units > 0)) return false;
+    let rec = ref.rec;
+    if (!rec || rec.dead) rec = this.recs.get(ref.key);
+    if (!rec || ref.r >= rec.n || rec.root[ref.r] !== ref.r) return false;
+    return this._heliDamage(rec, ref.r, units);
+  }
+
+  /** Rocket splash: standing buildings within r (box distance) take up to `units`, fading with distance. */
+  heliSplash(x, y, z, r, units, skipRef) {
+    if (!(r > 0) || !(units > 0)) return 0;
+    let destroyed = 0;
+    const stamp = ++this.stamp;
+    const r2 = r * r;
+    for (let ix = Math.floor((x - r) / CELL); ix <= Math.floor((x + r) / CELL); ix++) {
+      for (let iz = Math.floor((z - r) / CELL); iz <= Math.floor((z + r) / CELL); iz++) {
+        const l = this.grid.get(cellKey(ix, iz));
+        if (!l) continue;
+        for (let i = 0; i < l.length; i++) {
+          const p = l[i];
+          const rec = this.slots[(p / TEX_W) | 0];
+          if (!rec) continue;
+          const b = p % TEX_W;
+          if (rec.qs[b] === stamp) continue;
+          rec.qs[b] = stamp;
+          if (rec.st.flags[b] & F_DEAD || rec.root[b] !== b) continue;
+          if (skipRef && skipRef.key === rec.key && skipRef.r === b) continue;
+          const dx = Math.max(rec.rMinX[b] - x, 0, x - rec.rMaxX[b]);
+          const dy = Math.max(rec.rBase[b] - y, 0, y - rec.rTop[b]);
+          const dz = Math.max(rec.rMinZ[b] - z, 0, z - rec.rMaxZ[b]);
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 > r2) continue;
+          if (this._heliDamage(rec, b, units * (1 - Math.sqrt(d2) / r))) destroyed++;
+        }
+      }
+    }
+    return destroyed;
+  }
+
   getDensestTarget(fromX, fromZ) {
     const cs = C.densCell;
     const m = this._densMap;
