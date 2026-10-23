@@ -333,12 +333,27 @@ export function createLandcoverMaterial() {
           k = (0.93 + 0.12 * n) * (1.0 - line * 0.07 * (1.0 - fw));
         } else if (pat == 4.0) {
           k *= 0.8 + 0.35 * smoothstep(0.35, 0.75, lcNoise(w * 0.12 + 3.0));
+        } else if (pat == 5.0) {
+          // Crisp athletic court surface, white court lines & 3D sport equipment
+          k = 0.985 + 0.03 * (n - 0.5);
+        } else if (pat == 6.0) {
+          // Turquoise swimming pool water (#22b8cf) with sunlit aqua caustic shimmer
+          float c1 = sin(w.x * 2.2 + n * 4.0) * cos(w.y * 2.2 - n * 4.0);
+          float caustic = max(0.0, c1 * 0.5 + 0.35 * sin((w.x + w.y) * 3.0));
+          diffuseColor.rgb = clamp(diffuseColor.rgb * (0.96 + 0.08 * n) + vec3(0.15, 0.21, 0.23) * caustic, 0.0, 1.0);
+          k = 1.0;
+        } else if (pat == 7.0) {
+          // Pedestrian stone plazas, travertine coping & 3D hillside steps
+          vec2 g = abs(fract(w * 0.65) - 0.5);
+          float line = smoothstep(0.45, 0.5, max(g.x, g.y));
+          float tileVar = (lcHash(floor(w * 0.65)) - 0.5) * 0.06;
+          k = (0.96 + 0.07 * n + tileVar) * (1.0 - line * 0.09);
         }
         diffuseColor.rgb *= k;
       }`
     );
   };
-  mat.customProgramCacheKey = () => 'landcover-v1';
+  mat.customProgramCacheKey = () => 'landcover-v2';
   return mat;
 }
 
