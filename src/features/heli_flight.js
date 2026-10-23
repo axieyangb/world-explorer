@@ -469,6 +469,14 @@ export class HeliFlight {
         let nx = p.x + v.x * h, ny = p.y + v.y * h, nz = p.z + v.z * h;
         const sup = this._support(nx, nz, Math.max(prevY, ny) + 0.5);
         if (ny < sup) ny = sup;
+        if (typeof this.app.getBridgeUndersideAt === 'function') {
+          const under = this.app.getBridgeUndersideAt(nx, prevY - 1.5, nz);
+          if (under && prevY < under.soffitY && ny + 2.1 > under.soffitY) {
+            ny = under.soffitY - 2.1;
+            if (v.y > 0) v.y = 0;
+            this._holdY = ny;
+          }
+        }
         this._walls(nx, ny, nz, wallOut);
         if (wallOut.hit) {
           nx = wallOut.x; nz = wallOut.z;
@@ -644,47 +652,14 @@ export class HeliFlight {
     this._wash.geometry.attributes.position.needsUpdate = true;
   }
 
-  // ---------------------------------------------------------------- audio
+  // ---------------------------------------------------------------- audio (vehicle audio muted)
   _ensureAudio() {
-    if (this._audio) { if (this._audio.ctx.state === 'suspended') this._audio.ctx.resume().catch(() => {}); return; }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    try {
-      const ctx = new AC();
-      const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
-      const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-      const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 420; bp.Q.value = 0.8;
-      const chop = ctx.createGain(); chop.gain.value = 0.5;          // blade-pass "whop" amplitude modulation
-      const lfo = ctx.createOscillator(); lfo.type = 'triangle'; lfo.frequency.value = 14;
-      const lfoAmt = ctx.createGain(); lfoAmt.gain.value = 0.45;
-      lfo.connect(lfoAmt).connect(chop.gain);
-      noise.connect(bp).connect(chop).connect(master);
-      const turb = ctx.createOscillator(); turb.type = 'sawtooth'; turb.frequency.value = 220;
-      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
-      const tg = ctx.createGain(); tg.gain.value = 0.05;
-      turb.connect(lp).connect(tg).connect(master);
-      const wob = ctx.createOscillator(); wob.frequency.value = 0.35;   // Doppler-ish wobble
-      const wobAmt = ctx.createGain(); wobAmt.gain.value = 12;
-      wob.connect(wobAmt); wobAmt.connect(turb.detune); wobAmt.connect(lfo.detune);
-      noise.start(); lfo.start(); turb.start(); wob.start();
-      this._audio = { ctx, master, bp, lfo, turb };
-    } catch (e) {
-      this._audio = null;
-    }
+    this._audio = null;
+    return null;
   }
 
   _updateAudio() {
-    const a = this._audio;
-    if (!a || a.ctx.state !== 'running') return;
-    const s = this.state, on = this.app.mode === 'helicopter', t = a.ctx.currentTime;
-    const vol = on ? 0.22 * s.rpm * (0.55 + 0.45 * s.throttle) : 0;
-    a.master.gain.setTargetAtTime(vol, t, 0.15);
-    a.lfo.frequency.setTargetAtTime(6 + 12 * s.rpm + 4 * s.throttle, t, 0.2);
-    a.bp.frequency.setTargetAtTime(300 + 260 * s.throttle + Math.min(200, this.app.speed * 2), t, 0.2);
-    a.turb.frequency.setTargetAtTime(140 + 140 * s.rpm + 60 * s.throttle, t, 0.3);
+    // Muted by default (silent helicopter/vehicle operation)
   }
 
   /** Mute when leaving helicopter mode. */

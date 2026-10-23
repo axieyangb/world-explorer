@@ -1755,14 +1755,23 @@ function buildRoadsAndBridges(
     if (nPts > 0 && flat[(nPts - 1) * 3 + 1] > maxWayY) {
       maxWayY = flat[(nPts - 1) * 3 + 1];
     }
+    const midIdx = Math.floor(nPts * 0.5) * 3;
+    const isOverWater = Boolean(
+      isPointInWater &&
+        nPts > 0 &&
+        (isPointInWater(flat[0], flat[2], 0) ||
+          isPointInWater(flat[midIdx], flat[midIdx + 2], 0) ||
+          isPointInWater(flat[(nPts - 1) * 3], flat[(nPts - 1) * 3 + 2], 0))
+    );
     const isScenicArchBridge =
       Boolean(
         isBridge &&
+          isOverWater &&
           (cls === 'footway' || cls === 'pedestrian' || cls === 'service' || cls === 'path') &&
           ((name || '').includes('桥') || maxWayY <= 2.2)
       );
     const isHighPedOverpass =
-      isBridge && (cls === 'footway' || cls === 'cycleway') && totalWayLen >= 38.0 && flat[1] >= 4.5 && !isScenicArchBridge;
+      isBridge && (cls === 'footway' || cls === 'cycleway' || cls === 'pedestrian') && !isScenicArchBridge;
 
     const rgb = isScenicArchBridge
       ? [0.92, 0.91, 0.88]
@@ -1775,6 +1784,7 @@ function buildRoadsAndBridges(
     const rawYs = new Float32Array(nPts);
     let minRawY = Infinity;
     let touchesMainSunken = false;
+    const bridgeLayerElev = Math.max(1, layer || 1) * 7.5;
     for (let i = 0; i < nPts; i++) {
       const rY = flat[i * 3 + 1];
       if (rY < minRawY) minRawY = rY;
@@ -1788,15 +1798,15 @@ function buildRoadsAndBridges(
       }
       rawYs[i] = isScenicArchBridge
         ? rY
-        : isHighPedOverpass
-          ? 5.5
+        : (isBridge || (layer || 0) >= 1)
+          ? Math.max(rY, bridgeLayerElev)
           : isMinorWay
-            ? Math.max(-0.8, Math.min(0.85, rY * 0.14))
-            : rY;
+            ? Math.max(-0.8, Math.min(0.2, rY * 0.14))
+            : Math.min(0.2, rY);
     }
-    // fix/water: one consistent deck height for all minor ways of a bridge over water (+ no riverbed dips)
-    if (isBridge && isPointInWater) {
-      levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, isMinorWay || isHighPedOverpass || isScenicArchBridge, isPointInWater, getBeijingTerrainElevation,
+    // fix/water: one consistent deck height for water-crossing bridges (+ no riverbed dips), while keeping >= 6.8m overpass height
+    if (isBridge && isOverWater && isScenicArchBridge) {
+      levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, true, isPointInWater, getBeijingTerrainElevation,
         majorBridgeWays || (majorBridgeWays = collectMajorBridgeWays(roads)));
     }
     // Skip rendering 3D mesh for 1D topological _link connectors that dive directly into a sunken open-trench highway
@@ -1809,7 +1819,10 @@ function buildRoadsAndBridges(
       const x = flat[i * 3];
       const rawRoadY = rawYs[i];
       const z = flat[i * 3 + 2];
-      const terrainY = getBeijingTerrainElevation(ox + x, oz + z);
+      const terrainY = Math.max(
+        getBeijingTerrainElevation(ox + x, oz + z),
+        getChunkTerrainMeshElevation(ox + x, oz + z) + 0.35
+      );
       const y = terrainY + rawRoadY + yBias;
       centerPts.push([x, y, z, rawRoadY, terrainY]);
 
@@ -1914,15 +1927,16 @@ function buildRoadsAndBridges(
         const rawY2 = origRawY1 + (origRawY2 - origRawY1) * u1;
 
         const isGroundSeg = !isBridge && !isTunnel && rawY1 >= -0.45 && rawY2 >= -0.45;
-        const terrY1 = isGroundSeg
+        const useLocalTerr = isGroundSeg || (isBridge && !isScenicArchBridge);
+        const terrY1 = useLocalTerr
           ? sampleGroundTerr(cx1, cz1, lx1, lz1, rx1, rz1)
           : origTerrY1 + (origTerrY2 - origTerrY1) * u0;
-        const terrY2 = isGroundSeg
+        const terrY2 = useLocalTerr
           ? sampleGroundTerr(cx2, cz2, lx2, lz2, rx2, rz2)
           : origTerrY1 + (origTerrY2 - origTerrY1) * u1;
 
-        const cy1 = isGroundSeg ? terrY1 + rawY1 + yBias : origCy1 + (origCy2 - origCy1) * u0;
-        const cy2 = isGroundSeg ? terrY2 + rawY2 + yBias : origCy1 + (origCy2 - origCy1) * u1;
+        const cy1 = useLocalTerr ? terrY1 + rawY1 + yBias : origCy1 + (origCy2 - origCy1) * u0;
+        const cy2 = useLocalTerr ? terrY2 + rawY2 + yBias : origCy1 + (origCy2 - origCy1) * u1;
         const ly1 = cy1;
         const ry1 = cy1;
         const ly2 = cy2;

@@ -21,6 +21,8 @@ export const NEW_VEHICLE_SPECS = [
   {
     id: 'tesla',
     name: 'Tesla Model S',
+    massKg: 2100,
+    height: 1.44,
     maxSpeed: 68.0,      // ~245 km/h -> 404 km/h on Nitro (instant electric torque)
     nitroMult: 1.65,
     accel: 54.0,
@@ -33,6 +35,8 @@ export const NEW_VEHICLE_SPECS = [
   {
     id: 'cybertruck',
     name: 'Tesla Cybertruck',
+    massKg: 3100,
+    height: 1.79,
     maxSpeed: 62.0,      // ~223 km/h -> 357 km/h on Nitro
     nitroMult: 1.60,
     accel: 46.0,
@@ -45,6 +49,8 @@ export const NEW_VEHICLE_SPECS = [
   {
     id: 'ambulance',
     name: 'Ambulance',
+    massKg: 4500,
+    height: 2.70,
     maxSpeed: 52.0,      // ~187 km/h emergency response speed
     nitroMult: 1.55,
     accel: 30.0,
@@ -58,6 +64,8 @@ export const NEW_VEHICLE_SPECS = [
   {
     id: 'tow_truck',
     name: 'Tow Truck',
+    massKg: 6200,
+    height: 2.80,
     maxSpeed: 46.0,      // ~166 km/h heavy recovery truck
     nitroMult: 1.55,
     accel: 26.0,
@@ -1074,6 +1082,7 @@ export function stopVehicleSirenAudio() {
 
 export function playVehicleHornOrSiren(typeId, sirenActive) {
   stopVehicleSirenAudio();
+  if (true) return; // Vehicle audio muted by default
   try {
     const ctx = ensureAudioCtx();
     if (!ctx) return;

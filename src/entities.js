@@ -6,6 +6,8 @@ export const VEHICLE_SPECS = [
   {
     id: 'cyber_mach1',
     name: 'Concept Hypercar',
+    massKg: 1520,
+    height: 1.18,
     maxSpeed: 145.0,     // ~522 km/h cruise -> 340.3 m/s (1,225 km/h = Mach 1.00) on Shift Nitro!
     nitroMult: 2.347,    // 145.0 * 2.347 = 340.3 m/s (1,225 km/h = 1.00 Mach at sea level)
     accel: 92.0,
@@ -18,6 +20,8 @@ export const VEHICLE_SPECS = [
   {
     id: 'aero_formula',
     name: 'Formula Racer',
+    massKg: 920,
+    height: 1.05,
     maxSpeed: 96.0,      // ~346 km/h -> 553 km/h on Nitro
     nitroMult: 1.60,
     accel: 64.0,
@@ -30,6 +34,8 @@ export const VEHICLE_SPECS = [
   {
     id: 'supercar',
     name: 'Sports Car',
+    massKg: 1450,
+    height: 1.24,
     maxSpeed: 64.0,      // ~230 km/h -> 368 km/h on Nitro
     nitroMult: 1.60,
     accel: 36.0,
@@ -43,6 +49,8 @@ export const VEHICLE_SPECS = [
   {
     id: 'taxi',
     name: 'City Taxi',
+    massKg: 1550,
+    height: 1.48,
     maxSpeed: 38.0,      // ~137 km/h -> 212 km/h on Nitro
     nitroMult: 1.55,
     accel: 20.0,
@@ -55,6 +63,8 @@ export const VEHICLE_SPECS = [
   {
     id: 'police',
     name: 'Police Cruiser',
+    massKg: 1850,
+    height: 1.52,
     maxSpeed: 48.0,      // ~173 km/h -> 268 km/h on Nitro
     nitroMult: 1.55,
     accel: 26.0,
@@ -67,6 +77,8 @@ export const VEHICLE_SPECS = [
   {
     id: 'bus',
     name: 'City Bus',
+    massKg: 11000,
+    height: 3.70,
     maxSpeed: 28.0,      // ~101 km/h -> 162 km/h on Nitro
     nitroMult: 1.60,
     accel: 14.0,
@@ -755,7 +767,7 @@ export function createPlayerAvatarModel() {
   root.add(nitroVfx);
   const vfxParts = { plumes: [], shockCones: [], rings: [], trails: [] };
 
-  root.userData = { leftLeg, rightLeg, leftArm, rightArm, nitroVfx, vfxParts };
+  root.userData = { leftLeg, rightLeg, leftArm, rightArm, armL: leftArm, armR: rightArm, legL: leftLeg, legR: rightLeg, nitroVfx, vfxParts };
   return root;
 }
 

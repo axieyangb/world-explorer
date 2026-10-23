@@ -72,7 +72,7 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
-import { sampleRoadSurfaceIndexed } from "./features/road_grid.js"; // fix/water
+import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -276,6 +276,10 @@ class WorldExplorerApp {
     this.collision = new BuildingCollision(this); // fix/water
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
+    this.cityTraffic = this.traffic;
+    this._punchTimer = 0;
+    this._punchDuration = 0.32;
+    this._punchHand = "L";
     this.fullscreen = new FullscreenToggle(); // feature/fullscreen: before KaijuMode so Shift+F wins its capture listener
     this.kaiju = new KaijuMode(this); // [kaiju]
     this.navigator = new RoadNavigator(this.scene);
@@ -1229,6 +1233,10 @@ class WorldExplorerApp {
     return sampleRoadSurfaceIndexed(this, wx, wy, wz);
   }
 
+  getBridgeUndersideAt(wx, wy, wz) {
+    return sampleBridgeUndersideAt(this, wx, wy, wz);
+  }
+
   getRoofSupportAt(wx, wy, wz) {
     const [cx0, cz0] = this.worldToChunk(wx, wz);
     let maxH = -Infinity;
@@ -1499,6 +1507,36 @@ class WorldExplorerApp {
         if (leftArm) leftArm.rotation.x = 0;
         if (rightArm) rightArm.rotation.x = 0;
       }
+      if (leftArm) leftArm.rotation.z = 0;
+      if (rightArm) rightArm.rotation.z = 0;
+
+      if (this._punchTimer > 0) {
+        this._punchTimer = Math.max(0, this._punchTimer - dt);
+        const dur = this._punchDuration || 0.32;
+        const progress = 1 - this._punchTimer / dur;
+        const arc = Math.sin(Math.min(1, Math.max(0.18, progress)) * Math.PI);
+        const punchArm = this._punchHand === "R" ? rightArm : leftArm;
+        const guardArm = this._punchHand === "R" ? leftArm : rightArm;
+        if (punchArm) {
+          punchArm.rotation.x = -1.65 * arc;
+          punchArm.rotation.z = (this._punchHand === "R" ? -0.22 : 0.22) * arc;
+        }
+        if (guardArm) {
+          guardArm.rotation.x = -0.55 * arc;
+        }
+        const twistSign = this._punchHand === "R" ? 1 : -1;
+        this.avatarMesh.rotation.y = this.yaw + twistSign * 0.24 * arc;
+        if (progress < 0.45) {
+          const lungeStep = 2.4 * dt;
+          const lx = this.pos.x + Math.sin(this.yaw) * lungeStep;
+          const lz = this.pos.z + Math.cos(this.yaw) * lungeStep;
+          const col = this.collision.resolve(lx, this.pos.y + 0.6, lz, this.yaw, 0.45, [0], null, this.pos.x, this.pos.z);
+          const wk = this.water.resolveWalk(this.pos.x, this.pos.z, col.x, col.z, this.pos.y);
+          this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.x));
+          this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.z));
+          this.avatarMesh.position.copy(this.pos);
+        }
+      }
 
       updateEntityNitroVfx(this.avatarMesh, isNitro && this.speed > 2.0, this.speed, this.vfxTime);
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
@@ -1573,7 +1611,10 @@ class WorldExplorerApp {
       const meshY = getChunkTerrainMeshElevation(x, z);
       const demY = getBeijingTerrainElevation(x, z);
       const baseTerr = Math.max(meshY + 0.08, demY + 0.16);
-      const rSurf = this.sampleRoadSurface(x, refY, z);
+      let rSurf = this.sampleRoadSurface(x, refY, z);
+      if (!rSurf && refY > baseTerr + 3.0) {
+        rSurf = this.sampleRoadSurface(x, baseTerr, z);
+      }
       return {
         y: rSurf ? Math.max(rSurf.y, baseTerr) : baseTerr,
         surf: rSurf,
@@ -1599,6 +1640,7 @@ class WorldExplorerApp {
       if (this.water.tryEnterWater(stepCenter.surf)) return;
       if (this.pos.y < stepCenter.y) {
         this.pos.y = stepCenter.y;
+        this.driveVelY = 0;
       }
     }
 
@@ -1609,12 +1651,19 @@ class WorldExplorerApp {
     const frontSup = evalSupportAt(this.pos.x + sinY * axleHalfSpan, this.pos.z + cosY * axleHalfSpan, this.pos.y);
     const rearSup = evalSupportAt(this.pos.x - sinY * axleHalfSpan, this.pos.z - cosY * axleHalfSpan, this.pos.y);
 
-    // Ensure vehicle center sits on or above the bridge of front/center/rear axles so neither wheels nor bumpers clip into hills
+    // Ensure vehicle center sits on or above the bridge of front/center/rear axles so neither wheels nor bumpers clip into hills;
+    // when driving off an elevated bridge deck (pos.y > minSupportY + 0.25), integrate gravitational free-fall (g = 22 m/s^2).
     const minSupportY = Math.max(centerSup.y, (frontSup.y + rearSup.y) * 0.5);
-    if (this.pos.y <= minSupportY) {
+    if (this.pos.y <= minSupportY + 0.22 && (this.driveVelY || 0) <= 0) {
       this.pos.y = minSupportY;
+      this.driveVelY = 0;
     } else {
-      this.pos.y = Math.max(minSupportY, THREE.MathUtils.lerp(this.pos.y, minSupportY, Math.min(1, 20 * dt)));
+      this.driveVelY = (this.driveVelY || 0) - 22.0 * dt;
+      this.pos.y += this.driveVelY * dt;
+      if (this.pos.y <= minSupportY) {
+        this.pos.y = minSupportY;
+        this.driveVelY = 0;
+      }
     }
 
     this.water.recordSafe(dt, centerSup.surf); // fix/water: respawn pose
@@ -1627,10 +1676,14 @@ class WorldExplorerApp {
 
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
-    const trueSlopePitch = Math.atan2(frontSup.y - rearSup.y, axleHalfSpan * 2.0);
+    const rawSlopeDy = frontSup.y - rearSup.y;
+    const trueSlopePitch = Math.abs(rawSlopeDy) < 3.4 ? Math.atan2(rawSlopeDy, axleHalfSpan * 2.0) : 0;
+    const longAccel = (this.speed - (this._prevDriveSpeed || 0)) / Math.max(dt, 0.001);
+    this._prevDriveSpeed = this.speed;
+    const squatPitch = THREE.MathUtils.clamp(longAccel * 0.0028, -0.045, 0.045);
     this.vehicleMesh.rotation.x = THREE.MathUtils.lerp(
       this.vehicleMesh.rotation.x,
-      -THREE.MathUtils.clamp(trueSlopePitch, -0.24, 0.24),
+      -THREE.MathUtils.clamp(trueSlopePitch + squatPitch, -0.26, 0.26),
       Math.min(1, 14 * dt)
     );
 
@@ -1830,8 +1883,11 @@ class WorldExplorerApp {
       } else if (e.code === "KeyF" && !e.repeat) {
         if (this.mode === "helicopter") {
           this.setMode(this.heliLanded ? "walk" : "drive");
-        } else if (this.mode === "walk" && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
-          this.setMode("helicopter");
+        } else if (this.mode === "walk") {
+          const hits = this.triggerPlayerPunch();
+          if (hits === 0 && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 8) {
+            this.setMode("helicopter");
+          }
         } else {
           this.setMode(this.mode === "drive" ? "walk" : "drive");
         }
@@ -1883,11 +1939,14 @@ class WorldExplorerApp {
 
 
     let pointerDownX = 0, pointerDownY = 0;
+    let pointerStartX = 0, pointerStartY = 0;
     let isDragging = false;
 
     this.canvas.addEventListener("pointerdown", (e) => {
       pointerDownX = e.clientX;
       pointerDownY = e.clientY;
+      pointerStartX = e.clientX;
+      pointerStartY = e.clientY;
       isDragging = e.button === 0 || e.button === 2;
       const pop = document.getElementById("mode-vehicle-menu");
       if (pop) pop.classList.add("hidden");
@@ -1905,6 +1964,27 @@ class WorldExplorerApp {
       this.camYaw -= dx * 0.005;
       this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0042, 0.05, 1.18);
       this.lastMouseOrbitTime = performance.now();
+    });
+
+    this.canvas.addEventListener("pointerup", (e) => {
+      if (e.button === 0 && this.mode === "walk") {
+        const moveDist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
+        if (moveDist < 6) {
+          this._lastPointerPunchAt = performance.now();
+          this.triggerPlayerPunch();
+        }
+      }
+    });
+
+    this.canvas.addEventListener("click", (e) => {
+      if (e.button === 0 && this.mode === "walk") {
+        if (performance.now() - (this._lastPointerPunchAt || 0) > 80) {
+          const moveDist = Math.hypot((e.clientX || 0) - pointerStartX, (e.clientY || 0) - pointerStartY);
+          if (moveDist < 6) {
+            this.triggerPlayerPunch();
+          }
+        }
+      }
     });
 
     window.addEventListener("pointerup", () => {
@@ -1943,8 +2023,8 @@ class WorldExplorerApp {
         : "W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · L Land · F Exit";
     } else if (this.mode === "walk") {
       text = zh
-        ? "WASD 步行 · Shift 疾跑 · 空格 跳跃 · E 驾车 · C 直升机"
-        : "WASD Walk · Shift Run · Space Jump · E Drive · C Heli";
+        ? "WASD 步行 · Shift 疾跑 · 空格 跳跃 · F/点击 出拳 · E 驾车 · C 直升机"
+        : "WASD Walk · Shift Run · Space Jump · F/Click Punch · E Drive · C Heli";
     } else {
       text = zh
         ? "WASD 驾驶 · Shift 加速 · 空格 刹车 · V 换车 · H 喇叭/警笛 · E 夺车/下车 · C 直升机"
@@ -2208,6 +2288,47 @@ class WorldExplorerApp {
         this.setMode("walk");
       }
     }
+  }
+
+  triggerPlayerPunch() {
+    if (this.mode !== "walk") return 0;
+    this._punchDuration = 0.32;
+    this._punchTimer = this._punchDuration;
+    this._punchHand = this._punchHand === "L" ? "R" : "L";
+    const { leftArm, rightArm } = (this.avatarMesh && this.avatarMesh.userData) || {};
+    const punchArm = this._punchHand === "R" ? rightArm : leftArm;
+    const guardArm = this._punchHand === "R" ? leftArm : rightArm;
+    if (punchArm) {
+      punchArm.rotation.x = -1.65;
+      punchArm.rotation.z = this._punchHand === "R" ? -0.22 : 0.22;
+    }
+    if (guardArm) {
+      guardArm.rotation.x = -0.55;
+      guardArm.rotation.z = 0;
+    }
+    const fwdX = Math.sin(this.yaw);
+    const fwdZ = Math.cos(this.yaw);
+    const fx = this.pos.x + fwdX * 1.3;
+    const fy = this.pos.y + 1.2;
+    const fz = this.pos.z + fwdZ * 1.3;
+    let hits = 0;
+    if (this.traffic && typeof this.traffic.triggerImpactSphere === "function") {
+      hits += this.traffic.triggerImpactSphere(fx, fy, fz, 2.8, {
+        vx: fwdX * 14,
+        vy: 2.5,
+        vz: fwdZ * 14,
+        force: 1.6,
+      });
+      if (hits === 0) {
+        hits += this.traffic.triggerImpactSphere(this.pos.x + fwdX * 0.5, fy, this.pos.z + fwdZ * 0.5, 2.2, {
+          vx: fwdX * 14,
+          vy: 2.5,
+          vz: fwdZ * 14,
+          force: 1.6,
+        });
+      }
+    }
+    return hits;
   }
 
   triggerHornOrSiren() {
@@ -2592,4 +2713,5 @@ class WorldExplorerApp {
 }
 
 const app = new WorldExplorerApp();
+if (typeof window !== "undefined") window.app = app;
 app.start();

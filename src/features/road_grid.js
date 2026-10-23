@@ -88,8 +88,11 @@ export function sampleRoadSurfaceIndexed(app, wx, wy, wz) {
         const distH = Math.hypot(wx - px, wz - pz);
         if (distH > captureHalfWidth(s)) continue;
         const segY = s.y1 + (s.y2 - s.y1) * t;
-        const dy = Math.abs(segY - wy);
-        if (dy > 3.6) continue;
+        const signedDy = segY - wy;
+        // Multi-level underpass vs. overpass physical law: never snap an entity on the lower road
+        // up onto an overhead bridge deck (> 2.2m above wy); stay on bridge if wy >= segY - 2.6m.
+        if (s.bridge ? (signedDy > 2.2 || signedDy < -3.6) : (Math.abs(signedDy) > 3.6)) continue;
+        const dy = Math.abs(signedDy);
         cand[nc++] = segY;
         const score = distH + dy * 2.5;
         if (score < bestScore) { bestScore = score; bestSeg = s; bestY = segY; }
@@ -150,4 +153,49 @@ function bridgeGapFallback(app, wx, wy, wz, cx, cz) {
   }
   if (!best) return null;
   return { y: bestY + 0.07, seg: best.deck && best.ref ? best.ref : best };
+}
+
+/**
+ * Queries the lowest overhead bridge deck & underside soffit slab directly above (wx, wy, wz).
+ * Returns { deckY, soffitY, seg } or null if no elevated bridge spans over (wx, wz).
+ */
+export function sampleBridgeUndersideAt(app, wx, wy, wz) {
+  const [cx, cz] = app.worldToChunk(wx, wz);
+  let bestSeg = null, bestDeckY = Infinity;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      const chunk = app.loadedChunks.get(`${cx + dx},${cz + dz}`);
+      const ud = chunk && chunk.userData;
+      if (!ud || !ud.roadSegments) continue;
+      let g = ud.roadGrid;
+      if (g === undefined || (g && g.src && g.src !== ud.roadSegments)) {
+        g = ud.roadGrid = buildRoadGrid(ud.roadSegments, ud.deckSegments || null);
+      }
+      if (!g) continue;
+      const c = Math.floor((wx - g.minX) / g.cell), r = Math.floor((wz - g.minZ) / g.cell);
+      if (c < 0 || r < 0 || c >= g.nx || r >= g.nz) continue;
+      const k = r * g.nx + c;
+      const segs = ud.roadSegments, decks = ud.deckSegments;
+      for (let j = g.start[k], e = g.start[k + 1]; j < e; j++) {
+        const i = g.items[j];
+        const s = i < g.nSegs ? segs[i] : decks[i - g.nSegs];
+        if (!s || !s.bridge || s.tunnel) continue;
+        const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
+        const len2 = vx * vx + vz * vz;
+        if (len2 < 0.05) continue;
+        let t = ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2;
+        if (t < 0 || t > 1) continue;
+        const px = s.x1 + vx * t, pz = s.z1 + vz * t;
+        const distH = Math.hypot(wx - px, wz - pz);
+        if (distH > (s.width || 6.0) * 0.5 + 0.8) continue;
+        const segY = s.y1 + (s.y2 - s.y1) * t;
+        if (segY > wy + 2.2 && segY < bestDeckY) {
+          bestDeckY = segY;
+          bestSeg = s;
+        }
+      }
+    }
+  }
+  if (!bestSeg) return null;
+  return { deckY: bestDeckY + 0.07, soffitY: bestDeckY - 0.85, seg: bestSeg };
 }

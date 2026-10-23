@@ -590,7 +590,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         const isTunnel = f.tags.brunnel === "tunnel" || (f.tags.layer || 0) < 0 ? 1 : 0;
         if (isTunnel) continue;
         const layer = f.tags.layer !== undefined ? Number(f.tags.layer) : isBridge ? 1 : 0;
-        const rY = isBridge ? Math.max(1, layer || 1) * 6.0 : 0.0;
+        const rY = isBridge ? Math.max(1, layer || 1) * 7.4 : 0.0;
         for (const line of f.geom) {
           let inBounds = false;
           const flatXYZ = [];
@@ -698,6 +698,21 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       }
     }
 
+    if (isBridge && ptsXZ.length >= 2) {
+      const dense = [ptsXZ[0]];
+      for (let i = 1; i < ptsXZ.length; i++) {
+        const [x0, z0] = ptsXZ[i - 1];
+        const [x1, z1] = ptsXZ[i];
+        const segD = Math.hypot(x1 - x0, z1 - z0);
+        const steps = Math.max(1, Math.min(32, Math.ceil(segD / 4.0)));
+        for (let s = 1; s <= steps; s++) {
+          const u = s / steps;
+          dense.push([x0 + (x1 - x0) * u, z0 + (z1 - z0) * u]);
+        }
+      }
+      ptsXZ = dense;
+    }
+
     const nPts = ptsXZ.length;
     const cumDist = new Float32Array(nPts);
     let totalLen = 0;
@@ -706,25 +721,12 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       cumDist[i] = totalLen;
     }
 
-    const targetElev = isBridge ? Math.max(1, layer || 1) * 6.0 : isTunnel ? -6.0 : 0.0;
-    const rampStart = isBridge && groundNodeCounts.has(startKey);
-    const rampEnd = isBridge && groundNodeCounts.has(endKey);
-    const rampLen = Math.min(42.0, totalLen * 0.42);
+    const targetElev = isBridge ? Math.max(1, layer || 1) * 7.4 : isTunnel ? -6.8 : 0.0;
 
     const flatXYZ = [];
     for (let i = 0; i < nPts; i++) {
       const [lx, lz] = ptsXZ[i];
-      let y = targetElev;
-      if (isBridge && rampLen > 3.0) {
-        const dStart = cumDist[i];
-        const dEnd = totalLen - dStart;
-        if (rampStart && dStart < rampLen) {
-          y = Math.min(y, targetElev * 0.5 * (1.0 - Math.cos((Math.PI * dStart) / rampLen)));
-        }
-        if (rampEnd && dEnd < rampLen) {
-          y = Math.min(y, targetElev * 0.5 * (1.0 - Math.cos((Math.PI * dEnd) / rampLen)));
-        }
-      }
+      const y = targetElev;
       flatXYZ.push(Math.round(lx * 10) / 10, Math.round(y * 100) / 100, Math.round(lz * 10) / 10);
     }
 

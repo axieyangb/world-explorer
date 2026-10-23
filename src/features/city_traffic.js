@@ -26,13 +26,13 @@ import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.j
 const UMBRELLA_BIT = bit(OPT.UMBRELLA);
 
 const MAX_CARS = 110;
-const MAX_PEDS = 210;
+const MAX_PEDS = 72;
 const MAX_PEDS_CAP = 420; // [kaiju] instanced capacity for the panic density boost
 const WRECK_PAINT = new THREE.Color(0x14120f); // [kaiju] burned wreck tint
 const CAR_R = 400;
 const CAR_DESPAWN = 470;
-const PED_R = 155;
-const PED_DESPAWN = 180;
+const PED_R = 210;
+const PED_DESPAWN = 250;
 const GRAPH_SPAN = 1500; // include chunks whose center is within this many meters (3x3 around player)
 const HASH = 30;
 
@@ -43,8 +43,10 @@ const MAX_PUFFS = 128;
 
 // Indexed by traffic class code (see traffic_graph.js).
 const CAR_SPEED = [25, 20, 14, 12.5, 11, 8, 6, 12, 0, 0];
+// Physical vehicle mass (kg) by CAR_TYPES index: sedan, taxi, coupe, police, bus, tesla, cybertruck, ambulance, tow_truck
+const CAR_MASS_KG = [1500, 1550, 1420, 1850, 11000, 2100, 3100, 4500, 6200];
 const CAR_W = [3, 2.6, 2.2, 1.6, 1.1, 0.35, 0, 0.8, 0, 0];
-const PED_W = [0, 0, 1.25, 1.25, 1.1, 0.7, 0, 0, 0.95, 0];
+const PED_W = [0, 0, 1.15, 1.0, 0.45, 0.18, 0, 0, 0.55, 0];
 
 const PAINTS = [
   0xf2f2f0, 0xf2f2f0, 0xe8e8e6, 0x161719, 0x161719, 0x1f2124, 0xa7abb0, 0xa7abb0, 0x6c7177,
@@ -249,7 +251,8 @@ export class CityTraffic {
     for (let i = 0; i < E; i++) {
       if ((i & 255) === 255) yield;
       const cls = g.eCls[i];
-      const car = CAR_W[cls] > 0, ped = PED_W[cls] > 0;
+      const isBridge = (g.eOneway[i] & 2) !== 0;
+      const car = CAR_W[cls] > 0, ped = PED_W[cls] > 0 && !(isBridge && cls !== 8);
       if (!car && !ped) continue;
       const p0 = g.ptOff[i], p1 = g.ptOff[i + 1], n = p1 - p0;
       if (n < 2) continue;
@@ -266,7 +269,7 @@ export class CityTraffic {
       if (len < 0.5) continue;
       const e = {
         pts, cum, n, len, a: refs[g.eA[i]], b: refs[g.eB[i]], cls,
-        lanes: g.eLanes[i], width: g.eWidth[i], oneway: g.eOneway[i] === 1,
+        lanes: g.eLanes[i], width: g.eWidth[i], oneway: (g.eOneway[i] & 1) === 1,
         alive: true, minX, maxX, minZ, maxZ, dirs: [null, null], car, ped,
       };
       if (car) {
@@ -394,7 +397,38 @@ export class CityTraffic {
       }
     }
     this.carTarget = Math.min(MAX_CARS, Math.round(cw / 110));
-    this.pedTarget = Math.min(this.pedCap, Math.round((pw / 10) * this.pedMult)); // denser near sidewalks & crosswalks
+    const basePed = Math.min(this.pedCap, Math.round((pw / 28) * this.pedMult));
+    this.pedBaseTarget = basePed;
+    this.pedTarget = Math.min(this.pedCap, Math.round(basePed * this._pedTimeFactor()));
+  }
+
+  _pedTimeFactor() {
+    const app = this.app;
+    if (app && app.kaiju && app.kaiju.active) return 1.0;
+    const atmo = app && app.atmosphere;
+    if (atmo) {
+      const h = (atmo.targetHour !== null && Number.isFinite(atmo.targetHour))
+        ? atmo.targetHour
+        : atmo.hour;
+      if (Number.isFinite(h)) {
+        const hr = ((h % 24) + 24) % 24;
+        if (hr >= 21.5 || hr < 5.5) return 0.07; // Night: ~7%, almost nobody on the street
+        if (hr < 7.5) return 0.30;               // Early morning / dawn: ~30%
+        if (hr >= 18.5) return 0.35;             // Evening / dusk: ~35%
+        if (atmo.targetHour === null && !daylight.__stub && daylight.isNight()) return 0.07;
+        return 1.0;                              // Daytime: 100%
+      }
+    }
+    if (!daylight.__stub) {
+      try {
+        if (daylight.isNight()) return 0.07;
+        const d = daylight.getDaylight();
+        if (d < 0.55) return 0.35;
+        return 1.0;
+      } catch (_) { /* fall through */ }
+    }
+    const idx = app ? (app.timePresetIdx | 0) : 0; // TIME_PRESET_ORDER: noon, sunset, night, overcast
+    return idx === 2 ? 0.07 : idx === 1 ? 0.35 : 1.0;
   }
 
   _pickWeighted(cand, cum) {
@@ -602,10 +636,15 @@ export class CityTraffic {
     if (c.v < 0) c.v = 0;
     c.brake += ((dv < -0.4 || c.v < 0.3 ? 1 : 0) - c.brake) * Math.min(1, dt * 8);
 
+    if (Number.isFinite(c.speed) && c.speed !== c._lastSyncedV) {
+      c.v = Math.max(0, c.speed);
+    }
+    c.speed = c.v;
+    c._lastSyncedV = c.v;
     if (c.v < 0.2 && !atRed && c.bumpT <= 0) {
       c.blockedT += dt;
       c.stuckT += dt;
-      if (c.blockedT > 5) { c.ignoreT = 2.5; c.blockedT = 0; }
+      if (c.blockedT > 14) { c.ignoreT = 2.5; c.blockedT = 0; }
     } else {
       c.blockedT = 0;
       if (c.v > 1) c.stuckT = 0;
@@ -636,13 +675,31 @@ export class CityTraffic {
       if (!c.active) continue;
       const d = Math.hypot(c.x - p.x, c.z - p.z);
       if (d > CAR_DESPAWN || (c.stuckT > 30 && !this._visible(c.x, c.y, c.z))) { c.active = false; continue; }
+      if (c.kvx || c.kvz || c.kyawVel) {
+        const drag = Math.exp(-4.2 * dt);
+        c.kvx = (c.kvx || 0) * drag;
+        c.kvz = (c.kvz || 0) * drag;
+        c.kyawVel = (c.kyawVel || 0) * drag;
+        c.kxOff = ((c.kxOff || 0) + c.kvx * dt) * Math.exp(-1.8 * dt);
+        c.kzOff = ((c.kzOff || 0) + c.kvz * dt) * Math.exp(-1.8 * dt);
+        c.ryaw += c.kyawVel * dt;
+        if (Math.hypot(c.kvx, c.kvz) < 0.08 && Math.abs(c.kyawVel) < 0.04) {
+          c.kvx = 0; c.kvz = 0; c.kyawVel = 0;
+        }
+      } else if (c.kxOff || c.kzOff) {
+        const rec = Math.exp(-2.5 * dt);
+        c.kxOff *= rec;
+        c.kzOff *= rec;
+      }
       const k = 1 - Math.exp(-dt * 10);
-      c.rx += (c.x - c.rx) * k;
+      c.rx += (c.x + (c.kxOff || 0) - c.rx) * k;
       c.ry += (c.y - c.ry) * k;
-      c.rz += (c.z - c.rz) * k;
+      c.rz += (c.z + (c.kzOff || 0) - c.rz) * k;
       let dy = Math.atan2(c.ux, c.uz) - c.ryaw;
       dy -= Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
-      c.ryaw += dy * Math.min(1, dt * 7);
+      if (!c.kyawVel || Math.abs(c.kyawVel) < 0.3) {
+        c.ryaw += dy * Math.min(1, dt * 7);
+      }
       c.rpitch += (-Math.atan(c.slope) - c.rpitch) * k;
       active++;
     }
@@ -735,8 +792,9 @@ export class CityTraffic {
     return false;
   }
 
-  // Synthesized WebAudio impact thud / crunch (rate-limited so simultaneous hits never clip)
+  // Synthesized WebAudio impact thud / crunch (muted by default)
   _playHitSound(x, y, z, forceMul = 1) {
+    if (true) return;
     if (this._hitSoundCooldown > 0) return;
     this._hitSoundCooldown = 0.085;
     if (typeof window === 'undefined') return;
@@ -960,10 +1018,13 @@ export class CityTraffic {
   /**
    * Queue or immediately apply a spherical impact zone (used by Kaiju stomp, tail whip, breath, missiles, cannon).
    */
-  triggerImpactSphere(x, y, z, radius, opts = {}) {
+  triggerImpactSphere(x, y, z, radius, opts = {}, vzArg = 0, forceArg = 1.3) {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !(radius > 0)) return 0;
-    const force = opts.force || 1.3;
-    const vx = opts.vx || 0, vy = opts.vy || 0, vz = opts.vz || 0;
+    const isObj = opts !== null && typeof opts === 'object';
+    const force = isObj ? (opts.force || 1.3) : (Number.isFinite(forceArg) ? forceArg : 1.3);
+    const vx = isObj ? (opts.vx || 0) : (Number.isFinite(opts) ? opts : 0);
+    const vy = isObj ? (opts.vy || 0) : 0;
+    const vz = isObj ? (opts.vz || 0) : (Number.isFinite(vzArg) ? vzArg : 0);
     const r2 = radius * radius;
     let count = 0;
     for (const ped of this.peds) {
@@ -1313,20 +1374,29 @@ export class CityTraffic {
   }
 
   _updatePeds(dt, p, now, allowSpawn) {
-    let active = 0, ragdolls = 0, lying = 0;
+    let active = 0, walking = 0, ragdolls = 0, lying = 0;
     const app = this.app;
     const kj = this._kaijuCreature();
+    const timeFactor = this._pedTimeFactor();
+    const baseTarget = Number.isFinite(this.pedBaseTarget) ? this.pedBaseTarget : this.pedTarget;
+    this.pedTarget = Math.min(this.pedCap, Math.round(baseTarget * timeFactor));
+    if (this._lastPedTarget !== undefined && this.pedTarget > this._lastPedTarget + 6) {
+      this.fillBoost = 1;
+    }
+    this._lastPedTarget = this.pedTarget;
+
     for (const ped of this.peds) {
       if (!ped.active) continue;
       this._updatePed(ped, dt, now, app);
       if (!ped.active) continue;
       const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
       const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
-      if (ped.state === 'walking' && dP > PED_DESPAWN && dK > 220) {
+      if (ped.state === 'walking' && ((dP > PED_DESPAWN && dK > 220) || (!kj && walking >= this.pedTarget))) {
         ped.active = false;
         continue;
       }
-      if (ped.state === 'falling_apart') ragdolls++;
+      if (ped.state === 'walking') walking++;
+      else if (ped.state === 'falling_apart') ragdolls++;
       else if (ped.state === 'lying') lying++;
       active++;
     }
@@ -1334,34 +1404,173 @@ export class CityTraffic {
     this.stats.lying = lying;
     if (!allowSpawn) return active;
     const initial = this.fillBoost > 0;
-    let budget = initial ? 24 : 5;
+    let budget = initial ? 28 : 5;
     for (const ped of this.peds) {
-      if (active >= this.pedTarget || budget <= 0) break;
+      if (walking >= this.pedTarget || active >= this.pedCap || budget <= 0) break;
       if (ped.active) continue;
       budget--;
-      if (this._spawnPed(ped, p, initial)) active++;
+      if (this._spawnPed(ped, p, initial)) {
+        walking++;
+        active++;
+      }
     }
     return active;
   }
 
-  // ---------------- player collisions ----------------
+  _sliceEdgePolyline(e, s0, s1) {
+    if (!e || !e.pts || e.n < 2) return null;
+    const a = clamp(Math.min(s0, s1), 0, e.len);
+    const b = clamp(Math.max(s0, s1), 0, e.len);
+    if (b - a < 2.0) return null;
+    const pts = [];
+    const tmp = { x: 0, y: 0, z: 0, ux: 0, uz: 1, slope: 0 };
+    evalEdge(e, a, 0, tmp);
+    pts.push([tmp.x, tmp.z]);
+    for (let i = 1; i < e.n - 1; i++) {
+      const d = e.cum[i];
+      if (d > a + 0.5 && d < b - 0.5) {
+        pts.push([e.pts[i * 3], e.pts[i * 3 + 2]]);
+      }
+    }
+    evalEdge(e, b, 0, tmp);
+    pts.push([tmp.x, tmp.z]);
+    return pts;
+  }
+
+  /**
+   * Returns live map-app-style traffic congestion polyline segments near (centerX, centerZ):
+   * - 'heavy' (#ea4335 red): stopped/crawling traffic (speed < 3.2 m/s), collision/bump, or >= 2 slow cars queued
+   * - 'moderate' (#fbbc04 orange): slow-moving traffic (3.2 <= speed < 7.5 m/s)
+   */
+  getTrafficSegments(centerX = 0, centerZ = 0, radius = 480) {
+    const r2 = (radius + 60) * (radius + 60);
+    const byEdge = new Map();
+    const standalone = [];
+    const slowCars = [];
+
+    for (const c of this.cars) {
+      if (!c || !c.active) continue;
+      const dx = c.x - centerX, dz = c.z - centerZ;
+      if (dx * dx + dz * dz > r2) continue;
+      const spd = (Number.isFinite(c.speed) && c.speed !== c._lastSyncedV) ? c.speed : (c.v ?? 0);
+      const isBumped = (c.bumpT || 0) > 0 || (c.kWreck || 0) > 0 || Math.hypot(c.kvx || 0, c.kvz || 0) > 0.4;
+      if (spd >= 7.5 && !isBumped) continue;
+      slowCars.push({ c, spd, isBumped });
+    }
+
+    for (let i = 0; i < slowCars.length; i++) {
+      const item = slowCars[i];
+      const { c, spd, isBumped } = item;
+      let nearbySlow = 0;
+      for (let j = 0; j < slowCars.length; j++) {
+        if (i === j) continue;
+        const o = slowCars[j].c;
+        const d2 = (o.x - c.x) * (o.x - c.x) + (o.z - c.z) * (o.z - c.z);
+        if (d2 <= 42 * 42) nearbySlow++;
+      }
+      const isHeavy = isBumped || spd < 3.2 || (spd < 6.8 && nearbySlow >= 1);
+      const level = isHeavy ? 'heavy' : 'moderate';
+      const de = c.de;
+      const e = de && de.e;
+      if (e && e.alive && e.pts && e.len >= 4) {
+        const sEdge = de.fwd ? c.s : (e.len - c.s);
+        const halfSpan = isHeavy ? 30 : 22;
+        const s0 = Math.max(0, sEdge - halfSpan);
+        const s1 = Math.min(e.len, sEdge + halfSpan);
+        let list = byEdge.get(e);
+        if (!list) {
+          list = [];
+          byEdge.set(e, list);
+        }
+        list.push({ s0, s1, level, spd });
+      } else {
+        const ux = c.ux || Math.sin(c.ryaw || 0) || 0;
+        const uz = c.uz || Math.cos(c.ryaw || 0) || 1;
+        standalone.push({
+          level,
+          color: level === 'heavy' ? '#ea4335' : '#fbbc04',
+          casing: level === 'heavy' ? '#8c1d18' : '#b06000',
+          points: [
+            [c.x - ux * 22, c.z - uz * 22],
+            [c.x + ux * 16, c.z + uz * 16],
+          ],
+          avgSpeed: spd,
+          carCount: 1 + nearbySlow,
+        });
+      }
+    }
+
+    const out = [...standalone];
+    for (const [e, intervals] of byEdge.entries()) {
+      intervals.sort((a, b) => a.s0 - b.s0);
+      let cur = null;
+      for (const iv of intervals) {
+        if (!cur) {
+          cur = { s0: iv.s0, s1: iv.s1, level: iv.level, spdSum: iv.spd, count: 1 };
+        } else if (iv.s0 <= cur.s1 + 18) {
+          cur.s1 = Math.max(cur.s1, iv.s1);
+          cur.count++;
+          cur.spdSum += iv.spd;
+          if (iv.level === 'heavy' || cur.count >= 2) cur.level = 'heavy';
+        } else {
+          const pts = this._sliceEdgePolyline(e, cur.s0, cur.s1);
+          if (pts && pts.length >= 2) {
+            out.push({
+              level: cur.level,
+              color: cur.level === 'heavy' ? '#ea4335' : '#fbbc04',
+              casing: cur.level === 'heavy' ? '#8c1d18' : '#b06000',
+              points: pts,
+              avgSpeed: cur.spdSum / cur.count,
+              carCount: cur.count,
+            });
+          }
+          cur = { s0: iv.s0, s1: iv.s1, level: iv.level, spdSum: iv.spd, count: 1 };
+        }
+      }
+      if (cur) {
+        const pts = this._sliceEdgePolyline(e, cur.s0, cur.s1);
+        if (pts && pts.length >= 2) {
+          out.push({
+            level: cur.level,
+            color: cur.level === 'heavy' ? '#ea4335' : '#fbbc04',
+            casing: cur.level === 'heavy' ? '#8c1d18' : '#b06000',
+            points: pts,
+            avgSpeed: cur.spdSum / cur.count,
+            carCount: cur.count,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---------------- player collisions (Newtonian impulse p = m * v) ----------------
   _collidePlayer() {
     const app = this.app;
     if (app.mode !== 'drive' && app.mode !== 'walk') return;
     const drive = app.mode === 'drive';
-    const spec = VEHICLE_SPECS[app.vehicleIdx] || { length: 4.6, width: 2 };
+    const spec = VEHICLE_SPECS[app.vehicleIdx] || { length: 4.6, width: 2, massKg: 1600 };
+    const mPlayer = drive ? (spec.massKg || 1600) : 78;
     const hx = Math.sin(app.yaw), hz = Math.cos(app.yaw);
     const pl = drive ? spec.length * 0.5 : 0.4, pw = drive ? spec.width * 0.5 : 0.4;
     let hit = false;
     for (const c of this.cars) {
       if (!c.active) continue;
-      if (Math.abs(c.x - app.pos.x) > 9 || Math.abs(c.z - app.pos.z) > 9) continue;
-      if (Math.abs(c.y - app.pos.y) > 3) continue;
-      const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, pl, pw, c.x, c.z, c.ux, c.uz, c.len * 0.5, c.wid * 0.5);
+      const cxEff = c.x + (c.kxOff || 0), czEff = c.z + (c.kzOff || 0);
+      if (Math.abs(cxEff - app.pos.x) > 10 || Math.abs(czEff - app.pos.z) > 10) continue;
+      if (Math.abs(c.y - app.pos.y) > 2.8) continue;
+      const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, pl, pw, cxEff, czEff, c.ux, c.uz, c.len * 0.5, c.wid * 0.5);
       if (!r) continue;
+      const mAi = CAR_MASS_KG[c.type] || 1500;
+      const wPlayer = drive ? mAi / (mPlayer + mAi) : 1.0;
+      const wAi = drive ? mPlayer / (mPlayer + mAi) : 0.0;
       const px0 = app.pos.x, pz0 = app.pos.z;
-      app.pos.x += r.nx * r.depth;
-      app.pos.z += r.nz * r.depth;
+      app.pos.x += r.nx * r.depth * wPlayer;
+      app.pos.z += r.nz * r.depth * wPlayer;
+      if (wAi > 0) {
+        c.kxOff = (c.kxOff || 0) - r.nx * r.depth * wAi;
+        c.kzOff = (c.kzOff || 0) - r.nz * r.depth * wAi;
+      }
       if (app.collision) { // fix/water: an AI car must never shove the player into a building
         const rc = drive
           ? app.collision.resolveCar(app.pos.x, app.pos.y, app.pos.z, app.yaw, spec, px0, pz0)
@@ -1370,12 +1579,27 @@ export class CityTraffic {
         app.pos.z = rc.z;
       }
       if (drive) {
-        const into = (hx * r.nx + hz * r.nz) * Math.sign(app.speed || 0);
-        if (into < 0) app.speed *= 0.35;
-        else app.speed *= 0.85;
+        const v1x = hx * (app.speed || 0), v1z = hz * (app.speed || 0);
+        const v2x = c.ux * (c.v || 0) + (c.kvx || 0), v2z = c.uz * (c.v || 0) + (c.kvz || 0);
+        const relVn = (v1x - v2x) * r.nx + (v1z - v2z) * r.nz;
+        if (relVn < 0) {
+          const restitution = 0.35;
+          const jImpulse = -(1 + restitution) * relVn / (1 / mPlayer + 1 / mAi);
+          const dvPlayerX = (jImpulse / mPlayer) * r.nx;
+          const dvPlayerZ = (jImpulse / mPlayer) * r.nz;
+          const newV1x = v1x + dvPlayerX;
+          const newV1z = v1z + dvPlayerZ;
+          app.speed = newV1x * hx + newV1z * hz;
+
+          const dvAi = jImpulse / mAi;
+          c.kvx = (c.kvx || 0) - r.nx * dvAi;
+          c.kvz = (c.kvz || 0) - r.nz * dvAi;
+          const torqueArm = (cxEff - app.pos.x) * r.nz - (czEff - app.pos.z) * r.nx;
+          c.kyawVel = clamp((c.kyawVel || 0) + torqueArm * dvAi * 0.085, -4.8, 4.8);
+        }
       }
-      c.v *= 0.3;
-      c.bumpT = Math.max(c.bumpT, 1.5);
+      c.v *= 0.25;
+      c.bumpT = Math.max(c.bumpT, 1.6);
       hit = true;
     }
     if (hit) {

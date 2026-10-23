@@ -499,6 +499,7 @@ export class MapSystem {
     const more = this._drawTiles(ctx, this.cx, this.cy, this.zoom, W / 2, H / 2, { n: 3 });
     ctx.restore();
 
+    this._drawTrafficOverlay(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), true);
     this._drawRoute(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), 6.5, 4, true);
     this._drawLabels(ctx, W, H, ws);
 
@@ -523,6 +524,45 @@ export class MapSystem {
     if (txt) this.routeText.textContent = txt;
     this.routeBar.classList.toggle('hidden', !txt);
     return more;
+  }
+
+  _drawTrafficOverlay(ctx, toSx, toSy, full = false) {
+    const traffic = (this.app && this.app.traffic) || (typeof window !== 'undefined' && window.__cityTraffic);
+    if (!traffic || typeof traffic.getTrafficSegments !== 'function' || !this.lastPlayerPos || !this._origin()) return;
+    if (full && this.zoom < 12.5) return;
+    const radius = full ? 1400 : 480;
+    const segs = traffic.getTrafficSegments(this.lastPlayerPos.x, this.lastPlayerPos.z, radius);
+    this._lastTrafficSegs = segs;
+    if (!segs || !segs.length) return;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const wCasing = full ? 6.2 : 5.4;
+    const wLine = full ? 4.2 : 3.6;
+
+    // Draw moderate (#fbbc04) first, then heavy traffic jams (#ea4335) on top
+    for (const pass of ['moderate', 'heavy']) {
+      for (const seg of segs) {
+        if (seg.level !== pass || !seg.points || seg.points.length < 2) continue;
+        ctx.beginPath();
+        for (let i = 0; i < seg.points.length; i++) {
+          const [wx, wz] = seg.points[i];
+          const [lat, lon] = this.navigator.worldToLatLon(wx, wz);
+          const sx = toSx(lonToMx(lon));
+          const sy = toSy(latToMy(lat));
+          if (i === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.strokeStyle = seg.casing || (pass === 'heavy' ? '#8c1d18' : '#b06000');
+        ctx.lineWidth = wCasing;
+        ctx.stroke();
+        ctx.strokeStyle = seg.color || (pass === 'heavy' ? '#ea4335' : '#fbbc04');
+        ctx.lineWidth = wLine;
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   _drawRoute(ctx, toSx, toSy, wCasing, wLine, full) {
@@ -954,6 +994,7 @@ export class MapSystem {
     ctx.rotate(rot);
     const R = S * 0.72;
     if (this._drawTiles(ctx, pmx, pmy, zoom, R, R, { n: 1, shared: true })) this._mmForce = true;
+    this._drawTrafficOverlay(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, false);
     this._drawRoute(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, 5.5, 3.2, false);
     ctx.restore();
 

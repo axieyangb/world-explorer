@@ -53,7 +53,7 @@ export function buildTrafficGraph(segs, signalNodes, ox = 0, oz = 0) {
     sA.push(a); sB.push(b);
     const lanes = Math.max(1, Math.min(6, s.lanes | 0 || 1));
     const width = Math.max(2, Number(s.width) || 5);
-    const oneway = s.oneway ? 1 : 0;
+    const oneway = (s.oneway ? 1 : 0) | (s.bridge ? 2 : 0);
     sMeta.push([code, lanes, oneway, width]);
     sSig.push(`${code}|${lanes}|${oneway}|${width}|${s.id}`);
     nodeSegs[a].push(i);
