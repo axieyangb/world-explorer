@@ -5,6 +5,7 @@ import * as THREE from "../../../vendor/three.module.js";
 const VOICES = {
   cannon: 6, hit: 4, hitWeak: 3, missileLaunch: 4, explosion: 6, bigExplosion: 5, footstep: 4,
   roar: 2, breath: 2, collapse: 4, lock: 1, alarm: 1, heliHit: 2, crash: 1,
+  laserBeep: 2, laserFire: 1, dash: 2, lowHpAlarm: 1, pickup: 2, railgun: 2, emp: 2, orbital: 1,
 };
 const _v = new THREE.Vector3();
 const _r = new THREE.Vector3();
@@ -554,6 +555,165 @@ export class KaijuAudio {
       this._start(v, s);
     }
     this._start(v, m);
+    return v;
+  }
+
+  // ---------- dodge + laser (player) ----------
+  // Lock-on chirp; opts.pitch (~1..2) rises as the laser charges.
+  _s_laserBeep(o) {
+    const p = Math.max(0.5, Math.min(3, o.pitch || 1));
+    const v = this._voice("laserBeep", o, 0.12, 0.05);
+    const t = v.t0;
+    const s = this._osc("square", 1150 * p), s2 = this._osc("sine", 2300 * p), lp = this._filter("lowpass", 4200), g = this._gain();
+    s.connect(lp); s2.connect(lp); lp.connect(g); g.connect(v.in);
+    this._env(g.gain, t, 0.003, 0.13, 0.07);
+    this._start(v, s); this._start(v, s2);
+    return v;
+  }
+
+  // Beam firing: hard zap, then a looping charged hum + crackle until handle.stop().
+  _s_laserFire(o) {
+    const opts = o.gain === undefined ? Object.assign({}, o, { gain: 1.6 }) : o;
+    const v = this._voice("laserFire", opts, 3600, 0.3);
+    const t = v.t0;
+    // zap
+    const z = this._osc("sawtooth", 2400), zg = this._gain(), zl = this._filter("lowpass", 6000);
+    z.frequency.setValueAtTime(2400, t);
+    z.frequency.exponentialRampToValueAtTime(140, t + 0.25);
+    z.connect(zl); zl.connect(zg); zg.connect(v.in);
+    this._env(zg.gain, t, 0.002, 0.5, 0.3);
+    // hum (detuned saws through a resonant band, slow wobble)
+    const h1 = this._osc("sawtooth", 96), h2 = this._osc("sawtooth", 97.3), h3 = this._osc("square", 192.4);
+    const bp = this._filter("bandpass", 700, 2.5), hg = this._gain();
+    h1.connect(bp); h2.connect(bp); h3.connect(bp); bp.connect(hg); hg.connect(v.in);
+    hg.gain.setValueAtTime(0.0001, t);
+    hg.gain.linearRampToValueAtTime(0.55, t + 0.12);
+    const wob = this._osc("sine", 9), wg = this._gain(260);
+    wob.connect(wg); wg.connect(bp.frequency);
+    // high whine
+    const w = this._osc("sine", 3100), wl = this._gain(0), vib = this._osc("sine", 23), vg = this._gain(40);
+    vib.connect(vg); vg.connect(w.frequency);
+    w.connect(wl); wl.connect(v.in);
+    wl.gain.setValueAtTime(0, t);
+    wl.gain.linearRampToValueAtTime(0.05, t + 0.2);
+    // crackle: white noise gated by a fast random-ish square
+    const n = this._noise(false), nb = this._filter("highpass", 2500, 0.8), ng = this._gain(0.0), gate = this._osc("square", 31), gg = this._gain(0.18);
+    gate.connect(gg); gg.connect(ng.gain);
+    n.connect(nb); nb.connect(ng); ng.connect(v.in);
+    const gate2 = this._osc("square", 13.7), gg2 = this._gain(0.12);
+    gate2.connect(gg2); gg2.connect(ng.gain);
+    for (const src of [z, h1, h2, h3, wob, w, vib, n, gate, gate2]) this._start(v, src);
+    if (v.pos) this.loops.push(v);
+    return v;
+  }
+
+  // Dodge whoosh.
+  _s_dash(o) {
+    const v = this._voice("dash", o, 0.6, 0.1);
+    const t = v.t0;
+    const n = this._noise(false), bp = this._filter("bandpass", 500, 1.4), g = this._gain();
+    bp.frequency.setValueAtTime(500, t);
+    bp.frequency.exponentialRampToValueAtTime(2600, t + 0.16);
+    bp.frequency.exponentialRampToValueAtTime(700, t + 0.5);
+    n.connect(bp); bp.connect(g); g.connect(v.in);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.9, t + 0.1);
+    g.gain.setTargetAtTime(0.0001, t + 0.18, 0.1);
+    const r = this._noise(true), rl = this._filter("lowpass", 260), rg = this._gain();
+    r.connect(rl); rl.connect(rg); rg.connect(v.in);
+    this._env(rg.gain, t, 0.04, 0.6, 0.4);
+    this._start(v, n); this._start(v, r);
+    return v;
+  }
+
+  // Low hull warning: soft two-note chirp once a second, looping until handle.stop().
+  _s_lowHpAlarm(o) {
+    const ctx = this.ctx;
+    if (!this._chirpBuf) {
+      const sr = ctx.sampleRate, len = Math.floor(sr * 1.0);
+      const b = ctx.createBuffer(1, len, sr), d = b.getChannelData(0);
+      const note = (t0, dur, f) => {
+        const a = Math.floor(t0 * sr), m = Math.floor(dur * sr);
+        for (let i = 0; i < m; i++) {
+          const x = i / m;
+          const env = Math.min(1, x * 25) * Math.pow(1 - x, 1.6);
+          d[a + i] += Math.sin((2 * Math.PI * f * i) / sr) * env * 0.5;
+        }
+      };
+      note(0, 0.09, 1480);
+      note(0.14, 0.11, 1175);
+      this._chirpBuf = b;
+    }
+    const v = this._voice("lowHpAlarm", o, 3600, 0.05);
+    const s = ctx.createBufferSource();
+    s.buffer = this._chirpBuf;
+    s.loop = true;
+    const g = this._gain(0.35);
+    s.connect(g); g.connect(v.in);
+    this._start(v, s);
+    return v;
+  }
+
+  // Supply pickup chime
+  _s_pickup(o) {
+    const v = this._voice("pickup", o, 0.55, 0.08);
+    const t = v.t0;
+    const notes = [587.33, 880, 1174.66];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = this._osc("triangle", notes[i]);
+      const g = this._gain();
+      osc.connect(g); g.connect(v.in);
+      this._env(g.gain, t + i * 0.075, 0.005, 0.25, 0.14);
+      this._start(v, osc, t + i * 0.075);
+    }
+    return v;
+  }
+
+  // Hyper-velocity railgun crack + electromagnetic discharge
+  _s_railgun(o) {
+    const v = this._voice("railgun", o, 0.85, 0.15);
+    const t = v.t0;
+    const z = this._osc("sawtooth", 3200), zg = this._gain(), lp = this._filter("lowpass", 6500);
+    z.frequency.setValueAtTime(3200, t);
+    z.frequency.exponentialRampToValueAtTime(65, t + 0.38);
+    z.connect(lp); lp.connect(zg); zg.connect(v.in);
+    this._env(zg.gain, t, 0.002, 0.65, 0.38);
+    const n = this._noise(false), bp = this._filter("bandpass", 1800, 1.2), ng = this._gain();
+    n.connect(bp); bp.connect(ng); ng.connect(v.in);
+    this._env(ng.gain, t, 0.002, 0.7, 0.28);
+    this._start(v, z); this._start(v, n);
+    return v;
+  }
+
+  // Cryo-EMP pulse
+  _s_emp(o) {
+    const v = this._voice("emp", o, 1.3, 0.2);
+    const t = v.t0;
+    const sub = this._osc("sine", 160), sg = this._gain();
+    sub.frequency.setValueAtTime(160, t);
+    sub.frequency.exponentialRampToValueAtTime(32, t + 0.9);
+    sub.connect(sg); sg.connect(v.in);
+    this._env(sg.gain, t, 0.008, 0.85, 0.85);
+    const hi = this._osc("triangle", 1900), hg = this._gain();
+    hi.frequency.setValueAtTime(1900, t);
+    hi.frequency.exponentialRampToValueAtTime(420, t + 0.55);
+    hi.connect(hg); hg.connect(v.in);
+    this._env(hg.gain, t, 0.004, 0.35, 0.5);
+    this._start(v, sub); this._start(v, hi);
+    return v;
+  }
+
+  // Orbital ion strike
+  _s_orbital(o) {
+    const v = this._voice("orbital", o, 2.8, 0.3);
+    const t = v.t0;
+    const s1 = this._osc("sawtooth", 72), s2 = this._osc("square", 144.5), lp = this._filter("lowpass", 900), g = this._gain();
+    s1.connect(lp); s2.connect(lp); lp.connect(g); g.connect(v.in);
+    this._env(g.gain, t, 0.08, 0.65, 2.4);
+    const n = this._noise(true), nlp = this._filter("lowpass", 320), ng = this._gain();
+    n.connect(nlp); nlp.connect(ng); ng.connect(v.in);
+    this._env(ng.gain, t, 0.05, 0.7, 2.5);
+    this._start(v, s1); this._start(v, s2); this._start(v, n);
     return v;
   }
 }

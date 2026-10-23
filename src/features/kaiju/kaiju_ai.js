@@ -2,7 +2,7 @@
 import * as THREE from "../../../vendor/three.module.js";
 import { CFG } from "./kaiju_config.js";
 import { getBeijingTerrainElevation } from "../../environment.js";
-import { KaijuModel, BreathBeam, NOMINAL_HEIGHT, PALETTES } from "./kaiju_model.js";
+import { KaijuModel, BreathBeam, LaserBeam, NOMINAL_HEIGHT, PALETTES } from "./kaiju_model.js";
 import { densestBuildingCell } from "./kaiju_spawn.js";
 
 const DEG = Math.PI / 180;
@@ -61,6 +61,29 @@ export class Kaiju {
     this._boundR = 0;
     this._dmgB = new Float32Array(10); // damage per 1 s bucket, last 10 s
     this._dmgSec = 0;
+    // laser + aggro (HUD / radar read `aggro` and `laser`; objects are reused)
+    this.aggro = false;
+    this.laser = { phase: "idle", t: 0, charge: 0, origin: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, 1), length: 0, frozen: false };
+    this.laserBeam = null;
+    this.nextLaser = Infinity;
+    this._lastHitT = -1e9;
+    this._hv = new THREE.Vector3(); // heli velocity (finite difference)
+    this._hPrev = new THREE.Vector3();
+    this._hPrevOk = false;
+    this._lzBase = new THREE.Vector3(); // frozen aim
+    this._lzEnd = new THREE.Vector3();
+    this._lzOffY = 0;
+    this._lzOffP = 0;
+    this._lzTick = 0;
+    this._lzBoom = 0;
+    this._lzBeep = 0;
+    this._lzHandle = null;
+    this.breathLen = CFG.BREATH_RANGE;
+    this.breathAimed = false;
+    this.inDanger = false; // heli inside dangerRadius (HUD)
+    this.dangerRadius = CFG.AGGRO_RADIUS;
+    this.stunned = false;
+    this.stunTime = 0;
     this.pose = {
       t: 0, walkPhase: 0, walkAmt: 0, crouch: 0, lean: 0, headYaw: 0, headPitch: 0, jaw: 0, roar: 0, charge: 0, breath: 0,
       flinch: 0, flinchSide: 1, death: 0, tailSway: 1, tailBend: 0, tailLift: 0,
@@ -80,6 +103,8 @@ export class Kaiju {
     this.beam = new BreathBeam(pal);
     K.scene?.add(this.model.group);
     K.scene?.add(this.beam.object);
+    this.laserBeam = new LaserBeam(pal); // stays in the scene (scaled to ~0) so its shader compiles at spawn
+    K.scene?.add(this.laserBeam.object);
     this.hitSpheres = this.model.hitDefs.map((d) => ({ center: new THREE.Vector3(), radius: d.r * this.scale, weak: d.weak, name: d.name }));
     this._coreIdx = this.hitSpheres.findIndex((h) => h.name === "core");
 
@@ -110,9 +135,19 @@ export class Kaiju {
     this.deathRoll = 0;
     this.landed = false;
     this.pendingRoar = false;
+    this.aggro = false;
+    this.inDanger = false;
+    this.stunned = false;
+    this.stunTime = 0;
+    this.nextLaser = Infinity;
+    this._lastHitT = -1e9;
+    this._hPrevOk = false;
+    this._hv.set(0, 0, 0);
+    this._endLaser(false);
     this._enter("rising");
     this.rising = true;
     this.model.setEnraged(0);
+    this.laserBeam.setColor(this.model.PU.uGlow.value);
     this._applyTransforms(0);
   }
 
@@ -124,9 +159,12 @@ export class Kaiju {
 
   _teardown() {
     this._stopBreathAudio();
+    this._stopLaserAudio();
     this.breathActive = false;
+    this.laser.phase = "idle";
     if (this.model) { this.model.dispose(); this.model = null; }
     if (this.beam) { this.beam.dispose(); this.beam = null; }
+    if (this.laserBeam) { this.laserBeam.dispose(); this.laserBeam = null; }
     if (this.light) { this.light.parent?.remove(this.light); this.light.dispose?.(); this.light = null; }
     this.hitSpheres = [];
   }
@@ -147,9 +185,19 @@ export class Kaiju {
   }
 
   // ------------------------------------------------------------------ damage
-  takeDamage(amount, point, weak) {
+  takeDamage(amount, point, weak, opts) {
     if (!this.alive || !this.model || !(amount > 0)) return;
+    if (this.stunned) amount *= CFG.STUN_DAMAGE_MULT;
     this.hp = Math.max(0, this.hp - amount);
+    if (amount >= CFG.KAIJU_STAGGER_DAMAGE && this.laser.phase === "lock") {
+      this._endLaser(false);
+      this.nextLaser = 2;
+    }
+    this._lastHitT = this.time;
+    if (!this.aggro) {
+      this.aggro = true;
+      this.nextLaser = Math.min(this.nextLaser, CFG.LASER_FIRST_DELAY);
+    }
     this._rollDmg();
     this._dmgB[this._dmgSec % 10] += amount;
     // flash the part nearest the hit
@@ -180,6 +228,7 @@ export class Kaiju {
         this.pose.flinchSide = Math.sin(this.yaw) * _a.z - Math.cos(this.yaw) * _a.x > 0 ? -1 : 1;
       }
       if (this.state === "walk") this._enter("flinch");
+      else if (this.state === "stunned") this.flinchT = 0;
     }
     this._checkHp();
   }
@@ -204,6 +253,7 @@ export class Kaiju {
     if (!this.enraged && this.hp < this.maxHp * CFG.KAIJU_ENRAGE_FRACTION) {
       this.enraged = true;
       this.model?.setEnraged(1);
+      if (this.model) this.laserBeam?.setColor(this.model.PU.uGlow.value);
       if (this.state === "walk" || this.state === "flinch") this._enter("roar");
       else this.pendingRoar = true;
     }
@@ -213,6 +263,8 @@ export class Kaiju {
     this.alive = false;
     this.hp = 0;
     this._endBreath();
+    this._endLaser(false);
+    if (this.stunned) { this.stunned = false; this.stunTime = 0; this.model?.setStun?.(0); }
     this.deathSide = Math.random() < 0.5 ? -1 : 1;
     this._enter("dying");
     if (!this.deathCalled) {
@@ -261,8 +313,15 @@ export class Kaiju {
     this.time += dt;
     this.stateT += dt;
     const P = this.pose;
-    P.t = this.time;
+    if (this.state !== "stunned") P.t = this.time; // stun holds the pose
     this.tailCd -= dt;
+    this._trackHeliVel(dt);
+    this._updateDanger();
+    if (this.aggro && this.state !== "laser" && this.time - this._lastHitT > CFG.LASER_AGGRO_DECAY) {
+      this.aggro = false;
+      this.nextLaser = Infinity;
+    }
+    if (this.aggro && (this.state === "walk" || this.state === "flinch")) this.nextLaser -= this.inDanger ? dt / CFG.LASER_INTERVAL_NEAR_MULT : dt;
 
     switch (this.state) {
       case "rising": this._rising(dt); break;
@@ -272,6 +331,8 @@ export class Kaiju {
       case "tailSwipe": this._tailSwipe(dt); break;
       case "breathCharge": this._breathCharge(dt); break;
       case "breath": this._breath(dt); break;
+      case "laser": this._laserState(dt); break;
+      case "stunned": this._stunState(dt); break;
       case "dying": this._dying(dt); break;
       default: break;
     }
@@ -279,11 +340,12 @@ export class Kaiju {
     // overlays
     this.flinchT = Math.max(0, this.flinchT - dt);
     P.flinch = this.flinchT > 0 ? Math.sin(Math.PI * (1 - this.flinchT / FLINCH_SECONDS)) : 0;
-    if (this.state !== "breath" && this.state !== "breathCharge" && this.state !== "dying" && this.state !== "dead") this._trackHead(dt);
+    if (this.state !== "breath" && this.state !== "breathCharge" && this.state !== "laser" && this.state !== "stunned" && this.state !== "dying" && this.state !== "dead") this._trackHead(dt);
 
     this._applyTransforms(dt);
+    this._laserPost(dt);
 
-    if (this.state !== "dead" && this.state !== "dying") this._periodic(dt);
+    if (this.state !== "dead" && this.state !== "dying" && this.state !== "stunned") this._periodic(dt);
   }
 
   _enter(s) {
@@ -343,7 +405,11 @@ export class Kaiju {
   _walkState(dt) {
     if (this.pendingRoar) { this.pendingRoar = false; this._enter("roar"); return; }
     this._walkCore(dt, 1);
-    this.nextBreath -= dt;
+    if (this.nextLaser <= 0 && CFG.LASER_ENABLED) {
+      if (this._canLaser()) { this._startLaser(); return; }
+      this.nextLaser = 0.5;
+    }
+    this.nextBreath -= this.inDanger ? dt / CFG.LASER_INTERVAL_NEAR_MULT : dt;
     if (this.nextBreath <= 0) { this._startCharge(); return; }
     if (this.tailCd <= 0 && this._heliBehind()) this._startSwipe();
   }
@@ -351,9 +417,22 @@ export class Kaiju {
   _walkCore(dt, speedMul) {
     const P = this.pose;
     this._updateTarget(dt);
-    const desired = Math.atan2(this.target.x - this.position.x, this.target.z - this.position.z);
+    let desired = Math.atan2(this.target.x - this.position.x, this.target.z - this.position.z);
+    let aggroTurn = false;
+    if (this.aggro) {
+      // turn to face the helicopter when aggroed
+      const h = this._heli();
+      if (h) {
+        const hb = Math.atan2(h.x - this.position.x, h.z - this.position.z);
+        if (Math.abs(wrap(hb - this.yaw)) > 15 * DEG) {
+          desired = hb;
+          aggroTurn = true;
+        }
+      }
+    }
+    P.jaw += (0 - P.jaw) * Math.min(1, dt * 3);
     const dy = wrap(desired - this.yaw);
-    const rate = 0.24 * (this.enraged ? 1.35 : 1);
+    const rate = (aggroTurn ? 0.65 : 0.24) * (this.enraged ? 1.35 : 1);
     this.yaw = wrap(this.yaw + clamp(dy, -rate * dt, rate * dt));
     const want = (Math.abs(dy) > 1.2 ? 0.5 : 1) * speedMul;
     P.walkAmt += (want - P.walkAmt) * Math.min(1, dt * 0.8);
@@ -392,6 +471,7 @@ export class Kaiju {
     K.fx?.addDecal?.(p.x, p.z, this.yaw, s);
     K.audio?.play?.("footstep", { pos: p });
     K.destruction?.damageSphere?.(p.x, p.y, p.z, CFG.STOMP_RADIUS * s, 1.0, { source: "stomp" });
+    K.supply?.hazard?.(p.x, p.z, CFG.STOMP_RADIUS * s);
     K.crowd?.addThreat?.(p.x, p.z, 160 * s, 6);
   }
 
@@ -428,7 +508,7 @@ export class Kaiju {
     if (h) {
       const dx = h.x - this.position.x, dz = h.z - this.position.z;
       const d = Math.hypot(dx, dz);
-      if (d < 1400) {
+      if (d < (this.aggro ? CFG.LASER_RANGE : 1400)) {
         ty = clamp(wrap(Math.atan2(dx, dz) - this.yaw), -0.9, 0.9);
         tp = clamp(-Math.atan2(h.y - (this.position.y + this.height * 0.88), Math.max(1, d)), -0.6, 0.45);
       }
@@ -477,6 +557,7 @@ export class Kaiju {
     if (this.tickT <= 0) {
       this.tickT = 0.1;
       K.destruction?.damageSphere?.(tip.x, tip.y, tip.z, 16 * s, 1.0, { source: "tail" });
+      K.supply?.hazard?.(tip.x, tip.z, 16 * s);
       K.destruction?.damageSphere?.(mid.x, mid.y, mid.z, 12 * s, 1.0, { source: "tail" });
       K.crowd?.addThreat?.(tip.x, tip.z, 120 * s, 4);
     }
@@ -509,10 +590,18 @@ export class Kaiju {
   _startCharge() {
     const h = this._heli();
     this.breathAtPlayer = false;
+    this.breathAimed = false;
     if (h) {
-      const d = Math.hypot(h.x - this.position.x, h.z - this.position.z);
-      if (d < CFG.BREATH_RANGE * 1.15) this.breathAtPlayer = true;
+      const dx = h.x - this.position.x, dz = h.z - this.position.z;
+      const d = Math.hypot(dx, dz);
+      const rel = Math.abs(wrap(Math.atan2(dx, dz) - this.yaw));
+      if (d < CFG.BREATH_AIM_RANGE && rel < CFG.BREATH_AIM_SECTOR_DEG * 0.5 * DEG && this.K.heli?.alive !== false) {
+        this.breathAtPlayer = true;
+        this.breathAimed = true;
+      } else if (d < CFG.BREATH_RANGE * 1.15) this.breathAtPlayer = true;
     }
+    this.breathTelegraph = this.breathAimed ? CFG.BREATH_TELEGRAPH_AIMED : CFG.BREATH_TELEGRAPH;
+    this.breathLen = this.breathAimed ? Math.max(CFG.BREATH_RANGE, CFG.BREATH_AIM_RANGE) : CFG.BREATH_RANGE;
     this._aimBreath(true);
     this._enter("breathCharge");
     this.K.audio?.play?.("roar", { pos: this.position, gain: 0.8 });
@@ -522,7 +611,13 @@ export class Kaiju {
   _aimBreath(init) {
     const h = this._heli();
     const mouthY = this.position.y + this.height * 0.86;
-    if (this.breathAtPlayer && h) {
+    if (this.breathAimed && h) {
+      // true 3D aim from the mouth (pitch includes altitude)
+      const o = this.breathOrigin;
+      const dx = h.x - o.x, dz = h.z - o.z;
+      this.aimYaw = Math.atan2(dx, dz);
+      this.aimPitch = clamp(-Math.atan2(h.y - o.y, Math.max(1, Math.hypot(dx, dz))), -1.2, 0.9);
+    } else if (this.breathAtPlayer && h) {
       const dx = h.x - this.position.x, dz = h.z - this.position.z;
       this.aimYaw = Math.atan2(dx, dz);
       this.aimPitch = clamp(-Math.atan2(h.y - mouthY, Math.max(1, Math.hypot(dx, dz))), -0.7, 0.75);
@@ -534,7 +629,7 @@ export class Kaiju {
 
   _breathCharge(dt) {
     const P = this.pose;
-    const T = CFG.BREATH_TELEGRAPH;
+    const T = this.breathTelegraph || CFG.BREATH_TELEGRAPH;
     this.breathCharge = Math.min(1, this.stateT / T);
     P.walkAmt += (0 - P.walkAmt) * Math.min(1, dt * 2.5);
     this._aimBreath(false);
@@ -570,7 +665,17 @@ export class Kaiju {
     P.breath = clamp(this.stateT / 0.25, 0, 1) * clamp((D - this.stateT) / 0.3, 0, 1);
     P.walkAmt += (0 - P.walkAmt) * Math.min(1, dt * 3);
     this.breathCharge = 1;
-    if (this.breathAtPlayer) {
+    if (this.breathAimed) {
+      // sweep centre and pitch follow the heli at a limited rate (dodgeable)
+      const h = this._heli(), o = this.breathOrigin;
+      if (h) {
+        const dx = h.x - o.x, dz = h.z - o.z;
+        const tr = CFG.BREATH_TRACK_RATE * dt;
+        this.sweepCenter = wrap(this.sweepCenter + clamp(wrap(Math.atan2(dx, dz) - this.sweepCenter), -tr, tr));
+        const tp = clamp(-Math.atan2(h.y - o.y, Math.max(1, Math.hypot(dx, dz))), -1.2, 0.9);
+        this.breathPitch += clamp(tp - this.breathPitch, -tr * 2, tr * 2);
+      }
+    } else if (this.breathAtPlayer) {
       const h = this._heli();
       const mouthY = this.position.y + this.height * 0.86;
       if (h) {
@@ -578,7 +683,7 @@ export class Kaiju {
         this.breathPitch += (tp - this.breathPitch) * Math.min(1, dt * 0.9);
       }
     }
-    const off = (u - 0.5) * CFG.BREATH_SWEEP_DEG * DEG * this.sweepDir;
+    const off = (u - 0.5) * (this.breathAimed ? CFG.BREATH_AIMED_SWEEP_DEG : CFG.BREATH_SWEEP_DEG) * DEG * this.sweepDir;
     const by = this.sweepCenter + off;
     const bodyYaw = this.sweepCenter + off * 0.55;
     this.yaw = wrap(this.yaw + clamp(wrap(bodyYaw - this.yaw), -0.8 * dt, 0.8 * dt));
@@ -593,28 +698,33 @@ export class Kaiju {
     if (this.tickT <= 0) {
       this.tickT = 0.2;
       const half = CFG.BREATH_HALF_ANGLE_DEG * DEG;
-      const R = CFG.BREATH_RANGE;
+      const R = this.breathLen;
       K.destruction?.damageCone?.(o, this.breathDir, R, half, CFG.BREATH_BUILDING_DPS * 0.2, { fire: true });
       // ground footprint of the cone for the crowd
       for (let i = 1; i <= 4; i++) {
         const d = (R * i) / 4.5;
         _a.copy(this.breathDir).multiplyScalar(d).add(o);
         const gy = ground(_a.x, _a.z);
-        if (_a.y - gy < d * Math.tan(half) + 30) K.crowd?.burnZone?.(_a.x, _a.z, Math.max(15, d * Math.tan(half)));
+        if (_a.y - gy < d * Math.tan(half) + 30) {
+          K.crowd?.burnZone?.(_a.x, _a.z, Math.max(15, d * Math.tan(half)));
+          K.supply?.hazard?.(_a.x, _a.z, CFG.BREATH_HAZARD_RADIUS);
+        }
       }
       _a.copy(this.breathDir).multiplyScalar(R * 0.5).add(o);
       K.crowd?.addThreat?.(_a.x, _a.z, R * 0.7, 6);
     }
     const h = this._heli();
-    if (h) {
+    if (h && P.breath > 0.2) {
+      // full 3D cone test from the mouth; +6 m tolerance for the heli's size
       _a.copy(h).sub(o);
       const d = _a.length();
-      if (d < CFG.BREATH_RANGE && d > 1e-3 && _a.dot(this.breathDir) / d > Math.cos(CFG.BREATH_HALF_ANGLE_DEG * DEG)) {
-        K.damagePlayer?.(CFG.BREATH_PLAYER_DPS * dt, "breath");
+      if (d < this.breathLen + 6 && d > 1e-3 && _a.dot(this.breathDir) / d > Math.cos(CFG.BREATH_HALF_ANGLE_DEG * DEG + Math.atan2(6, d))) {
+        K.damagePlayer?.(CFG.BREATH_PLAYER_DPS * dt, "breath", o);
       }
     }
     if (u >= 1) {
       this._endBreath();
+      this.nextLaser = Math.max(this.nextLaser, 2);
       this.nextBreath = rand(CFG.BREATH_INTERVAL_MIN, CFG.BREATH_INTERVAL_MAX) * (this.enraged ? CFG.BREATH_INTERVAL_ENRAGED_MULT : 1);
       this._enter("walk");
     }
@@ -701,6 +811,12 @@ export class Kaiju {
       y += Math.sin(this.deathRoll) * 9 * s - this.pose.crouch * 0;
     }
     g.position.set(this.position.x, y, this.position.z);
+    if (this.state === "stunned") {
+      // shiver
+      const j = 0.18 * s * Math.min(1, this.stunTime * 2);
+      g.position.x += Math.sin(this.time * 47) * j;
+      g.position.z += Math.sin(this.time * 39 + 1.3) * j;
+    }
     g.rotation.y = this.yaw;
     g.rotation.z = roll;
     m.applyPose(this.pose);
@@ -726,11 +842,302 @@ export class Kaiju {
     }
 
     // shader + beam + light
-    const charge = this.state === "breathCharge" ? this.breathCharge : this.breathActive ? 1 : 0;
-    m.updateUniforms(dt, this.time, charge, this.breathActive ? this.pose.breath : 0, this.fade);
+    const L = this.laser;
+    const lc = L.phase === "lock" ? L.charge * 0.8 : L.phase === "fire" ? 0.9 : 0;
+    const charge = Math.max(lc, this.state === "breathCharge" ? this.breathCharge : this.breathActive ? 1 : 0);
+    m.updateUniforms(dt, this.time, charge, this.breathActive ? this.pose.breath : L.phase === "fire" ? 0.6 : 0, this.fade);
     const bi = this.breathActive ? this.pose.breath : 0;
-    const len = CFG.BREATH_RANGE * clamp(this.stateT / 0.35, 0.05, 1);
+    const len = this.breathLen * clamp(this.stateT / 0.35, 0.05, 1);
     this.beam?.update(this.breathOrigin, this.breathDir, this.breathActive ? len : 1, CFG.BREATH_HALF_ANGLE_DEG * DEG, bi, this.time,
       this.state === "breathCharge" ? this.breathCharge * this.breathCharge : 0, s);
+  }
+
+  // ------------------------------------------------------------------ danger radius + stun
+  _updateDanger() {
+    this.dangerRadius = this.enraged ? CFG.AGGRO_RADIUS_ENRAGED : CFG.AGGRO_RADIUS;
+    const h = this._heli();
+    let inside = false;
+    if (h && this.alive && this.state !== "rising" && this.K.heli?.alive !== false) {
+      const dx = h.x - this.position.x, dy = h.y - (this.position.y + this.height * 0.5), dz = h.z - this.position.z;
+      inside = dx * dx + dy * dy + dz * dz < this.dangerRadius * this.dangerRadius;
+    }
+    this.inDanger = inside;
+    if (inside) {
+      if (!this.aggro) { this.aggro = true; this.nextLaser = Math.min(this.nextLaser, CFG.LASER_FIRST_DELAY); }
+      this._lastHitT = this.time; // keeps aggro alive
+    }
+  }
+
+  // freeze in place: no movement, attacks or footstep damage; takes CFG.STUN_DAMAGE_MULT damage
+  stun(seconds) {
+    if (!this.alive || !this.model || !(seconds > 0)) return;
+    if (this.state === "rising" || this.state === "dying" || this.state === "dead") return;
+    this.stunTime = Math.max(this.stunTime, seconds);
+    if (this.stunned) return;
+    this.stunned = true;
+    if (this.laser.phase !== "idle") { this._endLaser(false); this.nextLaser = Math.max(this.nextLaser, 2); }
+    if (this.breathActive || this.state === "breathCharge") {
+      this._endBreath();
+      this.nextBreath = Math.max(this.nextBreath, 4);
+    }
+    if (this.state === "tailSwipe") this.tailCd = CFG.TAIL_SWIPE_COOLDOWN;
+    this.flinchT = 0;
+    this.pose.flinch = 0;
+    this._enter("stunned");
+  }
+
+  _stunState(dt) {
+    this.stunTime -= dt;
+    this.model?.setStun?.(clamp(this.stunTime / 0.5, 0, 1) * (0.85 + 0.15 * Math.sin(this.time * 9)));
+    if (this.stunTime <= 0) {
+      this.stunTime = 0;
+      this.stunned = false;
+      this.model?.setStun?.(0);
+      this.pose.tailBend = 0;
+      this.pose.crouch = 0;
+      this._enter("walk");
+    }
+  }
+
+  // ------------------------------------------------------------------ laser (aggro attack)
+  debugLaserNow() {
+    if (!this.alive || !this.model) return false;
+    if (this.stunned) { this.stunTime = 0; this._stunState(0); }
+    if (this.state === "rising") this.skipRise();
+    if (this.state === "breath" || this.state === "breathCharge") this._endBreath();
+    if (this.laser.phase !== "idle") this._endLaser(false);
+    this.aggro = true;
+    this._lastHitT = this.time;
+    this._startLaser();
+    return true;
+  }
+
+  debugBreathNow() {
+    if (!this.alive || !this.model) return false;
+    if (this.stunned) { this.stunTime = 0; this._stunState(0); }
+    if (this.state === "rising") this.skipRise();
+    if (this.laser.phase !== "idle") this._endLaser(false);
+    if (this.state === "breath" || this.state === "breathCharge") this._endBreath();
+    this._startCharge();
+    return true;
+  }
+
+  _trackHeliVel(dt) {
+    const h = this._heli();
+    if (!h) return;
+    if (this._hPrevOk) {
+      _a.copy(h).sub(this._hPrev).divideScalar(dt);
+      if (_a.lengthSq() > 250 * 250) this._hv.set(0, 0, 0); // teleport / respawn
+      else this._hv.lerp(_a, Math.min(1, dt * 10));
+    }
+    this._hPrev.copy(h);
+    this._hPrevOk = true;
+  }
+
+  _canLaser() {
+    const h = this._heli();
+    if (!h || this.K.heli?.alive === false) return false;
+    const dx = h.x - this.position.x, dz = h.z - this.position.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > CFG.LASER_RANGE * CFG.LASER_RANGE || d2 < (40 * this.scale) ** 2) return false;
+    return Math.abs(wrap(Math.atan2(dx, dz) - this.yaw)) < 100 * DEG;
+  }
+
+  _startLaser() {
+    const L = this.laser;
+    this._enter("laser");
+    L.phase = "lock";
+    L.t = 0;
+    L.charge = 0;
+    L.frozen = false;
+    L.length = 0;
+    L.origin.copy(this.breathOrigin);
+    const h = this._heli();
+    if (h) {
+      _a.copy(h).sub(L.origin);
+      if (_a.lengthSq() > 1e-6) L.dir.copy(_a.normalize());
+    }
+    this._lzBeep = 0;
+    this._lzTick = 0;
+    this._lzBoom = 0;
+    this._lzOffY = 0;
+    this._lzOffP = 0;
+  }
+
+  // pose, body turn, phase timing (aim/beam/damage happen in _laserPost with the fresh mouth position)
+  _laserState(dt) {
+    const P = this.pose, L = this.laser, h = this._heli();
+    L.t += dt;
+    P.walkAmt += (0 - P.walkAmt) * Math.min(1, dt * 3);
+    this._locomote(dt);
+    let ax, ay, az;
+    if (L.phase === "lock" && !L.frozen && h) { ax = h.x; ay = h.y; az = h.z; }
+    else { ax = L.origin.x + L.dir.x * 200; ay = L.origin.y + L.dir.y * 200; az = L.origin.z + L.dir.z * 200; }
+    const dx = ax - this.position.x, dz = az - this.position.z;
+    const bear = Math.atan2(dx, dz);
+    const rel = wrap(bear - this.yaw);
+    if (Math.abs(rel) > 0.35) this.yaw = wrap(this.yaw + clamp(rel - Math.sign(rel) * 0.35, -0.7 * dt, 0.7 * dt));
+    const k = Math.min(1, dt * 5);
+    P.headYaw += (clamp(wrap(bear - this.yaw), -0.9, 0.9) - P.headYaw) * k;
+    const tp = clamp(-Math.atan2(ay - (this.position.y + this.height * 0.88), Math.max(1, Math.hypot(dx, dz))), -0.6, 0.45);
+    P.headPitch += (tp - P.headPitch) * k;
+    P.jaw += ((L.phase === "lock" ? 0.1 + 0.22 * L.charge : 0.42) - P.jaw) * Math.min(1, dt * 8);
+    P.tailSway = 0.5;
+    if (L.phase === "lock") {
+      const T = CFG.LASER_LOCK_SECONDS;
+      L.charge = Math.min(1, L.t / T);
+      this._lzBeep -= dt;
+      if (this._lzBeep <= 0) {
+        this._lzBeep = 0.35 + (0.08 - 0.35) * L.charge;
+        this.K.audio?.play?.("laserBeep", { pitch: 1 + L.charge });
+      }
+      if (!L.frozen && L.t >= T - CFG.LASER_FREEZE_BEFORE) this._freezeAim();
+      if (L.t >= T) this._fireLaser();
+    } else if (L.phase === "fire" && L.t >= CFG.LASER_FIRE_SECONDS) {
+      this._endLaser(true);
+    }
+  }
+
+  // aim at the predicted heli position plus a small random error, then hold
+  _freezeAim() {
+    const L = this.laser, h = this._heli();
+    L.frozen = true;
+    if (h) _a.copy(this._hv).multiplyScalar(CFG.LASER_LEAD).add(h).sub(L.origin);
+    else _a.copy(L.dir);
+    if (_a.lengthSq() < 1e-6) _a.copy(L.dir);
+    _a.normalize();
+    _b.set(-_a.z, 0, _a.x);
+    if (_b.lengthSq() < 1e-8) _b.set(1, 0, 0);
+    _b.normalize();
+    _c.crossVectors(_a, _b);
+    const phi = Math.random() * TAU, e = Math.tan(CFG.LASER_AIM_ERROR_DEG * DEG * (0.3 + 0.7 * Math.random()));
+    _a.addScaledVector(_b, Math.cos(phi) * e).addScaledVector(_c, Math.sin(phi) * e).normalize();
+    this._lzBase.copy(_a);
+    L.dir.copy(_a);
+  }
+
+  _fireLaser() {
+    const L = this.laser, K = this.K;
+    if (!L.frozen) this._freezeAim();
+    L.phase = "fire";
+    L.t = 0;
+    L.charge = 1;
+    this._lzOffY = 0;
+    this._lzOffP = 0;
+    this._stopLaserAudio();
+    this._lzHandle = K.audio?.play?.("laserFire", { pos: this.position }) || null;
+    K.shake?.(0.5, L.origin.x, L.origin.y, L.origin.z);
+  }
+
+  _endLaser(resched) {
+    const L = this.laser;
+    L.phase = "idle";
+    L.t = 0;
+    L.charge = 0;
+    L.frozen = false;
+    L.length = 0;
+    this._stopLaserAudio();
+    this.model?.setLaserGlow?.(0);
+    if (resched) {
+      this.nextLaser = rand(CFG.LASER_INTERVAL_MIN, CFG.LASER_INTERVAL_MAX) * (this.enraged ? CFG.LASER_INTERVAL_ENRAGED_MULT : 1);
+      this.nextBreath = Math.max(this.nextBreath, 2.5);
+    }
+    if (this.state === "laser") this._enter("walk");
+  }
+
+  _stopLaserAudio() {
+    if (this._lzHandle) { try { this._lzHandle.stop?.(); } catch (e) { /* ignore */ } this._lzHandle = null; }
+  }
+
+  // distance along the ray to the terrain (Infinity if none within maxD)
+  _terrainHit(o, d, maxD) {
+    if (d.y >= 0) return Infinity;
+    let prev = 0;
+    for (let t = 15; ; t += 15) {
+      const tt = Math.min(t, maxD);
+      if (o.y + d.y * tt <= ground(o.x + d.x * tt, o.z + d.z * tt)) {
+        let lo = prev, hi = tt;
+        for (let i = 0; i < 6; i++) {
+          const m = (lo + hi) * 0.5;
+          if (o.y + d.y * m <= ground(o.x + d.x * m, o.z + d.z * m)) hi = m; else lo = m;
+        }
+        return hi;
+      }
+      prev = tt;
+      if (tt >= maxD) return Infinity;
+    }
+  }
+
+  _laserPost(dt) {
+    const L = this.laser, lb = this.laserBeam;
+    if (!lb) return;
+    if (L.phase === "idle") { lb.update(L, 0, this.time, this.scale, false); return; }
+    const K = this.K, h = this._heli();
+    L.origin.copy(this.breathOrigin);
+    if (L.phase === "lock" && !L.frozen && h) {
+      _a.copy(h).sub(L.origin);
+      if (_a.lengthSq() > 1e-6) L.dir.copy(_a.normalize());
+    } else if (L.phase === "fire" && h) {
+      // slow drift toward the heli, limited to +-SWEEP/2: a hovering heli stays hit, a moving one escapes
+      const b = this._lzBase;
+      const by = Math.atan2(b.x, b.z), bp = Math.asin(clamp(b.y, -1, 1));
+      _a.copy(h).sub(L.origin);
+      const hy = wrap(Math.atan2(_a.x, _a.z) - by);
+      const hp = Math.atan2(_a.y, Math.hypot(_a.x, _a.z)) - bp;
+      const rate = (CFG.LASER_SWEEP_DEG / Math.max(0.1, CFG.LASER_FIRE_SECONDS)) * DEG * dt;
+      const lim = CFG.LASER_SWEEP_DEG * 0.5 * DEG;
+      this._lzOffY = clamp(this._lzOffY + clamp(hy - this._lzOffY, -rate, rate), -lim, lim);
+      this._lzOffP = clamp(this._lzOffP + clamp(hp - this._lzOffP, -rate, rate), -lim, lim);
+      const yy = by + this._lzOffY, pp = bp + this._lzOffP, cp = Math.cos(pp);
+      L.dir.set(Math.sin(yy) * cp, Math.sin(pp), Math.cos(yy) * cp);
+    }
+    // beam length: first building or terrain along the ray
+    let maxD = CFG.LASER_RANGE;
+    if (L.phase === "lock" && h) maxD = Math.min(maxD, L.origin.distanceTo(h) + 25);
+    let len = maxD, hit = false;
+    const r = K.destruction?.raycast?.(L.origin, L.dir, maxD);
+    if (r && r.dist < len) { len = Math.max(1, r.dist); hit = true; }
+    const tg = this._terrainHit(L.origin, L.dir, len);
+    if (tg < len) { len = Math.max(1, tg); hit = true; }
+    L.length = len;
+
+    if (L.phase === "lock") {
+      this.model?.setLaserGlow?.(L.charge);
+      lb.update(L, 0, this.time, this.scale, false);
+      return;
+    }
+    const F = CFG.LASER_FIRE_SECONDS;
+    const fire = clamp(L.t / 0.12, 0, 1) * clamp((F - L.t) / 0.2, 0, 1);
+    this.model?.setLaserGlow?.(1);
+    if (h && fire > 0.05) {
+      _a.copy(h).sub(L.origin);
+      const t = _a.dot(L.dir);
+      const R = CFG.LASER_RADIUS;
+      if (t > 0 && t < len + R && _a.lengthSq() - t * t < R * R) K.damagePlayer?.(CFG.LASER_DPS * dt, "laser", L.origin);
+    }
+    if (hit) {
+      const e = this._lzEnd.copy(L.dir).multiplyScalar(len).add(L.origin);
+      this._lzTick -= dt;
+      if (this._lzTick <= 0) {
+        this._lzTick = CFG.LASER_TICK;
+        K.destruction?.damageSphere?.(e.x, e.y, e.z, CFG.LASER_BLAST_RADIUS, CFG.LASER_BUILDING_DAMAGE, { fire: true, source: "kaiju" });
+        K.fx?.spawn?.("fire", e, { count: 5, scale: 2.2 });
+        K.fx?.spawn?.("debris", e, { count: 5, scale: 1.4, speed: 30 });
+        if (e.y - ground(e.x, e.z) < 25) K.crowd?.burnZone?.(e.x, e.z, CFG.LASER_BLAST_RADIUS * 1.6);
+        K.supply?.hazard?.(e.x, e.z, CFG.LASER_BLAST_RADIUS);
+      }
+      this._lzBoom -= dt;
+      if (this._lzBoom <= 0) {
+        this._lzBoom = 0.45;
+        K.fx?.spawn?.("explosion", e, { scale: 1.6 });
+        K.audio?.play?.("explosion", { pos: e, gain: 0.6 });
+        K.shake?.(0.2, e.x, e.y, e.z);
+        if (e.y - ground(e.x, e.z) < 6) {
+          if (K.fx?.addScorch) K.fx.addScorch(e.x, e.z, CFG.LASER_BLAST_RADIUS);
+          else K.fx?.addDecal?.(e.x, e.z, Math.random() * TAU, 1.3);
+        }
+      }
+    }
+    lb.update(L, fire, this.time, this.scale, hit);
   }
 }

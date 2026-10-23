@@ -76,6 +76,8 @@ MOD_ID_MAP = {
     'src/features/kaiju/kaiju_destruction.js': '__MOD_kaiju_destruction',
     'src/features/kaiju/kaiju_crowd.js': '__MOD_kaiju_crowd',
     'src/features/kaiju/kaiju_weapons.js': '__MOD_kaiju_weapons',
+    'src/features/kaiju/kaiju_supply.js': '__MOD_kaiju_supply',
+    'src/features/kaiju/kaiju_super.js': '__MOD_kaiju_super',
     'src/features/kaiju/kaiju_hud.js': '__MOD_kaiju_hud',
     'src/features/kaiju/kaiju_mode.js': '__MOD_kaiju_mode',
     'src/main.js': '__MOD_main',

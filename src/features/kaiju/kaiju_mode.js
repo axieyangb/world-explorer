@@ -11,6 +11,8 @@ import { KaijuWeapons } from "./kaiju_weapons.js";
 import { KaijuHud } from "./kaiju_hud.js";
 import { Kaiju } from "./kaiju_ai.js";
 import { pickSpawn } from "./kaiju_spawn.js";
+import { KaijuSupply } from "./kaiju_supply.js";
+import { KaijuSuper } from "./kaiju_super.js";
 
 // Keys owned by Kaiju Defense while active (never reach main.js).
 const SWALLOW = new Set(["KeyF", "KeyC", "KeyG", "Space", "Escape", "Slash", "KeyM"]);
@@ -19,6 +21,13 @@ const FLIGHT = new Set([
   "KeyW", "KeyA", "KeyS", "KeyD", "KeyE", "KeyQ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
   "ShiftLeft", "ShiftRight", "ControlLeft",
 ]);
+
+// Dodge keys: double-tap (or Shift + Left/Right). Never swallowed, so the heli still strafes / climbs.
+const DASH_KEYS = { ArrowLeft: "left", ArrowRight: "right", KeyA: "left", KeyD: "right", KeyQ: "down", KeyE: "up" };
+// Mouse fire only when the press is not a camera drag.
+const DRAG_PX = 6;
+const DRAG_HOLD_MS = 120;
+const TAP_MS = 90;
 
 function injectStyles() {
   if (typeof document === "undefined" || document.getElementById("kaiju-styles")) return;
@@ -53,6 +62,8 @@ export class KaijuMode {
     this.crowd = null;
     this.weapons = null;
     this.hud = null;
+    this.supply = null;
+    this.super = null;
     this.kaiju = null;
     this._systemsReady = false;
 
@@ -65,6 +76,22 @@ export class KaijuMode {
     this._introRumble = 0;
     this._hitCooldown = 0;
     this._gestured = false;
+
+    // Dodge + damage feedback.
+    this.dash = { cooldown: 0, active: false, iframes: 0 };
+    this._dash = { t: 0, dur: 1, x: 0, z: 0, dirY: 0, vert: false, side: 1, v0: 0, v1: 0, prevY: 0, cd: 0 };
+    this._tap = { code: "", t: 0 };
+    this._sinceHit = 99;
+    this._trailT = 0;
+    this._alarm = null;
+    this._alarmWant = false;
+    this._ptr = { btn: -1, x: 0, y: 0, t: 0, firing: false, tapUntil: 0 };
+    this._dashUp0 = new THREE.Vector3();
+    this._dashUp1 = new THREE.Vector3();
+    this._trailPos = new THREE.Vector3();
+    this._smokeOpts = { count: 1, scale: 0.3, life: 3, speed: 2, light: true, color: undefined };
+    this._fireOpts = { count: 1, scale: 0.22, life: 0.35 };
+    this._darkSmoke = new THREE.Color(0.3, 0.28, 0.27);
 
     // Crash state
     this._crash = { t: 0, impactT: -1, velY: 0, vx: 0, vz: 0, spin: 0, yaw: 0, smokeT: 0 };
@@ -101,6 +128,11 @@ export class KaijuMode {
       forceKaijuHp(v) { if (K.kaiju) { if (K.kaiju.forceHp) K.kaiju.forceHp(v); else K.kaiju.hp = v; } },
       forceCityDamage(v) { K._forcedCity = Math.max(0, Number(v) || 0); },
       killHeli() { K._killHeli("debug"); },
+      dash(dir) { return K.tryDash(dir); },
+      laserNow() { return K.kaiju?.debugLaserNow?.(); },
+      spawnSupply(id, x, z) { return K.supply?.spawnDrop?.(id, x, z); },
+      equipSuper(id) { return K.super?.equip?.(id); },
+      fireSuper() { return K.super?.fire?.(); },
       skipIntro() { if (K.state === "intro") { if (K.kaiju) { K.kaiju.skipRise?.(); K.kaiju.rising = false; } K._beginFight(); } },
     };
     if (typeof window !== "undefined") window.__KAIJU__ = this;
@@ -108,6 +140,7 @@ export class KaijuMode {
 
   get scene() { return this.app.scene; }
   get camera() { return this.app.camera; }
+  get tracers() { return this.weapons ? this.weapons.tracers : []; }
 
   // ---------------------------------------------------------------- systems
   _ensureSystems() {
@@ -117,6 +150,8 @@ export class KaijuMode {
     this.audio = safeNew(KaijuAudio, this, "KaijuAudio");
     this.crowd = safeNew(KaijuCrowd, this, "KaijuCrowd");
     this.weapons = safeNew(KaijuWeapons, this, "KaijuWeapons");
+    this.supply = safeNew(KaijuSupply, this, "KaijuSupply");
+    this.super = safeNew(KaijuSuper, this, "KaijuSuper");
     this.hud = safeNew(KaijuHud, this, "KaijuHud");
   }
 
@@ -148,17 +183,17 @@ export class KaijuMode {
   }
 
   getAimRay() {
-    const r = this.app.heli && typeof this.app.heli.getAimRay === "function" ? this.app.heli.getAimRay() : null;
-    if (r && r.origin && r.dir) return r;
-    // Final (post gunner-offset, pre-shake) camera pose of the last rendered frame.
+    // Final centered, pre-shake camera pose of the last rendered frame.
     if (this._aimValid) {
       this._aimRay.origin.copy(this._aimPos);
       this._aimRay.dir.set(0, 0, -1).applyQuaternion(this._aimQuat);
-    } else {
-      const cam = this.app.camera;
-      cam.getWorldDirection(this._aimRay.dir);
-      this._aimRay.origin.copy(cam.position);
+      return this._aimRay;
     }
+    const r = this.app.heli && typeof this.app.heli.getAimRay === "function" ? this.app.heli.getAimRay() : null;
+    if (r && r.origin && r.dir) return r;
+    const cam = this.app.camera;
+    cam.getWorldDirection(this._aimRay.dir);
+    this._aimRay.origin.copy(cam.position);
     return this._aimRay;
   }
 
@@ -183,18 +218,228 @@ export class KaijuMode {
     this._trauma = Math.min(1, this._trauma + Math.max(0, strength) * atten);
   }
 
-  damagePlayer(amount, source) {
+  damagePlayer(amount, source, fromPos) {
     if (!this.active || !this.heli.alive || this.paused) return;
     if (this.state !== "intro" && this.state !== "fight") return;
     if (this.heli.invuln > 0 || !(amount > 0)) return;
+    // Dodge i-frames; wall scrapes during a dodge are free too.
+    if (this.dash.iframes > 0 || (source === "impact" && this.dash.active)) return;
     this.heli.health = Math.max(0, this.heli.health - amount);
+    this._sinceHit = 0;
+    let fx = NaN, fz = NaN;
+    if (fromPos && Number.isFinite(fromPos.x)) { fx = fromPos.x; fz = fromPos.z; }
+    else if (source !== "impact" && source !== "debug" && this.kaiju && this.kaiju.position) { fx = this.kaiju.position.x; fz = this.kaiju.position.z; }
+    if (fx === fx) this._call(this.hud, "damageFrom", fx, fz);
     if (this._hitCooldown <= 0) {
       this._hitCooldown = 0.22;
       this._call(this.hud, "flashHit");
-      this._call(this.audio, "play", "heliHit", { pos: this.app.pos, gain: source === "breath" ? 0.6 : 1 });
-      this.shake(source === "tail" || source === "body" ? 0.55 : 0.18);
+      this._call(this.audio, "play", "heliHit", { pos: this.app.pos, gain: source === "breath" || source === "laser" ? 0.6 : 1 });
+      this.shake(source === "tail" || source === "body" ? 0.55 : source === "laser" ? 0.3 : 0.18);
     }
     if (this.heli.health <= 0) this._killHeli(source);
+  }
+
+  // ---------------------------------------------------------------- dodge
+  _dashKey(code, shift) {
+    const dir = DASH_KEYS[code];
+    const keys = this.app.keys;
+    if (!shift && keys && typeof keys.has === "function") shift = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    const now = performance.now() * 0.001;
+    if ((shift && (dir === "left" || dir === "right")) || (this._tap.code === code && now - this._tap.t <= CFG.DASH_DOUBLE_TAP)) {
+      this._tap.code = "";
+      this.tryDash(dir);
+      return;
+    }
+    this._tap.code = code;
+    this._tap.t = now;
+  }
+
+  // Evasive dodge: 'left'|'right' (screen-relative) or 'up'|'down'. Returns true when it starts.
+  tryDash(dir) {
+    if (!this.canFire || this.dash.active || this._dash.cd > 0) return false;
+    const vert = dir === "up" || dir === "down";
+    if (!vert && dir !== "left" && dir !== "right") return false;
+    const app = this.app, p = app.pos, d = this._dash;
+    let dist = vert ? CFG.DASH_VERT_DIST : CFG.DASH_DIST;
+    d.vert = vert;
+    d.x = d.z = d.dirY = 0;
+    if (vert) {
+      d.dirY = dir === "up" ? 1 : -1;
+      if (d.dirY < 0) {
+        dist = Math.min(dist, p.y - this._floorAt(p.x, p.z));
+        if (dist < 3) return false;
+      }
+    } else {
+      const f = this._tmpV;
+      app.camera.getWorldDirection(f);
+      let fx = f.x, fz = f.z;
+      const l = Math.hypot(fx, fz);
+      if (l < 1e-3) { fx = Math.sin(app.yaw || 0); fz = Math.cos(app.yaw || 0); } else { fx /= l; fz /= l; }
+      d.side = dir === "right" ? 1 : -1;
+      d.x = -fz * d.side; // screen right = (-fz, fx)
+      d.z = fx * d.side;
+    }
+    d.dur = CFG.DASH_TIME;
+    d.v1 = vert ? 4 : CFG.DASH_END_SPEED;
+    d.v0 = Math.max(d.v1, (2 * dist) / d.dur - d.v1); // linear ease-out: area == dist
+    d.t = 0;
+    d.prevY = p.y;
+    d.cd = CFG.DASH_COOLDOWN;
+    this.dash.active = true;
+    this.dash.iframes = CFG.DASH_IFRAMES;
+    this.dash.cooldown = 1;
+    this._applyDashVel(d.v0);
+    this._call(this.fx, "spawn", "dustRing", p, { scale: 0.42 });
+    this._call(this.fx, "spawn", "muzzle", p, { count: 4, scale: 1.4, life: 0.16 });
+    this._call(this.audio, "play", "dash", { gain: 0.9 });
+    return true;
+  }
+
+  // Write the dodge speed into the flight model so it carries the momentum (and never reads as a teleport).
+  _applyDashVel(speed) {
+    const gta = this.gtaHeli;
+    const v = gta && gta.state && gta.state.velocity;
+    if (!v) return;
+    const d = this._dash;
+    if (d.vert) {
+      const c = gta.config || {};
+      v.y = Math.max(-(c.MAX_VY_DOWN || 20), Math.min(c.MAX_VY_UP || 16, d.dirY * speed));
+    } else {
+      const k = speed - (v.x * d.x + v.z * d.z);
+      v.x += d.x * k;
+      v.z += d.z * k;
+    }
+  }
+
+  _updateDash(dt) {
+    const D = this.dash, d = this._dash;
+    if (d.cd > 0) d.cd = Math.max(0, d.cd - dt);
+    D.cooldown = d.cd / CFG.DASH_COOLDOWN;
+    if (D.iframes > 0) D.iframes = Math.max(0, D.iframes - dt);
+    if (!D.active) {
+      // Responsive lateral strafe assist (±38 m/s) in Kaiju mode when ArrowLeft/ArrowRight is held
+      if (this.canFire && this.gtaHeli?.state?.velocity && this.app.keys) {
+        const st = (this.app.keys.has("ArrowRight") ? 1 : 0) - (this.app.keys.has("ArrowLeft") ? 1 : 0);
+        if (st !== 0) {
+          const v = this.gtaHeli.state.velocity, yaw = this.app.yaw || 0;
+          const rx = -Math.cos(yaw) * st, rz = Math.sin(yaw) * st;
+          const cur = v.x * rx + v.z * rz;
+          if (cur < 38) {
+            const add = Math.min(38 - cur, 65 * dt);
+            v.x += rx * add;
+            v.z += rz * add;
+          }
+        }
+      }
+      return;
+    }
+    if (!this.heli.alive) { this._endDash(); return; }
+    if (!(dt > 0)) return;
+    const p = this.app.pos, gta = this.gtaHeli;
+    const vPrev = d.v0 + (d.v1 - d.v0) * Math.min(1, d.t / d.dur); // speed over the frame just simulated
+    d.t += dt;
+    const u = Math.min(1, d.t / d.dur);
+    let floorHit = false;
+    if (d.vert) {
+      // The flight model caps vertical speed: add the rest as small per-frame steps (well under its teleport check).
+      let extra = d.dirY * vPrev * dt - (p.y - d.prevY);
+      if (extra * d.dirY < 0) extra = 0;
+      extra = Math.max(-2.5, Math.min(2.5, extra));
+      let ny = p.y + extra;
+      if (d.dirY < 0) {
+        const floor = this._floorAt(p.x, p.z);
+        if (ny <= floor) { ny = Math.min(p.y, floor); floorHit = true; }
+      }
+      p.y = ny;
+      d.prevY = ny;
+    } else if (!gta) {
+      p.x += d.x * vPrev * dt;
+      p.z += d.z * vPrev * dt;
+    }
+    const done = u >= 1 || floorHit;
+    this._applyDashVel(done ? d.v1 : d.v0 + (d.v1 - d.v0) * u);
+    if (floorHit && gta && gta.state && gta.state.velocity) gta.state.velocity.y = 0;
+    if (done) { this._endDash(); return; }
+    this._dashPose(u);
+  }
+
+  // Roll / pitch the airframe on top of the flight model's pose (it rewrites the mesh every frame).
+  _dashPose(u) {
+    const m = this.app.heliMesh;
+    if (!m) return;
+    const d = this._dash;
+    const gta = this.gtaHeli;
+    if (!gta) m.rotation.set(0, this.app.yaw || 0, 0);
+    const s = Math.sin(Math.PI * Math.min(1, u * 1.15));
+    const up0 = this._dashUp0.set(0, 1, 0).applyQuaternion(m.quaternion);
+    if (d.vert) m.rotateX(-d.dirY * 0.35 * s);
+    else m.rotateZ(d.side * 1.25 * s);
+    if (!gta) return;
+    // Pivot about the centre of mass (~1.3 m above the skids), like the flight model.
+    const up1 = this._dashUp1.set(0, 1, 0).applyQuaternion(m.quaternion);
+    m.position.addScaledVector(up0, 1.3).addScaledVector(up1, -1.3);
+  }
+
+  _endDash() {
+    if (!this.dash.active) return;
+    this.dash.active = false;
+    if (!this.gtaHeli && this.heli.alive) this._resetHeliMesh();
+  }
+
+  _floorAt(x, z) {
+    let g = getBeijingTerrainElevation(x, z);
+    const app = this.app;
+    if (typeof app.getBuildingCeilingAt === "function") {
+      const r = app.getBuildingCeilingAt(x, g, z, 6);
+      if (r !== null && r !== undefined && r > g) g = r;
+    }
+    return g + CFG.DASH_CLEARANCE;
+  }
+
+  _resetDodge() {
+    this._endDash();
+    this._dash.cd = 0;
+    this.dash.cooldown = 0;
+    this.dash.iframes = 0;
+    this._tap.code = "";
+    this._sinceHit = 99;
+    this._trailT = 0;
+    this._syncAlarm(false);
+  }
+
+  // Repair, smoke / fire trail.
+  _updateHeliFx(dt) {
+    const h = this.heli, st = this.state;
+    if (!h.alive || !(dt > 0) || !(st === "intro" || st === "fight" || st === "dying")) return;
+    this._sinceHit += dt;
+    if (st !== "dying" && this._sinceHit >= CFG.HELI_REGEN_DELAY && h.health < CFG.HELI_HP) {
+      h.health = Math.min(CFG.HELI_HP, h.health + CFG.HELI_REGEN_RATE * dt);
+    }
+    const hf = h.health / CFG.HELI_HP;
+    if (hf >= CFG.HELI_SMOKE_FRAC || !this.fx) return;
+    this._trailT -= dt;
+    if (this._trailT > 0) return;
+    const sev = 1 - hf / CFG.HELI_SMOKE_FRAC;
+    const heavy = hf < CFG.HELI_FIRE_FRAC;
+    this._trailT = heavy ? 0.05 : 0.2 - 0.12 * sev;
+    const p = this.app.pos, yaw = this.app.yaw || 0;
+    const tp = this._trailPos.set(p.x - Math.sin(yaw) * 2.2, p.y + 1.6, p.z - Math.cos(yaw) * 2.2);
+    const o = this._smokeOpts;
+    o.scale = 0.25 + 0.3 * sev;
+    o.life = heavy ? 4.5 : 3;
+    o.light = !heavy;
+    o.color = heavy ? this._darkSmoke : undefined;
+    this._call(this.fx, "spawn", "smoke", tp, o);
+    if (heavy) this._call(this.fx, "spawn", "fire", tp, this._fireOpts);
+  }
+
+  _syncAlarm(want) {
+    const a = this._alarm;
+    const dead = !!(a && a.voice && a.voice.stopped); // killed by audio.stopAll()
+    if (want === this._alarmWant && !(want && dead)) return;
+    this._alarmWant = want;
+    if (a) { a.stop(); this._alarm = null; }
+    if (want) this._alarm = this._call(this.audio, "play", "lowHpAlarm", { gain: 0.55 }) || null;
   }
 
   onKaijuDeath() {
@@ -214,6 +459,8 @@ export class KaijuMode {
     if (typeof app._ensureHeli === "function") app._ensureHeli();
     this._hookHeli();
     this.active = true;
+    this._blurButtons();
+    setTimeout(() => this._blurButtons(), 0);
     this._placeHeli(app.pos.x, app.pos.z, CFG.SPAWN_HELI_ALT, app.yaw);
     document.body.classList.add("kaiju-active");
     this._call(this.hud, "show");
@@ -291,6 +538,7 @@ export class KaijuMode {
     this.heli.invuln = 0;
     this._crash.impactT = -1;
     this._crash.t = 0;
+    this._resetDodge();
     const s = this.stats;
     s.cannonShots = s.cannonHits = s.missilesFired = s.missileHits = s.weakHits = 0;
     s.startTime = performance.now();
@@ -299,6 +547,8 @@ export class KaijuMode {
     this._result = null;
     this._dyingT = 0;
     this._call(this.weapons, "reset");
+    this._call(this.supply, "reset");
+    this._call(this.super, "reset");
     this._call(this.fx, "reset");
 
     let spawn = null;
@@ -323,6 +573,8 @@ export class KaijuMode {
     app.yaw = yaw;
     app.camYaw = yaw;
     app.camYawOffset = 0;
+    app.camPitch = 0.28;
+    app.lastMouseOrbitTime = 0;
     app.heliMesh.rotation.y = yaw;
 
     this.state = "intro";
@@ -344,8 +596,11 @@ export class KaijuMode {
     }
     this._call(this.destruction, "restoreAll");
     this._call(this.weapons, "reset");
+    this._call(this.supply, "reset");
+    this._call(this.super, "reset");
     this._call(this.fx, "reset");
     this._call(this.audio, "stopAll");
+    this._resetDodge();
     this._forcedCity = 0;
   }
 
@@ -443,6 +698,8 @@ export class KaijuMode {
     this._call(w, "onKeyUp", "KeyF");
     this._call(w, "onPointerUp", 0);
     this._call(w, "onPointerUp", 2);
+    this._call(this.super, "cancel"); // optional: drop a held charge without firing
+    if (this._ptr) this._ptr.btn = -1;
   }
 
   _killHeli(source) {
@@ -450,6 +707,7 @@ export class KaijuMode {
     if (this.state !== "intro" && this.state !== "fight") return;
     const app = this.app;
     this.heli.alive = false;
+    this._endDash();
     this.heli.health = 0;
     this.heli.lives = Math.max(0, this.heli.lives - 1);
     this._releaseWeapons();
@@ -556,6 +814,7 @@ export class KaijuMode {
     this.heli.health = CFG.HELI_HP;
     this.heli.invuln = CFG.RESPAWN_INVULN;
     this._crash.impactT = -1;
+    this._resetDodge();
     this._resetHeliMesh();
   }
 
@@ -573,10 +832,13 @@ export class KaijuMode {
     if (this._hitCooldown > 0) this._hitCooldown -= rawDt;
     if (this.app.heli && this._heliHooked !== this.app.heli) this._hookHeli();
     this._syncHeliInput();
+    this._updatePointerFire();
 
     if (!this.paused) {
       if (st === "intro" || st === "fight") this.time += dt;
       if (this.heli.invuln > 0) this.heli.invuln = Math.max(0, this.heli.invuln - dt);
+      this._updateDash(dt);
+      this._updateHeliFx(dt);
 
       if (!this.heli.alive && (st === "intro" || st === "fight")) this._updateCrash(dt);
       else if (this.app.heliMesh && this.heli.alive) {
@@ -600,6 +862,8 @@ export class KaijuMode {
       this._call(this.destruction, "update", dt);
       this._call(this.crowd, "update", dt);
       this._call(this.weapons, "update", dt);
+      this._call(this.supply, "update", dt);
+      this._call(this.super, "update", dt);
       this._call(this.fx, "update", dt);
 
       if (this.state === "fight" || this.state === "intro") {
@@ -611,6 +875,8 @@ export class KaijuMode {
         if (this._dyingT >= CFG.DEATH_SECONDS) this._finish(true);
       }
     }
+    const s2 = this.state;
+    this._syncAlarm(!this.paused && this.heli.alive && (s2 === "intro" || s2 === "fight") && this.heli.health < CFG.HELI_HP * CFG.HELI_ALARM_FRAC);
     this._call(this.audio, "update", rawDt, this.app.camera.position);
     this._call(this.hud, "update", rawDt);
   }
@@ -655,6 +921,45 @@ export class KaijuMode {
     window.addEventListener("keyup", (e) => this._onKey(e, false), true);
     window.addEventListener("pointerdown", (e) => this._onPointer(e, true), true);
     window.addEventListener("pointerup", (e) => this._onPointer(e, false), true);
+    window.addEventListener("pointermove", (e) => this._onPointerMove(e), true);
+    window.addEventListener("click", () => { if (this.active) this._blurButtons(); }, true);
+  }
+
+  _blurButtons() {
+    const a = typeof document !== "undefined" ? document.activeElement : null;
+    if (a && a !== document.body && a.tagName !== "INPUT" && a.tagName !== "TEXTAREA" && typeof a.blur === "function") a.blur();
+  }
+
+  _ptrSend(down) {
+    const b = this._ptr.btn;
+    const fn = down ? "onPointerDown" : "onPointerUp";
+    this._call(this.weapons, fn, b);
+    this._call(this.super, fn, b);
+  }
+
+  // Arms mouse fire once the press has been still for DRAG_HOLD_MS; ends a quick tap after TAP_MS.
+  _updatePointerFire() {
+    const P = this._ptr;
+    if (P.btn < 0) return;
+    const now = performance.now();
+    if (P.tapUntil > 0) {
+      if (now >= P.tapUntil) { this._ptrSend(false); P.btn = -1; P.firing = false; P.tapUntil = 0; }
+      return;
+    }
+    if (!P.firing && now - P.t >= DRAG_HOLD_MS && this.canFire) {
+      P.firing = true;
+      this._ptrSend(true);
+    }
+  }
+
+  _onPointerMove(e) {
+    const P = this._ptr;
+    if (!this.active || P.btn < 0 || P.tapUntil > 0) return;
+    if (Math.abs(e.clientX - P.x) + Math.abs(e.clientY - P.y) <= DRAG_PX) return;
+    // It is a camera drag: never fire (and stop if it already started).
+    if (P.firing) this._ptrSend(false);
+    P.firing = false;
+    P.btn = -1;
   }
 
   _gesture() {
@@ -666,11 +971,24 @@ export class KaijuMode {
   _onKey(e, down) {
     if (!this.active) return;
     const tag = e.target && e.target.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     this._gesture();
     const code = e.code;
     if (!down) this.app.keys?.delete?.(code);
+    if (code === "ArrowLeft" || code === "ArrowRight" || code === "ArrowUp" || code === "ArrowDown") e.preventDefault(); // no page scroll; still reaches the heli
+    if (down && !e.repeat && DASH_KEYS[code]) this._dashKey(code, e.shiftKey);
 
+    if (code === "KeyR") {
+      // Super weapon (K.super).
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      if (down) {
+        if (!e.repeat && this.canFire) this._call(this.super, "onKeyDown", code);
+      } else {
+        this._call(this.super, "onKeyUp", code);
+      }
+      return;
+    }
     if (SWALLOW.has(code)) {
       e.stopImmediatePropagation();
       e.preventDefault();
@@ -694,11 +1012,31 @@ export class KaijuMode {
   _onPointer(e, down) {
     if (!this.active) return;
     this._gesture();
+    // Dock / card buttons must not keep focus, or Space would click them.
+    if (!down && e.target && e.target.closest && e.target.closest("button")) setTimeout(() => this._blurButtons(), 0);
     if (e.button !== 0 && e.button !== 2) return;
+    const P = this._ptr;
     if (down) {
-      if (e.target === this.app.canvas && this.canFire) this._call(this.weapons, "onPointerDown", e.button);
-    } else {
+      if (e.target === this.app.canvas && this.canFire) {
+        if (P.btn >= 0 && P.firing) this._ptrSend(false);
+        P.btn = e.button; P.x = e.clientX; P.y = e.clientY; P.t = performance.now(); P.firing = false; P.tapUntil = 0;
+      }
+      return;
+    }
+    if (P.btn === e.button && P.tapUntil === 0) {
+      if (!P.firing) {
+        // Quick still click: a short burst / one missile salvo.
+        if (this.canFire) { P.firing = true; this._ptrSend(true); P.tapUntil = performance.now() + TAP_MS; return; }
+      } else {
+        this._ptrSend(false);
+      }
+      P.btn = -1;
+      P.firing = false;
+      return;
+    }
+    if (P.tapUntil === 0 || P.btn !== e.button) {
       this._call(this.weapons, "onPointerUp", e.button);
+      this._call(this.super, "onPointerUp", e.button);
     }
   }
 }

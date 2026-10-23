@@ -83,9 +83,13 @@ export class KaijuWeapons {
     if (button === 0) this._cannonMouse = false;
   }
 
+  get tracers() {
+    return this.rounds.filter((r) => r.active);
+  }
+
   _canFire() {
     const K = this.K;
-    return K && K.state === "fight" && !!K.heli?.alive;
+    return !!(K && K.canFire);
   }
 
   // ---------- helpers ----------
@@ -98,6 +102,7 @@ export class KaijuWeapons {
   _heliPoint(out, lx, ly, lz) {
     const hm = this.K?.app?.heliMesh;
     if (hm) {
+      hm.updateMatrixWorld();
       out.set(lx, ly, lz);
       return hm.localToWorld(out);
     }
@@ -236,7 +241,7 @@ export class KaijuWeapons {
     const K = this.K;
     const r = this.rounds.find((x) => !x.active);
     if (!r) return;
-    const muzzle = this._heliPoint(this._muzzle, 0, 0.75, 2.7);
+    const muzzle = this._heliPoint(this._muzzle, 0, 0.75, 2.8);
     // Aim at the crosshair point, compensating for drop.
     let k = 0;
     if (!kaijuAim) k = this._assist(ray, this._assistPt);
@@ -277,7 +282,7 @@ export class KaijuWeapons {
     const m = this.missiles.find((x) => !x.active);
     if (!m) return;
     this._salvoSide = -this._salvoSide;
-    this._heliPoint(m.pos, 1.5 * this._salvoSide, 1.0, 0.3);
+    this._heliPoint(m.pos, 1.8 * this._salvoSide, 1.05, 0.3);
     this._computeAim(ray);
     m.dir.subVectors(this.aimPoint, m.pos).normalize();
     if (this._salvoHoming) m.dir.y += 0.06;

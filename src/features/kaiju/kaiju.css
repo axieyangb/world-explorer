@@ -254,3 +254,57 @@ body.kaiju-active .radar-readout { display: none !important; }
 @keyframes kj-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes kj-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 @keyframes kj-in { from { opacity: 0; transform: translate(-50%, -48%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+
+/* ---- laser lock / danger zone / supply toast / super weapon ---- */
+.kj-warn-pill {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.kj-warn-pill.on { opacity: 1; }
+.kj-warn-lock {
+  background: rgba(220, 24, 40, 0.86);
+  border: 1px solid rgba(255, 140, 140, 0.85);
+  color: #ffffff;
+  box-shadow: 0 0 18px rgba(255, 45, 55, 0.65);
+  animation: kj-pulse 0.35s ease-in-out infinite;
+}
+.kj-warn-danger {
+  background: rgba(40, 16, 12, 0.72);
+  border: 1px solid rgba(255, 150, 60, 0.65);
+  color: #ffb84d;
+}
+.kj-toast {
+  position: absolute;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(8, 22, 30, 0.78);
+  border: 1px solid rgba(56, 242, 255, 0.55);
+  color: #72f5ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.kj-toast.on { opacity: 1; }
+.kj-toast.kj-toast-pickup {
+  background: rgba(12, 38, 48, 0.88);
+  border-color: rgba(100, 255, 255, 0.85);
+  color: #ffffff;
+}
+.kj-label-cyan { color: #5ce8ff; }
+.kj-bar-super > i { background: linear-gradient(90deg, #22b8cf, #72f5ff); }

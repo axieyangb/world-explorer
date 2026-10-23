@@ -33,7 +33,7 @@ export const CFG = {
   BODY_RADIUS: 18,              // continuous body overlap radius
 
   // Player
-  HELI_HP: 100,
+  HELI_HP: 250,                 // [player] was 100; laser full hit ~68 HP
   HELI_SEGMENTS: 10,
   LIVES: 3,
   RESPAWN_DELAY: 3.0,
@@ -104,6 +104,99 @@ export const CFG = {
   CROWD_REVERSE_SPEED: 5,
 
   // Game (camera)
-  GUNNER_CAM_RIGHT: 6,          // m, camera-space offset so the crosshair ray clears the heli
-  GUNNER_CAM_UP: 3,
+  GUNNER_CAM_RIGHT: 0,          // m, camera-space offset so the crosshair ray clears the heli
+  GUNNER_CAM_UP: 1.5,
+
+  // Dodge + feedback (player)
+  DASH_DIST: 36,                // m, lateral dodge (double-tap or Shift + Left/Right)
+  DASH_VERT_DIST: 20,           // m, vertical dodge (double-tap Q / E)
+  DASH_TIME: 0.45,               // s
+  DASH_END_SPEED: 18,           // m/s carried after a lateral dodge
+  DASH_COOLDOWN: 2.5,
+  DASH_IFRAMES: 0.55,
+  DASH_DOUBLE_TAP: 0.28,        // s between taps
+  DASH_CLEARANCE: 8,            // m above terrain / roofs for a downward dodge
+  HELI_REGEN_DELAY: 6,          // s without damage before repair starts
+  HELI_REGEN_RATE: 2,           // HP/s
+  HELI_SMOKE_FRAC: 0.6,         // smoke trail below this hull fraction
+  HELI_FIRE_FRAC: 0.3,          // fire + dark smoke below this
+  HELI_ALARM_FRAC: 0.25,        // warning chirp below this
+  DMG_INDICATOR_SECONDS: 1.0,
+  // Laser + aggro (creature)
+  LASER_ENABLED: true,
+  LASER_FIRST_DELAY: 2.2,         // s after the first hit
+  LASER_INTERVAL_MIN: 7,
+  LASER_INTERVAL_MAX: 10,
+  LASER_INTERVAL_ENRAGED_MULT: 0.65,
+  LASER_LOCK_SECONDS: 1.6,      // red targeting beam follows the heli
+  LASER_FREEZE_BEFORE: 0.25,    // aim freezes this long before firing
+  LASER_LEAD: 0.2,              // s of heli velocity lead at freeze
+  LASER_AIM_ERROR_DEG: 0.1,
+  LASER_FIRE_SECONDS: 1.8,
+  LASER_SWEEP_DEG: 4,           // beam drifts toward the heli by at most +-half of this while firing
+  LASER_RADIUS: 9,              // m, heli hit radius around the beam
+  LASER_DPS: 42,
+  LASER_RANGE: 1800,
+  LASER_BLAST_RADIUS: 14,
+  LASER_BUILDING_DAMAGE: 0.5,   // per tick at the beam end
+  LASER_TICK: 0.15,
+  LASER_AGGRO_DECAY: 25,        // s without hits before aggro ends
+  LASER_TURN_SECTOR_DEG: 60,    // aggro: body turns toward the heli when it is outside this
+  BREATH_AIM_RANGE: 450,        // breath aims at the heli inside this range ...
+  BREATH_AIM_SECTOR_DEG: 120,   // ... and front sector
+  BREATH_TELEGRAPH_AIMED: 1.3,
+  BREATH_AIMED_SWEEP_DEG: 24,
+  BREATH_TRACK_RATE: 0.12,      // rad/s, aimed breath follows the heli
+  AGGRO_RADIUS: 250,            // m (3D to the kaiju centre): heli inside => aggro without hits
+  AGGRO_RADIUS_ENRAGED: 350,
+  LASER_INTERVAL_NEAR_MULT: 0.6, // laser/breath timers run 1/this faster while the heli is inside the radius
+  STUN_DAMAGE_MULT: 2,
+  KAIJU_STAGGER_DAMAGE: 1500,   // single hit this big cancels a laser lock
+  BREATH_HAZARD_RADIUS: 25,     // crate hazard radius along the breath footprint
+
+  // Supply + super weapons (supply)
+  SUPPLY_FIRST: 12,             // s of fight before the first drop
+  SUPPLY_INTERVAL_MIN: 45,
+  SUPPLY_INTERVAL_MAX: 65,
+  SUPPLY_MAX_LIVE: 2,
+  SUPPLY_DROP_HEIGHT: 170,      // m above the landing surface
+  SUPPLY_FALL_SPEED: 12,         // m/s under canopy
+  SUPPLY_LIFETIME: 45,          // s after landing
+  SUPPLY_BLINK: 10,             // s of blinking before despawn
+  SUPPLY_PICKUP_RADIUS: 18,
+  SUPPLY_HAZARD_HEIGHT: 100,    // m above terrain; crates higher up survive footfalls / breath
+  SUPPLY_DANGER_MIN: 160,       // m from the kaiju
+  SUPPLY_DANGER_MAX: 320,
+  SUPPLY_SAFE_CHANCE: 0.35,
+  SUPPLY_SAFE_MIN: 320,
+  SUPPLY_SAFE_MAX: 500,
+  SUPPLY_BEACON_HEIGHT: 250,
+  SUPPLY_WEIGHTS: { railgun: 3, swarm: 3, emp: 2, orbital: 2 },
+  SUPPLY_SAFE_WEIGHTS: { repair: 1, coolant: 1 },
+  REPAIR_HP: 60,
+  COOLANT_SECONDS: 15,
+  RAIL_SHOTS: 3,
+  RAIL_CHARGE_TIME: 1.0,
+  RAIL_DAMAGE: 1100,            // x WEAK_POINT_MULT on a weak sphere
+  RAIL_RANGE: 2200,
+  RAIL_PIERCE: 3,               // buildings damaged behind the kaiju
+  RAIL_BUILDING_DAMAGE: 0.6,
+  SWARM_SALVOS: 2,
+  SWARM_COUNT: 12,
+  SWARM_STAGGER: 0.06,
+  SWARM_DAMAGE: 100,            // per missile, x WEAK_POINT_MULT on a weak sphere
+  SWARM_SPEED: 300,
+  SWARM_WEAK_CHANCE: 0.3,       // share of missiles aimed at a weak sphere
+  EMP_RANGE: 900,
+  EMP_CONE_DEG: 35,
+  EMP_STUN_SECONDS: 6,
+  EMP_DAMAGE: 450,
+  EMP_CHARGES: 2,
+  EMP_RADIUS: 140,              // visual shockwave radius
+  ORBITAL_RANGE: 2200,
+  ORBITAL_COUNTDOWN: 4.0,
+  ORBITAL_RADIUS: 60,           // kaiju (horizontal) within this of the mark takes the hit
+  ORBITAL_DAMAGE: 4000,
+  ORBITAL_CITY_RADIUS: 80,
+  ORBITAL_CITY_DAMAGE: 1.0,
 };

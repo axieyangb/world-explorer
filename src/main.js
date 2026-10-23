@@ -2296,6 +2296,7 @@ class WorldExplorerApp {
 
     document.querySelectorAll(".popover-mode-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
+        btn.blur();
         this.setMode(btn.dataset.mode);
         if (btn.dataset.mode !== "drive" && popover) {
           popover.classList.add("hidden");

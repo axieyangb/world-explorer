@@ -11,6 +11,7 @@ export const PALETTES = [
   { name: "red", body: 0x2f1913, belly: 0x5f3727, plate: 0x7a5544, glow: 0xff7a2c, eye: 0xffc24a },
 ];
 const ENRAGE_GLOW = new THREE.Color(0xff3218);
+const STUN_GLOW = new THREE.Color(0xa8f0ff);
 
 // ---------------------------------------------------------------- skeleton
 const TAIL_PTS = [
@@ -675,9 +676,27 @@ export class KaijuModel {
   anchorWorld(a, out) { return out.copy(a.off).applyMatrix4(a.bone.matrixWorld); }
 
   setEnraged(k) {
+    this._enr = k;
     this.PU.uGlow.value.copy(this.glowBase).lerp(ENRAGE_GLOW, k * 0.75);
     this.U.uEye.value.set(this.palette.eye).lerp(ENRAGE_GLOW, k * 0.8);
     this.U.uEyeGlow.value = 0.9 + k * 1.2;
+    this._eyeBase = this.U.uEyeGlow.value;
+  }
+
+  // stun: ice tint, plates and weak points blaze (k 0..1; 0 restores)
+  setStun(k) {
+    this._stunned = k > 0.01;
+    this.PU.uGlow.value.copy(this.glowBase).lerp(ENRAGE_GLOW, (this._enr || 0) * 0.75).lerp(STUN_GLOW, k * 0.8);
+    this.PU.uBase.value = 0.35 + 1.6 * k;
+  }
+
+  // laser telegraph: eyes and dorsal plates burn bright crimson/magenta (k 0..1)
+  setLaserGlow(k) {
+    this.U.uEyeGlow.value = (this._eyeBase ?? 0.9) + k * 7;
+    if (!this._stunned) {
+      this.PU.uGlow.value.copy(this.glowBase).lerp(ENRAGE_GLOW, Math.max((this._enr || 0) * 0.75, k * 0.9));
+      this.PU.uBase.value = 0.35 + 1.35 * k;
+    }
   }
 
   // P: pose params (see Kaiju), t: time
@@ -868,5 +887,155 @@ export class BreathBeam {
   dispose() {
     this.object.parent?.remove(this.object);
     for (const m of [this.outer, this.inner, this.ball]) { m.geometry.dispose(); m.material.dispose(); }
+  }
+}
+
+// ---------------------------------------------------------------- laser beam
+// Unit cylinder along +Z (0..1). Radius and length come from uniforms so the mesh matrix is just origin + rotation;
+// the radius never drops below uPixK * view distance (keeps the thin targeting line visible far away).
+const LASER_VS = `
+uniform float uLen, uR, uPixK;
+varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+void main(){
+  vUv = uv;
+  vec4 mvA = modelViewMatrix * vec4(0.0, 0.0, position.z * uLen, 1.0);
+  float r = max(uR, -mvA.z * uPixK);
+  vec4 mv = modelViewMatrix * vec4(position.xy * r, position.z * uLen, 1.0);
+  vN = normalize(normalMatrix * vec3(position.xy, 0.0)); vV = -mv.xyz;
+  gl_Position = projectionMatrix * mv;
+}`;
+const LASER_FS = `
+uniform float uTime, uInt, uLen, uSoft, uSpeed, uNoise, uFloor; uniform vec3 uC;
+varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+${GLSL_NOISE}
+void main(){
+  float f = abs(dot(normalize(vN), normalize(vV)));
+  float a = mix(uFloor, 1.0, pow(f, uSoft));
+  float d = vUv.y * uLen;
+  float ang = vUv.x * 6.2831853;
+  vec3 q = vec3(cos(ang) * 1.3, sin(ang) * 1.3, d * 0.045 - uTime * uSpeed);
+  float n = kjN3(q) * 0.65 + kjN3(q * 2.7 + 3.0) * 0.35;
+  a *= mix(1.0, 0.25 + 1.5 * n, uNoise);
+  a *= smoothstep(0.0, 3.0, d) * (1.0 - smoothstep(uLen - 4.0, uLen + 0.01, d));
+  gl_FragColor = vec4(uC * a * uInt, 1.0);
+}`;
+const FLARE_VS = "varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix*normal); vV = -mv.xyz; gl_Position = projectionMatrix*mv; }";
+const FLARE_FS = "uniform vec3 uC; uniform float uInt; varying vec3 vN; varying vec3 vV; void main(){ float f = abs(dot(normalize(vN), normalize(vV))); vec3 c = mix(uC, vec3(1.0), f * f * f); gl_FragColor = vec4(c * f * f * uInt, 1.0); }";
+
+export class LaserBeam {
+  constructor(palette) {
+    this.object = new THREE.Group(); // add this to the scene
+    this.object.name = "kaijuLaser";
+    this.beam = new THREE.Group();
+    this.object.add(this.beam);
+    const geo = new THREE.CylinderGeometry(1, 1, 1, 18, 1, true);
+    geo.translate(0, 0.5, 0);
+    geo.rotateX(Math.PI / 2);
+    this._geo = geo;
+    this.glow = new THREE.Color(palette.glow);
+    const mk = (color, soft, floor, noise, speed, order) => {
+      const m = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 }, uInt: { value: 0 }, uLen: { value: 1e-3 }, uR: { value: 1e-4 }, uPixK: { value: 0 },
+          uSoft: { value: soft }, uSpeed: { value: speed }, uNoise: { value: noise }, uFloor: { value: floor }, uC: { value: color },
+        },
+        vertexShader: LASER_VS, fragmentShader: LASER_FS,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+      });
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = order;
+      this.beam.add(mesh);
+      return mesh;
+    };
+    const white = new THREE.Color(1, 1, 1);
+    this.lock = mk(new THREE.Color(1.0, 0.07, 0.04).multiplyScalar(2.2), 0.6, 0.55, 0.25, 40, 12);
+    this.haze = mk(this.glow.clone().multiplyScalar(0.45), 2.4, 0.0, 1.0, 70, 12);
+    this.outer = mk(this.glow.clone().lerp(white, 0.2).multiplyScalar(1.5), 1.4, 0.1, 0.8, 140, 13);
+    this.core = mk(white.clone().lerp(this.glow, 0.12).multiplyScalar(3.2), 0.7, 0.5, 0.3, 230, 14);
+    this.layers = [this.lock, this.haze, this.outer, this.core];
+    const fm = (order) => {
+      const m = new THREE.ShaderMaterial({
+        uniforms: { uC: { value: this.glow.clone().lerp(white, 0.25).multiplyScalar(1.6) }, uInt: { value: 0 } },
+        vertexShader: FLARE_VS, fragmentShader: FLARE_FS,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+      });
+      const mesh = new THREE.Mesh(this._ballGeo || (this._ballGeo = new THREE.IcosahedronGeometry(1, 2)), m);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = order;
+      mesh.scale.setScalar(1e-4);
+      this.object.add(mesh);
+      return mesh;
+    };
+    this.mouth = fm(15);
+    this.impact = fm(15);
+    this._lockRed = new THREE.Color(1.0, 0.15, 0.08).multiplyScalar(1.6);
+    this._q = new THREE.Quaternion();
+    this._z = new THREE.Vector3(0, 0, 1);
+  }
+
+  // glow color follows the plate glow (enrage tint)
+  setColor(c) {
+    this.haze.material.uniforms.uC.value.copy(c).multiplyScalar(0.45);
+    this.outer.material.uniforms.uC.value.copy(c).multiplyScalar(1.2).addScalar(0.3);
+    this.core.material.uniforms.uC.value.setRGB(3.2, 3.2, 3.2).lerp(c, 0.12);
+    this.impact.material.uniforms.uC.value.copy(c).multiplyScalar(1.2).addScalar(0.4);
+  }
+
+  _set(mesh, len, r, pixK, inten, time) {
+    const u = mesh.material.uniforms;
+    u.uLen.value = len; u.uR.value = r; u.uPixK.value = pixK; u.uInt.value = inten; u.uTime.value = time;
+  }
+
+  // L: kaiju.laser state; fire: 0..1 beam intensity; hitSomething: impact flare at the end; scale: kaiju scale
+  update(L, fire, time, scale, hitSomething) {
+    const o = L.origin;
+    this.beam.position.copy(o);
+    if (L.phase === "idle") {
+      for (let i = 0; i < this.layers.length; i++) this._set(this.layers[i], 1e-3, 1e-4, 0, 0, time);
+      this.mouth.scale.setScalar(1e-4); this.mouth.material.uniforms.uInt.value = 0;
+      this.impact.scale.setScalar(1e-4); this.impact.material.uniforms.uInt.value = 0;
+      return;
+    }
+    this.beam.quaternion.copy(this._q.setFromUnitVectors(this._z, L.dir));
+    const len = Math.max(1, L.length);
+    const fl = 0.88 + 0.12 * Math.sin(time * 57) * Math.sin(time * 23);
+    if (L.phase === "lock") {
+      const c = L.charge;
+      this._set(this.lock, len, 0.25 * scale, L.frozen ? 0.0022 : 0.0014, (0.35 + 0.65 * c) * (L.frozen ? 1.6 : 1), time);
+      this._set(this.haze, 1e-3, 1e-4, 0, 0, time);
+      this._set(this.outer, 1e-3, 1e-4, 0, 0, time);
+      this._set(this.core, 1e-3, 1e-4, 0, 0, time);
+      this.mouth.material.uniforms.uC.value.copy(this._lockRed).lerp(this.glow, c * 0.5);
+      this.mouth.scale.setScalar((0.8 + 3.2 * c * c) * scale * fl);
+      this.mouth.material.uniforms.uInt.value = 0.5 + 1.5 * c;
+      this.impact.scale.setScalar(1e-4); this.impact.material.uniforms.uInt.value = 0;
+    } else {
+      const k = fire;
+      this._set(this.lock, 1e-3, 1e-4, 0, 0, time);
+      this._set(this.haze, len, 10 * scale * k, 0.006, 0.9 * k * fl, time);
+      this._set(this.outer, len, 4.2 * scale * k, 0.004, 1.0 * k * fl, time);
+      this._set(this.core, len, 1.5 * scale * (0.6 + 0.4 * k), 0.0018, 1.2 * k, time);
+      this.mouth.material.uniforms.uC.value.copy(this.outer.material.uniforms.uC.value);
+      this.mouth.scale.setScalar(5.5 * scale * k * fl);
+      this.mouth.material.uniforms.uInt.value = 2.2 * k;
+      if (hitSomething) {
+        this.impact.position.copy(L.dir).multiplyScalar(len).add(o);
+        this.impact.scale.setScalar(13 * scale * k * (0.8 + 0.25 * Math.sin(time * 41)));
+        this.impact.material.uniforms.uInt.value = 2.0 * k;
+      } else {
+        this.impact.scale.setScalar(1e-4); this.impact.material.uniforms.uInt.value = 0;
+      }
+    }
+    this.mouth.position.copy(o);
+  }
+
+  dispose() {
+    this.object.parent?.remove(this.object);
+    this._geo.dispose();
+    this._ballGeo?.dispose();
+    for (let i = 0; i < this.layers.length; i++) this.layers[i].material.dispose();
+    this.mouth.material.dispose();
+    this.impact.material.dispose();
   }
 }
