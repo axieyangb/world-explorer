@@ -1,6 +1,7 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
+import { extractVenues } from "./features/venues.js"; // [venues]
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -1303,10 +1304,12 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
   }
 
+  const venues = extractVenues(tiles, toLocalXZ, buildings); // [venues] also drops stadium shell buildings
   return {
     roads,
     railways,
     buildings,
+    venues, // [venues]
     water_polys,
     water_lines,
     island_holes,

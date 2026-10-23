@@ -39,6 +39,7 @@ import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetat
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import { PlacesSystem } from "./features/places.js"; // feature/places
+import { VenueRides } from "./features/venue_rides.js"; // [venues]
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
@@ -468,6 +469,7 @@ class WorldExplorerApp {
     }
 
     this.places = new PlacesSystem(this.scene); // feature/places
+    this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
     this._animate();
   }
 
@@ -2686,6 +2688,7 @@ class WorldExplorerApp {
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
+    if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {

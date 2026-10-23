@@ -15,6 +15,7 @@ import { computeStreetFeatures } from './features/street_worker.js'; // [feature
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
+import { buildVenues } from './features/venues.js'; // [venues]
 import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
 import {
   LANDMARKS_40,
@@ -1010,6 +1011,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         root.userData.places = computePlacesPayload({
           data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
         });
+        root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats }); // [venues] stadium bowls + theme-park rides
 
         stage = 4;
         this.done = true;
@@ -3484,6 +3486,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       street: root.userData.street || null, // [feature/street]
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
       places: root.userData.places || null, // feature/places
+      venues: root.userData.venues || null, // [venues]
       waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
       deckSegments: root.userData.deckSegments || [], // fix/water
       roadGrid: roadGridTransfer(buildRoadGrid(root.userData.roadSegments, root.userData.deckSegments), transferSet), // fix/water
@@ -3560,6 +3563,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     street: payload.street || null, // [feature/street]
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
     places: payload.places || null, // feature/places
+    venues: payload.venues || null, // [venues]
     waterMask: payload.waterMask || null, // fix/water
     deckSegments: payload.deckSegments || [], // fix/water
     roadGrid: payload.roadGrid !== undefined ? payload.roadGrid : undefined, // fix/water (built lazily if absent)

@@ -1071,66 +1071,7 @@ export function computePlacesPayload(ctx) {
     }
   }
 
-  // ---------------------------------------------------------------- 5. Stadium bowls (landuse=stadium without a stadium building)
-  for (const flat of (places && places.stadiums) || []) {
-    const area = ringArea(flat);
-    if (area < 6000) continue;
-    let mx = 0, mz = 0;
-    const n = flat.length / 2;
-    for (let i = 0; i < flat.length; i += 2) { mx += flat[i]; mz += flat[i + 1]; }
-    mx /= n; mz /= n;
-    let covered = false;
-    for (const B of blds) {
-      if (mx < B.minX || mx > B.maxX || mz < B.minZ || mz > B.maxZ) continue;
-      if (B.e.btype === 'stadium' || B.area > area * 0.35) { covered = true; break; }
-    }
-    if (covered) continue;
-    let cxx = 0, czz = 0, cxz = 0;
-    for (let i = 0; i < flat.length; i += 2) {
-      const dx = flat[i] - mx, dz = flat[i + 1] - mz;
-      cxx += dx * dx; czz += dz * dz; cxz += dx * dz;
-    }
-    const th = 0.5 * Math.atan2(2 * cxz, cxx - czz);
-    const ux = Math.cos(th), uz = Math.sin(th);
-    let a = 0, b = 0;
-    for (let i = 0; i < flat.length; i += 2) {
-      const dx = flat[i] - mx, dz = flat[i + 1] - mz;
-      a = Math.max(a, Math.abs(dx * ux + dz * uz));
-      b = Math.max(b, Math.abs(-dx * uz + dz * ux));
-    }
-    a *= 0.9; b *= 0.9;
-    if (a < 45 || b < 35) continue;
-    const H = Math.max(12, Math.min(30, b * 0.28));
-    const gy = getBeijingTerrainElevation(ox + mx, oz + mz);
-    const rng = mulberry32(hash2(ox + mx, oz + mz, 211));
-    const team = [[0.70, 0.16, 0.16], [0.14, 0.30, 0.62], [0.16, 0.50, 0.30], [0.85, 0.62, 0.12]][Math.floor(rng() * 4)];
-    const seatGrey = [0.62, 0.63, 0.66];
-    const concrete = [0.74, 0.73, 0.70];
-    const N = 56;
-    const P = (s, ang, y) => {
-      const ex = Math.cos(ang) * a * s, ez = Math.sin(ang) * b * s;
-      return [mx + ex * ux - ez * uz, y, mz + ex * uz + ez * ux];
-    };
-    const IN = 0.6, FIELD = 0.48;
-    for (let k = 0; k < N; k++) {
-      const a0 = (k / N) * Math.PI * 2, a1 = ((k + 1) / N) * Math.PI * 2;
-      structs.quad2(P(1, a1, gy - 1), P(1, a0, gy - 1), P(1, a0, gy + H), P(1, a1, gy + H), concrete);
-      for (let t = 0; t < 3; t++) {
-        const s0 = IN + (0.97 - IN) * (t / 3), s1 = IN + (0.97 - IN) * ((t + 1) / 3);
-        const y0 = gy + 3 + (H - 3) * (t / 3), y1 = gy + 3 + (H - 3) * ((t + 1) / 3);
-        const c = (k + t) % 2 === 0 ? team : seatGrey;
-        structs.quad2(P(s0, a0, y0), P(s0, a1, y0), P(s1, a1, y1), P(s1, a0, y1), c);
-      }
-      structs.quad2(P(0.97, a0, gy + H), P(0.97, a1, gy + H), P(1, a1, gy + H), P(1, a0, gy + H), concrete);
-      structs.quad2(P(1, a0, gy + H + 2.5), P(1, a1, gy + H + 2.5), P(0.84, a1, gy + H + 1.6), P(0.84, a0, gy + H + 1.6), [0.88, 0.88, 0.86]);
-      structs.quad2(P(IN, a1, gy + 0.2), P(IN, a1, gy + 3), P(IN, a0, gy + 3), P(IN, a0, gy + 0.2), concrete);
-      structs.quad2(P(FIELD, a0, gy + 0.22), P(FIELD, a1, gy + 0.22), P(IN, a1, gy + 0.22), P(IN, a0, gy + 0.22), [0.66, 0.33, 0.24]);
-      const c0 = [mx, gy + 0.24, mz];
-      const stripe = k % 4 < 2 ? [0.22, 0.55, 0.27] : [0.19, 0.49, 0.24];
-      structs.tri(c0[0], c0[1], c0[2], ...P(FIELD, a1, gy + 0.24), ...P(FIELD, a0, gy + 0.24), stripe);
-      structs.tri(c0[0], c0[1], c0[2], ...P(FIELD, a0, gy + 0.24), ...P(FIELD, a1, gy + 0.24), stripe);
-    }
-  }
+  // 5. Stadium bowls: moved to venues.js [venues]
 
   // ---------------------------------------------------------------- 6. Steel bridge railings + girders over water
   if (isPointInWater) {
