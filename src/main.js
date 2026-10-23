@@ -37,6 +37,7 @@ import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetat
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import { PlacesSystem } from "./features/places.js"; // feature/places
+import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import {
   getLang,
   setLang,
@@ -253,6 +254,7 @@ class WorldExplorerApp {
     this.scene.add(this.avatarMesh);
 
     this.heliMesh = createHelicopterModel();
+    this.heli = null; // feature/heli-gta: created once scene/camera exist (see _ensureHeli)
     this.heliMesh.visible = false;
     this.heliMesh.position.copy(this.pos);
     this.heliMesh.rotation.y = this.yaw;
@@ -1402,6 +1404,11 @@ class WorldExplorerApp {
     return Math.atan2(Math.sin(to - from), Math.cos(to - from));
   }
 
+  _ensureHeli() {
+    if (!this.heli) this.heli = new HeliFlight(this, { halfWorld: HALF_WORLD });
+    return this.heli;
+  }
+
   _updatePhysics(dt) {
     this.vfxTime += dt;
     if (this.camYawOffset !== 0) {
@@ -1412,77 +1419,8 @@ class WorldExplorerApp {
     const shiftPressed = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") || this.nitroLocked;
 
     if (this.mode === "helicopter") {
-      const { fuselage, mainRotor, tailRotor } = this.heliMesh.userData;
-      const isNitro = shiftPressed;
-      this.nitroActive = isNitro;
-
-      const fwdInput =
-        (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) -
-        (this.keys.has("KeyS") || this.keys.has("ArrowDown") ? 1 : 0);
-      const strafeInput =
-        (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) -
-        (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0);
-      const climbInput =
-        (this.keys.has("Space") || this.keys.has("KeyE") ? 1 : 0) -
-        (this.keys.has("KeyQ") || this.keys.has("ControlLeft") ? 1 : 0);
-
-      const maxHeliSpeed = isNitro ? 340.3 : 92.0;
-      const accel = isNitro ? 140.0 : 38.0;
-
-      const hasHorizInput = fwdInput !== 0 || strafeInput !== 0;
-      if (hasHorizInput) {
-        // yaw grows toward +X, which is screen-LEFT from the chase camera, so strafe-right is -angle.
-        const inputAngle = Math.atan2(-strafeInput, fwdInput);
-        const targetYaw = this.camYaw + inputAngle;
-        const diff = this._angleDiff(this.yaw, targetYaw);
-        this.yaw += diff * Math.min(1, 6.5 * dt);
-        this.speed = Math.min(maxHeliSpeed, this.speed + accel * dt);
-      } else {
-        this.speed = Math.max(0, this.speed - 28.0 * dt);
-      }
-
-      const maxClimb = isNitro ? 65.0 : 28.0;
-      const targetVelY = climbInput * maxClimb;
-      this.heliVelY = THREE.MathUtils.lerp(this.heliVelY, targetVelY, Math.min(1, 7.5 * dt));
-
-      const nx = this.pos.x + Math.sin(this.yaw) * this.speed * dt;
-      const nz = this.pos.z + Math.cos(this.yaw) * this.speed * dt;
-      let ny = this.pos.y + this.heliVelY * dt;
-
-      const terrY = getBeijingTerrainElevation(nx, nz);
-      const bldgCeil = this.getBuildingCeilingAt(nx, ny - 2.0, nz, 2.2);
-      const minSafeY = Math.max(terrY + 1.5, bldgCeil !== null ? bldgCeil + 1.5 : -Infinity);
-      if (ny < minSafeY) {
-        ny = minSafeY;
-        if (this.heliVelY < 0) this.heliVelY = 0;
-      }
-      ny = Math.min(2600, ny);
-
-      this.pos.set(
-        Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, nx)),
-        ny,
-        Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, nz))
-      );
-
-      const surf = this.sampleRoadSurface(this.pos.x, terrY + 0.5, this.pos.z);
-      if (surf && surf.seg && surf.seg.name) {
-        this.currentRoadName = surf.seg.name;
-      }
-
-      this.heliMesh.position.copy(this.pos);
-      this.heliMesh.rotation.y = this.yaw;
-
-      if (mainRotor) mainRotor.rotation.y += (isNitro ? 42.0 : 24.0) * dt;
-      if (tailRotor) tailRotor.rotation.x += (isNitro ? 48.0 : 28.0) * dt;
-      if (fuselage) {
-        const speedRatio = Math.min(1, this.speed / 95.0);
-        const targetPitch = hasHorizInput ? 0.22 * speedRatio : 0;
-        const targetRoll = strafeInput * 0.24 * speedRatio; // bank into the strafe direction
-        fuselage.rotation.x = THREE.MathUtils.lerp(fuselage.rotation.x, targetPitch, Math.min(1, 8 * dt));
-        fuselage.rotation.z = THREE.MathUtils.lerp(fuselage.rotation.z, targetRoll, Math.min(1, 8 * dt));
-      }
-
-      updateEntityNitroVfx(this.heliMesh, isNitro && this.speed > 5.0, this.speed, this.vfxTime);
+      this._ensureHeli().update(dt, { boost: shiftPressed }); // feature/heli-gta: GTA-style flight model
+      updateEntityNitroVfx(this.heliMesh, this.nitroActive, this.speed, this.vfxTime);
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
       updateEntityNitroVfx(this.avatarMesh, false, 0, this.vfxTime);
       return;
@@ -1708,6 +1646,7 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
       const isWalk = this.mode === "walk";
       const isHeli = this.mode === "helicopter";
+      if (isHeli && this.heli) this.heli.cameraPivot(this.camPivot, dt); // feature/heli-gta: lagged chase pivot
       const spec = VEHICLE_SPECS[this.vehicleIdx];
       const isBus = !isWalk && !isHeli && spec && spec.id === "bus";
       const rawBaseDist = isHeli
@@ -1758,13 +1697,15 @@ class WorldExplorerApp {
         this.camPivot.y + pivotH,
         this.camPivot.z + Math.cos(viewYaw) * lookAhead
       );
+      if (isHeli && this.heli) this.heli.cameraShake(this.camera, dt);
     }
 
     const absSpd = Math.abs(this.speed);
     const boostFovAdd = this.nitroActive
       ? Math.min(20.0, 6.0 + (absSpd / 340.3) * 14.0)
       : Math.min(6.0, (absSpd / 145.0) * 6.0);
-    const targetFov = 58.0 + boostFovAdd;
+    const heliFov = this.mode === "helicopter" && this.heli && this.camMode !== "topdown";
+    const targetFov = 58.0 + (heliFov ? this.heli.fovAdd() : boostFovAdd);
 
     const camTerrY = getBeijingTerrainElevation(this.camera.position.x, this.camera.position.z);
     const camAlt = Math.max(1.0, this.camera.position.y - camTerrY);
@@ -1831,7 +1772,7 @@ class WorldExplorerApp {
   _bindInputs() {
     const fadeControlsHint = () => {
       const hint = document.getElementById("hud-controls-hint");
-      if (hint && !hint.classList.contains("faded")) {
+      if (hint && !hint.classList.contains("faded") && performance.now() - (this._hintShownAt || 0) > 2500) {
         hint.classList.add("faded");
       }
     };
@@ -1938,6 +1879,25 @@ class WorldExplorerApp {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
     });
+  }
+
+  _showControlsHint() {
+    const hint = document.getElementById("hud-controls-hint");
+    if (!hint) return;
+    const zh = getLang() === "zh";
+    const text =
+      this.mode === "helicopter"
+        ? zh
+          ? "W/S 升降 · A/D 转向 · ↑↓ 俯仰 · ←→ 侧倾 · 拖动看 · C 退出"
+          : "W/S Up/Down · A/D Yaw · ↑↓ Pitch · ←→ Roll · Drag Look · C Exit"
+        : zh
+          ? "WASD 移动 · Shift 加速 · 空格 刹车 · F 步行/驾驶 · C 直升机 · G 换车 · / 搜索"
+          : "WASD Move · Shift Boost · Space Brake · F Walk/Drive · C Helicopter · G Switch Car · / Search";
+    if (hint.textContent !== text) hint.textContent = text;
+    hint.classList.remove("faded");
+    this._hintShownAt = performance.now();
+    clearTimeout(this._hintTimer);
+    this._hintTimer = setTimeout(() => hint.classList.add("faded"), 6000);
   }
 
   _updateModeAndCamBadges() {
@@ -2051,11 +2011,14 @@ class WorldExplorerApp {
         const minHeliY = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 150.0;
         this.pos.y = Math.max(this.pos.y + 150.0, minHeliY);
         this.heliVelY = 0;
+        this._ensureHeli().onEnter(); // feature/heli-gta
       }
       this.heliMesh.position.copy(this.pos);
       this.heliMesh.rotation.y = this.yaw;
       this.camPivot.copy(this.pos);
     }
+    if (prevMode === "helicopter" && newMode !== "helicopter" && this.heli) this.heli.onExit();
+    this._showControlsHint();
   }
 
   cycleCameraMode() {
