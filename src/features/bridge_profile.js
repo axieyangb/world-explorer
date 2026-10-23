@@ -19,6 +19,7 @@
  * Worker-safe: no THREE / DOM.
  */
 import { worldXZToLatLon } from './bridge_deck.js';
+import { LANDMARKS, landmarkWorldXZ } from './landmarks/registry.js'; // [release-6-integ] landmark deck pins
 
 const FOOT = new Set(['footway', 'pedestrian', 'cycleway', 'path', 'steps', 'bridleway', 'corridor']);
 const HIGHWAY = new Set(['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link']);
@@ -227,6 +228,32 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
     }
   }
 
+  // [release-6-integ] landmark deck pins: bridge vertices inside a landmark's `deck` footprint sit exactly on the
+  // model's road deck (base = min terrain-mesh height over the landmark's ground ring, as landmark_system._groundY)
+  const pinY = new Float64Array(N).fill(NaN);
+  let anyPin = false;
+  if (worldOrigin) {
+    for (const l of LANDMARKS) {
+      if (!l.on || !l.deck) continue;
+      const p = landmarkWorldXZ(l, worldOrigin);
+      if (!p || Math.abs(p[0] - ox) > 2500 || Math.abs(p[1] - oz) > 2500) continue;
+      const s = l.supp || { r: 20 };
+      const gr = l.groundR ?? Math.min(40, (s.r || Math.min(s.hw, s.hd)) * 0.5);
+      let base = meshY(terrainAt, p[0], p[1]);
+      for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; base = Math.min(base, meshY(terrainAt, p[0] + Math.cos(a) * gr, p[1] + Math.sin(a) * gr)); }
+      // chunk_builder draws roads at lift + ROAD_Y_BIAS (trunk 0.86 + 0..0.14 micro bias): pin so the drawn deck lands on the model's
+      const y = (Number.isFinite(base) ? base : 0) + (l.yOff || 0) + l.deck.y - 0.93;
+      const h = (l.heading || 0) * Math.PI / 180, c = Math.cos(h), sn = Math.sin(h);
+      for (let r = 0; r < roads.length; r++) {
+        const ids = wayNodes[r]; if (!ids || !roads[r][7]) continue;
+        for (const v of ids) {
+          const dx = ox + nodeX[v] - p[0], dz = oz + nodeZ[v] - p[1];
+          if (Math.abs(dx * c + dz * sn) <= l.deck.hw && Math.abs(-dx * sn + dz * c) <= l.deck.hd) { pinY[v] = y; anyPin = true; }
+        }
+      }
+    }
+  }
+
   // ---- 2. bridge components -> straight deck line between abutments ----
   const bridgeIdx = [];
   for (let r = 0; r < roads.length; r++) if (wayNodes[r] && roads[r][7]) bridgeIdx.push(r);
@@ -353,7 +380,8 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
         const w = l[j + 1];
         if (footOnly && w >= 0) continue;
         const nb = l[j], c = uv - Math.abs(w);
-        if (c > A[nb] + 1e-6 && (isBridgeNode[nb] || c > nodeG[nb] + 0.02)) { A[nb] = c; srcOf[nb] = srcOf[v]; heap.push(c, nb); }
+        if (c > A[nb] + 1e-6 && !(pinY[nb] < c) && (isBridgeNode[nb] || c > nodeG[nb] + 0.02)) { // [release-6-integ] !(pin < c): pins are hard
+          A[nb] = c; srcOf[nb] = srcOf[v]; heap.push(c, nb); }
       }
     }
   };
@@ -446,9 +474,28 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
         }
       }
       const footBridge = FOOT.has(cls);
+      for (let i = 0; i < n; i++) if (Number.isFinite(pinY[ids[i]])) req[i] = pinY[ids[i]]; // [release-6-integ] landmark deck
       for (let i = 0; i < n; i++) raise(ids[i], req[i], footBridge);
     }
     propagate();
+  }
+
+  // [release-6-integ] landmark deck pins are also ceilings: lower everything near a pin to pin + grade * path so
+  // approaches ramp down onto the deck instead of stepping (ground ways still never go below terrain in step 5)
+  if (anyPin) {
+    const cap = new Float64Array(N).fill(Infinity), capTop = new Float64Array(N); // capTop: pin + 8 m (reach limit)
+    const hp = new MaxHeap();
+    for (let v = 0; v < N; v++) if (Number.isFinite(pinY[v])) { cap[v] = pinY[v]; capTop[v] = pinY[v] + 8; hp.push(-pinY[v], v); }
+    while (hp.size) {
+      const v = hp.pop(); const cv = -hp._lastV;
+      if (cv > cap[v] + 1e-9) continue;
+      const l = adj[v];
+      for (let j = 0; j < l.length; j += 2) {
+        const nb = l[j], c = cv + Math.abs(l[j + 1]);
+        if (c < cap[nb] - 1e-6 && c <= capTop[v]) { cap[nb] = c; capTop[nb] = capTop[v]; hp.push(-c, nb); }
+      }
+    }
+    for (let v = 0; v < N; v++) if (cap[v] < Infinity) { if (UM[v] > cap[v]) UM[v] = cap[v]; if (UF[v] > cap[v]) UF[v] = cap[v]; }
   }
 
   // ---- 5. per-way vertex heights ----
@@ -500,6 +547,19 @@ function isGoldenGateSpan(name, wx, wz, worldOrigin) {
 function isBayBridgeWestSpan(name, wx, wz, worldOrigin) {
   const ll = worldXZToLatLon(wx, wz, worldOrigin);
   return Boolean(ll && ll[0] >= 37.787 && ll[0] <= 37.812 && ll[1] >= -122.388 && ll[1] <= -122.366);
+}
+
+// [release-6-integ] = environment.getChunkTerrainMeshElevation (24x24 chunk mesh triangles, DEM - 0.35) over terrainAt
+function meshY(terrainAt, wx, wz) {
+  const cx = Math.max(0, Math.min(39, Math.floor((wx + 20000) / 1000)));
+  const cz = Math.max(0, Math.min(39, Math.floor((wz + 20000) / 1000)));
+  const step = 1000 / 24, x00 = -20000 + cx * 1000, z00 = -20000 + cz * 1000;
+  const fx = Math.max(0, Math.min(24 - 0.0001, (wx - x00) / step)), fz = Math.max(0, Math.min(24 - 0.0001, (wz - z00) / step));
+  const ix = Math.floor(fx), iz = Math.floor(fz), tx = fx - ix, tz = fz - iz;
+  const x0 = x00 + ix * step, z0 = z00 + iz * step;
+  const ha = terrainAt(x0, z0) - 0.35, hb = terrainAt(x0 + step, z0) - 0.35;
+  const hc = terrainAt(x0, z0 + step) - 0.35, hd = terrainAt(x0 + step, z0 + step) - 0.35;
+  return tx + tz <= 1 ? ha + tx * (hb - ha) + tz * (hc - ha) : hd + (1 - tx) * (hc - hd) + (1 - tz) * (hb - hd);
 }
 
 function widthOf(roads, r) {
