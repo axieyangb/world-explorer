@@ -681,7 +681,9 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       const oneway = f.tags.oneway !== undefined ? (f.tags.oneway ? 1 : 0) : linkSpec ? linkSpec.oneway : baseSpec.oneway;
       const onewayRev = Number(f.tags.oneway) === -1; // OSM oneway=-1: traffic flows against the way geometry
       const isBridge = f.tags.brunnel === "bridge" || (f.tags.layer || 0) > 0 ? 1 : 0;
-      const isTunnel = f.tags.brunnel === "tunnel" || (f.tags.layer || 0) < 0 ? 1 : 0;
+      // [release-6-integ] a "tunnel" with layer > 0 is a building passage on a bridge (Tower Bridge towers): keep it a
+      // bridge deck, otherwise the deck graph loses the tower sections and the bascule span drops to the water (~6 m walls)
+      const isTunnel = (f.tags.brunnel === "tunnel" && !((f.tags.layer || 0) > 0)) || (f.tags.layer || 0) < 0 ? 1 : 0;
       const layer = f.tags.layer !== undefined ? Number(f.tags.layer) : isBridge ? 1 : isTunnel ? -1 : 0;
 
       for (const rawLine of f.geom) {

@@ -4,6 +4,7 @@ import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.j
 import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
 import { buildBridgeDecks, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js'; // fix/water
 import { computeRoadLiftProfiles } from './features/bridge_profile.js'; // fix/bridge-continuity
+import { clearBridgeDeckBuildings } from './features/bridge_deck_buildings.js'; // [release-6-integ] Tower Bridge deck blockers
 import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js'; // fix/water
 import {
   getBeijingTerrainElevation,
@@ -17,7 +18,8 @@ import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
-import { buildVenues } from './features/venues.js'; // [venues]
+import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
+setVenueTerrainSampler(getBeijingTerrainElevation); // [release-6-integ] breaks environment<->venues import cycle
 import { addPlacesInfo } from './features/places_info/pi_worker.js'; // places-info
 import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
 import {
@@ -2674,6 +2676,7 @@ function buildRailways(railways, ox, oz, railGroup, mats) {
 }
 
 function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingColliders, roadSegments = [], entityTable = [], regionTag = 'beijing') {
+  buildings = clearBridgeDeckBuildings(buildings, ox, oz, roadSegments, getBeijingTerrainElevation); // [release-6-integ] keep bridge carriageways clear
   const wfcPos = [];
   const wfcNorm = [];
   const wfcCol = [];

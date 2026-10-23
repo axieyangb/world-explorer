@@ -84,6 +84,29 @@ MOD_ID_MAP = {
     'src/features/kaiju/kaiju_super.js': '__MOD_kaiju_super',
     'src/features/kaiju/kaiju_hud.js': '__MOD_kaiju_hud',
     'src/features/kaiju/kaiju_mode.js': '__MOD_kaiju_mode',
+    'src/features/waterways.js': '__MOD_waterways',  # [release-6]
+    'src/features/rail_extract.js': '__MOD_rail_extract',  # [release-6]
+    'src/features/venues.js': '__MOD_venues',  # [release-6]
+    'src/features/bridge_profile.js': '__MOD_bridge_profile',  # [release-6]
+    'src/features/places_info/pi_worker.js': '__MOD_places_info_pi_worker',  # [release-6]
+    'src/features/rail_build.js': '__MOD_rail_build',  # [release-6]
+    'src/features/places_info/pi_map.js': '__MOD_places_info_pi_map',  # [release-6]
+    'src/features/street_detail.js': '__MOD_street_detail',  # [release-6]
+    'src/features/venue_rides.js': '__MOD_venue_rides',  # [release-6]
+    'src/features/places_info/index.js': '__MOD_places_info_index',  # [release-6]
+    'src/features/places_info/pi_system.js': '__MOD_places_info_pi_system',  # [release-6]
+    'src/features/places_info/pi_models.js': '__MOD_places_info_pi_models',  # [release-6]
+    'src/features/places_info/pi_borders.js': '__MOD_places_info_pi_borders',  # [release-6]
+    'src/features/places_info/pi_cards.js': '__MOD_places_info_pi_cards',  # [release-6]
+    'src/features/weapon_sfx.js': '__MOD_weapon_sfx',  # [release-6]
+    'src/features/rail_transit.js': '__MOD_rail_transit',  # [release-6]
+    'src/features/rail_models.js': '__MOD_rail_models',  # [release-6]
+    'src/features/maritime/maritime.js': '__MOD_maritime_maritime',  # [release-6]
+    'src/features/maritime/region.js': '__MOD_maritime_region',  # [release-6]
+    'src/features/maritime/geo.js': '__MOD_maritime_geo',  # [release-6]
+    'src/features/maritime/piers.js': '__MOD_maritime_piers',  # [release-6]
+    'src/features/maritime/vessel_models.js': '__MOD_maritime_vessel_models',  # [release-6]
+    'src/features/maritime/ais.js': '__MOD_maritime_ais',  # [release-6]
     'src/main.js': '__MOD_main',
 }
 

@@ -7,7 +7,10 @@
 //     compact list of animated rides for the main-thread VenueRides system (venue_rides.js).
 
 import * as THREE from '../../vendor/three.module.js';
-import { getBeijingTerrainElevation } from '../environment.js';
+// [release-6-integ] no static import of ../environment.js: environment -> global_tiles -> venues -> environment
+// is an import cycle the standalone IIFE bundle cannot handle. chunk_builder injects the terrain sampler.
+let getBeijingTerrainElevation = () => 0;
+export function setVenueTerrainSampler(fn) { if (typeof fn === 'function') getBeijingTerrainElevation = fn; }
 
 const HALF = 500;
 
