@@ -1431,7 +1431,8 @@ class WorldExplorerApp {
 
       const hasHorizInput = fwdInput !== 0 || strafeInput !== 0;
       if (hasHorizInput) {
-        const inputAngle = Math.atan2(strafeInput, fwdInput);
+        // yaw grows toward +X, which is screen-LEFT from the chase camera, so strafe-right is -angle.
+        const inputAngle = Math.atan2(-strafeInput, fwdInput);
         const targetYaw = this.camYaw + inputAngle;
         const diff = this._angleDiff(this.yaw, targetYaw);
         this.yaw += diff * Math.min(1, 6.5 * dt);
@@ -1476,7 +1477,7 @@ class WorldExplorerApp {
       if (fuselage) {
         const speedRatio = Math.min(1, this.speed / 95.0);
         const targetPitch = hasHorizInput ? 0.22 * speedRatio : 0;
-        const targetRoll = -strafeInput * 0.24 * speedRatio;
+        const targetRoll = strafeInput * 0.24 * speedRatio; // bank into the strafe direction
         fuselage.rotation.x = THREE.MathUtils.lerp(fuselage.rotation.x, targetPitch, Math.min(1, 8 * dt));
         fuselage.rotation.z = THREE.MathUtils.lerp(fuselage.rotation.z, targetRoll, Math.min(1, 8 * dt));
       }
@@ -1502,7 +1503,7 @@ class WorldExplorerApp {
       this.speed = THREE.MathUtils.lerp(this.speed, targetSpd, Math.min(1, 12 * dt));
 
       if (moveLen > 0) {
-        const moveYaw = this.camYaw + Math.atan2(strafe, fwd);
+        const moveYaw = this.camYaw + Math.atan2(-strafe, fwd); // D = camera-right (yaw grows toward screen-left)
         const diff = this._angleDiff(this.yaw, moveYaw);
         this.yaw += diff * Math.min(1, 12 * dt);
         const nx = this.pos.x + Math.sin(this.yaw) * this.speed * dt;

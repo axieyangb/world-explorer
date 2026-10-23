@@ -586,12 +586,14 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       const lanes = Number(f.tags.lanes) || (linkSpec ? linkSpec.lanes : baseSpec.lanes);
       const widthM = linkSpec ? linkSpec.width : baseSpec.width;
       const oneway = f.tags.oneway !== undefined ? (f.tags.oneway ? 1 : 0) : linkSpec ? linkSpec.oneway : baseSpec.oneway;
+      const onewayRev = Number(f.tags.oneway) === -1; // OSM oneway=-1: traffic flows against the way geometry
       const isBridge = f.tags.brunnel === "bridge" || (f.tags.layer || 0) > 0 ? 1 : 0;
       const isTunnel = f.tags.brunnel === "tunnel" || (f.tags.layer || 0) < 0 ? 1 : 0;
       const layer = f.tags.layer !== undefined ? Number(f.tags.layer) : isBridge ? 1 : isTunnel ? -1 : 0;
 
-      for (const line of f.geom) {
-        if (line.length < 2) continue;
+      for (const rawLine of f.geom) {
+        if (rawLine.length < 2) continue;
+        const line = onewayRev ? rawLine.slice().reverse() : rawLine;
         let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
         const ptsXZ = new Array(line.length);
         for (let i = 0; i < line.length; i++) {
