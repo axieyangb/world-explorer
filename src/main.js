@@ -67,6 +67,7 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
+import { sampleRoadSurfaceIndexed } from "./features/road_grid.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -1205,55 +1206,8 @@ class WorldExplorerApp {
   }
 
   sampleRoadSurface(wx, wy, wz) {
-    const [cx, cz] = this.worldToChunk(wx, wz);
-    let bestSeg = null;
-    let bestScore = Infinity;
-    let bestY = 0;
-    const candidates = [];
-
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const chunk = this.loadedChunks.get(`${cx + dx},${cz + dz}`);
-        if (!chunk || !chunk.userData.roadSegments) continue;
-        const segs = chunk.userData.roadSegments;
-        for (let i = 0; i < segs.length; i++) {
-          const s = segs[i];
-          if (s.tunnel) continue;
-          const vx = s.x2 - s.x1;
-          const vz = s.z2 - s.z1;
-          const len2 = vx * vx + vz * vz;
-          if (len2 < 0.05) continue;
-          let tParam = ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2;
-          tParam = Math.max(0, Math.min(1, tParam));
-          const px = s.x1 + vx * tParam;
-          const pz = s.z1 + vz * tParam;
-          const distH = Math.hypot(wx - px, wz - pz);
-          const halfW = s.width * 0.75 + 3.4;
-          if (distH > halfW) continue;
-
-          const segY = s.y1 + (s.y2 - s.y1) * tParam;
-          const dy = Math.abs(segY - wy);
-          if (dy > 3.6) continue;
-
-          candidates.push(segY);
-          const score = distH + dy * 2.5;
-          if (score < bestScore) {
-            bestScore = score;
-            bestSeg = s;
-            bestY = segY;
-          }
-        }
-      }
-    }
-    if (!bestSeg) return null;
-    // At intersections where two roads with different yBias overlap, ride on top of the highest overlapping surface (+0.05m clears sidewalks/markings)
-    let surfaceY = bestY;
-    for (let i = 0; i < candidates.length; i++) {
-      if (Math.abs(candidates[i] - bestY) <= 1.2 && candidates[i] > surfaceY) {
-        surfaceY = candidates[i];
-      }
-    }
-    return { y: surfaceY + 0.07, seg: bestSeg };
+    // fix/water: grid-accelerated (was a linear scan over every segment of the 3x3 chunks) + bridge deck fill
+    return sampleRoadSurfaceIndexed(this, wx, wy, wz);
   }
 
   getBuildingCeilingAt(wx, wy, wz, margin = 0.0) {

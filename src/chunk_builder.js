@@ -2,6 +2,8 @@ import * as THREE from '../vendor/three.module.js';
 import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
 import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
 import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
+import { buildBridgeDecks, levelWaterBridgeRawYs, collectMajorBridgeWays } from './features/bridge_deck.js'; // fix/water
+import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js'; // fix/water
 import {
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
@@ -793,6 +795,21 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           roadEntities
         );
 
+        // fix/water: fill gaps between parallel narrow bridge ways (deck strip + physics-only deck segments)
+        {
+          const deck = buildBridgeDecks(roadSegments, ox, oz);
+          root.userData.deckSegments = deck.segs;
+          if (deck.pos.length > 0) {
+            const dg = new THREE.BufferGeometry();
+            dg.setAttribute('position', new THREE.Float32BufferAttribute(deck.pos, 3));
+            dg.setAttribute('color', new THREE.BufferAttribute(toUint8Colors(deck.col), 3, true));
+            finalizeAndReleaseGeometry(dg, true, true);
+            const dm = new THREE.Mesh(dg, mats.roadMat);
+            dm.receiveShadow = true;
+            subGroups.roads.add(dm);
+          }
+        }
+
         // 3. Railways & Elevated Subway Viaducts
         buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
 
@@ -1485,6 +1502,7 @@ function buildRoadsAndBridges(
   const mCol = [];
 
   const bPos = []; // Bridge concrete parapets, deck soffits & piers
+  let majorBridgeWays = null; // fix/water: lazily collected for levelWaterBridgeRawYs
 
   // Pre-collect named roads in this chunk so unnamed ramps/service ways can inherit nearby road names
   const namedChunkRoads = [];
@@ -1624,6 +1642,11 @@ function buildRoadsAndBridges(
           : isMinorWay
             ? Math.max(-0.8, Math.min(0.85, rY * 0.14))
             : rY;
+    }
+    // fix/water: one consistent deck height for all minor ways of a bridge over water (+ no riverbed dips)
+    if (isBridge && isPointInWater) {
+      levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, isMinorWay || isHighPedOverpass || isScenicArchBridge, isPointInWater, getBeijingTerrainElevation,
+        majorBridgeWays || (majorBridgeWays = collectMajorBridgeWays(roads)));
     }
     // Skip rendering 3D mesh for 1D topological _link connectors that dive directly into a sunken open-trench highway
     // (where the sunken highway and ground auxiliary road already touch at the trench retaining wall).
@@ -3053,6 +3076,8 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
       places: root.userData.places || null, // feature/places
       waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
+      deckSegments: root.userData.deckSegments || [], // fix/water
+      roadGrid: roadGridTransfer(buildRoadGrid(root.userData.roadSegments, root.userData.deckSegments), transferSet), // fix/water
     },
     transferList: (collectPlacesTransfer(root.userData.places, transferSet), Array.from(transferSet)), // feature/places
   };
@@ -3125,6 +3150,8 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
     places: payload.places || null, // feature/places
     waterMask: payload.waterMask || null, // fix/water
+    deckSegments: payload.deckSegments || [], // fix/water
+    roadGrid: payload.roadGrid !== undefined ? payload.roadGrid : undefined, // fix/water (built lazily if absent)
   };
 
   return root;
