@@ -11,7 +11,7 @@ import {
   getChunkTerrainMeshElevation,
   buildChunkTerrainMesh,
   buildChunkTerrainArrays,
-  snowCover, // [fix/terrain-landmark-qa]
+  snowCover,
 } from './environment.js';
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]

@@ -36,11 +36,14 @@ import {
 
 export const INST_STRIDE = 9;
 // [feature/climate-flora] species ids live in flora_climate.js (re-exported for existing importers)
-export {
+import {
   SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BANANA,
   SP_DATEPALM, SP_BIRCH, SP_BAMBOO, SP_BARE, SP_AUTO, SPECIES_COUNT,
 } from './flora_climate.js';
-import { SP_BUSH } from './flora_climate.js';
+export {
+  SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BANANA,
+  SP_DATEPALM, SP_BIRCH, SP_BAMBOO, SP_BARE, SP_AUTO, SPECIES_COUNT,
+};
 
 const MAX_CHUNK_INSTANCES = 12000;
 

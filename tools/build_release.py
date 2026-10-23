@@ -224,7 +224,8 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
   )
 
   def repl_named_import(m):
-    inner = m.group(1)
+    inner = re.sub(r'//.*', '', m.group(1))
+    inner = re.sub(r'/\*.*?\*/', '', inner, flags=re.S)
     spec = m.group(2)
     target_rel = resolve_rel_import(rel_path, spec)
     items = []
