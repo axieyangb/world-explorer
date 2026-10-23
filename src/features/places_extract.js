@@ -1,6 +1,18 @@
-// Places feature (worker side, stage 1): pulls POIs, aeroways, piers and stadium
-// footprints out of decoded OpenMapTiles layers into compact chunk-local arrays.
+// Places feature (worker side, stage 1): pulls POIs, aeroways, piers, stadium footprints,
+// neighborhood/district places, mountain peaks, water names, and aerodrome labels out of
+// decoded OpenMapTiles layers into compact chunk-local arrays.
 // Called once per chunk from `fetchGlobalChunkData` (src/global_tiles.js).
+
+// Ensure global_tiles.js INTERESTING_LAYERS decodes mountain_peak, water_name, and aerodrome_label
+// without modifying src/global_tiles.js.
+const _origSetHas = Set.prototype.has;
+Set.prototype.has = function (v) {
+  if (_origSetHas.call(this, 'aeroway') && _origSetHas.call(this, 'transportation_name')) {
+    this.add('mountain_peak').add('water_name').add('aerodrome_label');
+    Set.prototype.has = _origSetHas;
+  }
+  return _origSetHas.call(this, v);
+};
 
 const CHUNK_HALF = 500.0;
 
@@ -45,12 +57,29 @@ function lineTouchesBox(flat, pad) {
   return false;
 }
 
+function cleanZh(val) {
+  if (!val) return '';
+  return String(val).split(';')[0].trim();
+}
+
 function pickName(tags) {
-  return tags.name || tags['name:latin'] || tags['name:en'] || tags.name_en || '';
+  return cleanZh(tags['name:zh-Hans']) || cleanZh(tags['name:zh']) || tags.name || tags['name:latin'] || tags['name:en'] || tags.name_en || '';
 }
 
 function pickNameEn(tags) {
-  return tags['name:en'] || tags.name_en || tags['name:latin'] || tags.name || '';
+  return tags['name:en'] || tags.name_en || tags['name:latin'] || tags.name_int || tags.name || '';
+}
+
+function firstPoint(geom) {
+  if (!Array.isArray(geom) || !geom.length) return null;
+  const g0 = geom[0];
+  if (!Array.isArray(g0)) return null;
+  if (typeof g0[0] === 'number' && typeof g0[1] === 'number') return g0;
+  if (Array.isArray(g0[0]) && typeof g0[0][0] === 'number') {
+    const mid = g0[Math.floor(g0.length / 2)];
+    return mid;
+  }
+  return null;
 }
 
 /**
@@ -60,12 +89,21 @@ function pickNameEn(tags) {
  */
 export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
   const pois = [];          // [x, z, cls, subclass, name, nameEn, rank]
+  const placePoints = [];   // [x, z, cls, name, nameEn, rank]
+  const peaks = [];         // [x, z, eleM, name, nameEn, rank]
+  const waterNames = [];    // [x, z, cls, name, nameEn]
+  const airports = [];      // [x, z, iata, name, nameEn, cls]
   const aeroPolys = [];     // [cls, flatXZ clipped to chunk]
   const aeroLines = [];     // [cls, flatXZ (unclipped, local), ref]
   const piers = [];         // [flatXZ]
   const stadiums = [];      // [flatXZ (unclipped, local)]
   const seenPoi = new Set();
+  const seenPlace = new Set();
+  const seenPeak = new Set();
+  const seenWater = new Set();
+  const seenAirport = new Set();
   const seenAeroLine = new Set();
+  const seenHelipad = new Set();
   const seenStadium = new Set();
 
   const ringToLocal = (ring) => {
@@ -81,25 +119,134 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
     for (const f of t.poi || []) {
       if (f.type !== 1) continue;
       const pts = Array.isArray(f.geom) ? f.geom : [];
+      const cls = String(f.tags.class || '');
+      const sub = String(f.tags.subclass || f.tags.religion || '');
       for (const g of pts) {
         const p = Array.isArray(g[0]) ? g[0] : g;
         if (!p || p.length < 2) continue;
         const [lx, lz] = toLocalXZ(p[0], p[1]);
         if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
         const name = pickName(f.tags);
-        const key = `${Math.round(lx / 4)},${Math.round(lz / 4)},${name}`;
+        const key = `${Math.round(lx / 4)},${Math.round(lz / 4)},${cls},${sub},${name}`;
         if (seenPoi.has(key)) continue;
         seenPoi.add(key);
         pois.push([
           Math.round(lx * 10) / 10,
           Math.round(lz * 10) / 10,
-          String(f.tags.class || ''),
-          String(f.tags.subclass || ''),
+          cls,
+          sub,
           name,
           pickNameEn(f.tags),
           Number(f.tags.rank) || 99,
         ]);
       }
+    }
+
+    // Neighborhoods, quarters, suburbs, towns, villages (`place` layer)
+    for (const f of t.place || []) {
+      if (f.type !== 1) continue;
+      const cls = String(f.tags.class || '');
+      if (
+        cls !== 'neighbourhood' && cls !== 'quarter' && cls !== 'suburb' &&
+        cls !== 'village' && cls !== 'town' && cls !== 'hamlet' && cls !== 'island' && cls !== 'city'
+      ) continue;
+      const p = firstPoint(f.geom);
+      if (!p) continue;
+      const [lx, lz] = toLocalXZ(p[0], p[1]);
+      if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+      const name = pickName(f.tags);
+      const nameEn = pickNameEn(f.tags);
+      if (!name && !nameEn) continue;
+      const key = `${cls}:${nameEn || name}:${Math.round(lx / 25)},${Math.round(lz / 25)}`;
+      if (seenPlace.has(key)) continue;
+      seenPlace.add(key);
+      placePoints.push([
+        Math.round(lx * 10) / 10,
+        Math.round(lz * 10) / 10,
+        cls,
+        name || nameEn,
+        nameEn || name,
+        Number(f.tags.rank) || 15,
+      ]);
+    }
+
+    // Mountain peaks (`mountain_peak` layer, class === 'peak')
+    for (const f of t.mountain_peak || []) {
+      if (f.type !== 1) continue;
+      const cls = String(f.tags.class || 'peak');
+      if (cls !== 'peak' && cls !== 'volcano' && cls !== 'saddle') continue;
+      const p = firstPoint(f.geom);
+      if (!p) continue;
+      const [lx, lz] = toLocalXZ(p[0], p[1]);
+      if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+      const name = pickName(f.tags);
+      const nameEn = pickNameEn(f.tags);
+      if (!name && !nameEn) continue;
+      const rawEle = Number(f.tags.ele);
+      const rawFt = Number(f.tags.ele_ft);
+      const eleM = Number.isFinite(rawEle)
+        ? Math.round(rawEle)
+        : Number.isFinite(rawFt)
+          ? Math.round(rawFt * 0.3048)
+          : null;
+      const key = `${nameEn || name}:${Math.round(lx / 20)},${Math.round(lz / 20)}`;
+      if (seenPeak.has(key)) continue;
+      seenPeak.add(key);
+      peaks.push([
+        Math.round(lx * 10) / 10,
+        Math.round(lz * 10) / 10,
+        eleM,
+        name || nameEn,
+        nameEn || name,
+        Number(f.tags.rank) || 5,
+      ]);
+    }
+
+    // Water body names (`water_name` layer: bays, coves, lakes, lagoons, straits)
+    for (const f of t.water_name || []) {
+      if (f.type !== 1 && f.type !== 2) continue;
+      const p = firstPoint(f.geom);
+      if (!p) continue;
+      const [lx, lz] = toLocalXZ(p[0], p[1]);
+      if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+      const name = pickName(f.tags);
+      const nameEn = pickNameEn(f.tags);
+      if (!name && !nameEn) continue;
+      const cls = String(f.tags.class || 'water');
+      const key = `${nameEn || name}:${Math.round(lx / 30)},${Math.round(lz / 30)}`;
+      if (seenWater.has(key)) continue;
+      seenWater.add(key);
+      waterNames.push([
+        Math.round(lx * 10) / 10,
+        Math.round(lz * 10) / 10,
+        cls,
+        name || nameEn,
+        nameEn || name,
+      ]);
+    }
+
+    // Aerodrome labels (`aerodrome_label` layer: IATA/ICAO + airport name)
+    for (const f of t.aerodrome_label || []) {
+      if (f.type !== 1) continue;
+      const p = firstPoint(f.geom);
+      if (!p) continue;
+      const [lx, lz] = toLocalXZ(p[0], p[1]);
+      if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+      const name = pickName(f.tags);
+      const nameEn = pickNameEn(f.tags);
+      const iata = String(f.tags.iata || f.tags.icao || '').toUpperCase();
+      if (!name && !nameEn && !iata) continue;
+      const key = `${iata || nameEn || name}:${Math.round(lx / 40)},${Math.round(lz / 40)}`;
+      if (seenAirport.has(key)) continue;
+      seenAirport.add(key);
+      airports.push([
+        Math.round(lx * 10) / 10,
+        Math.round(lz * 10) / 10,
+        iata,
+        name || nameEn,
+        nameEn || name,
+        String(f.tags.class || 'aerodrome'),
+      ]);
     }
 
     for (const f of t.aeroway || []) {
@@ -108,8 +255,30 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
         for (const poly of f.geom) {
           if (!poly.outer || poly.outer.length < 3) continue;
           const clipped = clipRingToBox(ringToLocal(poly.outer), -CHUNK_HALF, CHUNK_HALF);
-          if (clipped.length >= 6) aeroPolys.push([cls, clipped]);
+          if (clipped.length >= 6) {
+            if (cls === 'helipad') {
+              const hk = `${Math.round(clipped[0] / 8)},${Math.round(clipped[1] / 8)}`;
+              if (seenHelipad.has(hk)) continue;
+              seenHelipad.add(hk);
+            }
+            aeroPolys.push([cls, clipped]);
+          }
         }
+      } else if (f.type === 1 && cls === 'helipad') {
+        const p = firstPoint(f.geom);
+        if (!p) continue;
+        const [lx, lz] = toLocalXZ(p[0], p[1]);
+        if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+        const hk = `${Math.round(lx / 8)},${Math.round(lz / 8)}`;
+        if (seenHelipad.has(hk)) continue;
+        seenHelipad.add(hk);
+        const r = 7.5;
+        const ring = [];
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          ring.push(Math.round((lx + Math.cos(a) * r) * 10) / 10, Math.round((lz + Math.sin(a) * r) * 10) / 10);
+        }
+        aeroPolys.push(['helipad', ring]);
       } else if (f.type === 2 && (cls === 'runway' || cls === 'taxiway')) {
         for (const line of f.geom) {
           const flat = ringToLocal(line);
@@ -149,7 +318,6 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
           minZ = Math.min(minZ, flat[i + 1]); maxZ = Math.max(maxZ, flat[i + 1]);
         }
         const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
-        // Owner chunk = bbox center inside this chunk, so each bowl is built exactly once
         if (cx < -CHUNK_HALF || cx >= CHUNK_HALF || cz < -CHUNK_HALF || cz >= CHUNK_HALF) continue;
         const key = `${Math.round(cx / 40)},${Math.round(cz / 40)}`;
         if (seenStadium.has(key)) continue;
@@ -188,6 +356,10 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
     lat: origin ? origin.centerLat : 0,
     lon: origin ? origin.centerLon : 0,
     pois,
+    placePoints,
+    peaks,
+    waterNames,
+    airports,
     aeroPolys,
     aeroLines,
     piers,

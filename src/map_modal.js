@@ -1,5 +1,90 @@
 import { getLang } from './i18n.js';
-import { searchAddress } from './global_tiles.js';
+import { searchAddress, fetchDecodedMvtTile } from './global_tiles.js';
+
+const extraGeoStore = new Map(); // "z/x/y" -> { peaks, waterNames, airports, helipads } | { pending: true }
+
+function getExtraTileGeo(z, x, y, onReady) {
+  const key = `${z}/${x}/${y}`;
+  const hit = extraGeoStore.get(key);
+  if (hit) return hit.pending ? null : hit;
+  if (extraGeoStore.size > 260) {
+    const first = extraGeoStore.keys().next().value;
+    extraGeoStore.delete(first);
+  }
+  extraGeoStore.set(key, { pending: true });
+  const n = 1 << z;
+  fetchDecodedMvtTile(z, x, y)
+    .then((layers) => {
+      const out = { peaks: [], waterNames: [], airports: [], helipads: [] };
+      if (layers) {
+        for (const f of layers.mountain_peak || []) {
+          if (f.type !== 1 || !f.geom || !f.geom.length) continue;
+          const cls = f.tags.class || 'peak';
+          if (cls !== 'peak' && cls !== 'volcano' && cls !== 'saddle') continue;
+          const p = f.geom[0];
+          const rawEle = Number(f.tags.ele);
+          const rawFt = Number(f.tags.ele_ft);
+          const ele = Number.isFinite(rawEle)
+            ? Math.round(rawEle)
+            : Number.isFinite(rawFt)
+              ? Math.round(rawFt * 0.3048)
+              : null;
+          out.peaks.push({
+            tags: f.tags,
+            ele,
+            rank: f.tags.rank | 0,
+            u: lonToMx(p[1]) * n - x,
+            v: latToMy(p[0]) * n - y,
+          });
+        }
+        for (const f of layers.water_name || []) {
+          if ((f.type !== 1 && f.type !== 2) || !f.geom || !f.geom.length) continue;
+          const g0 = f.geom[0];
+          const p = f.type === 1 ? g0 : g0[Math.floor(g0.length / 2)];
+          if (!p || p.length < 2) continue;
+          out.waterNames.push({
+            tags: f.tags,
+            cls: f.tags.class || 'water',
+            u: lonToMx(p[1]) * n - x,
+            v: latToMy(p[0]) * n - y,
+          });
+        }
+        for (const f of layers.aerodrome_label || []) {
+          if (f.type !== 1 || !f.geom || !f.geom.length) continue;
+          const p = f.geom[0];
+          out.airports.push({
+            tags: f.tags,
+            iata: String(f.tags.iata || f.tags.icao || '').toUpperCase(),
+            u: lonToMx(p[1]) * n - x,
+            v: latToMy(p[0]) * n - y,
+          });
+        }
+        for (const f of layers.aeroway || []) {
+          if (f.tags.class !== 'helipad' || !f.geom || !f.geom.length) continue;
+          let lat = 0, lon = 0;
+          if (f.type === 1) {
+            lat = f.geom[0][0];
+            lon = f.geom[0][1];
+          } else if (f.type === 3 && f.geom[0].outer && f.geom[0].outer.length) {
+            const ring = f.geom[0].outer;
+            for (const pt of ring) { lat += pt[0]; lon += pt[1]; }
+            lat /= ring.length;
+            lon /= ring.length;
+          } else continue;
+          out.helipads.push({
+            u: lonToMx(lon) * n - x,
+            v: latToMy(lat) * n - y,
+          });
+        }
+      }
+      extraGeoStore.set(key, out);
+      if (onReady) onReady();
+    })
+    .catch(() => {
+      extraGeoStore.set(key, { peaks: [], waterNames: [], airports: [], helipads: [] });
+    });
+  return null;
+}
 import {
   MAP_STYLE,
   DATA_MAX_Z,
@@ -663,29 +748,98 @@ export class MapSystem {
 
     const places = [];
     const roads = [];
+    const peaks = [];
+    const waterNames = [];
+    const airports = [];
+    const helipads = [];
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
-        const prep = getTileData(dz, ((tx % n) + n) % n, ty);
-        if (!prep) continue;
+        const wx = ((tx % n) + n) % n;
+        const prep = getTileData(dz, wx, ty);
         const ox = this._mxToSx(tx / n);
         const oy = this._myToSy(ty / n);
-        for (const p of getPlaceLabelCandidates(prep, lang)) {
-          if (zoom < p.minZ) continue;
-          if ((p.cls === 'country' || p.cls === 'state') && zoom > 9) continue;
-          if (p.cls === 'city' && zoom > 16.5) continue;
-          places.push({ ...p, sx: ox + p.u * ppu, sy: oy + p.v * ppu });
+        if (prep) {
+          for (const p of getPlaceLabelCandidates(prep, lang)) {
+            const effMinZ = p.cls === 'quarter' ? 12.8 : p.cls === 'neighbourhood' ? 13.4 : p.minZ;
+            if (zoom < effMinZ) continue;
+            if ((p.cls === 'country' || p.cls === 'state') && zoom > 9) continue;
+            if (p.cls === 'city' && zoom > 16.5) continue;
+            places.push({ ...p, sx: ox + p.u * ppu, sy: oy + p.v * ppu });
+          }
+          if (zoom >= 13.4) {
+            const list = getRoadLabelCandidates(prep, lang);
+            for (let i = 0; i < list.length && i < 80; i++) {
+              const r = list[i];
+              if (zoom < 15 && r.rank < 4) continue;
+              roads.push({ ...r, sx: ox + r.u * ppu, sy: oy + r.v * ppu, len: r.segLen * ppu });
+            }
+          }
         }
-        if (zoom >= 13.4) {
-          const list = getRoadLabelCandidates(prep, lang);
-          for (let i = 0; i < list.length && i < 80; i++) {
-            const r = list[i];
-            if (zoom < 15 && r.rank < 4) continue;
-            roads.push({ ...r, sx: ox + r.u * ppu, sy: oy + r.v * ppu, len: r.segLen * ppu });
+        if (dz >= 12) {
+          const extra = getExtraTileGeo(dz, wx, ty, () => this._requestRender());
+          if (extra) {
+            if (zoom >= 10.5) {
+              for (const a of extra.airports) {
+                const nm = pickName(a.tags, lang);
+                if (!nm && !a.iata) continue;
+                const label = a.iata && nm ? (zoom >= 12.8 ? `✈ ${a.iata} · ${nm}` : `✈ ${a.iata}`) : `✈ ${a.iata || nm}`;
+                airports.push({ text: label, sx: ox + a.u * ppu, sy: oy + a.v * ppu });
+              }
+            }
+            if (zoom >= 12.5) {
+              for (const pk of extra.peaks) {
+                const nm = pickName(pk.tags, lang);
+                if (!nm) continue;
+                const text = pk.ele != null ? `▲ ${nm} · ${pk.ele}m` : `▲ ${nm}`;
+                peaks.push({ text, rank: pk.rank || 9, sx: ox + pk.u * ppu, sy: oy + pk.v * ppu });
+              }
+              for (const wn of extra.waterNames) {
+                const nm = pickName(wn.tags, lang);
+                if (!nm) continue;
+                waterNames.push({ text: nm, cls: wn.cls, sx: ox + wn.u * ppu, sy: oy + wn.v * ppu });
+              }
+            }
+            if (zoom >= 14.2) {
+              for (const hp of extra.helipads) {
+                helipads.push({ sx: ox + hp.u * ppu, sy: oy + hp.v * ppu });
+              }
+            }
           }
         }
       }
     }
+
+    // Also merge geo features from currently loaded 3D chunks (includes rooftop hospital helipads & chunk-extracted items)
+    if (this.lastLoadedChunks && this._origin()) {
+      const zh = lang === 'zh';
+      for (const g of this.lastLoadedChunks.values()) {
+        const pl = g.userData && g.userData.places;
+        if (!pl || !pl.geo) continue;
+        for (const item of pl.geo) {
+          const [wx, , wz, kind, sub, nameZh, nameEn, extra] = item;
+          const [lat, lon] = this.navigator.worldToLatLon(wx, wz);
+          const sx = this._mxToSx(lonToMx(lon));
+          const sy = this._myToSy(latToMy(lat));
+          if (sx < -60 || sx > W + 60 || sy < -30 || sy > H + 30) continue;
+          const nm = zh ? (nameZh || nameEn) : (nameEn || nameZh);
+          if (kind === 'airport' && zoom >= 10.5 && nm) {
+            airports.push({ text: nm, sx, sy });
+          } else if (kind === 'peak' && zoom >= 12.5 && nm) {
+            peaks.push({ text: nm, rank: 1, sx, sy });
+          } else if (kind === 'water' && zoom >= 12.5 && nm) {
+            waterNames.push({ text: nm, cls: sub, sx, sy });
+          } else if (kind === 'place' && nm) {
+            const effMinZ = sub === 'quarter' ? 12.8 : sub === 'neighbourhood' ? 13.4 : 11.0;
+            if (zoom >= effMinZ) places.push({ name: nm, cls: sub, rank: extra || 14, sx, sy });
+          } else if (kind === 'helipad' && zoom >= 14.2) {
+            helipads.push({ sx, sy });
+          }
+        }
+      }
+    }
+
     places.sort((a, b) => (PLACE_PRIORITY[a.cls] ?? 9) - (PLACE_PRIORITY[b.cls] ?? 9) || (a.rank || 99) - (b.rank || 99));
+    peaks.sort((a, b) => (a.rank || 9) - (b.rank || 9));
     roads.sort((a, b) => b.rank - a.rank || b.len - a.len);
 
     const boxes = [];
@@ -701,26 +855,115 @@ export class MapSystem {
     ctx.lineJoin = 'round';
     ctx.strokeStyle = 'rgba(22, 24, 28, 0.92)';
     let count = 0;
+    const placedText = new Set();
 
+    // 1. Airports (✈ SFO · San Francisco International Airport)
+    const airportFont = `600 12px ${FONT_FAMILY}`;
+    for (const a of airports) {
+      if (a.sx < -60 || a.sx > W + 60 || a.sy < -20 || a.sy > H + 20) continue;
+      if (placedText.has(a.text)) continue;
+      const tw = this._measure(airportFont, a.text);
+      const b = [a.sx - tw / 2 - 6, a.sy - 9, a.sx + tw / 2 + 6, a.sy + 9];
+      if (hit(b)) continue;
+      boxes.push(b);
+      placedText.add(a.text);
+      count++;
+      ctx.font = airportFont;
+      ctx.letterSpacing = '0.3px';
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = 'rgba(12, 20, 32, 0.94)';
+      ctx.strokeText(a.text, a.sx, a.sy);
+      ctx.fillStyle = '#7cc4ff';
+      ctx.fillText(a.text, a.sx, a.sy);
+    }
+
+    // 2. Places & Neighborhoods (CHINATOWN, NOB HILL, NORTH BEACH, MISSION DISTRICT)
+    ctx.strokeStyle = 'rgba(22, 24, 28, 0.92)';
     for (const p of places) {
-      if (count > 70) break;
+      if (count > 85) break;
       if (p.sx < -50 || p.sx > W + 50 || p.sy < -20 || p.sy > H + 20) continue;
       const small = p.cls === 'suburb' || p.cls === 'quarter' || p.cls === 'neighbourhood';
       const text = small && lang !== 'zh' ? p.name.toUpperCase() : p.name;
+      if (placedText.has(text)) continue;
       const font = `${PLACE_FONT[p.cls] || '500 12px'} ${FONT_FAMILY}`;
       const tw = this._measure(font, text) + (small ? text.length * 0.8 : 0);
       const th = small ? 12 : 16;
       const b = [p.sx - tw / 2 - 4, p.sy - th / 2 - 3, p.sx + tw / 2 + 4, p.sy + th / 2 + 3];
       if (hit(b)) continue;
       boxes.push(b);
+      placedText.add(text);
       count++;
       ctx.font = font;
       ctx.letterSpacing = small ? '0.8px' : '0px';
       ctx.lineWidth = 3;
       ctx.strokeText(text, p.sx, p.sy);
-      ctx.fillStyle = small ? '#8e949d' : p.cls === 'city' || p.cls === 'country' ? '#eef0f2' : '#cfd3d8';
+      ctx.fillStyle = small ? '#9fa6b0' : p.cls === 'city' || p.cls === 'country' ? '#eef0f2' : '#cfd3d8';
       ctx.fillText(text, p.sx, p.sy);
     }
+
+    // 3. Mountain Peaks (▲ Telegraph Hill · 91m)
+    const peakFont = `600 11px ${FONT_FAMILY}`;
+    ctx.letterSpacing = '0.2px';
+    for (const pk of peaks) {
+      if (count > 105) break;
+      if (pk.sx < -50 || pk.sx > W + 50 || pk.sy < -20 || pk.sy > H + 20) continue;
+      if (placedText.has(pk.text)) continue;
+      const tw = this._measure(peakFont, pk.text);
+      const b = [pk.sx - tw / 2 - 4, pk.sy - 8, pk.sx + tw / 2 + 4, pk.sy + 8];
+      if (hit(b)) continue;
+      boxes.push(b);
+      placedText.add(pk.text);
+      count++;
+      ctx.font = peakFont;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(18, 22, 18, 0.94)';
+      ctx.strokeText(pk.text, pk.sx, pk.sy);
+      ctx.fillStyle = '#e2c799';
+      ctx.fillText(pk.text, pk.sx, pk.sy);
+    }
+
+    // 4. Water Names (McCovey Cove, China Basin, Spreckels Lake)
+    const waterFont = `italic 500 11.5px ${FONT_FAMILY}`;
+    ctx.letterSpacing = '0.3px';
+    for (const wn of waterNames) {
+      if (count > 125) break;
+      if (wn.sx < -50 || wn.sx > W + 50 || wn.sy < -20 || wn.sy > H + 20) continue;
+      if (placedText.has(wn.text)) continue;
+      const tw = this._measure(waterFont, wn.text);
+      const b = [wn.sx - tw / 2 - 4, wn.sy - 8, wn.sx + tw / 2 + 4, wn.sy + 8];
+      if (hit(b)) continue;
+      boxes.push(b);
+      placedText.add(wn.text);
+      count++;
+      ctx.font = waterFont;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(10, 22, 36, 0.92)';
+      ctx.strokeText(wn.text, wn.sx, wn.sy);
+      ctx.fillStyle = '#6cb8f6';
+      ctx.fillText(wn.text, wn.sx, wn.sy);
+    }
+
+    // 5. Helipad badges (H)
+    if (helipads.length) {
+      ctx.font = `700 9.5px ${FONT_FAMILY}`;
+      ctx.letterSpacing = '0px';
+      for (const hp of helipads) {
+        if (hp.sx < -20 || hp.sx > W + 20 || hp.sy < -20 || hp.sy > H + 20) continue;
+        const b = [hp.sx - 9, hp.sy - 9, hp.sx + 9, hp.sy + 9];
+        if (hit(b)) continue;
+        boxes.push(b);
+        ctx.beginPath();
+        ctx.arc(hp.sx, hp.sy, 7.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(20, 26, 32, 0.9)';
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#2ee66b';
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('H', hp.sx, hp.sy + 0.5);
+      }
+    }
+    ctx.strokeStyle = 'rgba(22, 24, 28, 0.92)';
 
     ctx.letterSpacing = '0px';
     const roadFont = `500 11px ${FONT_FAMILY}`;
