@@ -516,20 +516,55 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     (centerLat - lat) * mPerDegLat - oz,
   ];
 
-  // 1. Collect road names from `transportation_name`
+  // 1. Collect road names & route refs from `transportation_name`
+  const formatRouteRef = (rawRef, network) => {
+    if (!rawRef) return "";
+    const first = String(rawRef).split(";")[0].trim();
+    if (!first) return "";
+    const net = String(network || "").toUpperCase();
+    if (/^[0-9]+[A-Z]?$/.test(first)) {
+      if (net.includes("US:I") || net.includes("INTERSTATE")) return "I-" + first;
+      if (net.includes("US:US")) return "US " + first;
+      if (net.includes("US:CA")) return "CA " + first;
+      if (net.includes("US:NY")) return "NY " + first;
+    }
+    return first;
+  };
   const namedRoadSamples = [];
+  const pushSample = (lx, lz, nm, nmZh, ref, cls) => {
+    if (lx >= -680 && lx <= 680 && lz >= -680 && lz <= 680) {
+      namedRoadSamples.push({ lx, lz, name: nm, nameZh: nmZh, ref, cls });
+    }
+  };
   for (const t of tiles) {
     for (const f of t.transportation_name || []) {
-      const nm = f.tags["name:en"] || f.tags.name_en || f.tags.name || f.tags.ref || "";
+      const nm = f.tags["name:en"] || f.tags.name_en || f.tags["name:latin"] || f.tags.name || "";
       const nmZh = f.tags.name || nm;
-      const ref = f.tags.ref || "";
+      const ref = formatRouteRef(f.tags.ref || f.tags.route_1 || "", f.tags.network || f.tags.route_1_network || "");
+      const cls = f.tags.class || f.tags.subclass || "";
+      if (cls === "path" || cls === "footway" || cls === "pedestrian" || cls === "steps" || cls === "cycleway" || cls === "corridor") continue;
+      if (nm.includes("...") || nm.includes("Herb Caen")) continue;
       if (!nm && !ref) continue;
-      if (f.type === 2) {
+      if (f.type === 1) {
+        for (const pt of f.geom) {
+          const [lx, lz] = toLocalXZ(pt[0], pt[1]);
+          pushSample(lx, lz, nm || ref, nmZh || ref, ref, cls);
+        }
+      } else if (f.type === 2) {
         for (const line of f.geom) {
           for (let i = 0; i < line.length; i++) {
             const [lx, lz] = toLocalXZ(line[i][0], line[i][1]);
-            if (lx >= -650 && lx <= 650 && lz >= -650 && lz <= 650) {
-              namedRoadSamples.push({ lx, lz, name: nm, nameZh: nmZh, ref, cls: f.tags.class || "" });
+            pushSample(lx, lz, nm || ref, nmZh || ref, ref, cls);
+            if (i + 1 < line.length) {
+              const [nx, nz] = toLocalXZ(line[i + 1][0], line[i + 1][1]);
+              const segD = Math.hypot(nx - lx, nz - lz);
+              if (segD > 28) {
+                const steps = Math.min(12, Math.floor(segD / 24));
+                for (let s = 1; s < steps; s++) {
+                  const u = s / steps;
+                  pushSample(lx + (nx - lx) * u, lz + (nz - lz) * u, nm || ref, nmZh || ref, ref, cls);
+                }
+              }
             }
           }
         }
@@ -643,15 +678,21 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   for (const r of rawRoads) {
     let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey } = r;
 
-    if (!name && namedRoadSamples.length > 0) {
+    if ((!name || !ref) && namedRoadSamples.length > 0) {
       const mid = ptsXZ[Math.floor(ptsXZ.length * 0.5)];
-      let bestD2 = 42.0 * 42.0;
+      const p0 = ptsXZ[0];
+      const p1 = ptsXZ[ptsXZ.length - 1];
+      let bestD2 = 58.0 * 58.0;
       for (let k = 0; k < namedRoadSamples.length; k++) {
         const ns = namedRoadSamples[k];
-        const d2 = (mid[0] - ns.lx) ** 2 + (mid[1] - ns.lz) ** 2;
+        const dMid = (mid[0] - ns.lx) ** 2 + (mid[1] - ns.lz) ** 2;
+        const d0 = (p0[0] - ns.lx) ** 2 + (p0[1] - ns.lz) ** 2;
+        const d1 = (p1[0] - ns.lx) ** 2 + (p1[1] - ns.lz) ** 2;
+        let d2 = Math.min(dMid, d0, d1);
+        if (ns.cls && ns.cls === rawCls) d2 *= 0.65;
         if (d2 < bestD2) {
           bestD2 = d2;
-          name = ns.name;
+          if (!name && ns.name) name = ns.name;
           if (!ref && ns.ref) ref = ns.ref;
         }
       }

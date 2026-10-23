@@ -1002,7 +1002,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)
         buildFacilities(data.facilities || [], ox, oz, subGroups.facilities, mats);
-        root.userData.street = computeStreetFeatures(root, data, ox, oz, null, mats); // [feature/street]
+        root.userData.street = computeStreetFeatures(root, data, ox, oz, worldOrigin, mats); // [feature/street]
 
         // feature/places: rooftop detail, POIs, airports, ships, stadiums, bridge steel, train rails
         root.userData.places = computePlacesPayload({
@@ -1949,6 +1949,8 @@ function buildRoadsAndBridges(
             cls,
             name: resolvedRoadName,
             rawName: name || ref || '',
+            signName: name || '',
+            ref: ref || '',
             id: wid,
           });
         }
@@ -3080,7 +3082,7 @@ function buildFacilities(facilities, ox, oz, facGroup, mats) {
 
   for (const f of facilities) {
     const [ftype, lx, ly, lz] = f;
-    if (STREET_OWNS_LANE_MARKINGS && (ftype === 'tl' || ftype === 'cr')) continue; // [feature/street] replaced by street furniture
+    if (STREET_OWNS_LANE_MARKINGS && (ftype === 'tl' || ftype === 'cr' || ftype === 'mj')) continue; // [feature/street] replaced by street furniture
     const y = getBeijingTerrainElevation(ox + lx, oz + lz) + (ly || 0);
 
     if (ftype === 'tl') {
@@ -3206,6 +3208,7 @@ const WORKER_DUMMY_MATS = {
   roofMat: { name: 'roofMat' },
   vegetationMat: { name: 'vegetationMat' },
   facilityMat: { name: 'facilityMat' },
+  streetDecalMat: { name: 'streetDecalMat' },
 };
 
 /**
