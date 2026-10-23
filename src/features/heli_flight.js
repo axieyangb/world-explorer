@@ -8,6 +8,8 @@
 //   L                                one-key auto-land (or auto-takeoff when landed)
 //   Mouse drag / right stick         free-look; camera recenters behind the heli after ~1.5 s
 //   Shift                            mild boost
+//   Space / hold left mouse          30mm nose cannon (straight at the point under #heli-reticle)
+//   F / X / right mouse              Hydra rocket salvo (converges on the reticle point)
 //
 // Public API (app.heli):
 //   heli.state        live flight state (see constructor); position is app.pos (shared Vector3)
@@ -66,6 +68,15 @@ export const CFG = {
   ALT_KP: 1.2, ALT_KD: 1.7, ALT_KI: 0.15, ALT_ACC_MAX: 6.0,
   MAX_ALT: 2600,
 };
+
+// Gunship weapons: projectiles fly straight (no drop) from the muzzle to the point under the reticle.
+const CANNON_SPEED = 420;     // m/s
+const ROCKET_SPEED = 230;     // m/s
+const AIM_RANGE = 1500;       // m, reticle raycast reach
+const AIM_FALLBACK = 600;     // m along the reticle ray when it hits nothing
+const CANNON_UNITS = 0.03;    // building damage per round, in rockets (see KaijuDestruction.heliHp)
+const ROCKET_UNITS = 1.0;     // building damage per rocket
+const ROCKET_SPLASH_R = 10;   // m
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const approach = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
@@ -670,8 +681,25 @@ export class HeliFlight {
 
   // ---------------------------------------------------------------- gunship weapons (30mm nose cannon + wing-pod rockets)
   _initWeapons() {
-    this.weaponStats = { cannonShots: 0, rocketsFired: 0, explosions: 0, trafficHits: 0 };
+    this.weaponStats = { cannonShots: 0, rocketsFired: 0, explosions: 0, trafficHits: 0, buildingHits: 0, buildingsDestroyed: 0 };
     this._cannonCooldown = 0;
+    this._trigger = null;               // held left mouse button (see pressTrigger)
+    this._retShift = { x: 0, y: 0 };    // #heli-reticle sway offset (px)
+    this._retNdc = { x: 0, y: 0 };
+    this._aimO = new THREE.Vector3();
+    this._aimPoint = new THREE.Vector3();
+    this._aimHitKind = null;
+    this._hit = { dist: 0, ref: null, kind: null };
+    this._segO = new THREE.Vector3();
+    this._segDir = new THREE.Vector3();
+    this._segHitOut = { x: 0, y: 0, z: 0, ref: null, kind: null };
+    this._tmpA = new THREE.Vector3();
+    this._tmpD = new THREE.Vector3();
+    this._fxP = new THREE.Vector3();
+    this._fxD = new THREE.Vector3();
+    this.lastAim = new THREE.Vector3();     // aim point of the latest shot (tests)
+    this.lastImpact = new THREE.Vector3();  // impact point of the latest detonation (tests)
+    this.lastImpactKind = null;
     this._rocketCooldown = 0;
     this._muzzleTimer = 0;
     this._reticleFlash = 0;
@@ -690,14 +718,15 @@ export class HeliFlight {
 
     // Pool of 30mm rotary cannon tracer bolts
     this._cannonPool = [];
-    const boltGeo = new THREE.BoxGeometry(0.14, 0.14, 3.2);
-    const boltMat = new THREE.MeshBasicMaterial({ color: 0xffb830 });
+    // Thick, bright tracers so the stream stays readable from the chase camera.
+    const boltGeo = new THREE.BoxGeometry(0.34, 0.34, 7.0);
+    const boltMat = new THREE.MeshBasicMaterial({ color: 0xffd36a, toneMapped: false });
     for (let i = 0; i < 36; i++) {
       const mesh = new THREE.Mesh(boltGeo, boltMat);
       mesh.visible = false;
       mesh.frustumCulled = false;
       this._weaponGroup.add(mesh);
-      this._cannonPool.push({ active: false, mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0 });
+      this._cannonPool.push({ active: false, mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, aim: new THREE.Vector3() });
     }
 
     // Pool of Hydra 70 wing-pod rockets
@@ -716,7 +745,7 @@ export class HeliFlight {
       grp.visible = false;
       grp.frustumCulled = false;
       this._weaponGroup.add(grp);
-      this._rocketPool.push({ active: false, mesh: grp, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0 });
+      this._rocketPool.push({ active: false, mesh: grp, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, aim: new THREE.Vector3() });
     }
 
     // Pool of 3D fireball explosions + shockwave rings
@@ -758,28 +787,130 @@ export class HeliFlight {
     }
   }
 
-  _computeFireDirection(spread = 0.012) {
-    const s = this.state;
-    const pos = this.app.pos;
-    const liveAgl = Math.max(s.agl || 0, pos.y - Math.max(0, this._terrain(pos.x, pos.z)));
-    const leadYaw = s.yaw + clamp(s.angularVelocity.y * 0.14, -0.28, 0.28) + (Math.random() - 0.5) * spread;
-    // Pitch down toward the street/ground ahead depending on altitude AGL
-    const baseDownPitch = liveAgl > 6 ? clamp(-0.28 - Math.min(0.22, liveAgl * 0.0015) - s.pitch * 0.55, -0.55, -0.08) : -0.08;
-    const pitch = baseDownPitch + (Math.random() - 0.5) * spread;
-    const cp = Math.cos(pitch);
-    return {
-      dx: Math.sin(leadYaw) * cp,
-      dy: Math.sin(pitch),
-      dz: Math.cos(leadYaw) * cp,
-      yaw: leadYaw,
-      pitch,
-    };
+  _kaijuActive() {
+    return !!(this.app.kaiju && this.app.kaiju.active); // Kaiju Defense owns firing (KaijuWeapons) during a round
   }
 
-  /** Fires a 30mm rotary nose cannon tracer bolt. */
+  _destruction() {
+    const K = this.app.kaiju;
+    return K && K.destruction && typeof K.destruction.raycast === 'function' ? K.destruction : null;
+  }
+
+  /** NDC of the #heli-reticle centre: CSS left 50% / top 54%, plus the flight-sway offset. */
+  _reticleNdc() {
+    const el = this.app.renderer && this.app.renderer.domElement;
+    const w = (el && el.clientWidth) || window.innerWidth || 1;
+    const h = (el && el.clientHeight) || window.innerHeight || 1;
+    this._retNdc.x = (2 * this._retShift.x) / w;
+    this._retNdc.y = 1 - (2 * (0.54 * h + this._retShift.y)) / h;
+    return this._retNdc;
+  }
+
+  _terrainRay(o, d, maxD) {
+    const H = (x, z) => Math.max(0, this._terrain(x, z));
+    if (o.y <= H(o.x, o.z)) return 0;
+    const step = 8;
+    let prev = 0;
+    for (let t = step; ; t += step) {
+      const tt = Math.min(t, maxD);
+      if (o.y + d.y * tt <= H(o.x + d.x * tt, o.z + d.z * tt)) {
+        let lo = prev, hi = tt;
+        for (let i = 0; i < 10; i++) {
+          const m = (lo + hi) * 0.5;
+          if (o.y + d.y * m <= H(o.x + d.x * m, o.z + d.z * m)) hi = m; else lo = m;
+        }
+        return hi;
+      }
+      prev = tt;
+      if (tt >= maxD) return Infinity;
+    }
+  }
+
+  /** First world hit along a ray (destructible buildings, terrain/water, traffic cars). Distance or Infinity; fills this._hit. */
+  _raycastWorld(o, d, maxD) {
+    const hit = this._hit;
+    hit.ref = null;
+    hit.kind = null;
+    let best = maxD;
+    const D = this._destruction();
+    if (D) {
+      const bh = D.raycast(o, d, best);
+      if (bh && bh.dist < best) { best = bh.dist; hit.ref = bh.ref; hit.kind = 'building'; }
+    }
+    const td = this._terrainRay(o, d, best);
+    if (td < best) { best = td; hit.ref = null; hit.kind = 'ground'; }
+    const cars = this.app.traffic && this.app.traffic.cars;
+    if (cars) {
+      for (let i = 0; i < cars.length; i++) {
+        const c = cars[i];
+        if (!c.active) continue;
+        const cx = c.x - o.x, cy = (c.y || 0) + 0.9 - o.y, cz = c.z - o.z;
+        const along = cx * d.x + cy * d.y + cz * d.z;
+        if (along <= 0 || along >= best) continue;
+        const px = cx - d.x * along, py = cy - d.y * along, pz = cz - d.z * along;
+        if (px * px + py * py + pz * pz <= 2.4 * 2.4) { best = along; hit.ref = null; hit.kind = 'car'; }
+      }
+    }
+    hit.dist = best;
+    return hit.kind ? best : Infinity;
+  }
+
+  /** World point under the reticle: camera ray through #heli-reticle, first hit (fallback AIM_FALLBACK m along the ray). */
+  computeAimPoint() {
+    const n = this._reticleNdc();
+    const ray = this.getAimRay(n.x, n.y);
+    const d = ray.dir;
+    const o = this._aimO.copy(ray.origin);
+    // Skip the stretch between the chase camera and the helicopter itself.
+    o.addScaledVector(d, Math.max(0, this._tmpA.subVectors(this.app.pos, o).dot(d)) + 4);
+    const dist = this._raycastWorld(o, d, AIM_RANGE);
+    this._aimHitKind = Number.isFinite(dist) ? this._hit.kind : null;
+    return this._aimPoint.copy(o).addScaledVector(d, Number.isFinite(dist) ? dist : AIM_FALLBACK);
+  }
+
+  /** Launches a projectile from `from` straight at `aim` (tiny spread, no gravity drop). */
+  _launch(slot, from, aim, speed, spread, extraLife) {
+    const d = this._tmpD.subVectors(aim, from);
+    const dist = Math.max(1e-3, d.length());
+    d.multiplyScalar(1 / dist);
+    if (spread > 0) {
+      d.x += (Math.random() - 0.5) * 2 * spread;
+      d.y += (Math.random() - 0.5) * 2 * spread;
+      d.z += (Math.random() - 0.5) * 2 * spread;
+      d.normalize();
+    }
+    slot.active = true;
+    slot.x = from.x; slot.y = from.y; slot.z = from.z;
+    slot.vx = d.x * speed; slot.vy = d.y * speed; slot.vz = d.z * speed;
+    slot.life = Math.min(6, dist / speed + extraLife);
+    slot.aim.copy(aim);
+    slot.mesh.position.set(slot.x, slot.y, slot.z);
+    slot.mesh.lookAt(slot.x + slot.vx, slot.y + slot.vy, slot.z + slot.vz);
+    slot.mesh.visible = true;
+  }
+
+  /** Left mouse button: hold to fire (a still press arms after 140 ms), a quick tap fires one round, a drag orbits the camera. */
+  pressTrigger(x, y) { this._trigger = { t: performance.now(), x, y, fired: false }; }
+  moveTrigger(x, y) {
+    const tr = this._trigger;
+    if (tr && !tr.fired && Math.abs(x - tr.x) + Math.abs(y - tr.y) > 6) this._trigger = null;
+  }
+  releaseTrigger() {
+    const tr = this._trigger;
+    this._trigger = null;
+    if (tr && !tr.fired) this.fireCannon();
+  }
+  cancelTrigger() { this._trigger = null; }
+  _triggerHeld() {
+    const tr = this._trigger;
+    if (!tr || performance.now() - tr.t < 140) return false;
+    tr.fired = true;
+    return true;
+  }
+
+  /** Fires a 30mm rotary nose cannon tracer at the point under the reticle. */
   fireCannon() {
-    const s = this.state;
-    if (this.app.mode !== 'helicopter') return false;
+    if (this.app.mode !== 'helicopter' || this._kaijuActive()) return false;
     let slot = null;
     for (let i = 0; i < this._cannonPool.length; i++) {
       if (!this._cannonPool[i].active) { slot = this._cannonPool[i]; break; }
@@ -788,20 +919,9 @@ export class HeliFlight {
 
     const mesh = this.app.heliMesh;
     this._tmpW.set(0, 0.55, 2.95).applyQuaternion(mesh.quaternion).add(this.app.pos);
-    const dir = this._computeFireDirection(0.016);
-    const speed = 310.0 + Math.max(0, this.app.speed || 0);
-
-    slot.active = true;
-    slot.x = this._tmpW.x;
-    slot.y = this._tmpW.y;
-    slot.z = this._tmpW.z;
-    slot.vx = dir.dx * speed;
-    slot.vy = dir.dy * speed;
-    slot.vz = dir.dz * speed;
-    slot.life = 2.4;
-    slot.mesh.position.set(slot.x, slot.y, slot.z);
-    slot.mesh.lookAt(slot.x + slot.vx, slot.y + slot.vy, slot.z + slot.vz);
-    slot.mesh.visible = true;
+    const aim = this.computeAimPoint();
+    this.lastAim.copy(aim);
+    this._launch(slot, this._tmpW, aim, CANNON_SPEED, 0.0012, 0.6);
 
     this._muzzleFlash.position.copy(this._tmpW);
     this._muzzleFlash.visible = true;
@@ -812,14 +932,15 @@ export class HeliFlight {
     return true;
   }
 
-  /** Fires a dual salvo of wing-pod Hydra rockets from the left and right stub wings. */
+  /** Fires a dual salvo of wing-pod Hydra rockets that converge on the point under the reticle. */
   fireRockets() {
-    if (this.app.mode !== 'helicopter') return false;
+    if (this.app.mode !== 'helicopter' || this._kaijuActive()) return false;
     if (this._rocketCooldown > 0.05) return false;
     this._rocketCooldown = 0.38;
 
     const mesh = this.app.heliMesh;
-    const speed = 195.0 + Math.max(0, this.app.speed || 0);
+    const aim = this.computeAimPoint();
+    this.lastAim.copy(aim);
     let fired = 0;
 
     for (const side of [-1, 1]) {
@@ -830,18 +951,7 @@ export class HeliFlight {
       if (!slot) slot = this._rocketPool[fired % this._rocketPool.length];
 
       this._tmpW.set(side * 1.68, 0.85, 0.55).applyQuaternion(mesh.quaternion).add(this.app.pos);
-      const dir = this._computeFireDirection(0.008);
-      slot.active = true;
-      slot.x = this._tmpW.x;
-      slot.y = this._tmpW.y;
-      slot.z = this._tmpW.z;
-      slot.vx = dir.dx * speed;
-      slot.vy = dir.dy * speed;
-      slot.vz = dir.dz * speed;
-      slot.life = 4.2;
-      slot.mesh.position.set(slot.x, slot.y, slot.z);
-      slot.mesh.lookAt(slot.x + slot.vx, slot.y + slot.vy, slot.z + slot.vz);
-      slot.mesh.visible = true;
+      this._launch(slot, this._tmpW, aim, ROCKET_SPEED, 0, 0.8);
       this.weaponStats.rocketsFired++;
       fired++;
     }
@@ -860,7 +970,9 @@ export class HeliFlight {
     slot.active = true;
     slot.age = 0;
     slot.dur = isRocket ? 0.58 : 0.28;
-    slot.maxR = isRocket ? 8.8 : 2.6;
+    const cam = this.app.camera;
+    const far = cam ? clamp(cam.position.distanceTo(this._fxP.set(x, y, z)) / 160, 1, 3) : 1;
+    slot.maxR = (isRocket ? 8.8 : 2.6) * far;
     slot.fireMesh.position.set(x, y + 0.35, z);
     slot.fireMesh.scale.setScalar(0.5);
     slot.fireMat.color.setHex(isRocket ? 0xffaa33 : 0xffcc44);
@@ -914,11 +1026,61 @@ export class HeliFlight {
     return null;
   }
 
-  _detonateProjectile(p, isRocket) {
+  /** Swept hit test for the segment a projectile travelled this frame (exact impact point + building ref). */
+  _segmentHit(p, ox, oy, oz, isRocket) {
+    const d = this._segDir.set(p.x - ox, p.y - oy, p.z - oz);
+    const len = d.length();
+    if (len < 1e-6) return null;
+    d.multiplyScalar(1 / len);
+    const dist = this._raycastWorld(this._segO.set(ox, oy, oz), d, len);
+    const h = this._segHitOut;
+    if (Number.isFinite(dist)) {
+      h.x = ox + d.x * dist; h.y = oy + d.y * dist; h.z = oz + d.z * dist;
+      h.ref = this._hit.ref; h.kind = this._hit.kind;
+      return h;
+    }
+    // Rooftops, elevated roads, non-destructible colliders, pedestrians (point test, refined to the entry point).
+    if (!this._checkProjectileHit(p, isRocket)) return null;
+    const q = this._refineP || (this._refineP = { x: 0, y: 0, z: 0 });
+    let lo = 0, hi = len, res = null;
+    for (let i = 0; i < 7; i++) {
+      const m = (lo + hi) * 0.5;
+      q.x = ox + d.x * m; q.y = oy + d.y * m; q.z = oz + d.z * m;
+      if (this._checkProjectileHit(q, isRocket)) hi = m; else lo = m;
+    }
+    q.x = ox + d.x * hi; q.y = oy + d.y * hi; q.z = oz + d.z * hi;
+    res = this._checkProjectileHit(q, isRocket) || this._checkProjectileHit(p, isRocket);
+    h.x = res.x; h.y = res.y; h.z = res.z; h.ref = null; h.kind = 'other';
+    return h;
+  }
+
+  _detonateProjectile(p, isRocket, hit) {
     p.active = false;
     p.mesh.visible = false;
-    const hit = this._checkProjectileHit(p, isRocket) || { x: p.x, y: p.y, z: p.z };
+    if (!hit) hit = { x: p.x, y: p.y, z: p.z, ref: null, kind: null };
+    this.lastImpact.set(hit.x, hit.y, hit.z);
+    this.lastImpactKind = hit.kind;
     this._spawnExplosion(hit.x, hit.y, hit.z, isRocket);
+    // Buildings: same destruction system as Kaiju Defense (HP scaled by building size).
+    const D = this._destruction();
+    if (D && typeof D.applyHeliHit === 'function') {
+      const before = D.stats.destroyed;
+      if (hit.ref) {
+        D.applyHeliHit(hit.ref, isRocket ? ROCKET_UNITS : CANNON_UNITS);
+        this.weaponStats.buildingHits++;
+      }
+      if (isRocket) D.heliSplash(hit.x, hit.y, hit.z, ROCKET_SPLASH_R, ROCKET_UNITS * 0.5, hit.ref);
+      this.weaponStats.buildingsDestroyed += Math.max(0, D.stats.destroyed - before);
+    }
+    const fx = this.app.kaiju && this.app.kaiju.fx;
+    if (fx && fx.spawn && hit.kind) {
+      const pt = this._fxP.set(hit.x, hit.y, hit.z);
+      const back = this._fxD.set(-p.vx, -p.vy, -p.vz).normalize();
+      const cam = this.app.camera;
+      const sc = cam ? clamp(cam.position.distanceTo(pt) / 150, 1, 4) : 1;
+      fx.spawn('spark', pt, { dir: back, count: isRocket ? 12 : 5, scale: sc });
+      if (hit.kind === 'building') fx.spawn('smoke', pt, { count: 1, scale: (isRocket ? 0.9 : 0.35) * sc, light: true, life: 2.5, speed: 1 });
+    }
     const traffic = this.app.traffic;
     if (traffic && typeof traffic.triggerImpactSphere === 'function') {
       const blastR = isRocket ? 16.0 : 5.8;
@@ -943,8 +1105,13 @@ export class HeliFlight {
       if (this._muzzleTimer <= 0) this._muzzleFlash.visible = false;
     }
 
-    // Hold Space to fire 30mm nose rotary cannon at 14 rounds/sec
-    if (this.inputEnabled && this.app.mode === 'helicopter' && !s.grounded && this.app.keys.has('Space')) {
+    // Reticle sway offset (also used for the aim ray, so shots go exactly where the reticle is drawn).
+    this._retShift.x = clamp(-s.angularVelocity.y * 28 - s.roll * 36, -68, 68);
+    this._retShift.y = clamp(-s.pitch * 42, -48, 48);
+
+    // Hold Space (or the left mouse button) to fire the 30mm nose rotary cannon at 14 rounds/sec
+    const trigger = this._triggerHeld() || this.app.keys.has('Space');
+    if (this.inputEnabled && this.app.mode === 'helicopter' && !s.grounded && !this._kaijuActive() && trigger) {
       if (this._cannonCooldown <= 0) {
         this._cannonCooldown = 0.071;
         this.fireCannon();
@@ -956,12 +1123,14 @@ export class HeliFlight {
       const b = this._cannonPool[i];
       if (!b.active) continue;
       b.life -= dt;
+      const ox = b.x, oy = b.y, oz = b.z;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       b.z += b.vz * dt;
       b.mesh.position.set(b.x, b.y, b.z);
-      if (this._checkProjectileHit(b, false)) {
-        this._detonateProjectile(b, false);
+      const hit = this._segmentHit(b, ox, oy, oz, false);
+      if (hit) {
+        this._detonateProjectile(b, false, hit);
       } else if (b.life <= 0) {
         b.active = false;
         b.mesh.visible = false;
@@ -973,14 +1142,15 @@ export class HeliFlight {
       const r = this._rocketPool[i];
       if (!r.active) continue;
       r.life -= dt;
-      r.vy -= 1.6 * dt;
+      const ox = r.x, oy = r.y, oz = r.z;
       r.x += r.vx * dt;
       r.y += r.vy * dt;
       r.z += r.vz * dt;
       r.mesh.position.set(r.x, r.y, r.z);
       r.mesh.lookAt(r.x + r.vx, r.y + r.vy, r.z + r.vz);
-      if (this._checkProjectileHit(r, true)) {
-        this._detonateProjectile(r, true);
+      const hit = this._segmentHit(r, ox, oy, oz, true);
+      if (hit) {
+        this._detonateProjectile(r, true, hit);
       } else if (r.life <= 0) {
         r.active = false;
         r.mesh.visible = false;
@@ -1015,11 +1185,11 @@ export class HeliFlight {
     if (typeof document !== 'undefined') {
       const ret = document.getElementById('heli-reticle');
       if (ret) {
-        const show = this.app.mode === 'helicopter' && !s.grounded && (!this.app.mapSystem || !this.app.mapSystem.isOpen);
+        const show = this.app.mode === 'helicopter' && !s.grounded && !this._kaijuActive() && (!this.app.mapSystem || !this.app.mapSystem.isOpen);
         ret.style.display = show ? 'block' : 'none';
         if (show) {
-          const shiftX = clamp(-s.angularVelocity.y * 28 - s.roll * 36, -68, 68);
-          const shiftY = clamp(-s.pitch * 42, -48, 48);
+          const shiftX = this._retShift.x;
+          const shiftY = this._retShift.y;
           const scale = this._reticleFlash > 0 ? 1.18 : 1.0;
           ret.style.transform = `translate(calc(-50% + ${shiftX.toFixed(1)}px), calc(-50% + ${shiftY.toFixed(1)}px)) scale(${scale})`;
         }

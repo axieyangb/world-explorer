@@ -50,7 +50,8 @@ export const CFG = {
   CANNON_RANGE: 1600,
   CANNON_HEAT_SECONDS: 14.0,    // continuous fire to overheat
   CANNON_COOL_SECONDS: 1.8,     // full cool-down
-  CANNON_BUILDING_DAMAGE: 0.012, // building damage (0..1) per round
+  CANNON_BUILDING_DAMAGE: 0.012, // building damage (0..1) per round (fallback)
+  CANNON_BUILDING_UNITS: 0.03,  // per round, in rockets of building HP (KaijuDestruction.heliHp), same as Fly mode
 
   // Missiles
   MISSILE_SALVO: 4,
