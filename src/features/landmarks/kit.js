@@ -195,7 +195,6 @@ export class Kit {
     for (let i = 0; i < 4; i++) {
       const j = (i + 1) % 4;
       this.quad(A[i], A[j], Bq[j], Bq[i]);
-      this.quad(A[i], Bq[i], Bq[j], A[j]); // both windings: robust regardless of orientation
     }
     return this;
   }

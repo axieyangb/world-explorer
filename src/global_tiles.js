@@ -13,6 +13,7 @@ const MAX_CACHED_TILES = 160;
 
 export const QUICK_WORLD_DESTINATIONS = [
   { id: "nyc_times_sq", name: "New York · Times Square", nameZh: "纽约 · 时代广场", street: "Broadway & 7th Ave", city: "New York, US", cityZh: "美国 纽约", lat: 40.7580, lon: -73.9855 },
+  { id: "nyc_liberty", name: "New York · Statue of Liberty", nameZh: "纽约 · 自由女神像", street: "Liberty Island", city: "New York, US", cityZh: "美国 纽约", lat: 40.6892, lon: -74.0445 }, // feature/famous-landmarks
   { id: "tokyo_shibuya", name: "Tokyo · Shibuya", nameZh: "东京 · 涩谷十字路口", street: "Shibuya Crossing", city: "Tokyo, JP", cityZh: "日本 东京", lat: 35.6595, lon: 139.7004 },
   { id: "sf_embarcadero", name: "San Francisco · Embarcadero", nameZh: "旧金山 · 内河码头", street: "The Embarcadero", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.7955, lon: -122.3937 },
   { id: "sf_golden_gate", name: "San Francisco · Golden Gate", nameZh: "旧金山 · 金门大桥", street: "Golden Gate Bridge · US 101", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.8199, lon: -122.4783 },

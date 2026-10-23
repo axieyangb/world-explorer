@@ -37,7 +37,7 @@ export const LANDMARKS = [
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: false },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: false },
   { id: "taj", name: "Taj Mahal", nameZh: "泰姬陵", lat: 27.17501, lon: 78.04215, heading: 180, height: 73, supp: { hw: 50, hd: 50 }, on: false },
-  { id: "burj", name: "Burj Khalifa", nameZh: "哈利法塔", lat: 25.1972, lon: 55.27437, heading: 0, height: 828, supp: { r: 60 }, on: false },
+  { id: "burj", name: "Burj Khalifa", nameZh: "哈利法塔", lat: 25.1972, lon: 55.27437, heading: 0, height: 828, supp: { r: 60 }, on: true },
   { id: "tokyotower", name: "Tokyo Tower", nameZh: "东京塔", lat: 35.65858, lon: 139.74543, heading: 0, height: 333, supp: { r: 50 }, on: false },
   { id: "skytree", name: "Tokyo Skytree", nameZh: "东京晴空塔", lat: 35.71006, lon: 139.8107, heading: 0, height: 634, supp: { r: 40 }, on: false },
   { id: "pearl", name: "Oriental Pearl Tower", nameZh: "东方明珠", lat: 31.2397, lon: 121.4998, heading: 0, height: 468, supp: { r: 45 }, on: false },
