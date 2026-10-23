@@ -5,7 +5,7 @@
 // noses and the pinnacle light up.
 import { Kit } from "../kit.js";
 
-const GLASS = 0xa7b6c4, GLASS_DK = 0x8798a9, FIN = 0xd3d9df, STEEL = 0xc4cad0, PODIUM = 0x9aa3ab;
+const GLASS = 0xc3cfda, GLASS_DK = 0xaab8c6, FIN = 0xd3d9df, STEEL = 0xc4cad0, PODIUM = 0x9aa3ab;
 
 export const lodDist = 2500;
 export const glowStrength = 2.4;
@@ -73,7 +73,7 @@ export function build(k) {
       if (hi) {
         // stainless vertical fins on the flanks
         const c = Math.cos(WING_ANG[a]), s = Math.sin(WING_ANG[a]);
-        k.color(FIN);
+        k.glow(true).color(0xaeb6c0);   // fins carry the facade lighting at night
         for (let f = 1; f <= 3; f++) {
           const d = core + ((L - w / 2 - core) * f) / 4;
           if (d < core + 1) continue;
@@ -83,7 +83,7 @@ export function build(k) {
           }
         }
         // lit nose strip
-        k.glow(true).color(0xdfe9ff);
+        k.color(0xdfe9ff);
         const nx = (L + 0.25) * c, nz = (L + 0.25) * s;
         k.box(nx, y0, nz, 0.9, h - 1.2, 0.9);
         k.glow(false);

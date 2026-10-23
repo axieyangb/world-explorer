@@ -110,7 +110,7 @@ export class LandmarkSystem {
 
   _groundY(it) {
     const s = it.L.supp || { r: 20 };
-    const r = Math.min(40, (s.r || Math.min(s.hw, s.hd)) * 0.5);
+    const r = it.L.groundR ?? Math.min(40, (s.r || Math.min(s.hw, s.hd)) * 0.5); // groundR: opt-in wider ground sampling
     let y = getChunkTerrainMeshElevation(it.x, it.z);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
