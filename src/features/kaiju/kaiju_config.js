@@ -65,7 +65,7 @@ export const CFG = {
   MISSILE_BUILDING_DAMAGE: 0.7,
 
   WEAK_POINT_MULT: 3.0,
-  AIM_ASSIST_DEG: 2.5,
+  AIM_ASSIST_DEG: 8.5,
 
   // City damage
   CITY_TRACK_RADIUS: 2000,
@@ -105,15 +105,17 @@ export const CFG = {
 
   // Game (camera)
   GUNNER_CAM_RIGHT: 0,          // m, camera-space offset so the crosshair ray clears the heli
-  GUNNER_CAM_UP: 1.5,
+  GUNNER_CAM_UP: 6.8,
+  GUNNER_CAM_DIST: 16.5,
+  SOFT_LOCK_WEIGHT: 0,
 
   // Dodge + feedback (player)
-  DASH_DIST: 36,                // m, lateral dodge (double-tap or Shift + Left/Right)
+  DASH_DIST: 48,                // m, lateral dodge (double-tap or Shift + Left/Right)
   DASH_VERT_DIST: 20,           // m, vertical dodge (double-tap Q / E)
   DASH_TIME: 0.45,               // s
   DASH_END_SPEED: 18,           // m/s carried after a lateral dodge
-  DASH_COOLDOWN: 2.5,
-  DASH_IFRAMES: 0.55,
+  DASH_COOLDOWN: 1.6,
+  DASH_IFRAMES: 0.90,
   DASH_DOUBLE_TAP: 0.28,        // s between taps
   DASH_CLEARANCE: 8,            // m above terrain / roofs for a downward dodge
   HELI_REGEN_DELAY: 6,          // s without damage before repair starts
@@ -128,13 +130,13 @@ export const CFG = {
   LASER_INTERVAL_MIN: 7,
   LASER_INTERVAL_MAX: 10,
   LASER_INTERVAL_ENRAGED_MULT: 0.65,
-  LASER_LOCK_SECONDS: 1.6,      // red targeting beam follows the heli
-  LASER_FREEZE_BEFORE: 0.25,    // aim freezes this long before firing
-  LASER_LEAD: 0.2,              // s of heli velocity lead at freeze
-  LASER_AIM_ERROR_DEG: 0.1,
+  LASER_LOCK_SECONDS: 1.8,      // red targeting beam follows the heli
+  LASER_FREEZE_BEFORE: 1.50,    // aim freezes this long before firing
+  LASER_LEAD: 0.0,              // s of heli velocity lead at freeze
+  LASER_AIM_ERROR_DEG: 0.0,
   LASER_FIRE_SECONDS: 1.8,
-  LASER_SWEEP_DEG: 4,           // beam drifts toward the heli by at most +-half of this while firing
-  LASER_RADIUS: 9,              // m, heli hit radius around the beam
+  LASER_SWEEP_DEG: 0,           // beam drifts toward the heli by at most +-half of this while firing
+  LASER_RADIUS: 5.5,              // m, heli hit radius around the beam
   LASER_DPS: 42,
   LASER_RANGE: 1800,
   LASER_BLAST_RADIUS: 14,

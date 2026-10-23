@@ -98,11 +98,17 @@ export class KaijuMode {
     this._crashPos = new THREE.Vector3();
     this._tmpV = new THREE.Vector3();
     this._aimRay = { origin: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1) };
-    // Gunner view: camera shifted right/up so the crosshair ray clears the heli body.
     this._gunner = 0; // 0..1 blend
     this._aimPos = new THREE.Vector3();
+    this._aimDir = new THREE.Vector3(0, 0, 1);
     this._aimQuat = new THREE.Quaternion();
     this._aimValid = false;
+    this._camYaw = 0;
+    this._yawAimLead = 0;
+    this.aimPitch = 0.04;
+    this.aimWorldPoint = new THREE.Vector3();
+    this.aimScreen = { x: 0, y: 0, xPct: 50, yPct: 38, ndcX: 0, ndcY: 0.24 };
+    this._projTmp = new THREE.Vector3();
     // GTA heli adapter (app.heli, feature/heli-gta); null when the legacy heli is in use.
     this._heliHooked = null;
     this._prevOnDamage = null;
@@ -183,14 +189,12 @@ export class KaijuMode {
   }
 
   getAimRay() {
-    // Final centered, pre-shake camera pose of the last rendered frame.
+    // Dynamic yaw-lead aim ray through the projected #kaiju-crosshair (aimWorldPoint).
     if (this._aimValid) {
       this._aimRay.origin.copy(this._aimPos);
-      this._aimRay.dir.set(0, 0, -1).applyQuaternion(this._aimQuat);
+      this._aimRay.dir.copy(this._aimDir);
       return this._aimRay;
     }
-    const r = this.app.heli && typeof this.app.heli.getAimRay === "function" ? this.app.heli.getAimRay() : null;
-    if (r && r.origin && r.dir) return r;
     const cam = this.app.camera;
     cam.getWorldDirection(this._aimRay.dir);
     this._aimRay.origin.copy(cam.position);
@@ -249,7 +253,16 @@ export class KaijuMode {
     const keys = this.app.keys;
     if (!shift && keys && typeof keys.has === "function") shift = keys.has("ShiftLeft") || keys.has("ShiftRight");
     const now = performance.now() * 0.001;
-    if ((shift && (dir === "left" || dir === "right")) || (this._tap.code === code && now - this._tap.t <= CFG.DASH_DOUBLE_TAP)) {
+    const lz = this.kaiju && this.kaiju.laser ? this.kaiju.laser.phase : "idle";
+    const laserDanger = lz === "lock" || lz === "fire";
+    // Single-press dodge on ArrowLeft/ArrowRight anytime, or on A/D when laser is locking/firing, or with Shift / double-tap
+    if (
+      code === "ArrowLeft" ||
+      code === "ArrowRight" ||
+      (laserDanger && (dir === "left" || dir === "right")) ||
+      (shift && (dir === "left" || dir === "right")) ||
+      (this._tap.code === code && now - this._tap.t <= CFG.DASH_DOUBLE_TAP)
+    ) {
       this._tap.code = "";
       this.tryDash(dir);
       return;
@@ -321,18 +334,53 @@ export class KaijuMode {
     D.cooldown = d.cd / CFG.DASH_COOLDOWN;
     if (D.iframes > 0) D.iframes = Math.max(0, D.iframes - dt);
     if (!D.active) {
-      // Responsive lateral strafe assist (±38 m/s) in Kaiju mode when ArrowLeft/ArrowRight is held
+      // Responsive combat flight assist in Kaiju mode:
+      // - ArrowLeft / ArrowRight: fast 52 m/s lateral strafe
+      // - KeyA / KeyD: 28 m/s lateral bank-strafe while yawing so turning also evades lasers
+      // - KeyW / KeyS: 42 m/s forward / backward velocity
+      // - KeyE / KeyQ: +-18 m/s altitude climb / descent
       if (this.canFire && this.gtaHeli?.state?.velocity && this.app.keys) {
-        const st = (this.app.keys.has("ArrowRight") ? 1 : 0) - (this.app.keys.has("ArrowLeft") ? 1 : 0);
-        if (st !== 0) {
-          const v = this.gtaHeli.state.velocity, yaw = this.app.yaw || 0;
-          const rx = -Math.cos(yaw) * st, rz = Math.sin(yaw) * st;
-          const cur = v.x * rx + v.z * rz;
-          if (cur < 38) {
-            const add = Math.min(38 - cur, 65 * dt);
-            v.x += rx * add;
-            v.z += rz * add;
+        const keys = this.app.keys;
+        const v = this.gtaHeli.state.velocity;
+        const yaw = this._camYaw || this.app.yaw || 0;
+        const fx = Math.sin(yaw), fz = Math.cos(yaw);
+        const rx = -fz, rz = fx;
+
+        const arrowSt = (keys.has("ArrowRight") ? 1 : 0) - (keys.has("ArrowLeft") ? 1 : 0);
+        const yawSt = (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0);
+        if (arrowSt !== 0) {
+          const sx = rx * arrowSt, sz = rz * arrowSt;
+          const cur = v.x * sx + v.z * sz;
+          if (cur < 52) {
+            const add = Math.min(52 - cur, 125 * dt);
+            v.x += sx * add;
+            v.z += sz * add;
           }
+        } else if (yawSt !== 0) {
+          const sx = rx * yawSt, sz = rz * yawSt;
+          const cur = v.x * sx + v.z * sz;
+          if (cur < 28) {
+            const add = Math.min(28 - cur, 85 * dt);
+            v.x += sx * add;
+            v.z += sz * add;
+          }
+        }
+
+        const fb = (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0);
+        if (fb !== 0) {
+          const mx = fx * fb, mz = fz * fb;
+          const curF = v.x * mx + v.z * mz;
+          if (curF < 42) {
+            const add = Math.min(42 - curF, 95 * dt);
+            v.x += mx * add;
+            v.z += mz * add;
+          }
+        }
+
+        const ud = (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
+        if (ud !== 0) {
+          const targetVy = ud * 18;
+          v.y += (targetVy - v.y) * Math.min(1, 8 * dt);
         }
       }
       return;
@@ -579,6 +627,8 @@ export class KaijuMode {
     app.camYawOffset = 0;
     app.camPitch = 0.28;
     app.lastMouseOrbitTime = 0;
+    this._camYaw = yaw;
+    this._yawAimLead = 0;
     app.heliMesh.rotation.y = yaw;
 
     this.state = "intro";
@@ -887,20 +937,68 @@ export class KaijuMode {
 
   postCamera(dt, rawDt = dt) {
     const cam = this.app.camera;
-    const ownCam = !!(this.app.heli && typeof this.app.heli.getAimRay === "function");
-    const wantG = this.active && !ownCam && this.heli.alive && (this.state === "intro" || this.state === "fight" || this.state === "dying") ? 1 : 0;
-    if (!this.paused) this._gunner += (wantG - this._gunner) * Math.min(1, rawDt * 2.5);
-    if (Math.abs(this._gunner - wantG) < 0.002) this._gunner = wantG;
-    if (this._gunner > 0 && !ownCam) {
-      cam.translateX(CFG.GUNNER_CAM_RIGHT * this._gunner);
-      cam.translateY(CFG.GUNNER_CAM_UP * this._gunner);
-    }
     if (!this.active) {
       this._aimValid = false;
       return;
     }
+    const wrap = (a) => a - Math.round(a / (Math.PI * 2)) * Math.PI * 2;
+    const heliYaw = this.app.yaw || 0;
+    const keys = this.app.keys;
+    const yawInput = keys && typeof keys.has === "function"
+      ? (keys.has("KeyA") ? 1 : 0) - (keys.has("KeyD") ? 1 : 0)
+      : 0;
+
+    if (!this.paused && this.heli.alive) {
+      const kCam = 1 - Math.exp(-3.4 * Math.max(0.001, rawDt));
+      this._camYaw = wrap(this._camYaw + wrap(heliYaw - this._camYaw) * kCam);
+      this.app.camYaw = this._camYaw;
+
+      const targetLead = yawInput * 0.34;
+      const kLead = 1 - Math.exp(-10.0 * Math.max(0.001, rawDt));
+      this._yawAimLead += (targetLead - this._yawAimLead) * kLead;
+    }
+
+    if (this.heli.alive && this.app.camMode !== "topdown") {
+      const pivot = this.app.camPivot || this.app.pos;
+      const camDist = CFG.GUNNER_CAM_DIST || 16.5;
+      const camUp = CFG.GUNNER_CAM_UP || 6.8;
+      const cx = pivot.x - Math.sin(this._camYaw) * camDist;
+      const cz = pivot.z - Math.cos(this._camYaw) * camDist;
+      const cy = Math.max(getBeijingTerrainElevation(cx, cz) + 1.5, pivot.y + camUp);
+      cam.position.set(cx, cy, cz);
+      cam.lookAt(
+        pivot.x + Math.sin(this._camYaw) * 100,
+        pivot.y + camUp + 2.4,
+        pivot.z + Math.cos(this._camYaw) * 100
+      );
+      cam.updateMatrixWorld();
+
+      const aimYaw = heliYaw + this._yawAimLead;
+      const aimDist = 140;
+      this.aimWorldPoint.set(
+        pivot.x + Math.sin(aimYaw) * aimDist,
+        pivot.y + camUp + 9.6,
+        pivot.z + Math.cos(aimYaw) * aimDist
+      );
+      const pr = this._projTmp.copy(this.aimWorldPoint).project(cam);
+      const ndcX = Math.max(-0.76, Math.min(0.76, pr.x));
+      const ndcY = Math.max(-0.50, Math.min(0.70, pr.y));
+      const w = typeof window !== "undefined" ? window.innerWidth : 1280;
+      const h = typeof window !== "undefined" ? window.innerHeight : 720;
+      this.aimScreen.ndcX = ndcX;
+      this.aimScreen.ndcY = ndcY;
+      this.aimScreen.xPct = (ndcX * 0.5 + 0.5) * 100;
+      this.aimScreen.yPct = (0.5 - ndcY * 0.5) * 100;
+      this.aimScreen.x = (this.aimScreen.xPct * 0.01) * w;
+      this.aimScreen.y = (this.aimScreen.yPct * 0.01) * h;
+      this._call(this.hud, "updateAim", this.aimScreen);
+    }
+
     this._aimPos.copy(cam.position);
     this._aimQuat.copy(cam.quaternion);
+    this._aimDir.copy(this.aimWorldPoint).sub(cam.position);
+    if (this._aimDir.lengthSq() > 1e-6) this._aimDir.normalize();
+    else cam.getWorldDirection(this._aimDir);
     this._aimValid = true;
     if (this.paused) return;
     this._trauma = Math.max(0, this._trauma - rawDt * 0.9);
@@ -988,6 +1086,11 @@ export class KaijuMode {
     if (!down) this.app.keys?.delete?.(code);
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "ArrowUp" || code === "ArrowDown") e.preventDefault(); // no page scroll; still reaches the heli
     if (down && !e.repeat && DASH_KEYS[code]) this._dashKey(code, e.shiftKey);
+    if (down && !e.repeat && (code === "ShiftLeft" || code === "ShiftRight") && this.canFire) {
+      const keys = this.app.keys;
+      const d = keys?.has("KeyA") || keys?.has("ArrowLeft") ? "left" : "right";
+      this.tryDash(d);
+    }
 
     if (code === "KeyR") {
       // Super weapon (K.super).

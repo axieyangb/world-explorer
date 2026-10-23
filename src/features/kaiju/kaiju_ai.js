@@ -71,6 +71,7 @@ export class Kaiju {
     this._hPrev = new THREE.Vector3();
     this._hPrevOk = false;
     this._lzBase = new THREE.Vector3(); // frozen aim
+    this._lzTargetPt = new THREE.Vector3();
     this._lzEnd = new THREE.Vector3();
     this._lzOffY = 0;
     this._lzOffP = 0;
@@ -957,6 +958,7 @@ export class Kaiju {
     L.origin.copy(this.breathOrigin);
     const h = this._heli();
     if (h) {
+      this._lzTargetPt.copy(h);
       _a.copy(h).sub(L.origin);
       if (_a.lengthSq() > 1e-6) L.dir.copy(_a.normalize());
     }
@@ -1001,20 +1003,15 @@ export class Kaiju {
     }
   }
 
-  // aim at the predicted heli position plus a small random error, then hold
+  // freeze the 3D target point after the initial 0.30s lock window so the player has 1.50s + 1.80s to dodge clear
   _freezeAim() {
     const L = this.laser, h = this._heli();
     L.frozen = true;
-    if (h) _a.copy(this._hv).multiplyScalar(CFG.LASER_LEAD).add(h).sub(L.origin);
-    else _a.copy(L.dir);
+    if (h) this._lzTargetPt.copy(h);
+    else this._lzTargetPt.copy(L.origin).addScaledVector(L.dir, 300);
+    _a.copy(this._lzTargetPt).sub(L.origin);
     if (_a.lengthSq() < 1e-6) _a.copy(L.dir);
     _a.normalize();
-    _b.set(-_a.z, 0, _a.x);
-    if (_b.lengthSq() < 1e-8) _b.set(1, 0, 0);
-    _b.normalize();
-    _c.crossVectors(_a, _b);
-    const phi = Math.random() * TAU, e = Math.tan(CFG.LASER_AIM_ERROR_DEG * DEG * (0.3 + 0.7 * Math.random()));
-    _a.addScaledVector(_b, Math.cos(phi) * e).addScaledVector(_c, Math.sin(phi) * e).normalize();
     this._lzBase.copy(_a);
     L.dir.copy(_a);
   }
@@ -1078,21 +1075,13 @@ export class Kaiju {
     const K = this.K, h = this._heli();
     L.origin.copy(this.breathOrigin);
     if (L.phase === "lock" && !L.frozen && h) {
+      this._lzTargetPt.copy(h);
       _a.copy(h).sub(L.origin);
       if (_a.lengthSq() > 1e-6) L.dir.copy(_a.normalize());
-    } else if (L.phase === "fire" && h) {
-      // slow drift toward the heli, limited to +-SWEEP/2: a hovering heli stays hit, a moving one escapes
-      const b = this._lzBase;
-      const by = Math.atan2(b.x, b.z), bp = Math.asin(clamp(b.y, -1, 1));
-      _a.copy(h).sub(L.origin);
-      const hy = wrap(Math.atan2(_a.x, _a.z) - by);
-      const hp = Math.atan2(_a.y, Math.hypot(_a.x, _a.z)) - bp;
-      const rate = (CFG.LASER_SWEEP_DEG / Math.max(0.1, CFG.LASER_FIRE_SECONDS)) * DEG * dt;
-      const lim = CFG.LASER_SWEEP_DEG * 0.5 * DEG;
-      this._lzOffY = clamp(this._lzOffY + clamp(hy - this._lzOffY, -rate, rate), -lim, lim);
-      this._lzOffP = clamp(this._lzOffP + clamp(hp - this._lzOffP, -rate, rate), -lim, lim);
-      const yy = by + this._lzOffY, pp = bp + this._lzOffP, cp = Math.cos(pp);
-      L.dir.set(Math.sin(yy) * cp, Math.sin(pp), Math.cos(yy) * cp);
+    } else {
+      // Frozen aim: point strictly at the frozen 3D world point _lzTargetPt (0 rad/s sweep)
+      _a.copy(this._lzTargetPt).sub(L.origin);
+      if (_a.lengthSq() > 1e-6) L.dir.copy(_a.normalize());
     }
     // beam length: first building or terrain along the ray
     let maxD = CFG.LASER_RANGE;

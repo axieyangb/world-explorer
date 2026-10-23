@@ -69,10 +69,12 @@ export class KaijuHud {
     this.warnPill = el("div", "kj-warn-pill", root);
     this.toast = el("div", "kj-toast", root);
     this.msg = el("div", "kj-msg", root);
-    this.hint = this._txt(el("div", "kj-hint", root), "kaiju_hint");
+    this.hint = this._txt(el("div", "kj-hint on", root), "kaiju_hint");
+    this.hint.id = "kaiju-hint";
 
     // Center crosshair + missile cooldown ring.
     const cross = (this.cross = document.createElementNS(SVG_NS, "svg"));
+    cross.id = "kaiju-crosshair";
     cross.setAttribute("class", "kj-cross");
     cross.setAttribute("viewBox", "-20 -20 40 40");
     cross.innerHTML =
@@ -243,6 +245,15 @@ export class KaijuHud {
     this.pause.style.display = "none";
   }
 
+  updateAim(aim) {
+    if (!this.cross || !aim) return;
+    const xq = Math.round(aim.xPct * 20), yq = Math.round(aim.yPct * 20);
+    if (this._chg("cx", xq) | this._chg("cy", yq)) {
+      this.cross.style.left = `${(xq / 20).toFixed(2)}%`;
+      this.cross.style.top = `${(yq / 20).toFixed(2)}%`;
+    }
+  }
+
   flashHit() {
     if (!this.visible) return;
     this.flash.animate([{ opacity: 0.5 }, { opacity: 0 }], { duration: 380, easing: "ease-out" });
@@ -283,9 +294,8 @@ export class KaijuHud {
       this._alertT -= dt;
       if (this._alertT <= 0) this.alert.classList.remove("on");
     }
-    if (this.hint && !this.hint.classList.contains("on")) {
-      this.hint.classList.add("on");
-    }
+    // Keep bottom controls instruction permanently visible while in Kaiju mode
+    if (!this.hint.classList.contains("on")) this.hint.classList.add("on");
 
     // Kaiju HP.
     const hp = k && k.maxHp > 0 ? Math.max(0, Math.min(1, k.hp / k.maxHp)) : 0;
