@@ -97,6 +97,7 @@ export class KaijuMode {
     this._crash = { t: 0, impactT: -1, velY: 0, vx: 0, vz: 0, spin: 0, yaw: 0, smokeT: 0 };
     this._crashPos = new THREE.Vector3();
     this._tmpV = new THREE.Vector3();
+    this.config = CFG;
     this._aimRay = { origin: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1) };
     this._gunner = 0; // 0..1 blend
     this._aimPos = new THREE.Vector3();
@@ -629,6 +630,10 @@ export class KaijuMode {
     app.lastMouseOrbitTime = 0;
     this._camYaw = yaw;
     this._yawAimLead = 0;
+    this._userYawOffset = 0;
+    this._lastCamYawRecorded = yaw;
+    this._camLookTarget = null;
+    this._aimInit = false;
     app.heliMesh.rotation.y = yaw;
 
     this.state = "intro";
@@ -960,10 +965,52 @@ export class KaijuMode {
       ? (keys.has("KeyA") ? 1 : 0) - (keys.has("KeyD") ? 1 : 0)
       : 0;
 
+    // Track mouse camera orbit deltas (from main.js pointermove)
+    if (this._lastCamYawRecorded !== undefined) {
+      const userDyaw = wrap(this.app.camYaw - this._lastCamYawRecorded);
+      if (Math.abs(userDyaw) > 1e-4) {
+        this._userYawOffset = wrap((this._userYawOffset || 0) + userDyaw);
+      }
+    }
+    const mouseIdle = (performance.now() - (this.app.lastMouseOrbitTime || 0)) * 0.001;
+    if (mouseIdle > 2.8) {
+      this._userYawOffset = (this._userYawOffset || 0) * Math.exp(-2.2 * rawDt);
+    }
+    const userPitch = (this.app.camPitch !== undefined ? this.app.camPitch : 0.28) - 0.28;
+
+    const pivot = this.app.camPivot || this.app.pos;
+    const k = this.kaiju;
+    const hasKaiju = !!(k && (k.alive || this.state === "intro" || this.state === "fight" || this.state === "dying"));
+    let kTarget = null;
+    let distXZ = 140;
+    let frontFactor = 0;
+    let effectiveLock = 0;
+    let kaijuHeading = heliYaw;
+
+    if (hasKaiju) {
+      kTarget = (k.getLockPoint && k.getLockPoint()) || k._bound || k.target;
+      if (kTarget) {
+        const dx = kTarget.x - pivot.x;
+        const dy = kTarget.y - pivot.y;
+        const dz = kTarget.z - pivot.z;
+        distXZ = Math.hypot(dx, dz);
+        kaijuHeading = Math.atan2(dx, dz);
+        const yawDiff = wrap(kaijuHeading - heliYaw);
+        const coneCos = Math.cos(yawDiff);
+        // Kaiju in front hemisphere (within ~85 degrees)
+        frontFactor = Math.max(0, Math.min(1, (coneCos - 0.10) / 0.45));
+        const softWeight = CFG.SOFT_LOCK_WEIGHT > 0 ? CFG.SOFT_LOCK_WEIGHT : 0.65;
+        effectiveLock = softWeight * frontFactor;
+      }
+    }
+
     if (!this.paused && this.heli.alive) {
-      const kCam = 1 - Math.exp(-3.4 * Math.max(0.001, rawDt));
-      this._camYaw = wrap(this._camYaw + wrap(heliYaw - this._camYaw) * kCam);
+      const lockYawTarget = heliYaw + wrap(kaijuHeading - heliYaw) * (effectiveLock * 0.48);
+      const targetCamYaw = lockYawTarget + this._yawAimLead + (this._userYawOffset || 0);
+      const kCam = 1 - Math.exp(-4.2 * Math.max(0.001, rawDt));
+      this._camYaw = wrap(this._camYaw + wrap(targetCamYaw - this._camYaw) * kCam);
       this.app.camYaw = this._camYaw;
+      this._lastCamYawRecorded = this.app.camYaw;
 
       const targetLead = yawInput * 0.34;
       const kLead = 1 - Math.exp(-10.0 * Math.max(0.001, rawDt));
@@ -971,30 +1018,127 @@ export class KaijuMode {
     }
 
     if (this.heli.alive && this.app.camMode !== "topdown") {
-      const pivot = this.app.camPivot || this.app.pos;
       const camDist = CFG.GUNNER_CAM_DIST || 16.5;
       const camUp = CFG.GUNNER_CAM_UP || 6.8;
       const cx = pivot.x - Math.sin(this._camYaw) * camDist;
       const cz = pivot.z - Math.cos(this._camYaw) * camDist;
       const cy = Math.max(getBeijingTerrainElevation(cx, cz) + 1.5, pivot.y + camUp);
       cam.position.set(cx, cy, cz);
-      cam.lookAt(
-        pivot.x + Math.sin(this._camYaw) * 100,
-        pivot.y + camUp + 2.4,
-        pivot.z + Math.cos(this._camYaw) * 100
-      );
+
+      // Camera look target with auto-focus & pitch elevation framing
+      const L = Math.max(70, Math.min(distXZ, 260));
+      const fwdX = pivot.x + Math.sin(this._camYaw) * L;
+      const fwdZ = pivot.z + Math.cos(this._camYaw) * L;
+      const fwdY = pivot.y + camUp + 2.0 - Math.tan(userPitch) * L;
+
+      let targetLookX = fwdX;
+      let targetLookY = fwdY;
+      let targetLookZ = fwdZ;
+
+      if (hasKaiju && kTarget && effectiveLock > 0) {
+        const kaijuLookY = kTarget.y + 4.5;
+        targetLookX = fwdX * (1 - effectiveLock) + kTarget.x * effectiveLock;
+        targetLookY = fwdY * (1 - effectiveLock) + kaijuLookY * effectiveLock;
+        targetLookZ = fwdZ * (1 - effectiveLock) + kTarget.z * effectiveLock;
+      }
+
+      if (!this._camLookTarget) {
+        this._camLookTarget = new THREE.Vector3(targetLookX, targetLookY, targetLookZ);
+      } else {
+        const kLook = 1 - Math.exp(-8.5 * Math.max(0.001, rawDt));
+        this._camLookTarget.x += (targetLookX - this._camLookTarget.x) * kLook;
+        this._camLookTarget.y += (targetLookY - this._camLookTarget.y) * kLook;
+        this._camLookTarget.z += (targetLookZ - this._camLookTarget.z) * kLook;
+      }
+      cam.lookAt(this._camLookTarget.x, this._camLookTarget.y, this._camLookTarget.z);
       cam.updateMatrixWorld();
 
-      const aimYaw = heliYaw + this._yawAimLead;
-      const aimDist = 140;
-      this.aimWorldPoint.set(
-        pivot.x + Math.sin(aimYaw) * aimDist,
-        pivot.y + camUp + 9.6,
-        pivot.z + Math.cos(aimYaw) * aimDist
-      );
+      // Crosshair & Aim Point
+      const camFwd = this._tmpCamFwd || (this._tmpCamFwd = new THREE.Vector3());
+      cam.getWorldDirection(camFwd);
+
+      const baseAimDir = this._tmpBaseAimDir || (this._tmpBaseAimDir = new THREE.Vector3());
+      baseAimDir.copy(camFwd);
+      const leadOffset = this._yawAimLead * 0.35;
+      if (Math.abs(leadOffset) > 1e-4) {
+        baseAimDir.applyAxisAngle(this._upVec || (this._upVec = new THREE.Vector3(0, 1, 0)), leadOffset);
+      }
+
+      // Check candidate target points: supply crates and Kaiju weak points / lock point
+      let bestTargetPt = null;
+      let bestAngle = (CFG.AIM_ASSIST_DEG || 8.5) * (Math.PI / 180);
+
+      // Check supply crates
+      if (this.supply?.drops) {
+        for (const d of this.supply.drops) {
+          if (!d.group || (!d.landed && d.y <= 0)) continue;
+          const dropPt = this._tmpCratePt || (this._tmpCratePt = new THREE.Vector3());
+          dropPt.set(d.x, d.y + 1.5, d.z);
+          const toDrop = this._tmpToTarget || (this._tmpToTarget = new THREE.Vector3());
+          toDrop.subVectors(dropPt, cam.position);
+          const dLen = toDrop.length();
+          if (dLen < 10 || dLen > 600) continue;
+          toDrop.multiplyScalar(1 / dLen);
+          const ang = Math.acos(Math.max(-1, Math.min(1, baseAimDir.dot(toDrop))));
+          if (ang < bestAngle) {
+            bestAngle = ang;
+            bestTargetPt = dropPt;
+          }
+        }
+      }
+
+      // Check Kaiju weak points
+      if (hasKaiju && k.hitSpheres) {
+        for (const s of k.hitSpheres) {
+          const toS = this._tmpToTarget || (this._tmpToTarget = new THREE.Vector3());
+          toS.subVectors(s.center, cam.position);
+          const sLen = toS.length();
+          if (sLen < 10 || sLen > CFG.CANNON_RANGE) continue;
+          toS.multiplyScalar(1 / sLen);
+          const bonus = s.weak ? 0.05 : 0;
+          const ang = Math.acos(Math.max(-1, Math.min(1, baseAimDir.dot(toS)))) - bonus;
+          if (ang < bestAngle) {
+            bestAngle = ang;
+            bestTargetPt = s.center;
+          }
+        }
+      }
+
+      // If no sphere selected, default to Kaiju lock point
+      if (!bestTargetPt && hasKaiju && frontFactor > 0.15) {
+        const lp = (k.getLockPoint && k.getLockPoint()) || kTarget;
+        if (lp) {
+          const toLp = this._tmpToTarget || (this._tmpToTarget = new THREE.Vector3());
+          toLp.subVectors(lp, cam.position);
+          const lpLen = toLp.length();
+          if (lpLen > 10) {
+            toLp.multiplyScalar(1 / lpLen);
+            const ang = Math.acos(Math.max(-1, Math.min(1, baseAimDir.dot(toLp))));
+            if (ang < (CFG.AIM_ASSIST_DEG || 8.5) * 1.6 * (Math.PI / 180)) {
+              bestTargetPt = lp;
+            }
+          }
+        }
+      }
+
+      const defaultAimDist = Math.max(80, Math.min(distXZ, 220));
+      const aimGoal = this._tmpAimGoal || (this._tmpAimGoal = new THREE.Vector3());
+      aimGoal.copy(cam.position).addScaledVector(baseAimDir, defaultAimDist);
+      if (bestTargetPt) {
+        aimGoal.lerp(bestTargetPt, 0.88);
+      }
+
+      if (!this._aimInit) {
+        this.aimWorldPoint.copy(aimGoal);
+        this._aimInit = true;
+      } else {
+        const kAim = 1 - Math.exp(-22.0 * Math.max(0.001, rawDt));
+        this.aimWorldPoint.lerp(aimGoal, kAim);
+      }
+
       const pr = this._projTmp.copy(this.aimWorldPoint).project(cam);
-      const ndcX = Math.max(-0.76, Math.min(0.76, pr.x));
-      const ndcY = Math.max(-0.50, Math.min(0.70, pr.y));
+      const ndcX = Math.max(-0.85, Math.min(0.85, pr.x));
+      const ndcY = Math.max(-0.70, Math.min(0.70, pr.y));
       const w = typeof window !== "undefined" ? window.innerWidth : 1280;
       const h = typeof window !== "undefined" ? window.innerHeight : 720;
       this.aimScreen.ndcX = ndcX;

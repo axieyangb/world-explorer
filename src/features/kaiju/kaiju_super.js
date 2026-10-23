@@ -155,7 +155,7 @@ export class KaijuSuper {
     }
 
     if (hitKaiju && k) {
-      const dmg = (CFG.RAIL_DAMAGE || 1100) * (hitWeak ? CFG.WEAK_POINT_MULT : 1);
+      const dmg = CFG.RAIL_DAMAGE || 2400;
       k.takeDamage(dmg, hitPt, hitWeak, { source: "railgun" });
       if (k.laser && k.laser.phase === "lock") {
         k._endLaser?.(false);
@@ -271,8 +271,8 @@ export class KaijuSuper {
     this._empWaves.push({ mesh, mat, t: 0, dur: 0.75, maxR: CFG.EMP_RADIUS || 140 });
 
     if (k && k.alive !== false) {
-      k.stun?.(CFG.EMP_STUN_SECONDS || 6);
-      k.takeDamage?.(CFG.EMP_DAMAGE || 450, center, true, { source: "emp" });
+      k.stun?.(CFG.EMP_STUN_SECONDS || 4.5);
+      k.takeDamage?.(CFG.EMP_DAMAGE || 1600, center, true, { source: "emp" });
       K.fx?.spawn?.("spark", center, { color: CYAN_COLOR, count: 32, speed: 65, scale: 3.0 });
     }
     K.audio?.play?.("emp", { pos: hp, gain: 1.0 });
@@ -318,7 +318,7 @@ export class KaijuSuper {
     // Immediate initial orbital strike damage + stun
     if (k && k.alive !== false) {
       k.stun?.(1.4);
-      k.takeDamage?.(800, target, true, { source: "orbital" });
+      k.takeDamage?.(CFG.ORBITAL_DAMAGE || 3200, target, true, { source: "orbital" });
     }
     K.fx?.spawn?.("bigExplosion", target, { scale: 2.8 });
     K.audio?.play?.("orbital", { pos: target, gain: 1.1 });
@@ -442,7 +442,7 @@ export class KaijuSuper {
         _a.subVectors(target, m.pos);
         const dist = _a.length();
         if (dist < 8) {
-          const dmg = (CFG.SWARM_DAMAGE || 100) * (m.weak ? CFG.WEAK_POINT_MULT : 1);
+          const dmg = CFG.SWARM_DAMAGE || 320;
           k.takeDamage?.(dmg, target, m.weak, { source: "swarm" });
           if (K.stats) {
             K.stats.missileHits = (K.stats.missileHits || 0) + 1;

@@ -10,7 +10,8 @@ export const CFG = {
   // Kaiju
   KAIJU_HEIGHT_MIN: 60,
   KAIJU_HEIGHT_MAX: 80,
-  KAIJU_HP: 6000,
+  KAIJU_HP: 24000,
+  KAIJU_MAX_HP: 24000,
   KAIJU_WALK_SPEED: 13.5,        // m/s
   KAIJU_ENRAGE_FRACTION: 0.3,
   KAIJU_ENRAGE_SPEED_MULT: 1.45,
@@ -43,7 +44,7 @@ export const CFG = {
 
   // Cannon
   CANNON_RPS: 14,
-  CANNON_DAMAGE: 75,
+  CANNON_DAMAGE: 32,
   CANNON_MUZZLE_SPEED: 900,     // m/s
   CANNON_GRAVITY: 9.8 * 0.35,   // slight drop
   CANNON_SPREAD_RAD: 0.0035,
@@ -55,8 +56,8 @@ export const CFG = {
 
   // Missiles
   MISSILE_SALVO: 4,
-  MISSILE_DAMAGE: 450,
-  MISSILE_COOLDOWN: 3.0,
+  MISSILE_DAMAGE: 280,
+  MISSILE_COOLDOWN: 4.0,
   MISSILE_SPEED: 260,
   MISSILE_TURN_RATE: 2.6,       // rad/s
   MISSILE_LOCK_TIME: 0.35,
@@ -65,7 +66,8 @@ export const CFG = {
   MISSILE_BLAST_RADIUS: 28,
   MISSILE_BUILDING_DAMAGE: 0.7,
 
-  WEAK_POINT_MULT: 3.0,
+  WEAK_POINT_MULT: 2.0,
+  WEAKPOINT_MULT: 2.0,
   AIM_ASSIST_DEG: 14.0,
 
   // City damage
@@ -108,7 +110,7 @@ export const CFG = {
   GUNNER_CAM_RIGHT: 0,          // m, camera-space offset so the crosshair ray clears the heli
   GUNNER_CAM_UP: 6.8,
   GUNNER_CAM_DIST: 16.5,
-  SOFT_LOCK_WEIGHT: 0,
+  SOFT_LOCK_WEIGHT: 0.65,
 
   // Dodge + feedback (player)
   DASH_DIST: 48,                // m, lateral dodge (double-tap or Shift + Left/Right)
@@ -187,21 +189,21 @@ export const CFG = {
   RAIL_PIERCE: 3,               // buildings damaged behind the kaiju
   RAIL_BUILDING_DAMAGE: 0.6,
   SWARM_SALVOS: 2,
-  SWARM_COUNT: 12,
+  SWARM_COUNT: 8,
   SWARM_STAGGER: 0.06,
-  SWARM_DAMAGE: 220,            // per missile, x WEAK_POINT_MULT on a weak sphere
+  SWARM_DAMAGE: 320,            // per missile, x WEAK_POINT_MULT on a weak sphere
   SWARM_SPEED: 300,
   SWARM_WEAK_CHANCE: 0.3,       // share of missiles aimed at a weak sphere
   EMP_RANGE: 900,
   EMP_CONE_DEG: 35,
-  EMP_STUN_SECONDS: 6,
-  EMP_DAMAGE: 2000,
+  EMP_STUN_SECONDS: 4.5,
+  EMP_DAMAGE: 1600,
   EMP_CHARGES: 2,
   EMP_RADIUS: 140,              // visual shockwave radius
   ORBITAL_RANGE: 2200,
   ORBITAL_COUNTDOWN: 2.2,
   ORBITAL_RADIUS: 75,           // kaiju (horizontal) within this of the mark takes the hit
-  ORBITAL_DAMAGE: 2800,
+  ORBITAL_DAMAGE: 3200,
   ORBITAL_CITY_RADIUS: 80,
   ORBITAL_CITY_DAMAGE: 1.0,
 };

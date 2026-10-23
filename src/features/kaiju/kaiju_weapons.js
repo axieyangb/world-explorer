@@ -149,6 +149,20 @@ export class KaijuWeapons {
       kh = K.kaiju.raycast(_ro, ray.dir, maxD) || null;
       if (kh && kh.dist < best) best = kh.dist; else kh = null;
     }
+    if (K.supply?.drops) {
+      for (const d of K.supply.drops) {
+        if (!d.group || (!d.landed && d.y <= 0)) continue;
+        _a.set(d.x, d.y + 1.5, d.z).sub(_ro);
+        const along = _a.dot(ray.dir);
+        if (along > 0 && along < best) {
+          const perp = _b.copy(ray.dir).multiplyScalar(along).sub(_a).length();
+          if (perp < 4.5) {
+            best = along;
+            kh = null;
+          }
+        }
+      }
+    }
     const bh = K.destruction?.raycast?.(_ro, ray.dir, best);
     if (bh && bh.dist < best) { best = bh.dist; kh = null; }
     const td = this._terrainRay(_ro, ray.dir, best, 30);
@@ -242,11 +256,8 @@ export class KaijuWeapons {
     const r = this.rounds.find((x) => !x.active);
     if (!r) return;
     const muzzle = this._heliPoint(this._muzzle, 0, 0.75, 2.8);
-    // Aim at the crosshair point, compensating for drop.
-    let k = 0;
-    if (!kaijuAim) k = this._assist(ray, this._assistPt);
+    // Aim directly at the 3D world point under #kaiju-crosshair, compensating for drop.
     _b.copy(this.aimPoint);
-    if (k > 0) _b.lerp(this._assistPt, k);
     const dist = _b.distanceTo(muzzle);
     const tf = dist / CFG.CANNON_MUZZLE_SPEED;
     _b.y += 0.5 * CFG.CANNON_GRAVITY * tf * tf;
