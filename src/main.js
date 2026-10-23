@@ -70,6 +70,8 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 }
 
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
+import { initLiveSky } from "./features/live_sky.js"; // [live-sky-weather]
+import { initLiveWeather } from "./features/live_weather.js"; // [live-sky-weather]
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
@@ -468,6 +470,8 @@ class WorldExplorerApp {
     }
 
     this.places = new PlacesSystem(this.scene); // feature/places
+    this.liveSky = initLiveSky(this); // [live-sky-weather] real aircraft (needs places' airliner geometry)
+    this.liveWeather = initLiveWeather(this); // [live-sky-weather] real weather -> atmosphere
     this._animate();
   }
 
@@ -2686,6 +2690,8 @@ class WorldExplorerApp {
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
+    if (this.liveSky) this.liveSky.update(dt); // [live-sky-weather] after places: may hide simulated jets
+    if (this.liveWeather) this.liveWeather.update(dt); // [live-sky-weather]
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
