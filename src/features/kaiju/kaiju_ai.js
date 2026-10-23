@@ -317,7 +317,7 @@ export class Kaiju {
       if (this.fromWater) {
         K.fx?.spawn?.("dustRing", _a, { scale: 3 * s, color: _water });
         _a.y += 8 * s;
-        K.fx?.spawn?.("smoke", _a, { count: 14, scale: 3.5 * s, color: _water, speed: 18 });
+        K.fx?.spawn?.("smoke", _a, { count: 14, scale: 3.5 * s, color: _water, speed: 18, light: true, life: 4 });
         K.fx?.spawn?.("spark", _a, { count: 10, scale: 2 * s, color: _water, speed: 30 });
       } else {
         K.fx?.spawn?.("dust", _a, { count: 18, scale: 4 * s, color: _dust });

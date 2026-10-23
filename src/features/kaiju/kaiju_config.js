@@ -10,11 +10,11 @@ export const CFG = {
   // Kaiju
   KAIJU_HEIGHT_MIN: 60,
   KAIJU_HEIGHT_MAX: 80,
-  KAIJU_HP: 16000,
+  KAIJU_HP: 45000,
   KAIJU_WALK_SPEED: 10.0,        // m/s
   KAIJU_ENRAGE_FRACTION: 0.3,
   KAIJU_ENRAGE_SPEED_MULT: 1.45,
-  KAIJU_RETARGET_PLAYER_DMG: 1500, // damage within 10 s that makes it turn on the player
+  KAIJU_RETARGET_PLAYER_DMG: 3000, // damage within 10 s that makes it turn on the player
   BREATH_INTERVAL_MIN: 12,
   BREATH_INTERVAL_MAX: 20,
   BREATH_INTERVAL_ENRAGED_MULT: 0.6,
@@ -24,7 +24,7 @@ export const CFG = {
   BREATH_HALF_ANGLE_DEG: 12.5,  // 25 deg cone
   BREATH_SWEEP_DEG: 50,         // total yaw sweep while breathing
   BREATH_PLAYER_DPS: 18,        // heli HP per second inside the cone
-  BREATH_BUILDING_DPS: 1.6,     // building damage (0..1) per second inside the cone
+  BREATH_BUILDING_DPS: 0.7,     // building damage (0..1) per second inside the cone
   TAIL_SWIPE_TRIGGER_DIST: 160, // heli behind kaiju within this => tail swipe
   TAIL_SWIPE_COOLDOWN: 9,
   TAIL_SWIPE_DAMAGE: 55,
@@ -54,7 +54,7 @@ export const CFG = {
 
   // Missiles
   MISSILE_SALVO: 2,
-  MISSILE_DAMAGE: 320,
+  MISSILE_DAMAGE: 260,
   MISSILE_COOLDOWN: 8.0,
   MISSILE_SPEED: 260,
   MISSILE_TURN_RATE: 2.6,       // rad/s
@@ -69,7 +69,7 @@ export const CFG = {
 
   // City damage
   CITY_TRACK_RADIUS: 2000,
-  CITY_FALL_FRACTION: 0.22,     // City Damage 100% == this fraction of tracked building volume destroyed
+  CITY_FALL_FRACTION: 0.35,     // City Damage 100% == this fraction of tracked building volume destroyed
   HUD_WARN_AMBER: 0.5,
   HUD_WARN_RED: 0.8,
 
