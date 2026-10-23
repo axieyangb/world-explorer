@@ -331,7 +331,7 @@ kbd {
 
 .popover-mode-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 5px;
 }
 
@@ -348,6 +348,7 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 3px;
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
@@ -363,13 +364,36 @@ kbd {
   color: var(--text-bright);
 }
 
+.vehicle-option-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Kaiju Defense: same row as the other modes, subtle red accent */
+.popover-mode-btn.popover-mode-kaiju {
+  color: #ff9a8f;
+  background: rgba(255, 82, 82, 0.1);
+  border-color: rgba(255, 82, 82, 0.35);
+}
+.popover-mode-btn.popover-mode-kaiju:hover {
+  color: #ffd0ca;
+  background: rgba(255, 82, 82, 0.2);
+}
+.popover-mode-btn.popover-mode-kaiju.active {
+  color: var(--text-bright);
+  background: rgba(255, 82, 82, 0.28);
+  border-color: rgba(255, 82, 82, 0.7);
+}
+
 .popover-vehicle-list {
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
 
-.popover-veh-btn {
+.popover-veh-btn,
+.vehicle-option-btn {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -386,12 +410,14 @@ kbd {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.popover-veh-btn:hover {
+.popover-veh-btn:hover,
+.vehicle-option-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-bright);
 }
 
-.popover-veh-btn.active {
+.popover-veh-btn.active,
+.vehicle-option-btn.active {
   background: rgba(77, 171, 247, 0.18);
   border-color: rgba(77, 171, 247, 0.45);
   color: var(--text-bright);

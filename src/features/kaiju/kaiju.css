@@ -1,6 +1,5 @@
 /* Kaiju Defense HUD (game). Everything here is only visible while Kaiju Defense is active. */
 
-.popover-mode-kaiju { grid-column: 1 / -1; }
 
 /* Hide dock clutter during the fight; the mode pill stays so the player can leave. */
 body.kaiju-active #location-bar,
