@@ -108,6 +108,7 @@ export function extractRailFeatures(tiles, tileXY, toLocalXZ) {
   const stops = [];
   const seenStops = new Set();
   const M = 560; // keep pieces touching the chunk (+margin); vehicles stitch across chunks
+  const ML = 900; // [release-6-integ] line pieces
 
   for (let ti = 0; ti < tiles.length; ti++) {
     const t = tiles[ti];
@@ -165,7 +166,9 @@ export function extractRailFeatures(tiles, tileXY, toLocalXZ) {
               if (zz < minZ) minZ = zz; if (zz > maxZ) maxZ = zz;
             }
             if (p.length < 4) continue;
-            if (maxX < -M || minX > M || maxZ < -M || minZ > M) continue;
+            // [release-6-integ] wider than M: rail_build road-clearance raises spread ~250 m along the line, so both
+            // chunks at a seam must see the same pieces (and crossings) on either side
+            if (maxX < -ML || minX > ML || maxZ < -ML || minZ > ML) continue;
             lines.push({ k: run.k, svc, br, tn, ly, p });
           }
         }

@@ -325,9 +325,12 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
   }
   for (const rw of railways || []) {
     const isBridge = rw[4], isTunnel = rw[5], flat = rw[7];
-    if (isTunnel || isBridge || !flat || flat.length < 6) continue;
+    if (isTunnel || !flat || flat.length < 6) continue;
+    // [release-6-integ] rail viaducts (rail_build: deck 6.5 m x layer over terrain) are lower obstacles for road
+    // bridges of a higher layer; rail_build raises viaducts over lower / same-layer roads
+    const layer = isBridge ? Math.max(1, Math.min(3, Number(rw[6]) || 1)) : 0;
     for (let i = 0; i + 1 < flat.length / 3; i++) {
-      addSeg({ ax: flat[i * 3], az: flat[i * 3 + 2], bx: flat[(i + 1) * 3], bz: flat[(i + 1) * 3 + 2], cls: 'rail', rail: true, layer: 0, bridgeRoad: false, r: -1, i, a: -1, b: -2 });
+      addSeg({ ax: flat[i * 3], az: flat[i * 3 + 2], bx: flat[(i + 1) * 3], bz: flat[(i + 1) * 3 + 2], cls: 'rail', rail: true, layer, railDeck: 6.5 * layer, bridgeRoad: false, r: -1, i, a: -1, b: -2 });
     }
   }
 
@@ -410,7 +413,7 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
             const s = lowSegs[si];
             if (s.r === r) continue;
             if (s.a === a || s.a === b || s.b === a || s.b === b) continue; // connected, not crossing
-            if (s.bridgeRoad ? s.layer >= L : s.layer > 0) continue;
+            if (s.bridgeRoad || s.rail ? s.layer >= L : s.layer > 0) continue; // [release-6-integ] s.rail: viaduct layers
             const hit = segIntersect(ax, az, bx, bz, s.ax, s.az, s.bx, s.bz);
             if (!hit) continue;
             const [tt, uu] = hit;
@@ -421,7 +424,7 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
             const chordHere = Math.max(Number.isFinite(chord[a]) ? chord[a] : -Infinity, Number.isFinite(chord[b]) ? chord[b] : -Infinity);
             let groundHere = terrainAt(ox + ax + (bx - ax) * tt, oz + az + (bz - az) * tt);
             if (Number.isFinite(chordHere)) groundHere = Math.min(groundHere, chordHere + 8);
-            const base = s.rail ? groundHere : Math.max(s.bridgeRoad ? -Infinity : groundHere, surfaceAtSeg(s, uu));
+            const base = s.rail ? groundHere + (s.railDeck || 0) : Math.max(s.bridgeRoad ? -Infinity : groundHere, surfaceAtSeg(s, uu));
             const need = base + clearanceOver(cls, s.cls, s.rail);
             // hold the clearance across the lower way's width (+ margin) on both sides of the crossing point
             const hold = (s.rail ? 3.0 : Math.max(2.5, 0.5 * widthOf(roads, s.r))) + hwSelf * 0.5 + 2.0;

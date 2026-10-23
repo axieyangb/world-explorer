@@ -977,6 +977,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         // [feature/rail-transit] real-geometry tracks (ballast/street/catenary/viaducts) + vehicle network payload
         if (data.rail) root.userData.rail = buildRailTrack(data.rail, ox, oz, subGroups.railways, mats, roadSegments);
         else buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
+        delete roadSegments.liftWays; // [release-6-integ]
 
         buildingTask = createBuildingBuildTask(
           data.buildings || [],
@@ -1732,6 +1733,8 @@ function buildRoadsAndBridges(
   } catch (err) {
     console.warn('computeRoadLiftProfiles failed', err);
   }
+  // [release-6-integ] same ways + lifted heights for rail_build crossings (removed again after buildRailTrack)
+  roadSegments.liftWays = { ways: roadContext.length ? roads.concat(roadContext) : roads, prof: liftProfiles };
 
   // Pre-collect named roads in this chunk so unnamed ramps/service ways can inherit nearby road names
   const namedChunkRoads = [];

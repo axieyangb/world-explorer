@@ -80,6 +80,230 @@ function computeElevations(lines) {
   });
 }
 
+// decide street running: tram-like kinds riding on a road surface for most of their length
+function streetRunning(l, wp, ox, oz, inChunk, roadAt) {
+  const n = wp.length / 2;
+  let st = 0;
+  if (!l.tn && !l.br && (l.k === 'tram' || l.k === 'cable_car' || l.k === 'light_rail' || l.k === 'funicular')) {
+    let on = 0, tot = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const mx = (wp[i * 2] + wp[i * 2 + 2]) / 2, mz = (wp[i * 2 + 1] + wp[i * 2 + 3]) / 2;
+      const L = Math.hypot(wp[i * 2 + 2] - wp[i * 2], wp[i * 2 + 3] - wp[i * 2 + 1]);
+      tot += L;
+      if (inChunk(mx - ox, mz - oz) && roadAt(mx, mz, railGroundY(mx, mz) + 0.6) !== null) on += L;
+      else if (!inChunk(mx - ox, mz - oz) && (l.k === 'tram' || l.k === 'cable_car')) on += L; // assume street outside our roads
+    }
+    st = tot > 0 && on / tot > 0.5 ? 1 : 0;
+  }
+  return st;
+}
+
+// ---------------------------------------------------------------- [release-6-integ] vertical separation with roads
+// Road heights include the fix/bridge-continuity lifts (approach ramps / embankments) and come from the same ways +
+// lift profiles as the road mesh (chunk ways + ~1 km context, stashed on roadSegments.liftWays by chunk_builder), so
+// neighbouring chunks see the same crossings:
+//   - viaduct over a lower road (lower layer / ground)   -> track ground >= road surface + RAIL_CLEAR
+//   - ground track crossing a lifted (non-bridge) street -> follows the street surface (level crossing)
+//   - road bridge of a higher layer (bridge_profile clears the nominal viaduct) -> raises stay below it
+// Raises spread along the rail graph at a rail grade (3 % heavy, 4.5 % light) so tracks climb smoothly.
+const RAIL_CLEAR = 6.2;   // track ground over road surface (deck underside ~4.8 m above the road)
+const ROAD_OVER = 7.5;    // keep the track this far below a higher-layer road bridge
+const FOOT_CLS = new Set(['footway', 'pedestrian', 'cycleway', 'path', 'steps', 'bridleway', 'corridor']);
+const NO_LEVEL_CLS = /^(motorway|trunk)/; // never level crossings (and their lifted ramps must not drag tracks up)
+
+class RHeap { // binary max-heap of (value, id)
+  constructor() { this.v = []; this.d = []; }
+  get size() { return this.v.length; }
+  push(val, id) {
+    const v = this.v, d = this.d;
+    let k = v.length; v.push(val); d.push(id);
+    while (k > 0) { const q = (k - 1) >> 1; if (v[q] >= val) break; v[k] = v[q]; d[k] = d[q]; k = q; }
+    v[k] = val; d[k] = id;
+  }
+  pop() {
+    const v = this.v, d = this.d;
+    const tv = v[0], td = d[0], lv = v.pop(), ld = d.pop();
+    if (v.length) {
+      let k = 0;
+      for (;;) {
+        const a = 2 * k + 1, b = a + 1;
+        let m = k, mv = lv;
+        if (a < v.length && v[a] > mv) { m = a; mv = v[a]; }
+        if (b < v.length && v[b] > mv) { m = b; mv = v[b]; }
+        if (m === k) break;
+        v[k] = v[m]; d[k] = d[m]; k = m;
+      }
+      v[k] = lv; d[k] = ld;
+    }
+    this.top = tv;
+    return td;
+  }
+}
+
+/** World-space road segments (no tunnels) with what is needed to evaluate their rendered surface height. */
+function crossingRoads(roadSegments, ox, oz) {
+  const segs = [];
+  const lw = roadSegments && roadSegments.liftWays;
+  if (lw && lw.ways) {
+    for (let r = 0; r < lw.ways.length; r++) {
+      const t = lw.ways[r], flat = t && t[10];
+      if (!flat || flat.length < 6 || t[8]) continue;
+      const prof = lw.prof && lw.prof[r];
+      const layer = t[7] ? Math.max(1, Number(t[9]) || 1) : Math.min(0, Number(t[9]) || 0);
+      // ground-relative raw height as chunk_builder renders it (bridges / layer >= 1 get theirs from the lift profile)
+      const rawOf = (y) => (t[7] || (Number(t[9]) || 0) >= 1 ? 0 : Math.min(0.2, y));
+      for (let i = 0; i + 1 < flat.length / 3; i++) {
+        segs.push({
+          ax: flat[i * 3] + ox, az: flat[i * 3 + 2] + oz, bx: flat[i * 3 + 3] + ox, bz: flat[i * 3 + 5] + oz,
+          ra: rawOf(flat[i * 3 + 1]), rb: rawOf(flat[i * 3 + 4]), la: prof ? prof[i] : NaN, lb: prof ? prof[i + 1] : NaN,
+          layer, bridge: Boolean(t[7]), cls: t[1],
+        });
+      }
+    }
+  } else {
+    for (const s of roadSegments || []) {
+      if (!s || s.tunnel) continue;
+      segs.push({ ax: s.x1, az: s.z1, bx: s.x2, bz: s.z2, ya: s.y1, yb: s.y2, cls: s.cls, bridge: Boolean(s.bridge),
+        layer: s.bridge ? Math.max(1, s.layer || 1) : Math.min(0, s.layer || 0) });
+    }
+  }
+  return segs;
+}
+
+/** Road surface at parameter u (same rule as chunk_builder: max(terrain + raw, lift ramp) + bias). */
+function roadYAt(s, u, wx, wz) {
+  if (s.ya !== undefined) return s.ya + (s.yb - s.ya) * u;
+  let y = railGroundY(wx, wz) + s.ra + (s.rb - s.ra) * u;
+  if (!Number.isNaN(s.la) || !Number.isNaN(s.lb)) {
+    const A = Number.isNaN(s.la) ? railGroundY(s.ax, s.az) + s.ra : s.la;
+    const B = Number.isNaN(s.lb) ? railGroundY(s.bx, s.bz) + s.rb : s.lb;
+    y = Math.max(y, A + (B - A) * u);
+  }
+  return y + 0.1;
+}
+
+function segCross(ax, az, bx, bz, cx, cz, dx, dz) {
+  const rX = bx - ax, rZ = bz - az, sX = dx - cx, sZ = dz - cz;
+  const den = rX * sZ - rZ * sX;
+  if (Math.abs(den) < 1e-9) return null;
+  const qx = cx - ax, qz = cz - az;
+  const t = (qx * sZ - qz * sX) / den, u = (qx * rZ - qz * rX) / den;
+  return t < 0 || t > 1 || u < 0 || u > 1 ? null : [t, u];
+}
+
+/** Raises per-vertex offsets `elev` (in place) so tracks clear / meet the roads they cross. */
+function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
+  const segs = crossingRoads(roadSegments, ox, oz);
+  if (!segs.length) return;
+  const CELL = 32, grid = new Map();
+  segs.forEach((s, si) => {
+    const x0 = Math.floor(Math.min(s.ax, s.bx) / CELL), x1 = Math.floor(Math.max(s.ax, s.bx) / CELL);
+    const z0 = Math.floor(Math.min(s.az, s.bz) / CELL), z1 = Math.floor(Math.max(s.az, s.bz) / CELL);
+    if ((x1 - x0 + 1) * (z1 - z0 + 1) > 400) return;
+    for (let gx = x0; gx <= x1; gx++) for (let gz = z0; gz <= z1; gz++) {
+      const k = gx * 100003 + gz; const l = grid.get(k); if (l) l.push(si); else grid.set(k, [si]);
+    }
+  });
+  // rail graph: one node per (rounded) vertex, pieces joined where they share a vertex
+  const nodeOf = new Map(), base = [], adj = [];
+  const node = (x, z) => {
+    const k = ekey(x, z); let id = nodeOf.get(k);
+    if (id === undefined) { id = base.length; nodeOf.set(k, id); base.push(-Infinity); adj.push([]); }
+    return id;
+  };
+  const info = lines.map((l, li) => {
+    if (l.tn || l.k === 'aerial' || stOf[li]) return null;
+    const p = l.p, n = p.length / 2, e = elev[li];
+    const g = new Float64Array(n), v = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      g[i] = railGroundY(p[i * 2] + ox, p[i * 2 + 1] + oz);
+      v[i] = node(p[i * 2], p[i * 2 + 1]);
+      base[v[i]] = Math.max(base[v[i]], g[i] + e[i]);
+    }
+    const G = RAIL_FAMILY[l.k] === 'heavy' ? 0.03 : 0.045;
+    for (let i = 0; i + 1 < n; i++) {
+      if (v[i] === v[i + 1]) continue;
+      const w = G * Math.hypot(p[i * 2 + 2] - p[i * 2], p[i * 2 + 3] - p[i * 2 + 1]);
+      adj[v[i]].push(v[i + 1], w); adj[v[i + 1]].push(v[i], w);
+    }
+    return { g, v };
+  });
+  const N = base.length;
+  const up = new Float64Array(N).fill(-Infinity), cap = new Float64Array(N).fill(Infinity);
+  const hUp = new RHeap(), hCap = new RHeap();
+  const seedUp = (id, y) => { if (y > up[id] + 1e-6 && y > base[id] + 0.05) { up[id] = y; hUp.push(y, id); } };
+  const seedCap = (id, y) => { if (y < cap[id] - 1e-6) { cap[id] = y; hCap.push(-y, id); } };
+
+  lines.forEach((l, li) => {
+    const I = info[li]; if (!I) return;
+    const p = l.p, n = p.length / 2, e = elev[li];
+    let maxE = 0;
+    for (let i = 0; i < n; i++) if (e[i] > maxE) maxE = e[i];
+    const viaduct = Boolean(l.br) && maxE > 2;
+    if (l.br && !viaduct) return; // short bridges / culverts only follow their neighbours
+    const RL = viaduct ? Math.max(1, Math.min(3, l.ly || 1)) : 0;
+    for (let i = 0; i + 1 < n; i++) {
+      const ax = p[i * 2] + ox, az = p[i * 2 + 1] + oz, bx = p[i * 2 + 2] + ox, bz = p[i * 2 + 3] + oz;
+      const gx0 = Math.floor(Math.min(ax, bx) / CELL), gx1 = Math.floor(Math.max(ax, bx) / CELL);
+      const gz0 = Math.floor(Math.min(az, bz) / CELL), gz1 = Math.floor(Math.max(az, bz) / CELL);
+      if ((gx1 - gx0 + 1) * (gz1 - gz0 + 1) > 400) continue;
+      const seen = new Set();
+      for (let gx = gx0; gx <= gx1; gx++) for (let gz = gz0; gz <= gz1; gz++) {
+        const cl = grid.get(gx * 100003 + gz); if (!cl) continue;
+        for (const si of cl) {
+          if (seen.has(si)) continue; seen.add(si);
+          const s = segs[si];
+          const hit = segCross(ax, az, bx, bz, s.ax, s.az, s.bx, s.bz);
+          if (!hit) continue;
+          const [t, u] = hit;
+          const x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+          const gc = railGroundY(x, z);
+          const railY = gc + e[i] + (e[i + 1] - e[i]) * t;
+          const roadY = roadYAt(s, u, x, z);
+          // the track interpolates offsets between vertices: compensate terrain that dips at the crossing
+          const comp = Math.max(0, I.g[i] + (I.g[i + 1] - I.g[i]) * t - gc);
+          if (s.bridge && s.layer > RL) { // road above: never push the track into it
+            seedCap(I.v[i], roadY - ROAD_OVER); seedCap(I.v[i + 1], roadY - ROAD_OVER);
+          } else if (viaduct) {
+            const need = roadY + RAIL_CLEAR;
+            if (railY < need && roadY - gc < 30) { seedUp(I.v[i], need + comp); seedUp(I.v[i + 1], need + comp); }
+          } else if (!s.bridge && s.layer === 0 && !FOOT_CLS.has(s.cls) && !NO_LEVEL_CLS.test(s.cls || '')) {
+            const dy = roadY - railY;
+            if (dy > 0.5 && dy < 7.5) { seedUp(I.v[i], roadY - 0.4 + comp); seedUp(I.v[i + 1], roadY - 0.4 + comp); }
+          }
+        }
+      }
+    }
+  });
+  if (!hUp.size) return;
+  while (hUp.size) {
+    const v = hUp.pop(), uv = hUp.top;
+    if (uv < up[v] - 1e-6) continue;
+    const a = adj[v];
+    for (let j = 0; j < a.length; j += 2) {
+      const nb = a[j], c = uv - a[j + 1];
+      if (c > up[nb] + 1e-6 && c > base[nb] + 0.02) { up[nb] = c; hUp.push(c, nb); }
+    }
+  }
+  while (hCap.size) {
+    const v = hCap.pop(), cv = -hCap.top;
+    if (cv > cap[v] + 1e-6) continue;
+    const a = adj[v];
+    for (let j = 0; j < a.length; j += 2) {
+      const nb = a[j], c = cv + a[j + 1];
+      if (c < cap[nb] - 1e-6 && c < up[nb]) { cap[nb] = c; hCap.push(-c, nb); }
+    }
+  }
+  lines.forEach((l, li) => {
+    const I = info[li]; if (!I) return;
+    const e = elev[li];
+    for (let i = 0; i < e.length; i++) {
+      const y = Math.min(up[I.v[i]], cap[I.v[i]]);
+      if (y > I.g[i] + e[i] + 0.01) e[i] = y - I.g[i];
+    }
+  });
+}
+
 /** Simple uniform grid over world-space road segments for road-surface lookups. */
 function makeRoadLookup(roadSegments) {
   const CELL = 24;
@@ -211,6 +435,14 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
 
   const inChunk = (lx, lz) => lx >= -500 && lx < 500 && lz >= -500 && lz < 500;
 
+  // [release-6-integ] street running first, then clear / follow the (bridge-profile lifted) roads
+  const stOf = lines.map((l) => {
+    const wq = new Float64Array(l.p.length);
+    for (let i = 0; i < l.p.length; i += 2) { wq[i] = l.p[i] + ox; wq[i + 1] = l.p[i + 1] + oz; }
+    return streetRunning(l, wq, ox, oz, inChunk, roadAt);
+  });
+  separateFromRoads(lines, elev, stOf, ox, oz, roadSegments);
+
   for (let li = 0; li < lines.length; li++) {
     const l = lines[li];
     const e = elev[li];
@@ -218,19 +450,7 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
     const wp = new Float64Array(l.p.length);
     for (let i = 0; i < n; i++) { wp[i * 2] = l.p[i * 2] + ox; wp[i * 2 + 1] = l.p[i * 2 + 1] + oz; }
 
-    // decide street running: tram-like kinds riding on a road surface for most of their length
-    let st = 0;
-    if (!l.tn && !l.br && (l.k === 'tram' || l.k === 'cable_car' || l.k === 'light_rail' || l.k === 'funicular')) {
-      let on = 0, tot = 0;
-      for (let i = 0; i < n - 1; i++) {
-        const mx = (wp[i * 2] + wp[i * 2 + 2]) / 2, mz = (wp[i * 2 + 1] + wp[i * 2 + 3]) / 2;
-        const L = Math.hypot(wp[i * 2 + 2] - wp[i * 2], wp[i * 2 + 3] - wp[i * 2 + 1]);
-        tot += L;
-        if (inChunk(mx - ox, mz - oz) && roadAt(mx, mz, railGroundY(mx, mz) + 0.6) !== null) on += L;
-        else if (!inChunk(mx - ox, mz - oz) && (l.k === 'tram' || l.k === 'cable_car')) on += L; // assume street outside our roads
-      }
-      st = tot > 0 && on / tot > 0.5 ? 1 : 0;
-    }
+    const st = stOf[li]; // [release-6-integ] decided in the pre-pass (streetRunning)
 
     const pay = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) { pay[i * 3] = wp[i * 2]; pay[i * 3 + 1] = wp[i * 2 + 1]; pay[i * 3 + 2] = e[i]; }
@@ -311,6 +531,12 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
           if (!l.svc) { // yards/sidings: flat bed only (triangle budget)
             strip(i, -2.5, -0.08, -1.7, bedY, C.ballastSide);
             strip(i, 1.7, bedY, 2.5, -0.08, C.ballastSide);
+          }
+          // [release-6-integ] raised ground track (level crossing on a lifted street, viaduct approach): embankment
+          const ea = d.es[i], eb = d.es[i + 1];
+          if (ea > 0.05 || eb > 0.05) {
+            sink.quad(P(i, -2.5 - 1.5 * ea, -0.38 - ea), P(i + 1, -2.5 - 1.5 * eb, -0.38 - eb), P(i + 1, -2.5, -0.08), P(i, -2.5, -0.08), C.ballastSide);
+            sink.quad(P(i, 2.5, -0.08), P(i + 1, 2.5, -0.08), P(i + 1, 2.5 + 1.5 * eb, -0.38 - eb), P(i, 2.5 + 1.5 * ea, -0.38 - ea), C.ballastSide);
           }
         }
         // sleepers

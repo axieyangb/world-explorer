@@ -1000,6 +1000,7 @@ const PHRASE_REPLACEMENTS = [
 const EXACT_TRANSLATIONS = Object.fromEntries(PHRASE_REPLACEMENTS.map(([k, v]) => [k, v.trim()]));
 
 const ROAD_SUFFIXES = [
+  ["旁 · 人行步道", " · Footpath"], // [release-6-integ] chunk_builder: `${name}旁 · 人行步道` (sidewalk of a named road)
   ["高速辅路", " Expy Frontage Rd"],
   ["快速路", " Expy"],
   ["高速公路", " Expy"],
@@ -1022,6 +1023,7 @@ const ROAD_SUFFIXES = [
   ["南路辅路", " S Frontage Rd"],
   ["东路辅路", " E Frontage Rd"],
   ["西路辅路", " W Frontage Rd"],
+  ["辅路/内部通道", " Service Rd"], // [release-6-integ] chunk_builder: `${name}辅路/内部通道`
   ["辅路", " Frontage Rd"],
   ["中路", " Middle Rd"],
   ["北路", " N Rd"],
@@ -1203,7 +1205,8 @@ export function translateRoadName(name, lang = currentLang) {
   if (!trimmed) return "";
   if (EXACT_TRANSLATIONS[trimmed]) return EXACT_TRANSLATIONS[trimmed];
 
-  if (trimmed.includes("·")) {
+  // [release-6-integ] "<road>旁 · <class>" suffixes are matched whole below, not split at "·"
+  if (trimmed.includes("·") && !ROAD_SUFFIXES.some(([zh]) => zh.includes("·") && trimmed.endsWith(zh))) {
     return trimmed
       .split("·")
       .map((part) => translateRoadName(part.trim(), "en"))
