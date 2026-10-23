@@ -167,6 +167,10 @@ export class KaijuMode {
     return Math.min(1, Math.max(real, this._forcedCity));
   }
 
+  get creature() {
+    return this.kaiju;
+  }
+
   get canFire() {
     return this.active && !this.paused && this.heli.alive && (this.state === "intro" || this.state === "fight");
   }
@@ -664,9 +668,15 @@ export class KaijuMode {
   }
 
   _onKey(e, down) {
-    if (!this.active) return;
     const tag = e.target && e.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (down && !e.repeat && e.code === "Digit4") {
+      e.preventDefault();
+      if (this.active) this.exit();
+      else this.enter();
+      return;
+    }
+    if (!this.active) return;
     this._gesture();
     const code = e.code;
     if (!down) this.app.keys?.delete?.(code);

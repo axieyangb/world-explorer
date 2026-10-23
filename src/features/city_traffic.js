@@ -3,33 +3,47 @@
 //   incrementally for chunks near the player.
 // - Cars: drive on the regional side, respect oneway, follow lanes, car-following,
 //   stop at red signals (signals.js), instanced rendering (traffic_models.js).
-// - Pedestrians: sidewalks/footways, cross at signalized crosswalks, avoid the player.
+// - Pedestrians: sidewalks/footways, cross at intersections, fall apart into multi-part
+//   ragdoll pieces when hit by player car, AI traffic cars, or Kaiju monster/weapons,
+//   and lie on the ground before respawning.
 // - Player car collides with AI cars (2D OBB, bump + slow down).
 import * as THREE from '../../vendor/three.module.js';
 import { VEHICLE_SPECS } from '../entities.js';
 import { buildTrafficGraph, isLeftHandTraffic } from './traffic_graph.js';
 import { getSignalPhase, getSignalInfo, approachAxis, signalTime } from './signals.js';
 import * as daylight from './daylight.js';
-import { CAR_TYPES, createCarMeshes, createPedMesh } from './traffic_models.js';
-import { randomPersonLook, bit, OPT } from './person_model.js'; // [feature/people]
+import {
+  CAR_TYPES,
+  RAGDOLL_PART_NAMES,
+  createCarMeshes,
+  createPedMesh,
+  createPedPartMeshes,
+  createImpactPuffMesh,
+} from './traffic_models.js';
+import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.js'; // [feature/people]
 
 const UMBRELLA_BIT = bit(OPT.UMBRELLA);
 
 const MAX_CARS = 110;
-const MAX_PEDS = 140;
-const MAX_PEDS_CAP = 360; // [kaiju] instanced capacity for the panic density boost (normal mode still caps at MAX_PEDS)
+const MAX_PEDS = 210;
+const MAX_PEDS_CAP = 420; // [kaiju] instanced capacity for the panic density boost
 const WRECK_PAINT = new THREE.Color(0x14120f); // [kaiju] burned wreck tint
 const CAR_R = 400;
 const CAR_DESPAWN = 470;
-const PED_R = 145;
-const PED_DESPAWN = 165;
+const PED_R = 155;
+const PED_DESPAWN = 180;
 const GRAPH_SPAN = 1500; // include chunks whose center is within this many meters (3x3 around player)
 const HASH = 30;
+
+const RAGDOLL_GRAVITY = 22.0;
+const RAGDOLL_SETTLE_TIME = 2.2;
+const RAGDOLL_LIE_DURATION = 15.0;
+const MAX_PUFFS = 128;
 
 // Indexed by traffic class code (see traffic_graph.js).
 const CAR_SPEED = [25, 20, 14, 12.5, 11, 8, 6, 12, 0, 0];
 const CAR_W = [3, 2.6, 2.2, 1.6, 1.1, 0.35, 0, 0.8, 0, 0];
-const PED_W = [0, 0, 1, 1, 0.9, 0.55, 0, 0, 0.8, 0];
+const PED_W = [0, 0, 1.25, 1.25, 1.1, 0.7, 0, 0, 0.95, 0];
 
 const PAINTS = [
   0xf2f2f0, 0xf2f2f0, 0xe8e8e6, 0x161719, 0x161719, 0x1f2124, 0xa7abb0, 0xa7abb0, 0x6c7177,
@@ -40,6 +54,10 @@ const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const hashKey = (x, z) => (Math.floor(x / HASH) + 2000) * 5000 + (Math.floor(z / HASH) + 2000);
 const nodeKey = (qx, qz) => (qx + 50000) * 100000 + (qz + 50000);
+const wrapPi = (a) => {
+  a -= Math.round(a / (Math.PI * 2)) * (Math.PI * 2);
+  return a;
+};
 
 function evalEdge(e, s, hint, out) {
   const cum = e.cum, n = e.n, p = e.pts;
@@ -88,10 +106,39 @@ export class CityTraffic {
     this.ped = createPedMesh(MAX_PEDS_CAP); // [kaiju]
     this.group.add(this.ped.mesh);
 
+    // Detached ragdoll body part meshes (head, torso, armL, armR, legL, legR, accessory)
+    this.partMeshes = createPedPartMeshes(MAX_PEDS_CAP);
+    this.pedParts = this.partMeshes;
+    this.ped.parts = this.partMeshes;
+    for (const name of RAGDOLL_PART_NAMES) {
+      this.group.add(this.partMeshes[name]);
+    }
+
+    // Subtle impact dust/debris puff particles
+    this.puffMesh = createImpactPuffMesh(MAX_PUFFS);
+    this.group.add(this.puffMesh);
+    this.puffs = [];
+    for (let i = 0; i < MAX_PUFFS; i++) {
+      this.puffs.push({ active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 0.5, scale: 1 });
+    }
+
     this.cars = [];
     for (let i = 0; i < MAX_CARS; i++) this.cars.push({ active: false, id: i });
     this.peds = [];
-    for (let i = 0; i < MAX_PEDS_CAP; i++) this.peds.push({ active: false, id: i }); // [kaiju]
+    for (let i = 0; i < MAX_PEDS_CAP; i++) {
+      this.peds.push({
+        active: false,
+        id: i,
+        state: 'walking',
+        crossState: 0,
+        stateTimer: 0,
+        ragdollTimer: 0,
+        lieTimer: 0,
+        groundY: 0,
+        parts: null,
+        partsByName: null,
+      });
+    }
     this.kaiju = null; // [kaiju] KaijuCrowd hooks (car/carPost/ped) while Kaiju Defense is active
     this.pedCapBase = MAX_PEDS; this.pedCap = MAX_PEDS; this.pedMult = 1; // [kaiju]
 
@@ -106,6 +153,9 @@ export class CityTraffic {
     this.taxiPaint = null;
     this.fillBoost = 0;
     this.adding = null;
+    this._queuedImpacts = [];
+    this._hitSoundCooldown = 0;
+    this._audioCtx = null;
 
     this.obs = { n: 0, x: [], z: [], hx: [], hz: [], hl: [], hw: [], v: [], kind: [], ref: [] };
     this.cells = new Map();
@@ -118,12 +168,21 @@ export class CityTraffic {
     this.eul = new THREE.Euler(0, 0, 0, 'YXZ');
     this.v3 = new THREE.Vector3();
     this.s3 = new THREE.Vector3(1, 1, 1);
-    this.stats = { cars: 0, peds: 0, edges: 0, nodes: 0 };
+    this._tmpVecA = new THREE.Vector3();
+    this._tmpVecB = new THREE.Vector3();
+    this.stats = { cars: 0, peds: 0, ragdolls: 0, lying: 0, hits: 0, edges: 0, nodes: 0 };
     if (typeof window !== 'undefined') window.__cityTraffic = this; // debug/test handle
   }
 
   setVisible(v) {
     this.group.visible = Boolean(v);
+  }
+
+  _kaijuCreature() {
+    const km = this.app && this.app.kaiju;
+    if (!km || !km.active) return null;
+    const kj = km.creature || km.kaiju;
+    return kj && kj.alive !== false && kj.position ? kj : null;
   }
 
   // ---------------- graph ----------------
@@ -255,11 +314,14 @@ export class CityTraffic {
 
   _syncChunks(loaded, p) {
     if (this.adding) { this._pumpAdd(1.2); return; }
+    const kj = this._kaijuCreature();
     // Remove stale / far chunks.
     for (const [key, rec] of this.chunkRecs) {
       const c = loaded.get(key);
       const ud = rec.chunk.userData;
-      if (c !== rec.chunk || Math.abs(ud.ox - p.x) > GRAPH_SPAN + 300 || Math.abs(ud.oz - p.z) > GRAPH_SPAN + 300) {
+      const farPlayer = Math.abs(ud.ox - p.x) > GRAPH_SPAN + 300 || Math.abs(ud.oz - p.z) > GRAPH_SPAN + 300;
+      const farKaiju = !kj || (Math.abs(ud.ox - kj.position.x) > GRAPH_SPAN + 300 || Math.abs(ud.oz - kj.position.z) > GRAPH_SPAN + 300);
+      if (c !== rec.chunk || (farPlayer && farKaiju)) {
         this._removeChunk(key);
       }
     }
@@ -268,9 +330,13 @@ export class CityTraffic {
     for (const [key, chunk] of loaded) {
       if (this.chunkRecs.has(key) || !chunk || !chunk.userData) continue;
       const ud = chunk.userData;
-      const dx = Math.abs(ud.ox - p.x), dz = Math.abs(ud.oz - p.z);
-      if (dx > GRAPH_SPAN || dz > GRAPH_SPAN) continue;
-      const d = dx + dz;
+      const dxP = Math.abs(ud.ox - p.x), dzP = Math.abs(ud.oz - p.z);
+      const nearP = dxP <= GRAPH_SPAN && dzP <= GRAPH_SPAN;
+      const dxK = kj ? Math.abs(ud.ox - kj.position.x) : Infinity;
+      const dzK = kj ? Math.abs(ud.oz - kj.position.z) : Infinity;
+      const nearK = dxK <= GRAPH_SPAN && dzK <= GRAPH_SPAN;
+      if (!nearP && !nearK) continue;
+      const d = Math.min(dxP + dzP, dxK + dzK);
       if (d < bestD) { bestD = d; bestKey = key; bestChunk = chunk; }
     }
     if (bestKey !== null) {
@@ -284,7 +350,13 @@ export class CityTraffic {
     this.nodeCells.clear();
     this.stats.nodes = 0;
     for (const c of this.cars) c.active = false;
-    for (const p of this.peds) p.active = false;
+    for (const p of this.peds) {
+      p.active = false;
+      p.state = 'walking';
+      p.parts = null;
+      p.partsByName = null;
+    }
+    for (const pf of this.puffs) pf.active = false;
     const o = this.app.worldOrigin || {};
     this.lht = isLeftHandTraffic(o.centerLat, o.centerLon);
     const uk = o.centerLat > 49.8 && o.centerLat < 61 && o.centerLon > -11 && o.centerLon < 2;
@@ -297,10 +369,15 @@ export class CityTraffic {
     this.pedCand.length = 0; this.pedCum.length = 0;
     let cw = 0, pw = 0;
     const R = CAR_R, PR = PED_R;
+    const kj = this._kaijuCreature();
+    const kx = kj ? kj.position.x : 0, kz = kj ? kj.position.z : 0;
+    const kPR = 190;
     for (const rec of this.chunkRecs.values()) {
       for (const e of rec.edges) {
-        if (e.minX > p.x + R || e.maxX < p.x - R || e.minZ > p.z + R || e.maxZ < p.z - R) continue;
-        if (e.car) {
+        const nearCarP = !(e.minX > p.x + R || e.maxX < p.x - R || e.minZ > p.z + R || e.maxZ < p.z - R);
+        const nearPedP = !(e.minX > p.x + PR || e.maxX < p.x - PR || e.minZ > p.z + PR || e.maxZ < p.z - PR);
+        const nearPedK = kj && !(e.minX > kx + kPR || e.maxX < kx - kPR || e.minZ > kz + kPR || e.maxZ < kz - kPR);
+        if (e.car && nearCarP) {
           const w = CAR_W[e.cls] * e.len;
           for (const d of e.dirs) {
             if (!d) continue;
@@ -308,14 +385,15 @@ export class CityTraffic {
             this.carCand.push(d); this.carCum.push(cw);
           }
         }
-        if (e.ped && !(e.minX > p.x + PR || e.maxX < p.x - PR || e.minZ > p.z + PR || e.maxZ < p.z - PR)) {
-          pw += PED_W[e.cls] * e.len * (e.cls === 8 ? 1 : 2);
+        if (e.ped && (nearPedP || nearPedK)) {
+          const boost = nearPedK ? 2.5 : 1.0;
+          pw += PED_W[e.cls] * e.len * (e.cls === 8 ? 1.2 : 2.4) * boost;
           this.pedCand.push(e); this.pedCum.push(pw);
         }
       }
     }
     this.carTarget = Math.min(MAX_CARS, Math.round(cw / 110));
-    this.pedTarget = Math.min(this.pedCap, Math.round((pw / 16) * this.pedMult)); // [kaiju] pedCap/pedMult
+    this.pedTarget = Math.min(this.pedCap, Math.round((pw / 10) * this.pedMult)); // denser near sidewalks & crosswalks
   }
 
   _pickWeighted(cand, cum) {
@@ -447,7 +525,9 @@ export class CityTraffic {
       c.obs = this._addObstacle(c.x, c.z, c.ux, c.uz, c.len * 0.5, c.wid * 0.5, c.v, 0, c);
     }
     for (const p of this.peds) {
-      if (p.active && p.state === 2) this._addObstacle(p.x, p.z, p.hx, p.hz, 0.4, 0.4, 0, 2, p);
+      if (p.active && p.state === 'walking' && p.crossState === 2) {
+        this._addObstacle(p.x, p.z, p.hx, p.hz, 0.4, 0.4, 0, 2, p);
+      }
     }
     if (app.mode === 'drive' || app.mode === 'walk') {
       const spec = VEHICLE_SPECS[app.vehicleIdx] || { length: 4.6, width: 2 };
@@ -495,8 +575,6 @@ export class CityTraffic {
     if (node.sig && rem < 70) {
       const ph = getSignalPhase(node.sig, now, de.endAxis);
       if (ph !== 'green') {
-        // [integration] +2.2: car-following keeps ~2.5 m to a stopped leader; the stop line is not a car, so
-        // offset it to halt with the bumper just behind street's painted line.
         const stopDist = rem - this._stopBack(node) - c.len * 0.5 + 2.2;
         const canStop = c.v * c.v / (2 * 7) < stopDist + 0.5;
         if (stopDist > -0.5 && canStop && (ph === 'red' || c.v * c.v / (2 * 4) < stopDist)) {
@@ -575,16 +653,17 @@ export class CityTraffic {
     return active;
   }
 
-  // ---------------- pedestrians ----------------
+  // ---------------- pedestrians & ragdoll physics ----------------
   _pedOffset(ped) {
     const e = ped.e;
-    return e.cls === 8 ? ped.footOff : e.width * 0.5 + (e.cls === 5 ? 0.8 : 1.1);
+    return e.cls === 8 ? ped.footOff : e.width * 0.5 + (e.cls === 5 ? 0.55 : 0.78);
   }
 
   _enterPedEdge(ped, e, fwd, carry) {
     ped.e = e; ped.fwd = fwd; ped.s = carry; ped.hint = fwd ? 0 : e.n - 2;
     const end = fwd ? e.b : e.a;
-    ped.willCross = Boolean(end.sig) && e.cls >= 2 && e.cls <= 5 && Math.random() < 0.45;
+    const hasIntersection = Boolean(end.sig) || (end.adj && end.adj.length >= 2);
+    ped.willCross = hasIntersection && e.cls >= 2 && e.cls <= 5 && Math.random() < (end.sig ? 0.72 : 0.48);
     ped.waitT = 0;
     if (e.cls === 8) ped.footOff = 0.2 + Math.random() * 0.6;
   }
@@ -596,31 +675,50 @@ export class CityTraffic {
     const t = this.tmp;
     const off = this._pedOffset(ped);
     let lat = ped.side * off;
-    if (ped.state === 2) lat = ped.side * off * (1 - 2 * clamp(ped.crossT / ped.crossDur, 0, 1));
+    if (ped.crossState === 2) lat = ped.side * off * (1 - 2 * clamp(ped.crossT / (ped.crossDur || 1), 0, 1));
     lat += ped.lat;
     ped.x = t.x - t.uz * lat;
     ped.z = t.z + t.ux * lat;
-    ped.y = t.y + (ped.state === 2 || e.cls === 8 ? 0.02 : 0.06);
-    if (ped.state === 1 || ped.state === 2) { ped.hx = t.uz * ped.side; ped.hz = -t.ux * ped.side; }
+    ped.y = t.y + (ped.crossState === 2 || e.cls === 8 ? 0.02 : 0.06);
+    if (ped.crossState === 1 || ped.crossState === 2) { ped.hx = t.uz * ped.side; ped.hz = -t.ux * ped.side; }
     else { const sgn = ped.fwd ? 1 : -1; ped.hx = t.ux * sgn; ped.hz = t.uz * sgn; }
     ped.gux = t.ux; ped.guz = t.uz;
   }
 
   _spawnPed(ped, p, initial) {
-    for (let tries = 0; tries < 4; tries++) {
+    const kj = this._kaijuCreature();
+    for (let tries = 0; tries < 6; tries++) {
       const e = this._pickWeighted(this.pedCand, this.pedCum);
       if (!e || !e.alive) return false;
-      ped.state = 0; ped.lat = 0; ped.crossT = 0;
+      ped.state = 'walking';
+      ped.crossState = 0;
+      ped.stateTimer = 0;
+      ped.ragdollTimer = 0;
+      ped.lieTimer = 0;
+      ped.parts = null;
+      ped.partsByName = null;
+      ped.lat = 0; ped.crossT = 0;
       ped.side = Math.random() < 0.5 ? -1 : 1;
       ped.footOff = 0.2 + Math.random() * 0.6;
-      this._enterPedEdge(ped, e, Math.random() < 0.5, Math.random() * e.len);
-      this._pedPose(ped);
-      const d = Math.hypot(ped.x - p.x, ped.z - p.z);
-      if (d > PED_R || d < (initial ? 8 : 25)) continue;
-      if (!initial && d < 90 && this._visible(ped.x, ped.y, ped.z, 1.5)) continue;
       const o = this.app.worldOrigin || {};
       ped.look = randomPersonLook(o.centerLat, o.centerLon);
       ped.v = (1.05 + Math.random() * 0.55) * ped.look.speedMul;
+      this._enterPedEdge(ped, e, Math.random() < 0.5, Math.random() * e.len);
+      // Spawn ~22% of road pedestrians actively crossing near intersections/crosswalks
+      if (e.cls >= 2 && e.cls <= 5 && Math.random() < 0.22) {
+        const off = this._pedOffset(ped);
+        ped.crossState = 2;
+        ped.crossDur = Math.max(1.5, (2 * off) / ped.v);
+        ped.crossT = Math.random() * ped.crossDur * 0.75;
+      }
+      this._pedPose(ped);
+      const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
+      const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
+      const validP = dP <= PED_R && dP >= (initial ? 6 : 16);
+      const validK = dK <= 185 && dK >= 4;
+      if (!validP && !validK) continue;
+      if (!initial && !validK && dP < 70 && this._visible(ped.x, ped.y, ped.z, 1.5)) continue;
+      ped.groundY = ped.y;
       ped.phase = Math.random() * 6.28;
       ped.amp = 0.5;
       ped.ryaw = Math.atan2(ped.hx, ped.hz);
@@ -632,45 +730,547 @@ export class CityTraffic {
     return false;
   }
 
+  // Synthesized WebAudio impact thud / crunch (rate-limited so simultaneous hits never clip)
+  _playHitSound(x, y, z, forceMul = 1) {
+    if (this._hitSoundCooldown > 0) return;
+    this._hitSoundCooldown = 0.085;
+    if (typeof window === 'undefined') return;
+    try {
+      const cam = this.app && this.app.camera;
+      if (cam) {
+        const dist = Math.hypot(x - cam.position.x, y - cam.position.y, z - cam.position.z);
+        if (dist > 160) return;
+      }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!this._audioCtx) this._audioCtx = new AC();
+      const ctx = this._audioCtx;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const now = ctx.currentTime;
+      const gainVal = clamp(0.26 * forceMul, 0.12, 0.42);
+
+      // Low body thud
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(135, now);
+      osc.frequency.exponentialRampToValueAtTime(36, now + 0.15);
+      g.gain.setValueAtTime(gainVal, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.165);
+
+      // Short crunch burst
+      const len = Math.floor(ctx.sampleRate * 0.075);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.35));
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(460, now);
+      bp.Q.setValueAtTime(1.6, now);
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(gainVal * 0.65, now);
+      ng.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+      src.connect(bp);
+      bp.connect(ng);
+      ng.connect(ctx.destination);
+      src.start(now);
+    } catch (_) {
+      // Ignore audio errors in headless / restricted environments
+    }
+  }
+
+  _spawnImpactPuff(x, y, z, svx = 0, svz = 0, forceMul = 1) {
+    const K = this.app && this.app.kaiju;
+    if (K && K.active && K.fx && K.fx.spawn) {
+      this._tmpVecA.set(x, y, z);
+      K.fx.spawn('dust', this._tmpVecA, { count: 4, scale: 0.7 });
+      K.fx.spawn('debris', this._tmpVecA, { count: 3, scale: 0.5 });
+    }
+    let spawned = 0;
+    for (let i = 0; i < this.puffs.length && spawned < 7; i++) {
+      const pf = this.puffs[i];
+      if (pf.active) continue;
+      const ang = (spawned / 7) * Math.PI * 2 + Math.random() * 0.5;
+      const spd = (1.8 + Math.random() * 2.6) * clamp(forceMul, 0.8, 1.6);
+      pf.active = true;
+      pf.x = x + (Math.random() - 0.5) * 0.35;
+      pf.y = y + (Math.random() - 0.5) * 0.35;
+      pf.z = z + (Math.random() - 0.5) * 0.35;
+      pf.vx = (svx || 0) * 0.25 + Math.cos(ang) * spd;
+      pf.vy = 2.2 + Math.random() * 3.2;
+      pf.vz = (svz || 0) * 0.25 + Math.sin(ang) * spd;
+      pf.age = 0;
+      pf.life = 0.45 + Math.random() * 0.25;
+      pf.scale = 0.75 + Math.random() * 0.65;
+      spawned++;
+    }
+  }
+
+  _updatePuffs(dt) {
+    let n = 0;
+    const m4 = this.m4, q = this.q, v3 = this.v3, s3 = this.s3;
+    q.identity();
+    for (let i = 0; i < this.puffs.length; i++) {
+      const pf = this.puffs[i];
+      if (!pf.active) continue;
+      pf.age += dt;
+      if (pf.age >= pf.life) {
+        pf.active = false;
+        continue;
+      }
+      pf.x += pf.vx * dt;
+      pf.y += pf.vy * dt;
+      pf.z += pf.vz * dt;
+      pf.vy -= 9.8 * dt;
+      const u = pf.age / pf.life;
+      const sc = pf.scale * (1 + u * 1.4) * (1 - u * 0.85);
+      v3.set(pf.x, pf.y, pf.z);
+      s3.set(sc, sc, sc);
+      m4.compose(v3, q, s3);
+      this.puffMesh.setMatrixAt(n++, m4);
+    }
+    this.puffMesh.count = n;
+    if (n > 0) this.puffMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * Transition a walking pedestrian into 'falling_apart' multi-part ragdoll physics.
+   */
+  hitPedestrian(ped, ix, iy, iz, svx = 0, svy = 0, svz = 0, forceMul = 1) {
+    if (!ped || !ped.active || ped.state !== 'walking') return false;
+    ped.state = 'falling_apart';
+    ped.stateTimer = 0;
+    ped.ragdollTimer = 0;
+    ped.lieTimer = 0;
+    const groundY = Number.isFinite(ped.y) ? ped.y : 0;
+    ped.groundY = groundY;
+
+    let dx = ped.x - (Number.isFinite(ix) ? ix : ped.x);
+    let dz = ped.z - (Number.isFinite(iz) ? iz : ped.z);
+    let dist = Math.hypot(dx, dz);
+    const sSpeed = Math.hypot(svx || 0, svz || 0);
+    if (dist < 0.05) {
+      if (sSpeed > 0.1) {
+        dx = svx / sSpeed;
+        dz = svz / sSpeed;
+      } else {
+        dx = Math.sin(ped.ryaw || 0);
+        dz = Math.cos(ped.ryaw || 0);
+      }
+      dist = 1;
+    } else {
+      dx /= dist;
+      dz /= dist;
+    }
+
+    const fMul = clamp(Number.isFinite(forceMul) ? forceMul : 1, 0.85, 2.2);
+    const launchH = clamp(2.0 + sSpeed * 0.14 + 1.4 * fMul, 2.4, 5.8);
+    const baseVx = (svx ? clamp(svx * 0.16, -3.5, 3.5) : 0) + dx * launchH * 0.6;
+    const baseVz = (svz ? clamp(svz * 0.16, -3.5, 3.5) : 0) + dz * launchH * 0.6;
+
+    const L = ped.look || { wScale: 1, hScale: 1, style: 0 };
+    const cy = Math.cos(ped.ryaw || 0), sy = Math.sin(ped.ryaw || 0);
+    const sw = Math.sin(ped.phase || 0) * (ped.amp || 0);
+    const parts = [];
+    const partsByName = {};
+
+    for (let i = 0; i < RAGDOLL_PART_SPECS.length; i++) {
+      const spec = RAGDOLL_PART_SPECS[i];
+      const lx = spec.ox * L.wScale;
+      const ly = spec.oy * L.hScale;
+      const lz = spec.oz * L.wScale;
+      const px = ped.x + lx * cy + lz * sy;
+      const py = groundY + ly;
+      const pz = ped.z - lx * sy + lz * cy;
+
+      let rx = 0;
+      if (spec.name === 'legL') rx = sw;
+      else if (spec.name === 'legR') rx = -sw;
+      else if (spec.name === 'armL') rx = -sw * 0.9;
+      else if (spec.name === 'armR') rx = sw * 0.9;
+
+      // Distinct outward scatter per limb/head/torso so all parts separate visibly in mid-air
+      const ang = (i / RAGDOLL_PART_SPECS.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
+      const scatterMag = 1.6 + Math.random() * 1.6; // up to 3.2 m/s radial scatter
+      const sideBias = spec.ox * 4.2;
+      const scVx = Math.cos(ang) * scatterMag + sideBias * cy + (Math.random() - 0.5) * 1.2;
+      const scVz = Math.sin(ang) * scatterMag - sideBias * sy + (Math.random() - 0.5) * 1.2;
+      const carryMul =
+        spec.name === 'torso' ? 0.82 :
+        spec.name === 'head' ? 1.16 :
+        spec.name === 'accessory' ? 1.28 :
+        spec.name.startsWith('arm') ? 1.06 : 0.94;
+
+      const baseVy =
+        spec.name === 'head' ? 7.4 :
+        spec.name === 'torso' ? 5.2 :
+        spec.name === 'accessory' ? 8.2 :
+        spec.name.startsWith('arm') ? 6.4 : 4.8;
+      const vy = clamp((baseVy + Math.random() * 2.6) * clamp(0.85 + 0.22 * fMul, 0.85, 1.35), 4.0, 11.0);
+
+      const rSign = () => (Math.random() < 0.5 ? -1 : 1);
+      const pt = {
+        name: spec.name,
+        x: px,
+        y: py,
+        z: pz,
+        vx: baseVx * carryMul + scVx,
+        vy,
+        vz: baseVz * carryMul + scVz,
+        rx,
+        ry: (ped.ryaw || 0) + (Math.random() - 0.5) * 0.5,
+        rz: (Math.random() - 0.5) * 0.4,
+        avx: rSign() * (5.2 + Math.random() * 6.8),
+        avy: rSign() * (4.0 + Math.random() * 7.5),
+        avz: rSign() * (5.0 + Math.random() * 7.0),
+        r: spec.r || 0.14,
+        scale: 1.12,
+        visible: true,
+        instanceIndex: -1,
+      };
+      parts.push(pt);
+      partsByName[spec.name] = pt;
+    }
+    partsByName.leftArm = partsByName.armL;
+    partsByName.rightArm = partsByName.armR;
+    partsByName.leftLeg = partsByName.legL;
+    partsByName.rightLeg = partsByName.legR;
+    ped.parts = parts;
+    ped.partsByName = partsByName;
+    this.stats.hits = (this.stats.hits || 0) + 1;
+
+    this._playHitSound(ped.x, ped.y, ped.z, fMul);
+    this._spawnImpactPuff(ped.x, groundY + 0.9, ped.z, svx, svz, fMul);
+    return true;
+  }
+
+  /**
+   * Queue or immediately apply a spherical impact zone (used by Kaiju stomp, tail whip, breath, missiles, cannon).
+   */
+  triggerImpactSphere(x, y, z, radius, opts = {}) {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !(radius > 0)) return 0;
+    const force = opts.force || 1.3;
+    const vx = opts.vx || 0, vy = opts.vy || 0, vz = opts.vz || 0;
+    const r2 = radius * radius;
+    let count = 0;
+    for (const ped of this.peds) {
+      if (!ped.active || ped.state !== 'walking') continue;
+      const dx = ped.x - x, dz = ped.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 <= r2) {
+        const d = Math.sqrt(d2) || 0.1;
+        const outSpd = 8.0 * force * (1 - 0.35 * (d / radius));
+        const ivx = vx + (dx / d) * outSpd;
+        const ivz = vz + (dz / d) * outSpd;
+        if (this.hitPedestrian(ped, x, Number.isFinite(y) ? y : ped.y, z, ivx, vy, ivz, force)) count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Check all active impact sources (Player car/vehicle, AI traffic cars, Kaiju monster/weapons, and custom sources).
+   */
+  checkPedestrianImpacts(impactSources = null) {
+    const app = this.app;
+    if (!app) return 0;
+    let hits = 0;
+
+    // 1. Custom / external impact sources array
+    if (Array.isArray(impactSources)) {
+      for (const src of impactSources) {
+        if (!src) continue;
+        hits += this.triggerImpactSphere(
+          src.x,
+          src.y ?? 0,
+          src.z,
+          src.radius || 2.4,
+          { vx: src.vx || 0, vy: src.vy || 0, vz: src.vz || 0, force: src.force || 1.2 }
+        );
+      }
+    }
+    if (this._queuedImpacts.length) {
+      for (const src of this._queuedImpacts) {
+        hits += this.triggerImpactSphere(src.x, src.y, src.z, src.radius, src);
+      }
+      this._queuedImpacts.length = 0;
+    }
+
+    // 2. Player Car / Vehicle (drive mode, or low-altitude fly mode < 4m AGL)
+    const isDrive = app.mode === 'drive';
+    const isLowFly = app.mode === 'fly';
+    if (isDrive || isLowFly) {
+      const px = app.pos.x, py = app.pos.y, pz = app.pos.z;
+      const speed = isLowFly
+        ? (Math.hypot(app.heli?.vel?.x || 0, app.heli?.vel?.z || 0) || Math.abs(app.speed || 0))
+        : (app.speed || 0);
+      if (Math.abs(speed) > 2.0) {
+        const spec = VEHICLE_SPECS[app.vehicleIdx] || { length: 4.6, width: 2.0 };
+        const hx = Math.sin(app.yaw || 0), hz = Math.cos(app.yaw || 0);
+        const sgn = speed >= 0 ? 1 : -1;
+        const vvx = isLowFly && app.heli?.vel ? app.heli.vel.x : hx * speed;
+        const vvz = isLowFly && app.heli?.vel ? app.heli.vel.z : hz * speed;
+        const hl = spec.length * 0.5 + 0.55;
+        const hw = spec.width * 0.5 + 0.55;
+        const forceMul = clamp(Math.abs(speed) / 9.0, 0.95, 1.85);
+        for (const ped of this.peds) {
+          if (!ped.active || ped.state !== 'walking') continue;
+          const agl = Math.abs(py - ped.y);
+          if (agl > (isLowFly ? 4.0 : 3.8)) continue;
+          const dx = ped.x - px, dz = ped.z - pz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 36) continue;
+          const radialHit = d2 <= 2.4 * 2.4;
+          const obbHit = !radialHit && Boolean(obbOverlap(px, pz, hx, hz, hl, hw, ped.x, ped.z, 0, 1, 0.45, 0.45));
+          if (radialHit || obbHit) {
+            if (this.hitPedestrian(ped, px - hx * sgn * 0.8, py, pz - hz * sgn * 0.8, vvx, 0, vvz, forceMul)) {
+              hits++;
+            }
+          }
+        }
+      }
+    }
+
+    // 3. AI Traffic Cars (< 2.0m or OBB overlap while moving)
+    for (const c of this.cars) {
+      if (!c.active || c.kWreck || Math.abs(c.v) <= 1.5) continue;
+      const cvx = c.ux * c.v, cvz = c.uz * c.v;
+      const hl = c.len * 0.5 + 0.35, hw = c.wid * 0.5 + 0.35;
+      const forceMul = clamp(Math.abs(c.v) / 9.0, 0.85, 1.55);
+      for (const ped of this.peds) {
+        if (!ped.active || ped.state !== 'walking') continue;
+        const dx = ped.x - c.x, dz = ped.z - c.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > 25) continue;
+        if (Math.abs(ped.y - c.y) > 3.5) continue;
+        if (d2 <= 2.0 * 2.0 || obbOverlap(c.x, c.z, c.ux, c.uz, hl, hw, ped.x, ped.z, 0, 1, 0.38, 0.38)) {
+          if (this.hitPedestrian(ped, c.x, c.y, c.z, cvx, 0, cvz, forceMul)) {
+            hits++;
+          }
+        }
+      }
+    }
+
+    // 4. Kaiju Monster (walking feet/body 18m, tail whip 28m, stomp 32m, atomic breath 18m)
+    const kj = this._kaijuCreature();
+    if (kj) {
+      const s = Math.max(1, kj.scale || 1);
+      const kvx = Math.sin(kj.yaw || 0) * 11;
+      const kvz = Math.cos(kj.yaw || 0) * 11;
+      // Body & feet (18m)
+      hits += this.triggerImpactSphere(kj.position.x, kj.position.y, kj.position.z, 18 * s, {
+        vx: kvx, vz: kvz, force: 1.5,
+      });
+      if (kj.model && kj.model.soles) {
+        for (let leg = 0; leg < kj.model.soles.length; leg++) {
+          const sole = kj.model.anchorWorld(kj.model.soles[leg], this._tmpVecA);
+          if (sole) {
+            hits += this.triggerImpactSphere(sole.x, sole.y, sole.z, 18 * s, {
+              vx: kvx, vz: kvz, force: 1.55,
+            });
+          }
+        }
+      }
+      // Tail whip (28m)
+      if (kj.state === 'tailSwipe' && kj.model) {
+        if (kj.model.tailTip) {
+          const tip = kj.model.anchorWorld(kj.model.tailTip, this._tmpVecA);
+          hits += this.triggerImpactSphere(tip.x, tip.y, tip.z, 28 * s, { force: 1.65 });
+        }
+        if (kj.model.tailMid) {
+          const mid = kj.model.anchorWorld(kj.model.tailMid, this._tmpVecB);
+          hits += this.triggerImpactSphere(mid.x, mid.y, mid.z, 28 * s, { force: 1.6 });
+        }
+        hits += this.triggerImpactSphere(kj.position.x, kj.position.y, kj.position.z, 28 * s, { force: 1.55 });
+      }
+      // Atomic breath / laser impact (18m)
+      if (kj.breathActive && kj.breathOrigin && kj.breathDir) {
+        const o = kj.breathOrigin, d = kj.breathDir;
+        for (let step = 1; step <= 6; step++) {
+          const dist = (380 * step) / 6.5;
+          const bx = o.x + d.x * dist;
+          const by = o.y + d.y * dist;
+          const bz = o.z + d.z * dist;
+          if (by - kj.position.y < 45) {
+            hits += this.triggerImpactSphere(bx, kj.position.y, bz, 18 * s, {
+              vx: d.x * 14, vz: d.z * 14, force: 1.65,
+            });
+          }
+        }
+      }
+    }
+
+    return hits;
+  }
+
+  _updateRagdollPed(ped, dt) {
+    ped.stateTimer += dt;
+    if (ped.state === 'falling_apart') {
+      ped.ragdollTimer = ped.stateTimer;
+      const groundY = Number.isFinite(ped.groundY) ? ped.groundY : 0;
+      const parts = ped.parts;
+      if (!parts || !parts.length) {
+        ped.state = 'lying';
+        ped.stateTimer = 0;
+        return;
+      }
+      let allSettled = ped.stateTimer >= 1.0;
+      for (let i = 0; i < parts.length; i++) {
+        const pt = parts[i];
+        const airDrag = Math.exp(-1.15 * dt);
+        pt.vx *= airDrag;
+        pt.vz *= airDrag;
+        pt.x += pt.vx * dt;
+        pt.y += pt.vy * dt;
+        pt.z += pt.vz * dt;
+        pt.vy -= RAGDOLL_GRAVITY * dt;
+        pt.rx += pt.avx * dt;
+        pt.ry += pt.avy * dt;
+        pt.rz += pt.avz * dt;
+
+        const floorY = groundY + (pt.r || 0.14);
+        if (pt.y <= floorY) {
+          pt.y = floorY;
+          if (pt.vy < 0) {
+            pt.vy = -pt.vy * 0.32;
+            if (Math.abs(pt.vy) < 0.45) pt.vy = 0;
+          }
+          pt.vx *= 0.65;
+          pt.vz *= 0.65;
+          pt.avx *= 0.6;
+          pt.avy *= 0.65;
+          pt.avz *= 0.6;
+          pt.rx = wrapPi(pt.rx);
+          pt.rz = wrapPi(pt.rz);
+          const kSettle = Math.min(1, dt * 11);
+          pt.rx += (Math.PI / 2 - pt.rx) * kSettle;
+          pt.rz += (0 - pt.rz) * kSettle;
+        }
+
+        const spd2 = pt.vx * pt.vx + pt.vy * pt.vy + pt.vz * pt.vz;
+        if (pt.y > floorY + 0.04 || spd2 > 0.04) {
+          allSettled = false;
+        }
+      }
+
+      // Gentle horizontal separation when parts touch the ground so limbs/torso/head don't stack
+      for (let i = 0; i < parts.length; i++) {
+        const a = parts[i];
+        if (a.y > groundY + 0.35) continue;
+        for (let j = i + 1; j < parts.length; j++) {
+          const b = parts[j];
+          if (b.y > groundY + 0.35) continue;
+          const dx = a.x - b.x, dz = a.z - b.z;
+          const d2 = dx * dx + dz * dz;
+          const minD = 0.42;
+          if (d2 < minD * minD) {
+            const d = Math.sqrt(d2) || 0.01;
+            const push = (minD - d) * 0.5;
+            const nx = dx / d, nz = dz / d;
+            a.x += nx * push; a.z += nz * push;
+            b.x -= nx * push; b.z -= nz * push;
+          }
+        }
+      }
+
+      const torso = ped.partsByName?.torso || parts[0];
+      if (torso) {
+        ped.x = torso.x;
+        ped.z = torso.z;
+      }
+
+      if (ped.stateTimer >= RAGDOLL_SETTLE_TIME || allSettled) {
+        ped.state = 'lying';
+        ped.stateTimer = 0;
+        ped.lieTimer = 0;
+        for (let i = 0; i < parts.length; i++) {
+          const pt = parts[i];
+          pt.y = groundY + 0.135;
+          pt.vx = 0; pt.vy = 0; pt.vz = 0;
+          pt.avx = 0; pt.avy = 0; pt.avz = 0;
+          pt.rx = Math.PI / 2;
+          pt.rz = 0;
+        }
+      }
+      return;
+    }
+
+    if (ped.state === 'lying') {
+      ped.lieTimer = ped.stateTimer;
+      const groundY = Number.isFinite(ped.groundY) ? ped.groundY : 0;
+      if (ped.parts) {
+        for (let i = 0; i < ped.parts.length; i++) {
+          const pt = ped.parts[i];
+          pt.y = groundY + 0.135;
+          pt.rx = Math.PI / 2;
+          pt.rz = 0;
+        }
+      }
+      if (ped.stateTimer >= RAGDOLL_LIE_DURATION) {
+        ped.active = false;
+        ped.state = 'walking';
+        ped.parts = null;
+        ped.partsByName = null;
+      }
+    }
+  }
+
   _updatePed(ped, dt, now, app) {
+    if (ped.state === 'falling_apart' || ped.state === 'lying') {
+      this._updateRagdollPed(ped, dt);
+      return;
+    }
     if (this.kaiju && this.kaiju.ped(ped, dt)) return; // [kaiju] panic flee (off the sidewalk graph)
     const e = ped.e;
     if (!e.alive) { ped.active = false; return; }
     let speed = ped.v;
-    if (ped.state === 0) {
+    if (ped.crossState === 0) {
       const end = ped.fwd ? e.b : e.a;
-      if (ped.willCross && end.sig) {
+      if (ped.willCross && (end.sig || (end.adj && end.adj.length >= 2))) {
         const crossAt = e.len - Math.max(2, this._stopBack(end) - 2);
-        if (ped.s >= crossAt) { ped.s = Math.max(ped.s, crossAt); ped.state = 1; ped.waitT = 0; }
+        if (ped.s >= crossAt) { ped.s = Math.max(ped.s, crossAt); ped.crossState = 1; ped.waitT = 0; }
       }
     }
-    if (ped.state === 1) {
+    if (ped.crossState === 1) {
       speed = 0;
       ped.waitT += dt;
       const end = ped.fwd ? e.b : e.a;
       const off = this._pedOffset(ped);
-      ped.crossDur = (2 * off) / ped.v;
-      const axis = approachAxis(ped.gux, ped.guz);
-      const info = getSignalInfo(end.sig, now, axis);
-      if (info.phase === 'red' && info.timeLeft > ped.crossDur + 1) { ped.state = 2; ped.crossT = 0; }
-      else if (ped.waitT > 45) { ped.state = 0; ped.willCross = false; }
-    } else if (ped.state === 2) {
+      ped.crossDur = Math.max(1.5, (2 * off) / ped.v);
+      if (end.sig) {
+        const axis = approachAxis(ped.gux, ped.guz);
+        const info = getSignalInfo(end.sig, now, axis);
+        if ((info.phase === 'red' && info.timeLeft > ped.crossDur + 1) || ped.waitT > 6) {
+          ped.crossState = 2; ped.crossT = 0;
+        } else if (ped.waitT > 45) {
+          ped.crossState = 0; ped.willCross = false;
+        }
+      } else if (ped.waitT > 0.6) {
+        ped.crossState = 2; ped.crossT = 0;
+      }
+    } else if (ped.crossState === 2) {
       speed = 0;
       ped.crossT += dt;
-      if (ped.crossT >= ped.crossDur) { ped.side = -ped.side; ped.state = 0; ped.willCross = false; }
+      if (ped.crossT >= ped.crossDur) { ped.side = -ped.side; ped.crossState = 0; ped.willCross = false; }
     }
 
-    // Avoid the player (step aside), slow down when close.
+    // Step aside politely only when player is walking or stopped; moving cars collide with pedestrians!
     const pdx = ped.x - app.pos.x, pdz = ped.z - app.pos.z;
     const pd = Math.hypot(pdx, pdz);
-    const drive = app.mode === 'drive';
-    const R = drive ? 5.5 : 1.6;
-    if (pd < R && ped.state !== 2) {
+    const carMoving = app.mode === 'drive' && Math.abs(app.speed || 0) > 2.0;
+    if (!carMoving && pd < 1.6 && ped.crossState !== 2) {
       const nx = -ped.guz, nz = ped.gux;
       const sgn = pdx * nx + pdz * nz >= 0 ? 1 : -1;
-      ped.lat = clamp(ped.lat + sgn * (R - pd) * 4 * dt, -2.4, 2.4);
-      if (drive && pd < 2.5 && Math.abs(app.speed) > 3) ped.lat = sgn * 2.4;
-      speed *= pd < R * 0.5 ? 0.2 : 0.6;
+      ped.lat = clamp(ped.lat + sgn * (1.6 - pd) * 3 * dt, -1.2, 1.2);
+      speed *= 0.6;
     } else if (ped.lat !== 0) {
       const dl = Math.min(Math.abs(ped.lat), 0.6 * dt);
       ped.lat -= Math.sign(ped.lat) * dl;
@@ -692,12 +1292,11 @@ export class CityTraffic {
       ped.side = s2 >= 0 ? 1 : -1;
     }
     this._pedPose(ped);
-    const moving = speed > 0.05 || ped.state === 2;
-    const v = ped.state === 2 ? ped.v : speed;
+    ped.groundY = ped.y;
+    const moving = speed > 0.05 || ped.crossState === 2;
+    const v = ped.crossState === 2 ? ped.v : speed;
     ped.phase += dt * v * 5.0;
     ped.amp += ((moving ? 0.5 : 0) - ped.amp) * Math.min(1, dt * 6);
-    // [feature/people] Face the actual direction of travel (covers stepping aside and crossing);
-    // fall back to the path heading when standing or after a discontinuity.
     const mvx = ped.x - ped.px, mvz = ped.z - ped.pz;
     const md = Math.hypot(mvx, mvz);
     let tyaw = Math.atan2(ped.hx, ped.hz);
@@ -709,18 +1308,28 @@ export class CityTraffic {
   }
 
   _updatePeds(dt, p, now, allowSpawn) {
-    let active = 0;
+    let active = 0, ragdolls = 0, lying = 0;
     const app = this.app;
+    const kj = this._kaijuCreature();
     for (const ped of this.peds) {
       if (!ped.active) continue;
       this._updatePed(ped, dt, now, app);
       if (!ped.active) continue;
-      if (Math.hypot(ped.x - p.x, ped.z - p.z) > PED_DESPAWN) { ped.active = false; continue; }
+      const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
+      const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
+      if (ped.state === 'walking' && dP > PED_DESPAWN && dK > 220) {
+        ped.active = false;
+        continue;
+      }
+      if (ped.state === 'falling_apart') ragdolls++;
+      else if (ped.state === 'lying') lying++;
       active++;
     }
+    this.stats.ragdolls = ragdolls;
+    this.stats.lying = lying;
     if (!allowSpawn) return active;
     const initial = this.fillBoost > 0;
-    let budget = initial ? 16 : 3;
+    let budget = initial ? 24 : 5;
     for (const ped of this.peds) {
       if (active >= this.pedTarget || budget <= 0) break;
       if (ped.active) continue;
@@ -799,36 +1408,87 @@ export class CityTraffic {
         cm.iBrake.needsUpdate = true;
       }
     }
+
     const P = this.ped;
-    let n = 0;
+    let nWalk = 0;
+    const partCounts = { head: 0, torso: 0, armL: 0, armR: 0, legL: 0, legR: 0, accessory: 0 };
+
     if (showPeds) {
       const an = P.iAnim.array, sh = P.iShirt.array, pa = P.iPants.array, sk = P.iSkin.array;
       const ha = P.iHair.array, ac = P.iAcc.array;
       const rain = typeof daylight.getWeather === 'function' && daylight.getWeather() === 'rain';
       for (const ped of this.peds) {
         if (!ped.active) continue;
-        q.setFromAxisAngle(this._up || (this._up = new THREE.Vector3(0, 1, 0)), ped.ryaw);
-        v3.set(ped.x, ped.y, ped.z);
-        const L = ped.look;
-        s3.set(L.wScale, L.hScale, L.wScale);
-        m4.compose(v3, q, s3);
-        P.mesh.setMatrixAt(n, m4);
-        an[n * 3] = ped.phase; an[n * 3 + 1] = ped.amp;
-        an[n * 3 + 2] = L.style | (rain && L.umbRoll < 0.65 ? UMBRELLA_BIT : 0);
-        const i3 = n * 3;
-        sh[i3] = L.top.r; sh[i3 + 1] = L.top.g; sh[i3 + 2] = L.top.b;
-        pa[i3] = L.pants.r; pa[i3 + 1] = L.pants.g; pa[i3 + 2] = L.pants.b;
-        sk[i3] = L.skin.r; sk[i3 + 1] = L.skin.g; sk[i3 + 2] = L.skin.b;
-        ha[i3] = L.hair.r; ha[i3 + 1] = L.hair.g; ha[i3 + 2] = L.hair.b;
-        ac[i3] = L.acc.r; ac[i3 + 1] = L.acc.g; ac[i3 + 2] = L.acc.b;
-        n++;
+        const L = ped.look || {
+          wScale: 1, hScale: 1, style: 0, umbRoll: 1,
+          top: { r: 0.3, g: 0.4, b: 0.6 },
+          pants: { r: 0.2, g: 0.2, b: 0.25 },
+          skin: { r: 0.9, g: 0.75, b: 0.6 },
+          hair: { r: 0.1, g: 0.08, b: 0.06 },
+          acc: { r: 0.2, g: 0.2, b: 0.2 },
+        };
+        if (ped.state === 'walking') {
+          q.setFromAxisAngle(this._up || (this._up = new THREE.Vector3(0, 1, 0)), ped.ryaw);
+          v3.set(ped.x, ped.y, ped.z);
+          s3.set(L.wScale, L.hScale, L.wScale);
+          m4.compose(v3, q, s3);
+          P.mesh.setMatrixAt(nWalk, m4);
+          const i3 = nWalk * 3;
+          an[i3] = ped.phase; an[i3 + 1] = ped.amp;
+          an[i3 + 2] = L.style | (rain && L.umbRoll < 0.65 ? UMBRELLA_BIT : 0);
+          sh[i3] = L.top.r; sh[i3 + 1] = L.top.g; sh[i3 + 2] = L.top.b;
+          pa[i3] = L.pants.r; pa[i3 + 1] = L.pants.g; pa[i3 + 2] = L.pants.b;
+          sk[i3] = L.skin.r; sk[i3 + 1] = L.skin.g; sk[i3 + 2] = L.skin.b;
+          ha[i3] = L.hair.r; ha[i3 + 1] = L.hair.g; ha[i3 + 2] = L.hair.b;
+          ac[i3] = L.acc.r; ac[i3 + 1] = L.acc.g; ac[i3 + 2] = L.acc.b;
+          nWalk++;
+        } else if ((ped.state === 'falling_apart' || ped.state === 'lying') && ped.parts) {
+          for (let k = 0; k < ped.parts.length; k++) {
+            const pt = ped.parts[k];
+            if (pt.visible === false) continue;
+            const pm = this.partMeshes[pt.name];
+            if (!pm) continue;
+            const idx = partCounts[pt.name]++;
+            pt.instanceIndex = idx;
+            eul.set(pt.rx, pt.ry, pt.rz, 'YXZ');
+            q.setFromEuler(eul);
+            v3.set(pt.x, pt.y, pt.z);
+            const sc = pt.scale || 1.12;
+            s3.set(L.wScale * sc, L.hScale * sc, L.wScale * sc);
+            m4.compose(v3, q, s3);
+            pm.setMatrixAt(idx, m4);
+
+            const cA = pm.iColA.array, cB = pm.iColB.array;
+            const j3 = idx * 3;
+            let colA = L.top, colB = L.pants;
+            if (pt.name === 'head') { colA = L.skin; colB = L.hair; }
+            else if (pt.name === 'torso') { colA = L.top; colB = L.pants; }
+            else if (pt.name === 'armL' || pt.name === 'armR') { colA = L.top; colB = L.skin; }
+            else if (pt.name === 'legL' || pt.name === 'legR') { colA = L.pants; colB = L.pants; }
+            else if (pt.name === 'accessory') { colA = L.acc; colB = L.top; }
+            cA[j3] = colA.r; cA[j3 + 1] = colA.g; cA[j3 + 2] = colA.b;
+            cB[j3] = colB.r; cB[j3 + 1] = colB.g; cB[j3 + 2] = colB.b;
+          }
+        }
       }
     }
-    P.mesh.count = n;
-    if (n) {
+
+    P.mesh.count = nWalk;
+    if (nWalk) {
       P.mesh.instanceMatrix.needsUpdate = true;
       P.iAnim.needsUpdate = true; P.iShirt.needsUpdate = true; P.iPants.needsUpdate = true; P.iSkin.needsUpdate = true;
       P.iHair.needsUpdate = true; P.iAcc.needsUpdate = true;
+    }
+
+    for (const name of RAGDOLL_PART_NAMES) {
+      const pm = this.partMeshes[name];
+      const cnt = partCounts[name] || 0;
+      pm.count = cnt;
+      if (cnt > 0) {
+        pm.instanceMatrix.needsUpdate = true;
+        pm.iColA.needsUpdate = true;
+        pm.iColB.needsUpdate = true;
+      }
     }
   }
 
@@ -843,9 +1503,10 @@ export class CityTraffic {
     return idx === 2 ? 1 : idx === 1 ? 0.45 : idx === 3 ? 0.25 : 0;
   }
 
-  update(dt, playerPos, loadedChunks) {
+  update(dt, playerPos, loadedChunks, impactSources = null) {
     if (!this.group.visible) return;
     const app = this.app;
+    if (this._hitSoundCooldown > 0) this._hitSoundCooldown = Math.max(0, this._hitSoundCooldown - dt);
     if (app.worldOrigin !== this.origin) {
       this.origin = app.worldOrigin;
       this._resetAll();
@@ -865,8 +1526,12 @@ export class CityTraffic {
     const now = signalTime();
     this._buildObstacles();
     const cars = this._updateCars(dt, p, now, this.carCand.length > 0);
-    const camHigh = cam ? cam.position.y - p.y > 160 : false;
+    const kaijuActive = Boolean(app.kaiju && app.kaiju.active);
+    const camHigh = !kaijuActive && cam ? cam.position.y - p.y > 320 : false;
+    this.checkPedestrianImpacts(impactSources);
     const peds = camHigh ? this.peds.filter((x) => x.active).length : this._updatePeds(dt, p, now, this.pedCand.length > 0);
+    if (!camHigh) this.checkPedestrianImpacts( null);
+    this._updatePuffs(dt);
     if (this.fillBoost > 0 && cars >= this.carTarget * 0.9 && peds >= this.pedTarget * 0.9 && this.carTarget > 0) this.fillBoost = 0;
     this._collidePlayer();
     this.uniforms.uLights.value = this._lightsLevel();

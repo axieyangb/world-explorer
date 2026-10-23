@@ -326,6 +326,7 @@ export class KaijuWeapons {
     } else {
       fx?.spawn?.("spark", p, { dir: _a, count: 4, scale: sc });
       fx?.spawn?.("smoke", p, { count: 1, scale: 0.4 * sc, light: true, life: 2.0, speed: 1 });
+      K.app?.traffic?.triggerImpactSphere?.(p.x, p.y, p.z, 6.0, { force: 1.15, source: "cannon" });
     }
   }
 
@@ -344,6 +345,7 @@ export class KaijuWeapons {
       if (weak) fx?.spawn?.("muzzle", p, { color: WEAK_COLOR, scale: 7, count: 2, life: 0.18 });
     } else if (kind) {
       K.destruction?.damageSphere?.(p.x, p.y, p.z, CFG.MISSILE_BLAST_RADIUS, CFG.MISSILE_BUILDING_DAMAGE, { fire: true, source: "player" });
+      K.app?.traffic?.triggerImpactSphere?.(p.x, p.y, p.z, CFG.MISSILE_BLAST_RADIUS || 28, { force: 1.65, source: "missile" });
       K.crowd?.addThreat?.(p.x, p.z, 120, 8);
     }
   }

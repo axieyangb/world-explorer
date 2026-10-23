@@ -4,7 +4,7 @@
 // Pedestrians: one low-poly merged figure, walk cycle animated in the vertex shader.
 import * as THREE from '../../vendor/three.module.js';
 import { createVehicleModel } from '../entities.js';
-import { personParts, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL } from './person_model.js';
+import { personParts, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL, RAGDOLL_PART_SPECS, createRagdollPartGeometries } from './person_model.js';
 
 const HEAD_HEX = 0xfff3c4;
 const TAIL_HEX = 0xff2a2a;
@@ -194,4 +194,77 @@ ${PERSON_ANIM_GLSL}
   mesh.receiveShadow = true;
   mesh.name = 'traffic_pedestrians';
   return { mesh, iAnim, iShirt, iPants, iSkin, iHair, iAcc, tris: geom.attributes.position.count / 3 };
+}
+
+export const RAGDOLL_PART_NAMES = RAGDOLL_PART_SPECS.map((s) => s.name);
+
+export function createPedPartMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0.02 });
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nattribute float aSlot;\nattribute vec3 iColA;\nattribute vec3 iColB;'
+      )
+      .replace(
+        '#include <color_vertex>',
+        `#include <color_vertex>
+  {
+    vColor.rgb = aSlot < 0.5 ? vColor.rgb : (aSlot < 1.5 ? iColA : iColB);
+  }`
+      );
+  };
+  mat.customProgramCacheKey = () => 'we-traffic-ped-ragdoll-part-v1';
+  return mat;
+}
+
+export function createPedPartMeshes(capacity) {
+  const geoms = createRagdollPartGeometries();
+  const mat = createPedPartMaterial();
+  const out = {};
+  for (const spec of RAGDOLL_PART_SPECS) {
+    const geom = geoms[spec.name];
+    const iColA = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const iColB = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    iColA.setUsage(THREE.DynamicDrawUsage);
+    iColB.setUsage(THREE.DynamicDrawUsage);
+    geom.setAttribute('iColA', iColA);
+    geom.setAttribute('iColB', iColB);
+    const mesh = new THREE.InstancedMesh(geom, mat, capacity);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 0;
+    mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = `traffic_ped_part_${spec.name}`;
+    mesh.iColA = iColA;
+    mesh.iColB = iColB;
+    mesh.mesh = mesh;
+    mesh.spec = spec;
+    out[spec.name] = mesh;
+  }
+  out.leftArm = out.armL;
+  out.rightArm = out.armR;
+  out.leftLeg = out.legL;
+  out.rightLeg = out.legR;
+  return out;
+}
+
+export function createImpactPuffMesh(capacity = 128) {
+  const geom = new THREE.DodecahedronGeometry(0.16, 0);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xd8cfc2,
+    roughness: 0.9,
+    metalness: 0.0,
+    transparent: true,
+    opacity: 0.82,
+  });
+  const mesh = new THREE.InstancedMesh(geom, mat, capacity);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.count = 0;
+  mesh.frustumCulled = false;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.name = 'traffic_ped_impact_puffs';
+  return mesh;
 }

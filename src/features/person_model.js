@@ -182,3 +182,108 @@ export const PERSON_BEGIN_GLSL = `
     if (pOpt > 0 && ((pStyle >> (pOpt - 1)) & 1) == 0) transformed = vec3(0.0, 1.1, 0.0);
   }
 `;
+
+// ---------------- Ragdoll Detached Body Parts ----------------
+// Each detached body part is centered around (0, 0, 0) in its own local space so it can
+// tumble in 3D and settle horizontally on the ground when a pedestrian is hit.
+// aSlot: 0 = fixed vertex color, 1 = primary instance color (iColA), 2 = secondary instance color (iColB).
+export const RAGDOLL_PART_SPECS = [
+  { name: 'head', ox: 0.0, oy: 1.60, oz: 0.0, r: 0.14 },
+  { name: 'torso', ox: 0.0, oy: 1.12, oz: 0.0, r: 0.14 },
+  { name: 'armL', ox: -0.265, oy: 1.15, oz: 0.0, r: 0.12 },
+  { name: 'armR', ox: 0.265, oy: 1.15, oz: 0.0, r: 0.12 },
+  { name: 'legL', ox: -0.10, oy: 0.45, oz: 0.0, r: 0.12 },
+  { name: 'legR', ox: 0.10, oy: 0.45, oz: 0.0, r: 0.12 },
+  { name: 'accessory', ox: 0.0, oy: 1.30, oz: -0.15, r: 0.12 },
+];
+
+function buildPartBuffer(pieces) {
+  const pos = [], nor = [], col = [], slot = [];
+  for (const pc of pieces) {
+    const g = pc.geom;
+    const p = g.attributes.position, n = g.attributes.normal;
+    const rgb = pc.rgb || DARK;
+    const sl = pc.slot || 0;
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i));
+      nor.push(n.getX(i), n.getY(i), n.getZ(i));
+      col.push(rgb[0], rgb[1], rgb[2]);
+      slot.push(sl);
+    }
+    g.dispose();
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geom.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geom.setAttribute('aSlot', new THREE.Float32BufferAttribute(slot, 1));
+  geom.computeBoundingSphere();
+  return geom;
+}
+
+export function createRagdollPartGeometries() {
+  // 1. Head (skin = slot 1, hair = slot 2, eyes/mouth = slot 0)
+  const headSphere = new THREE.SphereGeometry(0.118, 8, 6);
+  headSphere.scale(0.92, 1.1, 1.0);
+  const headCap = new THREE.SphereGeometry(0.126, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.42);
+  headCap.scale(0.95, 1.08, 1.04);
+  const headBack = new THREE.SphereGeometry(0.125, 6, 3, Math.PI, Math.PI, Math.PI * 0.32, Math.PI * 0.4);
+  headBack.scale(0.95, 1.1, 1.06);
+  const headPieces = [
+    { geom: geo(headSphere, 0, 0, 0), slot: 1 },
+    { geom: geo(headCap, 0, 0.006, -0.008), slot: 2 },
+    { geom: geo(headBack, 0, 0, -0.004), slot: 2 },
+    { geom: box(0.026, 0.042, 0.032, 0, -0.005, 0.108), slot: 1 },
+    { geom: quad(0.044, 0.01, 0, -0.048, 0.107), slot: 0, rgb: [0.5, 0.2, 0.2] },
+  ];
+  for (const sx of [-0.04, 0.04]) {
+    headPieces.push(
+      { geom: quad(0.034, 0.022, sx, 0.018, 0.112), slot: 0, rgb: WHITE },
+      { geom: quad(0.016, 0.019, sx, 0.017, 0.1145), slot: 0, rgb: DARK },
+      { geom: quad(0.038, 0.009, sx, 0.046, 0.111), slot: 2 }
+    );
+  }
+
+  // 2. Torso (shirt = slot 1, pants/hips = slot 2, zipper = slot 0)
+  const torsoPieces = [
+    { geom: box(0.41, 0.56, 0.22, 0, 0.06, 0), slot: 1 },
+    { geom: quad(0.018, 0.54, 0, 0.06, 0.112), slot: 0, rgb: [0.16, 0.16, 0.18] },
+    { geom: box(0.39, 0.14, 0.21, 0, -0.25, 0), slot: 2 },
+  ];
+
+  // 3. Left & Right Arms (shirt sleeve = slot 1, skin hand = slot 2)
+  const armLPieces = [
+    { geom: box(0.115, 0.50, 0.115, 0, 0.05, 0), slot: 1 },
+    { geom: box(0.092, 0.10, 0.095, 0, -0.24, 0.005), slot: 2 },
+  ];
+  const armRPieces = [
+    { geom: box(0.115, 0.50, 0.115, 0, 0.05, 0), slot: 1 },
+    { geom: box(0.092, 0.10, 0.095, 0, -0.24, 0.005), slot: 2 },
+  ];
+
+  // 4. Left & Right Legs (pants = slot 1, shoe = slot 0)
+  const legLPieces = [
+    { geom: box(0.15, 0.80, 0.16, 0, 0.02, 0), slot: 1 },
+    { geom: box(0.135, 0.09, 0.28, 0, -0.405, 0.06), slot: 0, rgb: [0.12, 0.12, 0.13] },
+  ];
+  const legRPieces = [
+    { geom: box(0.15, 0.80, 0.16, 0, 0.02, 0), slot: 1 },
+    { geom: box(0.135, 0.09, 0.28, 0, -0.405, 0.06), slot: 0, rgb: [0.12, 0.12, 0.13] },
+  ];
+
+  // 5. Accessory (backpack/bag/cap bundle: acc = slot 1, trim = slot 0)
+  const accPieces = [
+    { geom: box(0.28, 0.32, 0.14, 0, 0, 0), slot: 1 },
+    { geom: box(0.18, 0.05, 0.16, 0, 0.14, 0.02), slot: 0, rgb: [0.15, 0.15, 0.16] },
+  ];
+
+  return {
+    head: buildPartBuffer(headPieces),
+    torso: buildPartBuffer(torsoPieces),
+    armL: buildPartBuffer(armLPieces),
+    armR: buildPartBuffer(armRPieces),
+    legL: buildPartBuffer(legLPieces),
+    legR: buildPartBuffer(legRPieces),
+    accessory: buildPartBuffer(accPieces),
+  };
+}
