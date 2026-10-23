@@ -215,6 +215,7 @@ const INTERESTING_LAYERS = new Set([
   "landcover",
   "place",
   "poi", // feature/places
+  "housenumber",
   "aeroway", // feature/places
 ]);
 
@@ -536,15 +537,40 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       namedRoadSamples.push({ lx, lz, dx, dz, name: nm, nameZh: nmZh, ref, cls });
     }
   };
+  const highwayJunctions = [];
+  const seenJunctionKeys = new Set();
   for (const t of tiles) {
     for (const f of t.transportation_name || []) {
       const nm = f.tags["name:en"] || f.tags.name_en || f.tags["name:latin"] || f.tags.name || "";
       const nmZh = f.tags.name || nm;
+      const subCls = f.tags.subclass || "";
+      const rawCls = f.tags.class || "";
+      if (subCls === "junction" || rawCls === "junction") {
+        const rawJuncRef = String(f.tags.ref || f.tags.route_1 || "").split(";")[0].trim();
+        if (rawJuncRef && f.type === 1) {
+          for (const pt of f.geom) {
+            const [lx, lz] = toLocalXZ(pt[0], pt[1]);
+            if (lx >= -620 && lx <= 620 && lz >= -620 && lz <= 620) {
+              const jKey = `${Math.round(lx / 6)},${Math.round(lz / 6)},${rawJuncRef}`;
+              if (!seenJunctionKeys.has(jKey)) {
+                seenJunctionKeys.add(jKey);
+                highwayJunctions.push({
+                  lx: Math.round(lx * 10) / 10,
+                  lz: Math.round(lz * 10) / 10,
+                  ref: rawJuncRef,
+                  name: nm,
+                });
+              }
+            }
+          }
+        }
+        continue;
+      }
       const net = f.tags.network || f.tags.route_1_network || "";
       // Ignore walking/cycling trail route networks (rwn, lwn, nwn, rcn, lcn, ncn) when extracting highway refs
       const isTrailNet = /^[rln][wc]n$/i.test(String(net).trim());
       const ref = isTrailNet ? "" : formatRouteRef(f.tags.ref || f.tags.route_1 || "", net);
-      const cls = f.tags.class || f.tags.subclass || "";
+      const cls = rawCls || subCls;
       if (
         cls === "path" || cls === "footway" || cls === "pedestrian" || cls === "steps" ||
         cls === "cycleway" || cls === "corridor" || cls === "ferry" || cls === "aerialway" ||
@@ -781,6 +807,109 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     roads.push(roadTuple);
   }
 
+  // 3b. Extract POI points & `housenumber` street address points for building name/role binding
+  const pointInFlatRingXZ = (px, pz, flat) => {
+    let inside = false;
+    for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
+      const xi = flat[i], zi = flat[i + 1];
+      const xj = flat[j], zj = flat[j + 1];
+      if ((zi > pz) !== (zj > pz) && px < ((xj - xi) * (pz - zi)) / (zj - zi + 1e-12) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  };
+  const pointToFlatRingDistXZ = (px, pz, flat) => {
+    let minD2 = Infinity;
+    for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
+      const x1 = flat[j], z1 = flat[j + 1];
+      const x2 = flat[i], z2 = flat[i + 1];
+      const dx = x2 - x1, dz = z2 - z1;
+      const len2 = dx * dx + dz * dz;
+      const t = len2 > 1e-6 ? Math.max(0, Math.min(1, ((px - x1) * dx + (pz - z1) * dz) / len2)) : 0;
+      const cxp = x1 + dx * t, czp = z1 + dz * t;
+      const d2 = (px - cxp) * (px - cxp) + (pz - czp) * (pz - czp);
+      if (d2 < minD2) minD2 = d2;
+    }
+    return Math.sqrt(minD2);
+  };
+  const classifyPoiRole = (cls, subCls, rank) => {
+    const c = String(cls || "").toLowerCase();
+    const s = String(subCls || "").toLowerCase();
+    const rPenalty = Math.min(20, Math.max(0, Number(rank) || 10));
+    if (c === "hospital" || s === "hospital" || s === "clinic" || s === "doctors") return { btype: "hospital", priority: 100 - rPenalty };
+    if (c === "university" || s === "university") return { btype: "university", priority: 98 - rPenalty };
+    if (c === "college" || s === "college") return { btype: "college", priority: 96 - rPenalty };
+    if (c === "school" || s === "school" || s === "kindergarten") return { btype: s === "kindergarten" ? "kindergarten" : "school", priority: 94 - rPenalty };
+    if (c === "town_hall" || s === "town_hall" || s === "courthouse" || s === "embassy" || s === "government" || s === "community_centre") return { btype: "government", priority: 96 - rPenalty };
+    if (c === "museum" || c === "library" || s === "museum" || s === "library" || s === "art_gallery" || s === "theatre" || s === "arts_centre") return { btype: "civic", priority: 92 - rPenalty };
+    if (c === "police" || c === "fire_station" || c === "post" || s === "police" || s === "fire_station" || s === "post_office") return { btype: "public", priority: 90 - rPenalty };
+    if (c === "place_of_worship" || s === "place_of_worship" || s === "church" || s === "cathedral" || s === "temple" || s === "mosque" || s === "shrine") {
+      const bt = s === "temple" || s === "shrine" ? "temple" : s === "mosque" ? "mosque" : s === "cathedral" ? "cathedral" : "church";
+      return { btype: bt, priority: 92 - rPenalty };
+    }
+    if (c === "stadium" || s === "stadium" || s === "sports_centre" || s === "arena" || c === "Ice_rink" || c === "swimming_pool") {
+      return { btype: c === "stadium" || s === "stadium" ? "stadium" : "sports_centre", priority: 92 - rPenalty };
+    }
+    if (c === "railway" || s === "station" || s === "subway" || s === "bus_station" || s === "ferry_terminal") return { btype: "train_station", priority: 90 - rPenalty };
+    if (c === "lodging" || s === "hotel" || s === "motel" || s === "hostel" || s === "guest_house") return { btype: "hotel", priority: 88 - rPenalty };
+    if (c === "attraction" || c === "castle" || c === "monument" || c === "memorial" || c === "historic") return { btype: "civic", priority: 86 - rPenalty };
+    if (c === "office" || s === "office" || s === "company" || s === "financial" || c === "bank" || s === "bank") return { btype: "office", priority: 78 - rPenalty };
+    if (s === "supermarket" || c === "supermarket" || s === "department_store" || s === "mall" || s === "marketplace") {
+      return { btype: s === "supermarket" || c === "supermarket" ? "supermarket" : "commercial", priority: 76 - rPenalty };
+    }
+    if (c === "parking" || s === "parking") return { btype: "parking", priority: 72 - rPenalty };
+    if (c === "industrial" || s === "industrial" || s === "warehouse") return { btype: "industrial", priority: 70 - rPenalty };
+    if (c === "shop" || c === "grocery" || c === "clothing_store" || c === "restaurant" || c === "cafe" || c === "fast_food" || c === "bar" || c === "pharmacy" || c === "bakery" || c === "commercial" || c === "retail") {
+      return { btype: "retail", priority: 58 - rPenalty };
+    }
+    return { btype: "commercial", priority: 50 - rPenalty };
+  };
+
+  const chunkPois = [];
+  for (const t of tiles) {
+    for (const f of t.poi || []) {
+      if (f.type !== 1) continue;
+      const cls = f.tags.class || "";
+      const subCls = f.tags.subclass || "";
+      const nm = String(f.tags["name:en"] || f.tags.name_en || f.tags.name || "").trim();
+      if (!nm && !cls && !subCls) continue;
+      const role = classifyPoiRole(cls, subCls, f.tags.rank);
+      for (const pt of f.geom) {
+        const [lx, lz] = toLocalXZ(pt[0], pt[1]);
+        if (lx < -520 || lx > 520 || lz < -520 || lz > 520) continue;
+        chunkPois.push({ lx, lz, name: nm, btype: role.btype, priority: role.priority });
+      }
+    }
+  }
+
+  // Collect road name sample points in chunk-local XZ for pairing `housenumber` points with their street name
+  const localStreetPts = [];
+  for (const r of roads) {
+    const [, rCls, rName, , , , , , , , flatXYZ] = r;
+    if (!rName || rCls === "footway" || rCls === "steps" || rCls === "cycleway") continue;
+    for (let i = 0; i < flatXYZ.length; i += 6) {
+      localStreetPts.push({ lx: flatXYZ[i], lz: flatXYZ[i + 2], name: rName });
+    }
+  }
+  const chunkHousenumbers = [];
+  const seenHnKeys = new Set();
+  for (const t of tiles) {
+    for (const f of t.housenumber || []) {
+      if (f.type !== 1) continue;
+      const rawHn = String(f.tags.housenumber || "").trim();
+      if (!rawHn || rawHn.length > 16) continue;
+      for (const pt of f.geom) {
+        const [lx, lz] = toLocalXZ(pt[0], pt[1]);
+        if (lx < -515 || lx > 515 || lz < -515 || lz > 515) continue;
+        const hk = `${Math.round(lx / 3)},${Math.round(lz / 3)},${rawHn}`;
+        if (seenHnKeys.has(hk)) continue;
+        seenHnKeys.add(hk);
+        chunkHousenumbers.push({ lx, lz, num: rawHn });
+      }
+    }
+  }
+
   // 4. Extract 3D Buildings from `building` layer
   const buildings = [];
   const seenBldgKeys = new Set();
@@ -854,14 +983,83 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         }
 
         if (approxArea < 16.0 && rawH < 12.0) continue;
-        const bName = f.tags["name:en"] || f.tags.name_en || f.tags.name || "";
+        let bName = f.tags["name:en"] || f.tags.name_en || f.tags.name || "";
+        let btype = f.tags.class || f.tags.building || "yes";
+
+        // Spatially bind POI points and `housenumber` addresses inside or within 14m of building footprint
+        if (!bName || btype === "yes") {
+          let bestPoi = null;
+          let bestPoiScore = -Infinity;
+          let bestNamedPoi = null;
+          let bestNamedPoiScore = -Infinity;
+          for (let pIdx = 0; pIdx < chunkPois.length; pIdx++) {
+            const p = chunkPois[pIdx];
+            if (p.lx < minX - 14.0 || p.lx > maxX + 14.0 || p.lz < minZ - 14.0 || p.lz > maxZ + 14.0) continue;
+            const inside = pointInFlatRingXZ(p.lx, p.lz, flatOuter);
+            const dist = inside ? 0.0 : pointToFlatRingDistXZ(p.lx, p.lz, flatOuter);
+            if (!inside && dist > 14.0) continue;
+            const sc = p.priority * 10.0 - (inside ? 0.0 : dist * 5.5);
+            if (sc > bestPoiScore) {
+              bestPoiScore = sc;
+              bestPoi = p;
+            }
+            if (p.name && sc > bestNamedPoiScore) {
+              bestNamedPoiScore = sc;
+              bestNamedPoi = p;
+            }
+          }
+          if (bestPoi && btype === "yes" && bestPoi.btype) {
+            btype = bestPoi.btype === "retail" && rawH > 36.0 ? "commercial" : bestPoi.btype;
+          }
+          if (!bName && bestNamedPoi && (bestNamedPoi.priority >= 68 || rawH <= 28.0)) {
+            bName = bestNamedPoi.name;
+          }
+          if (!bName && chunkHousenumbers.length > 0) {
+            let bestHn = null;
+            let bestHnDist = 14.01;
+            for (let hIdx = 0; hIdx < chunkHousenumbers.length; hIdx++) {
+              const hn = chunkHousenumbers[hIdx];
+              if (hn.lx < minX - 14.0 || hn.lx > maxX + 14.0 || hn.lz < minZ - 14.0 || hn.lz > maxZ + 14.0) continue;
+              const inside = pointInFlatRingXZ(hn.lx, hn.lz, flatOuter);
+              const dist = inside ? 0.0 : pointToFlatRingDistXZ(hn.lx, hn.lz, flatOuter);
+              if (dist < bestHnDist) {
+                bestHnDist = dist;
+                bestHn = hn;
+                if (inside) break;
+              }
+            }
+            if (bestHn) {
+              let nearStreet = "";
+              let bestRoadD2 = 135.0 * 135.0;
+              for (let sIdx = 0; sIdx < localStreetPts.length; sIdx++) {
+                const sp = localStreetPts[sIdx];
+                const d2 = (bestHn.lx - sp.lx) * (bestHn.lx - sp.lx) + (bestHn.lz - sp.lz) * (bestHn.lz - sp.lz);
+                if (d2 < bestRoadD2) {
+                  bestRoadD2 = d2;
+                  nearStreet = sp.name;
+                }
+              }
+              if (nearStreet) {
+                bName = /[\u4e00-\u9fa5]/.test(nearStreet)
+                  ? `${nearStreet}${bestHn.num}号`
+                  : `${bestHn.num} ${nearStreet}`;
+              } else {
+                bName = `No. ${bestHn.num}`;
+              }
+            }
+          }
+          if (!bName && bestNamedPoi) {
+            bName = bestNamedPoi.name;
+          }
+        }
+
         const bId = f.id || bldgIdSeq++;
         buildings.push({
           score: rawH * Math.sqrt(Math.max(16.0, approxArea)) + (bName ? 500 : 0),
           tuple: [
             bId,
             bName,
-            f.tags.class || "yes",
+            btype,
             isPart,
             Math.round(rawH * 10) / 10,
             Math.round(rawMinH * 10) / 10,
@@ -930,6 +1128,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
 
     for (const f of t.waterway || []) {
       if (f.type !== 2) continue;
+      if (f.tags.brunnel === "tunnel" || Number(f.tags.layer) < 0) continue;
       const wCls = f.tags.class || "river";
       const widthM = wCls === "river" ? 26.0 : wCls === "canal" ? 15.0 : 8.0;
       for (const line of f.geom) {
@@ -1005,6 +1204,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     water_lines,
     parks,
     facilities,
+    highwayJunctions,
     osm_trees: [],
     vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
     places: extractPlaceFeatures(tiles, toLocalXZ, origin), // feature/places

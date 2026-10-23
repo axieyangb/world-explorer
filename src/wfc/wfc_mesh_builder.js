@@ -736,6 +736,93 @@ export function resolveRegionTag(worldOrigin) {
   return 'global';
 }
 
+const OSM_NAMED_COLOURS = {
+  white: [0.95, 0.95, 0.94],
+  offwhite: [0.92, 0.91, 0.88],
+  ivory: [0.94, 0.92, 0.86],
+  cream: [0.93, 0.89, 0.80],
+  beige: [0.85, 0.79, 0.69],
+  tan: [0.78, 0.67, 0.54],
+  sand: [0.82, 0.74, 0.62],
+  sandstone: [0.79, 0.68, 0.55],
+  limestone: [0.84, 0.81, 0.75],
+  buff: [0.83, 0.74, 0.58],
+  ochre: [0.78, 0.58, 0.32],
+  yellow: [0.88, 0.78, 0.45],
+  lightyellow: [0.93, 0.88, 0.68],
+  gold: [0.82, 0.68, 0.38],
+  amber: [0.80, 0.58, 0.28],
+  orange: [0.82, 0.52, 0.32],
+  terracotta: [0.74, 0.42, 0.31],
+  brick: [0.64, 0.34, 0.27],
+  red: [0.68, 0.32, 0.28],
+  darkred: [0.50, 0.22, 0.20],
+  maroon: [0.46, 0.20, 0.20],
+  burgundy: [0.48, 0.20, 0.24],
+  pink: [0.86, 0.66, 0.66],
+  rose: [0.80, 0.56, 0.56],
+  salmon: [0.84, 0.58, 0.50],
+  brown: [0.55, 0.40, 0.31],
+  lightbrown: [0.68, 0.53, 0.41],
+  darkbrown: [0.38, 0.27, 0.21],
+  bronze: [0.52, 0.43, 0.33],
+  copper: [0.66, 0.44, 0.34],
+  grey: [0.62, 0.63, 0.64],
+  gray: [0.62, 0.63, 0.64],
+  lightgrey: [0.78, 0.79, 0.80],
+  lightgray: [0.78, 0.79, 0.80],
+  darkgrey: [0.42, 0.44, 0.46],
+  darkgray: [0.42, 0.44, 0.46],
+  charcoal: [0.28, 0.30, 0.32],
+  slate: [0.44, 0.48, 0.53],
+  silver: [0.76, 0.78, 0.80],
+  steel: [0.58, 0.63, 0.68],
+  black: [0.22, 0.23, 0.25],
+  glass: [0.48, 0.64, 0.76],
+  blue: [0.42, 0.58, 0.76],
+  lightblue: [0.62, 0.76, 0.88],
+  darkblue: [0.26, 0.38, 0.56],
+  navy: [0.24, 0.34, 0.52],
+  teal: [0.34, 0.58, 0.60],
+  cyan: [0.46, 0.72, 0.78],
+  green: [0.42, 0.58, 0.45],
+  lightgreen: [0.62, 0.76, 0.62],
+  darkgreen: [0.28, 0.42, 0.32],
+  olive: [0.52, 0.54, 0.36],
+  purple: [0.52, 0.42, 0.60],
+  violet: [0.58, 0.48, 0.68],
+};
+
+export function parseOsmBuildingColour(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const first = raw.split(/[;,/]/)[0].trim().toLowerCase();
+  if (!first) return null;
+  const hex6 = first.match(/^#?([0-9a-f]{6})$/i);
+  if (hex6) {
+    const h = hex6[1];
+    return [
+      parseInt(h.slice(0, 2), 16) / 255.0,
+      parseInt(h.slice(2, 4), 16) / 255.0,
+      parseInt(h.slice(4, 6), 16) / 255.0,
+    ];
+  }
+  const hex3 = first.match(/^#([0-9a-f]{3})$/i);
+  if (hex3) {
+    const h = hex3[1];
+    return [
+      parseInt(h[0] + h[0], 16) / 255.0,
+      parseInt(h[1] + h[1], 16) / 255.0,
+      parseInt(h[2] + h[2], 16) / 255.0,
+    ];
+  }
+  const cleanKey = first.replace(/[-_\s]+/g, '');
+  if (OSM_NAMED_COLOURS[cleanKey]) return OSM_NAMED_COLOURS[cleanKey];
+  for (const [k, rgb] of Object.entries(OSM_NAMED_COLOURS)) {
+    if (cleanKey.includes(k)) return rgb;
+  }
+  return null;
+}
+
 export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   const h = Number(bldgInfo.height) || 18;
   const btype = String(bldgInfo.btype || '').toLowerCase();
@@ -849,12 +936,28 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     clampC(avg[2] * 0.54),
   ];
 
+  // Blend 45% toward real OpenStreetMap building colour (`building.tags.colour`) when present
+  const osmRgb = parseOsmBuildingColour(bldgInfo.colour);
+  if (osmRgb) {
+    const [cr, cg, cb] = osmRgb;
+    wallTint[0] = Math.max(0.32, Math.min(1.06, wallTint[0] * 0.55 + (cr * 0.78 + 0.24) * 0.45));
+    wallTint[1] = Math.max(0.32, Math.min(1.06, wallTint[1] * 0.55 + (cg * 0.78 + 0.24) * 0.45));
+    wallTint[2] = Math.max(0.32, Math.min(1.06, wallTint[2] * 0.55 + (cb * 0.78 + 0.24) * 0.45));
+    wallSecondary[0] = clampC(wallSecondary[0] * 0.55 + cr * 0.45);
+    wallSecondary[1] = clampC(wallSecondary[1] * 0.55 + cg * 0.45);
+    wallSecondary[2] = clampC(wallSecondary[2] * 0.55 + cb * 0.45);
+    roofDeck[0] = clampC(roofDeck[0] * 0.70 + cr * 0.75 * 0.30);
+    roofDeck[1] = clampC(roofDeck[1] * 0.70 + cg * 0.75 * 0.30);
+    roofDeck[2] = clampC(roofDeck[2] * 0.70 + cb * 0.75 * 0.30);
+  }
+
   return {
     spec,
     texIdx: spec.index,
     wallTint,
     wallSecondary,
     roofDeck,
+    osmColour: bldgInfo.colour || null,
   };
 }
 

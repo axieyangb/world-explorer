@@ -2461,11 +2461,11 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
   const rfCol = [];
   const kaijuBid = []; // [kaiju] [v0, v1, entityIdx + 1] per building
 
-  // Pre-collect named parent buildings in this chunk so unnamed `building:part` tiers or courtyard wings can inherit them
+  // Pre-collect parent buildings with name/role/colour in this chunk so `building:part` tiers or courtyard wings can inherit them
   const namedParentBuildings = [];
   for (let i = 0; i < buildings.length; i++) {
-    const [, bName, bType, bIsPart, , , , , , , , bFlat] = buildings[i];
-    if (bName && bFlat && bFlat.length >= 6) {
+    const [, bName, bType, bIsPart, , , , , , bCol, , bFlat] = buildings[i];
+    if ((bName || (bType && bType !== 'yes') || bCol) && bFlat && bFlat.length >= 6) {
       let bx0 = Infinity, bx1 = -Infinity, bz0 = Infinity, bz1 = -Infinity;
       for (let k = 0; k < bFlat.length; k += 2) {
         const x = bFlat[k], z = bFlat[k + 1];
@@ -2477,6 +2477,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
       namedParentBuildings.push({
         name: bName,
         btype: bType,
+        colour: bCol || null,
         isPart: Boolean(bIsPart),
         minX: bx0,
         maxX: bx1,
@@ -2538,7 +2539,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const i = curIdx;
         curIdx++;
 
-        const [osmId, name, btype, isPart, rawH, rawMinH, lvl, style, , , , flatOuter, flatHoles] = b;
+        const [osmId, name, rawBtype, isPart, rawH, rawMinH, lvl, style, , rawColour, , flatOuter, flatHoles] = b;
         if (!flatOuter || flatOuter.length < 6) continue;
 
         const contour = [];
@@ -2607,7 +2608,35 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
               : terrainY - (terrainY > 1.5 ? 2.2 : 0.05);
         const h = terrainY + rawH + hMicroOffset;
 
-        // 1. Determine localized Chinese architectural category label (`typeLabel`)
+        // 1. Inherit parent building name / architectural role (`btype`) / OSM `colour` for enclosed parts
+        let resolvedBldgName = name;
+        let btype = rawBtype || 'yes';
+        let bColour = rawColour || null;
+        if (!resolvedBldgName || btype === 'yes' || !bColour) {
+          for (let pIdx = 0; pIdx < namedParentBuildings.length; pIdx++) {
+            const pb = namedParentBuildings[pIdx];
+            if (
+              cx >= pb.minX - 4.0 &&
+              cx <= pb.maxX + 4.0 &&
+              cz >= pb.minZ - 4.0 &&
+              cz <= pb.maxZ + 4.0 &&
+              pointInRing2D(cx, cz, pb.flatOuter)
+            ) {
+              if (!resolvedBldgName && pb.name) {
+                resolvedBldgName = isPart ? `${pb.name} (${lvl}层分级体块)` : pb.name;
+              }
+              if (btype === 'yes' && pb.btype && pb.btype !== 'yes') {
+                btype = pb.btype;
+              }
+              if (!bColour && pb.colour) {
+                bColour = pb.colour;
+              }
+              if (resolvedBldgName && btype !== 'yes' && bColour) break;
+            }
+          }
+        }
+
+        // 2. Determine localized Chinese architectural category label (`typeLabel`)
         let typeLabel = BUILDING_TYPE_ZH[btype] || '';
         if (!typeLabel) {
           if (style === 'imperial') {
@@ -2624,24 +2653,6 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             typeLabel = '低层街区建筑';
           } else {
             typeLabel = '城市综合楼宇';
-          }
-        }
-
-        // 2. Resolve building display name (explicit OSM name -> enclosing parent building -> nearest named road + category)
-        let resolvedBldgName = name;
-        if (!resolvedBldgName) {
-          for (let pIdx = 0; pIdx < namedParentBuildings.length; pIdx++) {
-            const pb = namedParentBuildings[pIdx];
-            if (
-              cx >= pb.minX - 4.0 &&
-              cx <= pb.maxX + 4.0 &&
-              cz >= pb.minZ - 4.0 &&
-              cz <= pb.maxZ + 4.0 &&
-              pointInRing2D(cx, cz, pb.flatOuter)
-            ) {
-              resolvedBldgName = isPart ? `${pb.name} (${lvl}层分级体块)` : pb.name;
-              break;
-            }
           }
         }
         if (!resolvedBldgName) {
@@ -2684,6 +2695,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           minHeight: rawMinH,
           levels: lvl,
           style,
+          colour: bColour,
           holesCount: holes.length,
           flatOuter,
           minX: minX + ox,
@@ -2744,6 +2756,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             minHeight: rawMinH,
             levels: lvl,
             style,
+            colour: bColour,
             flatOuter: normFlatOuter,
             flatHoles: normFlatHoles,
             wx,

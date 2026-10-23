@@ -187,7 +187,7 @@ function compassDirFromTangent(dx, dz) {
   return dz <= 0 ? 'NORTH' : 'SOUTH';
 }
 
-function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz, lx, lz, dx, dz, chunkNamedRoads) {
+function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz, lx, lz, dx, dz, chunkNamedRoads, highwayJunctions = null) {
   const h = hashInt(id || 1, Math.round(wx * 0.05) * 31 + Math.round(wz * 0.05));
   const baseCls = cls.replace('_link', '');
   const isTrueHighway = baseCls === 'motorway' || baseCls === 'trunk';
@@ -243,10 +243,27 @@ function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz, lx, lz, dx
       }
     }
   }
+  let juncRef = '';
+  if (highwayJunctions && highwayJunctions.length > 0) {
+    let bestJuncD2 = 650 * 650;
+    for (let i = 0; i < highwayJunctions.length; i++) {
+      const hj = highwayJunctions[i];
+      if (!hj.ref) continue;
+      const d2 = (lx - hj.lx) * (lx - hj.lx) + (lz - hj.lz) * (lz - hj.lz);
+      if (d2 < bestJuncD2) {
+        bestJuncD2 = d2;
+        juncRef = String(hj.ref).replace(/^EXIT\s+/i, '').trim();
+        if (!dest2 && hj.name) {
+          const jName = cleanOsmName(hj.name);
+          if (jName && jName !== name && jName !== realName) dest2 = jName;
+        }
+      }
+    }
+  }
   if (!dest2) {
     dest2 = `${compass}BOUND`;
   }
-  const rawExit = (rawRef && /^[0-9]+[A-Z]$/.test(String(rawRef).trim())) ? String(rawRef).trim() : `${1 + (h % 42)}${(h & 3) === 0 ? 'B' : (h & 3) === 1 ? 'A' : ''}`;
+  const rawExit = juncRef || ((rawRef && /^[0-9]+[A-Z]$/.test(String(rawRef).trim())) ? String(rawRef).trim() : `${1 + (h % 42)}${(h & 3) === 0 ? 'B' : (h & 3) === 1 ? 'A' : ''}`);
   const exitNum = `EXIT ${rawExit}`;
   return { ref, hasRealRef, realName, hasRealName, name, dest2, exitNum };
 }
@@ -451,11 +468,12 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     }
   }
 
+  const highwayJunctions = data.highwayJunctions || [];
   const waySignCache = new Map();
   const getWaySignage = (id, cls, rawName, rawRef, lx, lz, dx, dz) => {
     let info = waySignCache.get(id);
     if (!info) {
-      info = resolveRoadSignage(id, cls, rawName, rawRef, region, ox + lx, oz + lz, lx, lz, dx, dz, chunkNamedRoads);
+      info = resolveRoadSignage(id, cls, rawName, rawRef, region, ox + lx, oz + lz, lx, lz, dx, dz, chunkNamedRoads, highwayJunctions);
       waySignCache.set(id, info);
     }
     return info;
@@ -1180,6 +1198,28 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
           }
         }
 
+        // Match nearest real OpenFreeMap motorway_junction exit ref (`EXIT 2A`, `EXIT 1C`, etc.) to gantry position (cx, cz)
+        let localExitNum = s.exitNum;
+        if (highwayJunctions.length > 0) {
+          let bestJuncD2 = 650 * 650;
+          for (let jIdx = 0; jIdx < highwayJunctions.length; jIdx++) {
+            const hj = highwayJunctions[jIdx];
+            if (!hj.ref) continue;
+            const d2 = (cx - hj.lx) * (cx - hj.lx) + (cz - hj.lz) * (cz - hj.lz);
+            if (d2 < bestJuncD2) {
+              bestJuncD2 = d2;
+              const cleanRef = String(hj.ref).replace(/^EXIT\s+/i, '').trim();
+              if (cleanRef) localExitNum = `EXIT ${cleanRef}`;
+              if (hj.name && (!localDest2 || /BOUND$/i.test(localDest2))) {
+                const jName = cleanOsmName(hj.name);
+                if (jName && jName !== mainBaseName && jName !== localMainDest) {
+                  localDest2 = jName;
+                }
+              }
+            }
+          }
+        }
+
         // Left & right steel gantry columns + overhead cross-braced box truss (height = 6.8m clearance)
         const faceRot = rotFor(rx, rz); // local +X spans across road (rx, rz), local +Z faces oncoming traffic (-s.dx, -s.dz)
         push('gantryLeg', lx, cy, lz, rotFor(rx, rz));
@@ -1190,7 +1230,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         const isMoto = (s.cls === 'motorway' || s.cls === 'trunk') ? 1 : 0;
         gantries.push([
           cx, cy, cz, faceRot, spanW, s.oneway ? 1 : 0, isMoto,
-          s.ref, localMainDest, localDest2, s.exitNum,
+          s.ref, localMainDest, localDest2, localExitNum,
         ]);
         dbg.gantries++;
       });
