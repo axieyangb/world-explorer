@@ -66,6 +66,8 @@ export class KaijuHud {
     this.cityFill = el("i", "", this.cityBar);
 
     this.alert = this._txt(el("div", "kj-alert", root), "kaiju_alert");
+    this.warnPill = el("div", "kj-warn-pill", root);
+    this.toast = el("div", "kj-toast", root);
     this.msg = el("div", "kj-msg", root);
     this.hint = this._txt(el("div", "kj-hint", root), "kaiju_hint");
 
@@ -108,6 +110,18 @@ export class KaijuHud {
     this._txt(el("span", "kj-label kj-label-dim", misRow), "kaiju_missile");
     this.misBar = el("div", "kj-bar kj-bar-mis", misRow);
     this.misFill = el("i", "", this.misBar);
+
+    const dodgeRow = el("div", "kj-srow", st);
+    this._txt(el("span", "kj-label kj-label-dim", dodgeRow), "kaiju_dodge");
+    this.dodgeBar = el("div", "kj-bar kj-bar-mis kj-ready", dodgeRow);
+    this.dodgeFill = el("i", "", this.dodgeBar);
+    this.dodgeFill.style.transform = "scaleX(1)";
+
+    this.superRow = el("div", "kj-srow kj-srow-super", st);
+    this.superRow.style.display = "none";
+    this.superLabel = el("span", "kj-label kj-label-cyan", this.superRow, "SUPER [R]");
+    this.superBar = el("div", "kj-bar kj-bar-super", this.superRow);
+    this.superFill = el("i", "", this.superBar);
 
     const livesRow = el("div", "kj-srow kj-lives", st);
     this.pips = [];
@@ -234,6 +248,22 @@ export class KaijuHud {
     this.flash.animate([{ opacity: 0.5 }, { opacity: 0 }], { duration: 380, easing: "ease-out" });
   }
 
+  damageFrom(fx, fz) {
+    if (!this.visible) return;
+    this._dmgFromX = fx;
+    this._dmgFromZ = fz;
+    this._dmgT = CFG.DMG_INDICATOR_SECONDS || 1.0;
+  }
+
+  announceSupply(id, mode = "drop") {
+    if (!this.visible || !this.toast) return;
+    const itemName = t(`kaiju_item_${id}`) || id.toUpperCase();
+    this.toast.textContent = mode === "pickup" ? `${itemName} [R]` : `${t("kaiju_supply_drop")} · ${itemName}`;
+    this.toast.classList.toggle("kj-toast-pickup", mode === "pickup");
+    this.toast.classList.add("on");
+    this._toastT = mode === "pickup" ? 3.2 : 2.6;
+  }
+
   // ---------------------------------------------------------------- frame
   // Change detection: returns true (and stores v) only when the value differs from last frame.
   _chg(key, v) {
@@ -320,6 +350,46 @@ export class KaijuHud {
       this.cross.classList.toggle("kj-mis-ready", misQ === 0);
     }
 
+    // Dodge cooldown bar
+    const dodgeQ = Math.round((K.dash ? Math.max(0, Math.min(1, K.dash.cooldown || 0)) : 0) * 200);
+    if (this._chg("dodge", dodgeQ)) {
+      this.dodgeFill.style.transform = `scaleX(${1 - dodgeQ / 200})`;
+      this.dodgeBar.classList.toggle("kj-ready", dodgeQ === 0);
+    }
+
+    // Super weapon status
+    const sup = K.super && K.super.item;
+    const supKey = sup ? `${sup.id}:${sup.charges}/${sup.maxCharges}` : "";
+    if (this._chg("sup", supKey)) {
+      if (!sup) {
+        this.superRow.style.display = "none";
+      } else {
+        this.superRow.style.display = "";
+        this.superLabel.textContent = `${t(sup.nameKey)} [R]`;
+        this.superFill.style.transform = `scaleX(${Math.max(0, Math.min(1, sup.charges / Math.max(1, sup.maxCharges)))})`;
+      }
+    }
+
+    // Laser lock / Danger zone pill
+    const lzPhase = k && k.laser ? k.laser.phase : "idle";
+    const warnState = !h.alive ? 0 : (lzPhase === "lock" || lzPhase === "fire") ? 2 : (k && k.inDanger) ? 1 : 0;
+    if (this._chg("warn", warnState)) {
+      if (warnState === 2) {
+        this.warnPill.textContent = `${t("kaiju_lock")} — ${t("kaiju_dodge").toUpperCase()}`;
+        this.warnPill.className = "kj-warn-pill on kj-warn-lock";
+      } else if (warnState === 1) {
+        this.warnPill.textContent = t("kaiju_danger");
+        this.warnPill.className = "kj-warn-pill on kj-warn-danger";
+      } else {
+        this.warnPill.className = "kj-warn-pill";
+      }
+    }
+
+    if (this._toastT > 0) {
+      this._toastT -= dt;
+      if (this._toastT <= 0) this.toast.classList.remove("on");
+    }
+
     // Lock reticle.
     const ret = w && w.reticle;
     const fighting = K.state === "fight" || K.state === "intro";
@@ -377,6 +447,59 @@ export class KaijuHud {
     ctx.save();
     ctx.translate(S / 2, S / 2);
     ctx.rotate(rot);
+
+    // Supply drop markers (cyan/amber diamonds).
+    const drops = K.supply && K.supply.drops;
+    if (drops && drops.length > 0) {
+      const limD = S * 0.44;
+      for (let i = 0; i < drops.length; i++) {
+        const dr = drops[i];
+        this._proj(dr.x, dr.z, tmp);
+        let dx = tmp[0], dy = tmp[1];
+        const dd = Math.hypot(dx, dy);
+        if (dd > limD) { dx = (dx / dd) * limD; dy = (dy / dd) * limD; }
+        ctx.save();
+        ctx.translate(dx, dy);
+        ctx.rotate(-rot);
+        ctx.beginPath();
+        ctx.moveTo(0, -5);
+        ctx.lineTo(5, 0);
+        ctx.lineTo(0, 5);
+        ctx.lineTo(-5, 0);
+        ctx.closePath();
+        ctx.fillStyle = dr.danger ? "rgba(255, 190, 50, 0.95)" : "rgba(56, 242, 255, 0.95)";
+        ctx.fill();
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = "rgba(0, 20, 30, 0.85)";
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // Laser beam on radar (lock / fire).
+    if (k.laser && (k.laser.phase === "lock" || k.laser.phase === "fire") && k.laser.dir) {
+      const lo = k.laser.origin || k.position;
+      const llen = Math.max(80, k.laser.length || 600);
+      this._proj(lo.x, lo.z, tmp);
+      const x0 = tmp[0], y0 = tmp[1];
+      this._proj(lo.x + k.laser.dir.x * llen, lo.z + k.laser.dir.z * llen, tmp);
+      const x1 = tmp[0], y1 = tmp[1];
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      if (k.laser.phase === "fire") {
+        ctx.strokeStyle = "rgba(255, 50, 50, 0.9)";
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(255, 240, 240, 0.95)";
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = "rgba(255, 60, 60, 0.85)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
 
     // Breath cone (telegraph -> active).
     const charge = k.breathActive ? 1 : Math.max(0, Math.min(1, k.breathCharge || 0));
