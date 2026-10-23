@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer - 40 Authentic Beijing Landmarks Aggregator
+ * World Explorer - 40 Authentic Beijing Landmarks Aggregator
  *
  * Imports modularized landmark definitions (BATCH_01 through BATCH_10)
  * and LandmarkGeometryBuilder, providing spatial matching and batch geometry generation.

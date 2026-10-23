@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer — Procedural 3D Architectural Landmark Definitions
+ * World Explorer — Procedural 3D Architectural Landmark Definitions
  * Batch 08 (BATCH_08): Modern Supertall CBD & Contemporary Architecture
  *
  * Landmarks:

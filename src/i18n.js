@@ -1,8 +1,8 @@
 /**
- * Beijing Explorer (京华漫游) — Internationalization (i18n) Module
+ * World Explorer (世界探索) — Internationalization (i18n) Module
  *
  * Requirements & Invariants:
- * 1. Project Title: Always 'Beijing Explorer' in BOTH English (en) and Chinese (zh).
+ * 1. Project Title: 'World Explorer' (en) / '世界探索' (zh).
  * 2. Supported Languages: 'zh' (Simplified Chinese) and 'en' (English).
  * 3. Initial Language Selection: Chosen on every page load via a language modal
  *    (session-fixed; does NOT auto-skip from localStorage).
@@ -16,8 +16,8 @@ const langChangeCallbacks = new Set();
 export const I18N = {
   zh: {
     dom: {
-      page_title: 'Beijing Explorer',
-      game_title: 'Beijing Explorer',
+      page_title: '世界探索',
+      game_title: '世界探索',
       lbl_road: '当前道路 / 区域',
       lbl_latlon: '真实经纬度 (WGS-84)',
       lbl_xyz: '天安门相对坐标 / 高程',
@@ -325,8 +325,8 @@ export const I18N = {
 
   en: {
     dom: {
-      page_title: 'Beijing Explorer',
-      game_title: 'Beijing Explorer',
+      page_title: 'World Explorer',
+      game_title: 'World Explorer',
       lbl_road: 'Current Road / Area',
       lbl_latlon: 'Coordinates (WGS-84)',
       lbl_xyz: 'Relative XYZ / Elevation',

@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer - Landmark Procedural Geometry Definitions: Batch 01
+ * World Explorer - Landmark Procedural Geometry Definitions: Batch 01
  * 
  * 1. tiananmen_rostrum (天安门城楼)
  * 2. qianmen_gate (正阳门城楼)

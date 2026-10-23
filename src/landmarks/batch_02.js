@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer - Batch 02 Landmarks: Forbidden City Three Great Halls & North Gate
+ * World Explorer - Batch 02 Landmarks: Forbidden City Three Great Halls & North Gate
  *
  * 1. Hall of Supreme Harmony (太和殿 - taihedian)
  * 2. Hall of Central Harmony (中和殿 - zhonghedian)
