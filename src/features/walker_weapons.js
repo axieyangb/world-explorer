@@ -2,7 +2,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { getWeaponSfx } from './weapon_sfx.js';
 import { getBeijingTerrainElevation } from '../environment.js';
-import { createVehicleModel } from '../entities.js';
+import { createVehicleModel, createHelicopterModel } from '../entities.js';
 
 const HALF_PI = Math.PI * 0.5;
 
@@ -336,6 +336,7 @@ export class WalkerWeaponsSystem {
     this.fireTimer = 0;
     this.rpgQuickTimer = 0;
     this.tankCannonTimer = 0;
+    this.tankRocketTimer = 0;
     this.isFiring = false;
     this.reticleEl = null;
     this.weaponBadgeEl = null;
@@ -349,6 +350,7 @@ export class WalkerWeaponsSystem {
     this.aiSoldiers = [];
     this.aiTanks = [];
     this.aiRagdolls = [];
+    this.aiHeli = null;
 
     this._initReticleUi();
     this._initPlayerWeaponGroup();
@@ -730,6 +732,54 @@ export class WalkerWeaponsSystem {
     });
   }
 
+  fireTankRocket() {
+    if (this.tankRocketTimer > 0) return;
+    const mesh = this.app.vehicleMesh;
+    if (!mesh || !mesh.userData || !mesh.userData.isTank) return;
+
+    this.tankRocketTimer = 1.15;
+    getWeaponSfx(this.app).play('missileLaunch', { gain: 0.85 });
+
+    const ray = this.getAimRay();
+    const hit = this.raycastAim(ray, 1400);
+
+    const podWorld = new THREE.Vector3();
+    const turret = mesh.userData.turret;
+    if (turret) {
+      turret.getWorldPosition(podWorld);
+      podWorld.y += 1.15;
+      const side = (this._tankRocketSide = (this._tankRocketSide || 1) * -1);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(turret.quaternion);
+      podWorld.addScaledVector(right, side * 1.35);
+    } else {
+      podWorld.copy(this.app.pos).add(new THREE.Vector3(0, 2.1, 0));
+    }
+
+    this._spawnMuzzleFlash(podWorld, 0.32, 0xff7722);
+
+    const dir = new THREE.Vector3().subVectors(hit.point, podWorld).normalize();
+    const rocketMesh = createRpgModel();
+    rocketMesh.scale.setScalar(0.85);
+    rocketMesh.position.copy(podWorld);
+    rocketMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    this.app.scene.add(rocketMesh);
+
+    this.projectiles.push({
+      mesh: rocketMesh,
+      pos: podWorld.clone(),
+      dir,
+      speed: 210,
+      distTraveled: 0,
+      maxDist: hit.dist,
+      damage: 1.2,
+      splashRadius: 12.0,
+      kaijuDamage: 650,
+      hitTarget: hit,
+      isRocket: true,
+      smokeTimer: 0,
+    });
+  }
+
   _applyImpact(hitPos, hit, buildingUnits, splashRadius, kaijuDmg) {
     const K = this.app.kaiju;
     const D = K && K.destruction;
@@ -847,6 +897,7 @@ export class WalkerWeaponsSystem {
     for (const t of this.aiTanks) {
       if (t.mesh) t.mesh.visible = false;
     }
+    if (this.aiHeli && this.aiHeli.mesh) this.aiHeli.mesh.visible = false;
   }
 
   _updateAiKaijuBattle(dt, kaiju) {
@@ -954,6 +1005,113 @@ export class WalkerWeaponsSystem {
         this._aiTankFire(t, chestPos, kaiju);
       }
     }
+
+    // AI Helicopter Gunship support overhead when player is Tank or Soldier
+    const K = this.app.kaiju;
+    const playerInHeli = !K || !K.active || K.activeUnit === 'heli';
+    if (!playerInHeli) {
+      if (!this.aiHeli) {
+        const heliMesh = createHelicopterModel();
+        heliMesh.scale.setScalar(1.0);
+        this.app.scene.add(heliMesh);
+        this.aiHeli = {
+          mesh: heliMesh,
+          mainRotor: heliMesh.userData.mainRotor,
+          tailRotor: heliMesh.userData.tailRotor,
+          angle: 0.8,
+          radius: 110,
+          alt: 85,
+          cannonTimer: 1.2,
+          missileTimer: 4.5,
+          alive: true,
+        };
+      }
+      const ah = this.aiHeli;
+      ah.mesh.visible = true;
+      ah.angle += 0.28 * dt;
+
+      const hx = kPos.x + Math.sin(ah.angle) * ah.radius;
+      const hz = kPos.z + Math.cos(ah.angle) * ah.radius;
+      const hy = Math.max(getBeijingTerrainElevation(hx, hz) + 40, kPos.y + ah.alt);
+      ah.mesh.position.set(hx, hy, hz);
+
+      const targetLook = new THREE.Vector3(chestPos.x, chestPos.y, chestPos.z);
+      ah.mesh.lookAt(targetLook);
+      ah.mesh.rotateZ(-0.16);
+
+      if (ah.mainRotor) ah.mainRotor.rotation.y += 32.0 * dt;
+      if (ah.tailRotor) ah.tailRotor.rotation.x += 40.0 * dt;
+
+      ah.cannonTimer -= dt;
+      if (ah.cannonTimer <= 0) {
+        ah.cannonTimer = 1.6 + Math.random() * 0.8;
+        this._aiHeliFireCannon(ah, chestPos, kaiju);
+      }
+
+      ah.missileTimer -= dt;
+      if (ah.missileTimer <= 0) {
+        ah.missileTimer = 5.5 + Math.random() * 2.0;
+        this._aiHeliFireMissile(ah, chestPos, kaiju);
+      }
+    } else if (this.aiHeli && this.aiHeli.mesh) {
+      this.aiHeli.mesh.visible = false;
+    }
+  }
+
+  _aiHeliFireCannon(ah, chestPos, kaiju) {
+    const origin = ah.mesh.position.clone().add(new THREE.Vector3(0, -0.6, 1.5));
+    const dir = new THREE.Vector3().subVectors(chestPos, origin).normalize();
+    this._spawnMuzzleFlash(origin, 0.25, 0xffdd44);
+    getWeaponSfx(this.app).play('cannon', { gain: 0.35 });
+
+    const tracerGeom = new THREE.CylinderGeometry(0.04, 0.04, 3.2, 6);
+    tracerGeom.rotateX(HALF_PI);
+    const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffea55 });
+    const tracerMesh = new THREE.Mesh(tracerGeom, tracerMat);
+    tracerMesh.position.copy(origin);
+    tracerMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    this.app.scene.add(tracerMesh);
+
+    this.projectiles.push({
+      mesh: tracerMesh,
+      pos: origin.clone(),
+      dir,
+      speed: 600,
+      distTraveled: 0,
+      maxDist: origin.distanceTo(chestPos),
+      damage: 0,
+      kaijuDamage: 12.0,
+      hitTarget: { kind: 'kaiju' },
+      isRocket: false,
+    });
+  }
+
+  _aiHeliFireMissile(ah, chestPos, kaiju) {
+    const origin = ah.mesh.position.clone().add(new THREE.Vector3(1.4, -0.4, 0));
+    const dir = new THREE.Vector3().subVectors(chestPos, origin).normalize();
+    this._spawnMuzzleFlash(origin, 0.35, 0xff7722);
+    getWeaponSfx(this.app).play('missileLaunch', { gain: 0.65 });
+
+    const rocketMesh = createRpgModel();
+    rocketMesh.scale.setScalar(0.75);
+    rocketMesh.position.copy(origin);
+    rocketMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    this.app.scene.add(rocketMesh);
+
+    this.projectiles.push({
+      mesh: rocketMesh,
+      pos: origin.clone(),
+      dir,
+      speed: 195,
+      distTraveled: 0,
+      maxDist: origin.distanceTo(chestPos),
+      damage: 0.6,
+      kaijuDamage: 75.0,
+      splashRadius: 8.0,
+      hitTarget: { kind: 'kaiju' },
+      isRocket: true,
+      smokeTimer: 0,
+    });
   }
 
   _aiSoldierFireRifle(s, chestPos, kaiju) {
@@ -1097,6 +1255,7 @@ export class WalkerWeaponsSystem {
     if (this.fireTimer > 0) this.fireTimer -= dt;
     if (this.rpgQuickTimer > 0) this.rpgQuickTimer -= dt;
     if (this.tankCannonTimer > 0) this.tankCannonTimer -= dt;
+    if (this.tankRocketTimer > 0) this.tankRocketTimer -= dt;
 
     const isWalk = this.app.mode === 'walk';
     const isDrive = this.app.mode === 'drive';

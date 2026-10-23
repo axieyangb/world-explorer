@@ -1955,13 +1955,29 @@ class WorldExplorerApp {
       } else if (e.code === "KeyE" && !e.repeat && this.mode === "walk" && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
         this.setMode("helicopter");
       } else if (e.code === "KeyC" && !e.repeat) {
-        this.setMode(this.mode === "helicopter" ? (this.heliLanded ? "walk" : "drive") : "helicopter");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.cyclePlayableUnit();
+        } else {
+          this.setMode(this.mode === "helicopter" ? (this.heliLanded ? "walk" : "drive") : "helicopter");
+        }
       } else if (e.code === "Digit1" && !e.repeat) {
-        this.setMode("drive");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.setPlayableUnit("heli");
+        } else {
+          this.setMode("drive");
+        }
       } else if (e.code === "Digit2" && !e.repeat) {
-        this.setMode("walk");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.setPlayableUnit("tank");
+        } else {
+          this.setMode("walk");
+        }
       } else if (e.code === "Digit3" && !e.repeat) {
-        this.setMode("helicopter");
+        if (this.kaiju && this.kaiju.active) {
+          this.kaiju.setPlayableUnit("soldier");
+        } else {
+          this.setMode("helicopter");
+        }
       } else if (e.code === "Digit4" && !e.repeat) {
         this.setMode("kaiju");
       } else if (e.code === "KeyV") {
@@ -2194,9 +2210,9 @@ class WorldExplorerApp {
     }
   }
 
-  setMode(rawMode) {
+  setMode(rawMode, keepKaiju = false) {
     if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
-    if (this.kaiju && this.kaiju.active) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
+    if (this.kaiju && this.kaiju.active && !keepKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
