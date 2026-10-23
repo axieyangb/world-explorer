@@ -434,6 +434,10 @@ export class VegetationSystem {
         }
       }
     }
+    if (this.streetDetail && this.streetDetail.version !== this._sdVersion) { // [feature/street-detail] real OSM trees
+      this._sdVersion = this.streetDetail.version;
+      changed = true;
+    }
     const dx = cp.x - this._lastX, dz = cp.z - this._lastZ;
     if (!changed && dx * dx + dz * dz < REBUILD_DIST * REBUILD_DIST && Math.abs(cp.y - this._lastY) < 25) return;
     if (changed) {
@@ -461,16 +465,20 @@ export class VegetationSystem {
       if (ddx * ddx + ddz * ddz > far2) continue;
       tables.push(v);
     }
+    const sd = this.streetDetail; // [feature/street-detail] real OSM trees + drop procedural street trees next to them
+    if (sd && sd.trees) tables.push(sd.trees);
+    const treeSup = sd ? sd.treeSuppress : null;
     // Pass 1: classify & count
     const cls = [];
     for (const v of tables) {
       const { inst, species, count } = v;
       const c = new Int8Array(count);
+      const nStreet = treeSup ? v.streetCount || 0 : 0; // [feature/street-detail]
       for (let i = 0; i < count; i++) {
         const o = i * INST_STRIDE;
         const hx = inst[o] - cp.x, hz = inst[o + 2] - cp.z;
         const h2 = hx * hx + hz * hz;
-        if (h2 > far2) {
+        if (h2 > far2 || (i < nStreet && treeSup.near(inst[o], inst[o + 2]))) {
           c[i] = -1;
           continue;
         }

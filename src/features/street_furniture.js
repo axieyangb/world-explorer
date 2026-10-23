@@ -1238,8 +1238,13 @@ export class StreetFeatures {
     while (this.bladeSignGroup.children.length > 0) this.bladeSignGroup.remove(this.bladeSignGroup.children[0]);
     let gantryCount = 0, bladeCount = 0;
 
-    for (const group of loadedChunks.values()) {
+    // [feature/street-detail] real OSM furniture as a pseudo chunk (world coords) + suppression of nearby procedural duplicates
+    const sd = this.streetDetail && this.streetDetail.st ? this.streetDetail : null;
+    const groups = sd ? [...loadedChunks.values(), sd.pseudo] : loadedChunks.values();
+    for (const group of groups) {
       const st = group.userData && group.userData.street;
+      const isReal = !!group.userData.realDetail;
+      const sup = sd && !isReal ? sd.suppress : null; // [/feature/street-detail]
       const ox = group.userData.ox, oz = group.userData.oz;
       const chunkD = Math.hypot(ox - cx, oz - cz);
       const sg = group.userData.subGroups;
@@ -1248,7 +1253,7 @@ export class StreetFeatures {
           if (this.detailMats.has(m.material)) m.visible = chunkD < (m.material === this.wearMat ? DETAIL_CULL_M - 350 : DETAIL_CULL_M);
         }
       }
-      if (!st || chunkD > 1300) continue;
+      if (!st || (chunkD > 1300 && !isReal)) continue;
       const region = st.region || 'us';
 
       for (const [type, arr] of Object.entries(st.types || {})) {
@@ -1257,10 +1262,12 @@ export class StreetFeatures {
         const r2 = mesh.userData.cull * mesh.userData.cull;
         const cap = mesh.instanceMatrix.count;
         const out = mesh.instanceMatrix.array;
+        const supG = sup && sup[type]; // [feature/street-detail]
         for (let i = 0; i < arr.length; i += STRIDE) {
           const x = arr[i] + ox, z = arr[i + 2] + oz;
           const dx = x - cx, dz = z - cz;
           if (dx * dx + dz * dz > r2) continue;
+          if (supG && supG.near(x, z)) continue; // [feature/street-detail]
           const n = counts[type];
           if (n >= cap) break;
           writeMatrix(out, n * 16, x, arr[i + 1], z, arr[i + 3], arr[i + 4]);
@@ -1346,6 +1353,10 @@ export class StreetFeatures {
           const x = heads[i] + ox, y = heads[i + 1], z = heads[i + 2] + oz;
           const dx = x - cx, dz = z - cz;
           if (dx * dx + dz * dz > r2) continue;
+          if (sup && sup._lamp) { // [feature/street-detail] drop bulbs of suppressed procedural lamps (test the pole position)
+            const hh = y - heads[i + 4], ho = hh > 9.5 ? 2.4 : hh > 8.5 ? 2.6 : hh > 8 ? 2.3 : 0;
+            if (sup._lamp.near(x - Math.cos(heads[i + 3]) * ho, z + Math.sin(heads[i + 3]) * ho)) continue;
+          }
           const isPost = y - heads[i + 4] < 5;
           if (isPost) {
             if (nBulbPost < 2000) writeMatrix(bulbPostArr, nBulbPost++ * 16, x, y, z, heads[i + 3], 1);
@@ -1432,7 +1443,7 @@ export class StreetFeatures {
     const vis = !layerVisibility || layerVisibility.facilities !== false;
     this.root.visible = vis && !this._forceHidden;
     if (!vis || !loadedChunks) return;
-    const sig = this._chunkSignature(loadedChunks);
+    const sig = this._chunkSignature(loadedChunks) + (this.streetDetail ? `|sd${this.streetDetail.version}` : ''); // [feature/street-detail]
     const lr = this.lastRefresh;
     if (sig !== lr.sig || Math.hypot(camPos.x - lr.x, camPos.z - lr.z) > REFRESH_MOVE_M) {
       lr.sig = sig;

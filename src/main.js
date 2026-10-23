@@ -38,6 +38,7 @@ import { playVehicleHornOrSiren, stopVehicleSirenAudio, showVehicleToast } from 
 import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
+import { StreetDetail } from "./features/street_detail.js"; // [feature/street-detail]
 import { PlacesSystem } from "./features/places.js"; // feature/places
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
@@ -189,6 +190,7 @@ class WorldExplorerApp {
     this.mats = createSharedMaterials();
     this.streetFeatures = new StreetFeatures(this.scene, this.mats); // [feature/street]
     this.vegetation = new VegetationSystem(this.scene, this.mats); // [feature/vegetation] instanced trees + landcoverMat
+    this.streetDetail = new StreetDetail(this.scene, this.streetFeatures, this.vegetation); // [feature/street-detail] real OSM trees/lamps/signals/...
     this.chunksRoot = new THREE.Group();
     this.scene.add(this.chunksRoot);
 
@@ -2684,6 +2686,7 @@ class WorldExplorerApp {
     this._processChunkBuildQueue(5.5);
     this.traffic.update(dt, this.pos, this.loadedChunks);
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
+    this.streetDetail.update(dt, this.camera.position, this.loadedChunks, this.worldOrigin, this.layerVisibility); // [feature/street-detail]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
     this._updateHud();

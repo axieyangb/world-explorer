@@ -1158,6 +1158,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     }
   }
 
+  const streetCount = count; // [feature/street-detail] instances [0, streetCount) are procedural street trees
   // --- 2. Area vegetation from landcover + park polygons (jittered grid sampling) ---
   const AREA = {
     [LC_WOOD]: [1 / 85, 1 / 350, 1.8, 0.85, 1.35],
@@ -1239,5 +1240,5 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     }
   }
 
-  return { count, inst: inst.slice(0, count * INST_STRIDE), species: species.slice(0, count) };
+  return { count, inst: inst.slice(0, count * INST_STRIDE), species: species.slice(0, count), streetCount };
 }
