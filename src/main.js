@@ -72,6 +72,7 @@ if (THREE.ShaderChunk && THREE.ShaderChunk.shadowmap_pars_fragment) {
 import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
+import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
@@ -274,6 +275,7 @@ class WorldExplorerApp {
 
     this.water = new WaterPhysics(this); // fix/water
     this.collision = new BuildingCollision(this); // fix/water
+    this.landmarks = new LandmarkSystem(this); // feature/famous-landmarks
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
     this.cityTraffic = this.traffic;
@@ -2686,6 +2688,7 @@ class WorldExplorerApp {
     this.streetFeatures.update(dt, this.camera.position, this.loadedChunks, this.layerVisibility, this.worldOrigin); // [feature/street]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
+    if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {

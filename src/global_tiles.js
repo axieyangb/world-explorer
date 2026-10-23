@@ -1,6 +1,7 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
+import { makeLandmarkSuppressor } from "./features/landmarks/registry.js"; // feature/famous-landmarks
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -1224,6 +1225,19 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     } else if (info.deg >= 3 && info.y === 0) {
       facilities.push(["tl", Math.round((info.lx + 5.5) * 10) / 10, 0, Math.round((info.lz + 5.5) * 10) / 10]);
       facilities.push(["cr", Math.round((info.lx - 4.5) * 10) / 10, 0, Math.round(info.lz * 10) / 10]);
+    }
+  }
+
+  // feature/famous-landmarks: drop generic OSM buildings inside hand-built landmark footprints
+  const lmSuppress = makeLandmarkSuppressor(origin);
+  if (lmSuppress) {
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      const fo = buildings[i][11];
+      if (!fo || fo.length < 6) continue;
+      let sx = 0, sz = 0;
+      for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
+      const n = fo.length / 2;
+      if (lmSuppress(ox + sx / n, oz + sz / n)) buildings.splice(i, 1);
     }
   }
 
