@@ -43,6 +43,8 @@ MOD_ID_MAP = {
     'src/features/vegetation_worker.js': '__MOD_vegetation_worker',
     'src/features/places_worker.js': '__MOD_places_worker',
     'src/features/water_physics.js': '__MOD_water_physics',
+    'src/features/road_grid.js': '__MOD_road_grid',
+    'src/features/bridge_deck.js': '__MOD_bridge_deck',
     'src/features/building_collision.js': '__MOD_building_collision',
     'src/chunk_builder.js': '__MOD_chunk_builder',
     'src/chunk_worker.js': '__MOD_chunk_worker',
