@@ -2068,7 +2068,7 @@ function buildRoadsAndBridges(
         }
 
         // One-way directional chevron arrow every 42 meters
-        if (oneway && widthM >= 4.5 && Math.floor((subAccumDist + segLen) / 42) > Math.floor(subAccumDist / 42)) {
+        if (!STREET_OWNS_LANE_MARKINGS && oneway && widthM >= 4.5 && Math.floor((subAccumDist + segLen) / 42) > Math.floor(subAccumDist / 42)) {
           const mx = (cx1 + cx2) * 0.5;
           const my = (my1 + my2) * 0.5 + 0.03;
           const mz = (cz1 + cz2) * 0.5;
@@ -2769,6 +2769,10 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           entityRecord.styleDisplay = `${wfcMeta.facadeId || wfcMeta.arch.shortName} · ${wfcMeta.arch.category}`;
           entityRecord.styleId = wfcMeta.styleId;
           entityRecord.facadeId = wfcMeta.facadeId;
+          entityRecord.extruded = true;
+          if (wfcMeta.topRoofFlat) entityRecord.topRoofFlat = wfcMeta.topRoofFlat;
+          if (wfcMeta.topRoofHoles) entityRecord.topRoofHoles = wfcMeta.topRoofHoles;
+          if (Number.isFinite(wfcMeta.topRoofY)) entityRecord.topY = wfcMeta.topRoofY;
         }
 
         // If this building is a stadium with an inner courtyard bowl (e.g. Workers' Stadium, Bird's Nest),

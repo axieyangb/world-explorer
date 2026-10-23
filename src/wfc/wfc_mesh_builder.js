@@ -1641,6 +1641,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   }
 
+  const topTier = tiers[tiers.length - 1];
   return {
     styleId,
     arch,
@@ -1648,6 +1649,9 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     facadeIndex: upperSpec.index,
     doorId: DOOR_CATALOG[primaryDoorIdx]?.id || 'door_office_lobby_glass',
     doorIndex: primaryDoorIdx,
+    topRoofFlat: topTier ? topTier.flatOuter : ccwOuter,
+    topRoofHoles: topTier ? (topTier.flatHoles || []) : (flatHoles || []),
+    topRoofY: topTier ? topTier.y1 : topY,
   };
 }
 
