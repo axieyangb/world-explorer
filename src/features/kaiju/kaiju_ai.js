@@ -472,6 +472,7 @@ export class Kaiju {
     K.audio?.play?.("footstep", { pos: p });
     K.destruction?.damageSphere?.(p.x, p.y, p.z, CFG.STOMP_RADIUS * s, 1.0, { source: "stomp" });
     K.supply?.hazard?.(p.x, p.z, CFG.STOMP_RADIUS * s);
+    K.app?.traffic?.triggerImpactSphere?.(p.x, p.y, p.z, Math.max(32, CFG.STOMP_RADIUS * s), { force: 1.6, source: "stomp" });
     K.crowd?.addThreat?.(p.x, p.z, 160 * s, 6);
   }
 
@@ -558,6 +559,8 @@ export class Kaiju {
       this.tickT = 0.1;
       K.destruction?.damageSphere?.(tip.x, tip.y, tip.z, 16 * s, 1.0, { source: "tail" });
       K.supply?.hazard?.(tip.x, tip.z, 16 * s);
+      K.app?.traffic?.triggerImpactSphere?.(tip.x, tip.y, tip.z, 28 * s, { force: 1.65, source: "tail" });
+      K.app?.traffic?.triggerImpactSphere?.(mid.x, mid.y, mid.z, 28 * s, { force: 1.6, source: "tail" });
       K.destruction?.damageSphere?.(mid.x, mid.y, mid.z, 12 * s, 1.0, { source: "tail" });
       K.crowd?.addThreat?.(tip.x, tip.z, 120 * s, 4);
     }

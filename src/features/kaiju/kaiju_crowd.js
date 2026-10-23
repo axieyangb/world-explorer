@@ -52,7 +52,7 @@ export class KaijuCrowd {
     T.pedMult = 1;
     T.pedCap = T.pedCapBase || 140;
     for (const c of T.cars) { c.active = false; c.kWreck = 0; c.kPanic = 0; c.kSw = 0; }
-    for (const p of T.peds) { p.active = false; p.kFlee = 0; p.kOff = 0; }
+    for (const p of T.peds) { p.active = false; p.state = 'walking'; p.parts = null; p.partsByName = null; p.kFlee = 0; p.kOff = 0; }
     T.candTimer = 0;
     T.fillBoost = 1;
   }
@@ -78,10 +78,8 @@ export class KaijuCrowd {
       if (dx * dx + dz * dz > r2) continue;
       this._wreck(c);
     }
-    for (const p of T.peds) {
-      if (!p.active) continue;
-      const dx = p.x - x, dz = p.z - z;
-      if (dx * dx + dz * dz <= r2) p.active = false;
+    if (typeof T.triggerImpactSphere === 'function') {
+      T.triggerImpactSphere(x, 0, z, Math.max(18, radius), { force: 1.6, source: 'breath' });
     }
   }
 
@@ -170,6 +168,7 @@ export class KaijuCrowd {
   }
 
   ped(p, dt) {
+    if (p.state === 'falling_apart' || p.state === 'lying') return false;
     this._field(p.x, p.z);
     const s = this._s;
     if (s > 0.03) {
@@ -185,7 +184,7 @@ export class KaijuCrowd {
       return false;
     }
     p.kOff = 1;
-    p.state = 0;
+    p.crossState = 0;
     const l = Math.hypot(p.kHx, p.kHz) || 1;
     const hx = p.kHx / l, hz = p.kHz / l;
     const running = p.kFlee > 0;
