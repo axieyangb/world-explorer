@@ -104,8 +104,11 @@ export class RailTransit {
           const ka = `${q(ax)},${q(az)}`, kb = `${q(bx)},${q(bz)}`;
           if (ka === kb) continue;
           const key = ka < kb ? `${ka}|${kb}|${l.k}` : `${kb}|${ka}|${l.k}`;
-          if (segs.has(key)) continue;
-          segs.set(key, { key, ka, kb, ax, az, bx, bz, ea: p[i * 3 + 2], eb: p[i * 3 + 5], k: l.k, st: l.st, tn: l.tn, br: l.br, svc: l.svc });
+          // [rail-road-clearance] prefer the copy of the chunk that draws this segment (heights match the mesh)
+          const own = g.position && Math.abs((ax + bx) / 2 - g.position.x) < 500 && Math.abs((az + bz) / 2 - g.position.z) < 500;
+          const prev = segs.get(key);
+          if (prev && (prev.own || !own)) continue;
+          segs.set(key, { key, ka, kb, ax, az, bx, bz, ea: p[i * 3 + 2], eb: p[i * 3 + 5], k: l.k, st: l.st, tn: l.tn, br: l.br, svc: l.svc, own });
         }
       }
       for (const s of rail.stops || []) {
