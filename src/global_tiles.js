@@ -3,6 +3,7 @@ import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [fe
 import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
+import { extractVenues } from "./features/venues.js"; // [venues]
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -1322,11 +1323,13 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
   }
 
+  const venues = extractVenues(tiles, toLocalXZ, buildings); // [venues] also drops stadium shell buildings
   return {
     roads,
     road_context: roadContext, // fix/bridge-continuity: approach context for computeRoadLiftProfiles only
     railways,
     buildings,
+    venues, // [venues]
     water_polys,
     water_lines,
     island_holes,
