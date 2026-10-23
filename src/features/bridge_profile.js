@@ -242,7 +242,7 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
       let base = meshY(terrainAt, p[0], p[1]);
       for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; base = Math.min(base, meshY(terrainAt, p[0] + Math.cos(a) * gr, p[1] + Math.sin(a) * gr)); }
       // chunk_builder draws roads at lift + ROAD_Y_BIAS (trunk 0.86 + 0..0.14 micro bias): pin so the drawn deck lands on the model's
-      const y = (Number.isFinite(base) ? base : 0) + (l.yOff || 0) + l.deck.y - 0.93;
+      const y = (Number.isFinite(base) ? base : 0) + l.deck.y - 0.93;
       const h = (l.heading || 0) * Math.PI / 180, c = Math.cos(h), sn = Math.sin(h);
       for (let r = 0; r < roads.length; r++) {
         const ids = wayNodes[r]; if (!ids || !roads[r][7]) continue;
