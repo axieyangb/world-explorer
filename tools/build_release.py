@@ -40,6 +40,8 @@ MOD_ID_MAP = {
     'src/features/traffic_graph.js': '__MOD_traffic_graph',
     'src/features/water_shore.js': '__MOD_water_shore',
     'src/features/street_worker.js': '__MOD_street_worker',
+    'src/features/koppen_grid.js': '__MOD_koppen_grid',  # [feature/climate-flora]
+    'src/features/flora_climate.js': '__MOD_flora_climate',  # [feature/climate-flora]
     'src/features/vegetation_worker.js': '__MOD_vegetation_worker',
     'src/features/places_worker.js': '__MOD_places_worker',
     'src/features/water_physics.js': '__MOD_water_physics',

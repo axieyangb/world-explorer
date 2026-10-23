@@ -14,7 +14,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { getDaylight } from './daylight.js';
 import { getBeijingTerrainElevation } from '../environment.js';
-import { INST_STRIDE, SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM } from './vegetation_worker.js';
+import { INST_STRIDE, SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_AUTO } from './vegetation_worker.js';
 import { resolveStreetRegion } from './street_worker.js';
 
 const MIRRORS = [
@@ -65,12 +65,15 @@ function tileBBox(x, y, z) {
 const PALM_RE = /palm|phoenix|washingtonia|syagrus|trachycarpus|archontophoenix|cocos|roystonea|butia|sabal|chamaerops/;
 const CONIFER_RE = /pinus|pine|cupressus|cypress|sequoia|redwood|cedrus|cedar|picea|spruce|abies|\bfir\b|junip|thuja|taxus|podocarpus|araucaria|cryptomeria|chamaecyparis|larix|larch/;
 const TALL_RE = /eucalyptus|platanus|plane|populus|poplar|lophostemon|ginkgo|liriodendron|melaleuca|sycamore|tulip/;
+const BROADLEAF_RE = /broadleaf|broadleaved|quercus|oak|acer|maple|fagus|beech|betula|birch|fraxinus|ash|ulmus|elm|tilia|lime|linden|castanea|chestnut|salix|willow|prunus|cherry|magnolia|citrus|ficus|jacaranda|sophora|malus|pyrus|alnus|carpinus|juglans|carya/;
+
 function treeSpecies(t) {
   const s = `${t.genus || ''} ${t.species || ''} ${t.taxon || ''} ${t['species:en'] || ''} ${t['genus:en'] || ''} ${t['taxon:en'] || ''}`.toLowerCase();
-  if (PALM_RE.test(s)) return SP_PALM;
+  if (PALM_RE.test(s) || t.leaf_type === 'palm') return SP_PALM;
   if (t.leaf_type === 'needleleaved' || CONIFER_RE.test(s)) return SP_CONIFER;
   if (TALL_RE.test(s)) return SP_TALL;
-  return SP_BROADLEAF;
+  if (t.leaf_type === 'broadleaved' || BROADLEAF_RE.test(s) || Boolean(t.genus || t.species || t.taxon)) return SP_BROADLEAF;
+  return SP_AUTO; // untagged OSM tree -> local climate palette
 }
 const num = (v) => {
   const f = parseFloat(v);
