@@ -1367,7 +1367,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     facilities,
     highwayJunctions,
     osm_trees: [],
-    vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
+    vegetation: { lat: centerLat, lon: centerLon, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
     places: extractPlaceFeatures(tiles, toLocalXZ, origin), // feature/places
     rail: extractRailFeatures(tiles, tileXY, toLocalXZ), // [feature/rail-transit]
   };

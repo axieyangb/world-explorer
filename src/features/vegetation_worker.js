@@ -9,7 +9,8 @@
  *    group and returns a compact tree/bush instance table that `VegetationSystem` renders with InstancedMesh.
  */
 import * as THREE from '../../vendor/three.module.js';
-import { getBeijingTerrainElevation, snowCover } from '../environment.js';
+import { getBeijingTerrainElevation, getBeijingDemState, snowCover } from '../environment.js';
+import { floraContext, pickFlora, floraLook, floraBush, orchardEntry } from './flora_climate.js'; // [feature/climate-flora]
 import {
   LC_RESIDENTIAL,
   LC_COMMERCIAL,
@@ -34,11 +35,12 @@ import {
 } from './vegetation_extract.js';
 
 export const INST_STRIDE = 9;
-export const SP_BROADLEAF = 0;
-export const SP_TALL = 1;
-export const SP_CONIFER = 2;
-export const SP_PALM = 3;
-export const SP_BUSH = 4;
+// [feature/climate-flora] species ids live in flora_climate.js (re-exported for existing importers)
+export {
+  SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BANANA,
+  SP_DATEPALM, SP_BIRCH, SP_BAMBOO, SP_BARE, SP_AUTO, SPECIES_COUNT,
+} from './flora_climate.js';
+import { SP_BUSH } from './flora_climate.js';
 
 const MAX_CHUNK_INSTANCES = 12000;
 
@@ -964,23 +966,6 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
   };
 }
 
-/** Climate-driven species mix from latitude. */
-function climateMix(absLat) {
-  if (absLat < 23.5) return { palm: 0.45, conifer: 0.05, tall: 0.15 };
-  if (absLat < 32) return { palm: 0.22, conifer: 0.12, tall: 0.18 };
-  if (absLat < 50) return { palm: 0, conifer: 0.22, tall: 0.26 };
-  return { palm: 0, conifer: 0.5, tall: 0.2 };
-}
-
-function pickTree(r, mix, coniferBias = 1, palmBias = 1) {
-  const pPalm = mix.palm * palmBias;
-  const pCon = Math.min(0.9, mix.conifer * coniferBias);
-  if (r < pPalm) return SP_PALM;
-  if (r < pPalm + pCon) return SP_CONIFER;
-  if (r < pPalm + pCon + mix.tall) return SP_TALL;
-  return SP_BROADLEAF;
-}
-
 /**
  * Chunk hook: builds the landcover & rich athletic/pool/plaza/step meshes into `terrainGroup`
  * and returns the vegetation instance table.
@@ -989,9 +974,14 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   const src = data.vegetation || {};
   const landPolys = src.landcover || [];
 
-  const lat = Number.isFinite(src.lat) ? src.lat : 39.9;
-  const mix = climateMix(Math.abs(lat));
-  const autumnChance = Math.abs(lat) > 34 && Math.abs(lat) < 55 ? 0.06 : 0;
+  // [feature/climate-flora] Koeppen climate + region palette + season + altitude for this chunk's location
+  const lat0 = Number.isFinite(src.lat) ? src.lat : 39.9;
+  const lon0 = Number.isFinite(src.lon) ? src.lon : 116.4;
+  const latC = lat0 - oz / 111320;
+  const lonC = lon0 + ox / (111320 * Math.cos((lat0 * Math.PI) / 180));
+  const dem = getBeijingDemState();
+  const baseAsl = (dem && dem.baseAslM) || 0;
+  const ctx = floraContext(latC, lonC, baseAsl);
 
   const inst = new Float32Array(MAX_CHUNK_INSTANCES * INST_STRIDE);
   const species = new Uint8Array(MAX_CHUNK_INSTANCES);
@@ -1112,28 +1102,34 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     return true;
   };
 
-  const push = (sp, x, z, sXZ, sY, rot, rng) => {
+  const pushRaw = (sp, x, y, z, sXZ, sY, rot, r, g, b) => {
     if (count >= MAX_CHUNK_INSTANCES) return false;
-    const wx = ox + x, wz = oz + z;
     const o = count * INST_STRIDE;
-    inst[o] = wx;
-    inst[o + 1] = getBeijingTerrainElevation(wx, wz) - 0.05;
-    inst[o + 2] = wz;
+    inst[o] = ox + x;
+    inst[o + 1] = y - 0.05;
+    inst[o + 2] = oz + z;
     inst[o + 3] = sXZ;
     inst[o + 4] = sY;
     inst[o + 5] = rot;
-    const lum = 0.84 + rng() * 0.3;
-    const warm = (rng() - 0.5) * 0.18;
-    let r = lum * (1 + warm), g = lum, b = lum * (1 - warm * 0.6);
-    if ((sp === SP_BROADLEAF || sp === SP_TALL) && autumnChance > 0 && rng() < autumnChance) {
-      r = 1.75; g = 1.25; b = 0.45;
-    }
     inst[o + 6] = r;
     inst[o + 7] = g;
     inst[o + 8] = b;
     species[count] = sp;
     count++;
     return true;
+  };
+  // [feature/climate-flora] palette entry -> species/color/scale after season + altitude (null look = no tree here)
+  const plantTree = (e, x, z, sXZ, sY, rng) => {
+    const y = getBeijingTerrainElevation(ox + x, oz + z);
+    const lk = floraLook(ctx, e, rng(), rng(), y + baseAsl);
+    if (!lk) return count < MAX_CHUNK_INSTANCES;
+    return pushRaw(lk.sp, x, y, z, sXZ * lk.sx, sY * lk.sy, rng() * 6.283, lk.r, lk.g, lk.b);
+  };
+  const plantBush = (x, z, sXZ, sY, rng) => {
+    const y = getBeijingTerrainElevation(ox + x, oz + z);
+    const lk = floraBush(ctx, rng(), y + baseAsl);
+    if (!lk) return count < MAX_CHUNK_INSTANCES;
+    return pushRaw(SP_BUSH, x, y, z, sXZ * lk.sx, sY * lk.sy, rng() * 6.283, lk.r, lk.g, lk.b);
   };
 
   // --- 1. Street trees: rows on sidewalks, regular spacing per street, skipping junctions/driveways ---
@@ -1150,7 +1146,8 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (sr() < (s.cls === 'residential' ? 0.25 : 0.1)) continue;
     if (s.hw * 2 < 7 && sr() < 0.5) continue;
     const spacing = 8 + sr() * 4;
-    const sp = pickTree(sr(), mix, 0.3, 1.3);
+    const streetEntry = pickFlora(ctx, 0, sr());
+    if (!streetEntry || sr() > ctx.streetDens) continue;
     const baseScale = 0.82 + sr() * 0.22;
     const nx = -dz / len, nz = dx / len;
     const off = s.hw + sw * 0.55;
@@ -1165,7 +1162,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
         if (nearJunction(x, z, 11)) continue;
         if (!groundOk(x, z, 0.5, 2.8, 2.5)) continue;
         const sc = baseScale * (0.92 + rng() * 0.16);
-        if (!push(sp, x, z, sc, sc * (0.95 + rng() * 0.1), rng() * Math.PI * 2, rng)) break;
+        if (!plantTree(streetEntry, x, z, sc, sc * (0.95 + rng() * 0.1), rng)) break;
       }
     }
   }
@@ -1182,7 +1179,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     [LC_CEMETERY]: [1 / 300, 1 / 600, 2.0, 0.8, 1.2],
     [LC_COMMERCIAL]: [1 / 3500, 0, 0.5, 0.8, 1.1],
     [LC_INDUSTRIAL]: [1 / 4500, 0, 0.8, 0.8, 1.1],
-    [LC_SAND]: [mix.palm > 0 ? 1 / 700 : 0, 0, 0, 0.9, 1.2],
+    [LC_SAND]: [ctx.cum[3].total > 0 ? 1 / 700 : 0, 0, 0, 0.9, 1.2],
     [LC_FLOWERBED]: [0, 1 / 55, 0.5, 0.65, 0.95],
     park: [1 / 320, 1 / 450, 1.0, 0.8, 1.3],
   };
@@ -1197,6 +1194,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     areas.push({ key: 'park', outer: flat, holes: [], seed: 100003 + p * 104729 });
   }
 
+  const orchardE = orchardEntry(ctx); // [feature/climate-flora]
   for (const a of areas) {
     if (count >= MAX_CHUNK_INSTANCES) break;
     const bb = bboxOf(a.outer);
@@ -1216,13 +1214,18 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
         for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {
           if (!inside(x, z) || !groundOk(x, z, 1.5, 2, 2)) continue;
           const sc = 0.45 + rng() * 0.12;
-          if (!push(SP_BROADLEAF, x, z, sc, sc * 0.85, rng() * 6.283, rng)) break;
+          if (!plantTree(orchardE, x, z, sc, sc * 0.85, rng)) break;
         }
       }
       continue;
     }
 
-    const [tD, bD, conBias, sMin, sMax] = AREA[a.key];
+    const [tD0, bD0, , sMin, sMax] = AREA[a.key];
+    // [feature/climate-flora] biome density: natural cover follows the climate; irrigated urban greenery less so
+    const natural = a.key === LC_WOOD || a.key === LC_GRASS || a.key === LC_SCRUB || a.key === LC_WETLAND;
+    const role = a.key === LC_SAND ? 3 : natural ? 2 : 1;
+    const dens = Math.min(1.4, natural ? ctx.dens : (ctx.dens + ctx.streetDens) * 0.5);
+    const tD = tD0 * dens, bD = bD0 * Math.min(1.3, ctx.bushDens);
     const layers = [];
     if (tD > 0) layers.push([Math.sqrt(1 / tD), false]);
     if (bD > 0) layers.push([Math.sqrt(1 / bD), true]);
@@ -1238,13 +1241,13 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
               const bx = x + (rng() - 0.5) * 3.2, bz = z + (rng() - 0.5) * 3.2;
               if (k > 0 && !groundOk(bx, bz, 2.0, 1.2, 1.5)) continue;
               const sc = 0.9 + rng() * 0.8;
-              push(SP_BUSH, bx, bz, sc, sc * (0.8 + rng() * 0.4), rng() * 6.283, rng);
+              plantBush(bx, bz, sc, sc * (0.8 + rng() * 0.4), rng);
             }
           } else {
             if (!groundOk(x, z, 3.0, 2.5, 3)) continue;
-            const sp = a.key === LC_SAND ? SP_PALM : pickTree(rng(), mix, conBias, 1);
+            const e = pickFlora(ctx, role, rng());
             const sc = sMin + rng() * (sMax - sMin);
-            push(sp, x, z, sc, sc * (0.9 + rng() * 0.25), rng() * 6.283, rng);
+            if (e) plantTree(e, x, z, sc, sc * (0.9 + rng() * 0.25), rng);
           }
           if (count >= MAX_CHUNK_INSTANCES) break;
         }
@@ -1252,5 +1255,8 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     }
   }
 
-  return { count, inst: inst.slice(0, count * INST_STRIDE), species: species.slice(0, count), streetCount };
+  return {
+    count, inst: inst.slice(0, count * INST_STRIDE), species: species.slice(0, count), streetCount,
+    climate: { lat: latC, lon: lonC, baseAsl, cls: ctx.cls, zone: ctx.zone, region: ctx.region }, // [feature/climate-flora]
+  };
 }
