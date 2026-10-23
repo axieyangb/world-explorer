@@ -286,6 +286,7 @@ export class HeliFlight {
     s.pitch = clamp(s.pitch + w.x * dt, -CFG.MAX_PITCH, CFG.MAX_PITCH);
     s.roll = clamp(s.roll + w.z * dt, -CFG.MAX_ROLL, CFG.MAX_ROLL);
     s.yaw += w.y * dt;
+    s.yaw -= Math.round(s.yaw / (Math.PI * 2)) * Math.PI * 2; // keep bounded
     // tiny buffeting in attitude
     const gust = CFG.WIND * (Math.sin(this._t * 0.9) * 0.6 + Math.sin(this._t * 2.3 + 1.7) * 0.4);
     this._euler.set(s.pitch + gust * 0.004, s.yaw, s.roll + gust * 0.006, 'YXZ');
