@@ -181,7 +181,7 @@ export class KaijuWeapons {
       }
     }
     if (!found) return 0;
-    return 0.35 + 0.4 * (1 - Math.max(0, bestA) / lim);
+    return 0.72 + 0.25 * (1 - Math.max(0, bestA) / lim);
   }
 
   // Homing point: named weak sphere picked at lock time, else the lock point.
@@ -464,7 +464,7 @@ export class KaijuWeapons {
       m.age += dt;
       const speed = CFG.MISSILE_SPEED * Math.min(1, 0.35 + (m.age / 0.6) * 0.65);
       let target = null;
-      if (m.homing && this._kaijuAlive()) target = this._homingPoint();
+      if (this._kaijuAlive()) target = this._homingPoint();
       if (target && m.age > 0.12) {
         _a.subVectors(target, m.pos);
         const dist = _a.length();

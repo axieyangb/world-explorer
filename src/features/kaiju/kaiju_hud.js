@@ -269,10 +269,12 @@ export class KaijuHud {
   announceSupply(id, mode = "drop") {
     if (!this.visible || !this.toast) return;
     const itemName = t(`kaiju_item_${id}`) || id.toUpperCase();
-    this.toast.textContent = mode === "pickup" ? `${itemName} [R]` : `${t("kaiju_supply_drop")} · ${itemName}`;
+    this.toast.textContent = mode === "pickup"
+      ? `EQUIPPED: ${itemName.toUpperCase()} — PRESS [R] TO FIRE`
+      : `${t("kaiju_supply_drop")} · ${itemName} (FLY IN OR SHOOT TO EQUIP)`;
     this.toast.classList.toggle("kj-toast-pickup", mode === "pickup");
     this.toast.classList.add("on");
-    this._toastT = mode === "pickup" ? 3.2 : 2.6;
+    this._toastT = mode === "pickup" ? 4.0 : 3.5;
   }
 
   // ---------------------------------------------------------------- frame

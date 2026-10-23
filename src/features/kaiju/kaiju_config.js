@@ -10,7 +10,7 @@ export const CFG = {
   // Kaiju
   KAIJU_HEIGHT_MIN: 60,
   KAIJU_HEIGHT_MAX: 80,
-  KAIJU_HP: 45000,
+  KAIJU_HP: 6000,
   KAIJU_WALK_SPEED: 10.0,        // m/s
   KAIJU_ENRAGE_FRACTION: 0.3,
   KAIJU_ENRAGE_SPEED_MULT: 1.45,
@@ -33,7 +33,7 @@ export const CFG = {
   BODY_RADIUS: 18,              // continuous body overlap radius
 
   // Player
-  HELI_HP: 250,                 // [player] was 100; laser full hit ~68 HP
+  HELI_HP: 400,                 // [player] boosted hull durability
   HELI_SEGMENTS: 10,
   LIVES: 3,
   RESPAWN_DELAY: 3.0,
@@ -42,30 +42,30 @@ export const CFG = {
   RESPAWN_INVULN: 3.0,
 
   // Cannon
-  CANNON_RPS: 12,
-  CANNON_DAMAGE: 7,
+  CANNON_RPS: 14,
+  CANNON_DAMAGE: 75,
   CANNON_MUZZLE_SPEED: 900,     // m/s
   CANNON_GRAVITY: 9.8 * 0.35,   // slight drop
   CANNON_SPREAD_RAD: 0.0035,
   CANNON_RANGE: 1600,
-  CANNON_HEAT_SECONDS: 6.0,     // continuous fire to overheat
-  CANNON_COOL_SECONDS: 3.0,     // full cool-down
+  CANNON_HEAT_SECONDS: 14.0,    // continuous fire to overheat
+  CANNON_COOL_SECONDS: 1.8,     // full cool-down
   CANNON_BUILDING_DAMAGE: 0.012, // building damage (0..1) per round
 
   // Missiles
-  MISSILE_SALVO: 2,
-  MISSILE_DAMAGE: 200,          // [integration] was 260: locked salvos home onto the weak core (x3) and ~96% hit with the GTA heli; 260 gave TTK ~3.6 min
-  MISSILE_COOLDOWN: 8.0,
+  MISSILE_SALVO: 4,
+  MISSILE_DAMAGE: 450,
+  MISSILE_COOLDOWN: 3.0,
   MISSILE_SPEED: 260,
   MISSILE_TURN_RATE: 2.6,       // rad/s
-  MISSILE_LOCK_TIME: 0.8,
-  MISSILE_LOCK_RANGE: 1500,
-  MISSILE_LOCK_CONE_DEG: 9,     // kaiju lock point within this angle of screen center
+  MISSILE_LOCK_TIME: 0.35,
+  MISSILE_LOCK_RANGE: 1600,
+  MISSILE_LOCK_CONE_DEG: 18,    // kaiju lock point within this angle of screen center
   MISSILE_BLAST_RADIUS: 28,
   MISSILE_BUILDING_DAMAGE: 0.7,
 
   WEAK_POINT_MULT: 3.0,
-  AIM_ASSIST_DEG: 8.5,
+  AIM_ASSIST_DEG: 14.0,
 
   // City damage
   CITY_TRACK_RADIUS: 2000,
@@ -118,8 +118,8 @@ export const CFG = {
   DASH_IFRAMES: 0.90,
   DASH_DOUBLE_TAP: 0.28,        // s between taps
   DASH_CLEARANCE: 8,            // m above terrain / roofs for a downward dodge
-  HELI_REGEN_DELAY: 6,          // s without damage before repair starts
-  HELI_REGEN_RATE: 2,           // HP/s
+  HELI_REGEN_DELAY: 2.5,        // s without damage before repair starts
+  HELI_REGEN_RATE: 8,           // HP/s
   HELI_SMOKE_FRAC: 0.6,         // smoke trail below this hull fraction
   HELI_FIRE_FRAC: 0.3,          // fire + dark smoke below this
   HELI_ALARM_FRAC: 0.25,        // warning chirp below this
@@ -127,8 +127,8 @@ export const CFG = {
   // Laser + aggro (creature)
   LASER_ENABLED: true,
   LASER_FIRST_DELAY: 2.2,         // s after the first hit
-  LASER_INTERVAL_MIN: 7,
-  LASER_INTERVAL_MAX: 10,
+  LASER_INTERVAL_MIN: 10.5,
+  LASER_INTERVAL_MAX: 14,
   LASER_INTERVAL_ENRAGED_MULT: 0.65,
   LASER_LOCK_SECONDS: 1.8,      // red targeting beam follows the heli
   LASER_FREEZE_BEFORE: 1.50,    // aim freezes this long before firing
@@ -137,7 +137,7 @@ export const CFG = {
   LASER_FIRE_SECONDS: 1.8,
   LASER_SWEEP_DEG: 0,           // beam drifts toward the heli by at most +-half of this while firing
   LASER_RADIUS: 5.5,              // m, heli hit radius around the beam
-  LASER_DPS: 42,
+  LASER_DPS: 20,
   LASER_RANGE: 1800,
   LASER_BLAST_RADIUS: 14,
   LASER_BUILDING_DAMAGE: 0.5,   // per tick at the beam end
@@ -157,15 +157,17 @@ export const CFG = {
   BREATH_HAZARD_RADIUS: 25,     // crate hazard radius along the breath footprint
 
   // Supply + super weapons (supply)
-  SUPPLY_FIRST: 12,             // s of fight before the first drop
-  SUPPLY_INTERVAL_MIN: 45,
-  SUPPLY_INTERVAL_MAX: 65,
-  SUPPLY_MAX_LIVE: 2,
-  SUPPLY_DROP_HEIGHT: 170,      // m above the landing surface
-  SUPPLY_FALL_SPEED: 12,         // m/s under canopy
-  SUPPLY_LIFETIME: 45,          // s after landing
+  SUPPLY_FIRST: 2.5,            // s of fight before the first drop
+  SUPPLY_INTERVAL_MIN: 18,
+  SUPPLY_INTERVAL_MAX: 26,
+  SUPPLY_MAX_LIVE: 3,
+  SUPPLY_DROP_HEIGHT: 120,      // m above hover altitude
+  SUPPLY_HOVER_ALT: 95,         // m above terrain (helicopter flight level)
+  SUPPLY_FALL_SPEED: 28,        // m/s under canopy
+  SUPPLY_LIFETIME: 60,          // s after reaching hover altitude
   SUPPLY_BLINK: 10,             // s of blinking before despawn
-  SUPPLY_PICKUP_RADIUS: 18,
+  SUPPLY_PICKUP_RADIUS: 28,
+  SUPPLY_MAGNET_RADIUS: 48,
   SUPPLY_HAZARD_HEIGHT: 100,    // m above terrain; crates higher up survive footfalls / breath
   SUPPLY_DANGER_MIN: 160,       // m from the kaiju
   SUPPLY_DANGER_MAX: 320,
@@ -178,27 +180,27 @@ export const CFG = {
   REPAIR_HP: 60,
   COOLANT_SECONDS: 15,
   RAIL_SHOTS: 3,
-  RAIL_CHARGE_TIME: 1.0,
-  RAIL_DAMAGE: 1100,            // x WEAK_POINT_MULT on a weak sphere
+  RAIL_CHARGE_TIME: 0.45,
+  RAIL_DAMAGE: 2400,            // x WEAK_POINT_MULT on a weak sphere
   RAIL_RANGE: 2200,
   RAIL_PIERCE: 3,               // buildings damaged behind the kaiju
   RAIL_BUILDING_DAMAGE: 0.6,
   SWARM_SALVOS: 2,
   SWARM_COUNT: 12,
   SWARM_STAGGER: 0.06,
-  SWARM_DAMAGE: 100,            // per missile, x WEAK_POINT_MULT on a weak sphere
+  SWARM_DAMAGE: 220,            // per missile, x WEAK_POINT_MULT on a weak sphere
   SWARM_SPEED: 300,
   SWARM_WEAK_CHANCE: 0.3,       // share of missiles aimed at a weak sphere
   EMP_RANGE: 900,
   EMP_CONE_DEG: 35,
   EMP_STUN_SECONDS: 6,
-  EMP_DAMAGE: 450,
+  EMP_DAMAGE: 2000,
   EMP_CHARGES: 2,
   EMP_RADIUS: 140,              // visual shockwave radius
   ORBITAL_RANGE: 2200,
-  ORBITAL_COUNTDOWN: 4.0,
-  ORBITAL_RADIUS: 60,           // kaiju (horizontal) within this of the mark takes the hit
-  ORBITAL_DAMAGE: 4000,
+  ORBITAL_COUNTDOWN: 2.2,
+  ORBITAL_RADIUS: 75,           // kaiju (horizontal) within this of the mark takes the hit
+  ORBITAL_DAMAGE: 2800,
   ORBITAL_CITY_RADIUS: 80,
   ORBITAL_CITY_DAMAGE: 1.0,
 };
