@@ -235,10 +235,11 @@ export class KaijuHud {
   }
 
   // ---------------------------------------------------------------- frame
-  _set(key, v, apply) {
-    if (this._last[key] === v) return;
+  // Change detection: returns true (and stores v) only when the value differs from last frame.
+  _chg(key, v) {
+    if (this._last[key] === v) return false;
     this._last[key] = v;
-    apply(v);
+    return true;
   }
 
   update(dt) {
@@ -259,75 +260,83 @@ export class KaijuHud {
 
     // Kaiju HP.
     const hp = k && k.maxHp > 0 ? Math.max(0, Math.min(1, k.hp / k.maxHp)) : 0;
-    this._set("hp", Math.round(hp * 1000), (v) => (this.hpFill.style.transform = `scaleX(${v / 1000})`));
-    this._set("enr", !!(k && k.enraged), (v) => this.hpBar.classList.toggle("kj-enraged", v));
+    const hpQ = Math.round(hp * 1000);
+    if (this._chg("hp", hpQ)) this.hpFill.style.transform = `scaleX(${hpQ / 1000})`;
+    const enr = !!(k && k.enraged);
+    if (this._chg("enr", enr)) this.hpBar.classList.toggle("kj-enraged", enr);
 
     // City damage + edge glow.
     const cd = K.getCityDamage ? K.getCityDamage() : 0;
-    this._set("cd", Math.round(cd * 1000), (v) => {
-      this.cityFill.style.transform = `scaleX(${v / 1000})`;
-      this.cityVal.textContent = `${Math.floor(v / 10)}%`;
-    });
+    const cdQ = Math.round(cd * 1000);
+    if (this._chg("cd", cdQ)) {
+      this.cityFill.style.transform = `scaleX(${cdQ / 1000})`;
+      this.cityVal.textContent = `${Math.floor(cdQ / 10)}%`;
+    }
     const lvl = cd >= CFG.HUD_WARN_RED ? 2 : cd >= CFG.HUD_WARN_AMBER ? 1 : 0;
-    this._set("lvl", lvl, (v) => {
-      this.edge.classList.toggle("kj-amber", v === 1);
-      this.edge.classList.toggle("kj-red", v === 2);
-      this.cityBar.classList.toggle("kj-amber", v === 1);
-      this.cityBar.classList.toggle("kj-red", v === 2);
-    });
+    if (this._chg("lvl", lvl)) {
+      this.edge.classList.toggle("kj-amber", lvl === 1);
+      this.edge.classList.toggle("kj-red", lvl === 2);
+      this.cityBar.classList.toggle("kj-amber", lvl === 1);
+      this.cityBar.classList.toggle("kj-red", lvl === 2);
+    }
 
-    // Heli hull segments.
+    // Heli hull segments + lives.
     const h = K.heli;
     const hf = Math.max(0, Math.min(1, h.health / CFG.HELI_HP));
     const segOn = Math.ceil(hf * CFG.HELI_SEGMENTS - 1e-6);
-    this._set("seg", segOn, (v) => {
+    if (this._chg("seg", segOn)) {
       for (let i = 0; i < this.segs.length; i++) {
-        this.segs[i].classList.toggle("on", i < v);
-        this.segs[i].classList.toggle("low", v <= 3);
+        this.segs[i].classList.toggle("on", i < segOn);
+        this.segs[i].classList.toggle("low", segOn <= 3);
       }
-    });
-    this._set("lives", h.lives, (v) => {
-      for (let i = 0; i < this.pips.length; i++) this.pips[i].classList.toggle("on", i < v);
-    });
+    }
+    if (this._chg("lives", h.lives)) {
+      for (let i = 0; i < this.pips.length; i++) this.pips[i].classList.toggle("on", i < h.lives);
+    }
     // Low health vignette (pulsing below 35%).
     const low = h.alive && hf < 0.35 ? (1 - hf / 0.35) * (0.75 + 0.25 * Math.sin(this._pulse * 6)) : 0;
-    this._set("vig", Math.round(low * 50), (v) => (this.vignette.style.opacity = String(v / 50)));
-    this._set("down", !h.alive && K.state !== "results", (v) => {
-      this.msg.textContent = v ? t("kaiju_down") : "";
-      this.msg.classList.toggle("on", v);
-    });
+    const vig = Math.round(low * 50);
+    if (this._chg("vig", vig)) this.vignette.style.opacity = String(vig / 50);
+    const down = !h.alive && K.state !== "results";
+    if (this._chg("down", down)) {
+      this.msg.textContent = down ? t("kaiju_down") : "";
+      this.msg.classList.toggle("on", down);
+    }
 
     // Weapons.
-    const heat = w ? Math.max(0, Math.min(1, w.heat || 0)) : 0;
-    this._set("heat", Math.round(heat * 200), (v) => (this.heatFill.style.transform = `scaleX(${v / 200})`));
-    this._set("oh", !!(w && w.overheated), (v) => {
-      this.heatBar.classList.toggle("kj-red", v);
-      this.heatLabel.textContent = t(v ? "kaiju_overheat" : "kaiju_heat");
-      this.heatLabel.classList.toggle("kj-label-red", v);
-    });
-    const cool = w ? Math.max(0, Math.min(1, w.missileCooldown || 0)) : 0;
-    this._set("mis", Math.round(cool * 200), (v) => {
-      this.misFill.style.transform = `scaleX(${1 - v / 200})`;
-      this.ring.setAttribute("stroke-dashoffset", ((v / 200) * RING_C).toFixed(1));
-      this.misBar.classList.toggle("kj-ready", v === 0);
-      this.cross.classList.toggle("kj-mis-ready", v === 0);
-    });
+    const heatQ = Math.round((w ? Math.max(0, Math.min(1, w.heat || 0)) : 0) * 200);
+    if (this._chg("heat", heatQ)) this.heatFill.style.transform = `scaleX(${heatQ / 200})`;
+    const oh = !!(w && w.overheated);
+    if (this._chg("oh", oh)) {
+      this.heatBar.classList.toggle("kj-red", oh);
+      this.heatLabel.textContent = t(oh ? "kaiju_overheat" : "kaiju_heat");
+      this.heatLabel.classList.toggle("kj-label-red", oh);
+    }
+    const misQ = Math.round((w ? Math.max(0, Math.min(1, w.missileCooldown || 0)) : 0) * 200);
+    if (this._chg("mis", misQ)) {
+      this.misFill.style.transform = `scaleX(${1 - misQ / 200})`;
+      this.ring.setAttribute("stroke-dashoffset", ((misQ / 200) * RING_C).toFixed(1));
+      this.misBar.classList.toggle("kj-ready", misQ === 0);
+      this.cross.classList.toggle("kj-mis-ready", misQ === 0);
+    }
 
     // Lock reticle.
     const ret = w && w.reticle;
     const fighting = K.state === "fight" || K.state === "intro";
     const showLock = !!(ret && fighting && h.alive);
-    this._set("lockOn", showLock, (v) => (this.lock.style.display = v ? "" : "none"));
+    if (this._chg("lockOn", showLock)) this.lock.style.display = showLock ? "" : "none";
     if (showLock) {
       const lp = Math.max(0, Math.min(1, w.lockProgress || 0));
       const locked = !!w.locked;
-      this.lock.style.transform = `translate(${ret.x.toFixed(1)}px, ${ret.y.toFixed(1)}px)`;
-      const rot = locked ? 0 : (1 - lp) * 90 + this._pulse * 120 * (1 - lp);
-      const gap = locked ? 0 : (1 - lp) * 14;
-      this.lockG.setAttribute("transform", `rotate(${rot.toFixed(1)}) scale(${(1 + gap / 20).toFixed(3)})`);
-      this._set("locked", locked, (v) => this.lock.classList.toggle("kj-locked", v));
+      const rx = Math.round(ret.x * 2), ry = Math.round(ret.y * 2);
+      if (this._chg("rx", rx) | this._chg("ry", ry)) this.lock.style.transform = `translate(${rx / 2}px, ${ry / 2}px)`;
+      const rot = locked ? 0 : Math.round(((1 - lp) * 90 + this._pulse * 120 * (1 - lp)) % 360);
+      const sc = locked ? 100 : Math.round(100 + (1 - lp) * 70);
+      if (this._chg("lrot", rot) | this._chg("lsc", sc)) this.lockG.setAttribute("transform", `rotate(${rot}) scale(${sc / 100})`);
+      if (this._chg("locked", locked)) this.lock.classList.toggle("kj-locked", locked);
     }
-    this._set("crossOn", fighting && h.alive, (v) => (this.cross.style.display = v ? "" : "none"));
+    const crossOn = fighting && h.alive;
+    if (this._chg("crossOn", crossOn)) this.cross.style.display = crossOn ? "" : "none";
 
     // Radar overlay (30 Hz).
     this._radarT -= dt;
@@ -335,6 +344,13 @@ export class KaijuHud {
       this._radarT = 1 / 30;
       this._drawRadar();
     }
+  }
+
+  _proj(x, z, out) {
+    const p = this._pr, o = p.o;
+    out[0] = (lonToMx(o.centerLon + x / o.mPerDegLon) - p.pmx) * p.ws;
+    out[1] = (latToMy(o.centerLat - z / o.mPerDegLat) - p.pmy) * p.ws;
+    return out;
   }
 
   _drawRadar() {
@@ -352,11 +368,8 @@ export class KaijuHud {
     const p = K.app.pos;
     const pmx = lonToMx(o.centerLon + p.x / o.mPerDegLon);
     const pmy = latToMy(o.centerLat - p.z / o.mPerDegLat);
-    const proj = (x, z, out) => {
-      out[0] = (lonToMx(o.centerLon + x / o.mPerDegLon) - pmx) * ws;
-      out[1] = (latToMy(o.centerLat - z / o.mPerDegLat) - pmy) * ws;
-      return out;
-    };
+    const pr = this._pr || (this._pr = { o: null, pmx: 0, pmy: 0, ws: 0 });
+    pr.o = o; pr.pmx = pmx; pr.pmy = pmy; pr.ws = ws;
     const tmp = this._rtmp || (this._rtmp = [0, 0]);
     const rot = (K.app.yaw || 0) - Math.PI; // same heading-up rotation as the minimap
 
@@ -373,12 +386,12 @@ export class KaijuHud {
       const base = Math.atan2(k.breathDir.x, k.breathDir.z);
       const half = (CFG.BREATH_HALF_ANGLE_DEG * Math.PI) / 180;
       const R = CFG.BREATH_RANGE * (k.breathActive ? 1 : 0.35 + 0.65 * charge);
-      proj(bx, bz, tmp);
+      this._proj(bx, bz, tmp);
       ctx.beginPath();
       ctx.moveTo(tmp[0], tmp[1]);
       for (let i = 0; i <= 6; i++) {
         const a = base - half + (2 * half * i) / 6;
-        proj(bx + Math.sin(a) * R, bz + Math.cos(a) * R, tmp);
+        this._proj(bx + Math.sin(a) * R, bz + Math.cos(a) * R, tmp);
         ctx.lineTo(tmp[0], tmp[1]);
       }
       ctx.closePath();
@@ -390,7 +403,7 @@ export class KaijuHud {
     }
 
     // Kaiju marker (clamped to the radar edge when out of range).
-    proj(k.position.x, k.position.z, tmp);
+    this._proj(k.position.x, k.position.z, tmp);
     let mx = tmp[0], my = tmp[1];
     const lim = S * 0.46;
     const d = Math.hypot(mx, my);

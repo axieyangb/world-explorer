@@ -11,7 +11,7 @@ export const CFG = {
   KAIJU_HEIGHT_MIN: 60,
   KAIJU_HEIGHT_MAX: 80,
   KAIJU_HP: 16000,
-  KAIJU_WALK_SPEED: 7.0,        // m/s
+  KAIJU_WALK_SPEED: 10.0,        // m/s
   KAIJU_ENRAGE_FRACTION: 0.3,
   KAIJU_ENRAGE_SPEED_MULT: 1.45,
   KAIJU_RETARGET_PLAYER_DMG: 1500, // damage within 10 s that makes it turn on the player
@@ -23,7 +23,7 @@ export const CFG = {
   BREATH_RANGE: 400,
   BREATH_HALF_ANGLE_DEG: 12.5,  // 25 deg cone
   BREATH_SWEEP_DEG: 50,         // total yaw sweep while breathing
-  BREATH_PLAYER_DPS: 34,        // heli HP per second inside the cone
+  BREATH_PLAYER_DPS: 18,        // heli HP per second inside the cone
   BREATH_BUILDING_DPS: 1.6,     // building damage (0..1) per second inside the cone
   TAIL_SWIPE_TRIGGER_DIST: 160, // heli behind kaiju within this => tail swipe
   TAIL_SWIPE_COOLDOWN: 9,
@@ -98,4 +98,12 @@ export const CFG = {
 
   DEATH_SLOWMO: 0.35,
   DEATH_SECONDS: 6.0,
+
+  // City life (world)
+  CROWD_KAIJU_RADIUS: 320,
+  CROWD_REVERSE_SPEED: 5,
+
+  // Game (camera)
+  GUNNER_CAM_RIGHT: 6,          // m, camera-space offset so the crosshair ray clears the heli
+  GUNNER_CAM_UP: 3,
 };

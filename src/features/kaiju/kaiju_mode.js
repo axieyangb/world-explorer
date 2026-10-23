@@ -71,6 +71,23 @@ export class KaijuMode {
     this._crashPos = new THREE.Vector3();
     this._tmpV = new THREE.Vector3();
     this._aimRay = { origin: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1) };
+    // Gunner view: camera shifted right/up so the crosshair ray clears the heli body.
+    this._gunner = 0; // 0..1 blend
+    this._aimPos = new THREE.Vector3();
+    this._aimQuat = new THREE.Quaternion();
+    this._aimValid = false;
+    // GTA heli adapter (app.heli, feature/heli-gta); null when the legacy heli is in use.
+    this._heliHooked = null;
+    this._prevOnDamage = null;
+    this._prevOnImpact = null;
+    this._onHeliDamage = (amount, info) => {
+      if (this._prevOnDamage) this._prevOnDamage(amount, info);
+      this.damagePlayer(amount, "impact");
+    };
+    this._onHeliImpact = (info) => {
+      if (this._prevOnImpact) this._prevOnImpact(info);
+      if (info && info.speed > 0 && this.app.pos) this.shake(Math.min(0.6, info.speed / 40));
+    };
 
     injectStyles();
     // Destruction installs its building shader patch at construction, so it must exist before chunks build.
@@ -133,9 +150,15 @@ export class KaijuMode {
   getAimRay() {
     const r = this.app.heli && typeof this.app.heli.getAimRay === "function" ? this.app.heli.getAimRay() : null;
     if (r && r.origin && r.dir) return r;
-    const cam = this.app.camera;
-    cam.getWorldDirection(this._aimRay.dir);
-    this._aimRay.origin.copy(cam.position);
+    // Final (post gunner-offset, pre-shake) camera pose of the last rendered frame.
+    if (this._aimValid) {
+      this._aimRay.origin.copy(this._aimPos);
+      this._aimRay.dir.set(0, 0, -1).applyQuaternion(this._aimQuat);
+    } else {
+      const cam = this.app.camera;
+      cam.getWorldDirection(this._aimRay.dir);
+      this._aimRay.origin.copy(cam.position);
+    }
     return this._aimRay;
   }
 
@@ -188,6 +211,8 @@ export class KaijuMode {
     this._ensureSystems();
     const app = this.app;
     if (app.mode !== "helicopter") app.setMode("helicopter");
+    if (typeof app._ensureHeli === "function") app._ensureHeli();
+    this._hookHeli();
     this.active = true;
     this._placeHeli(app.pos.x, app.pos.z, CFG.SPAWN_HELI_ALT, app.yaw);
     document.body.classList.add("kaiju-active");
@@ -215,6 +240,7 @@ export class KaijuMode {
     }
     this.heli.alive = true;
     this._resetHeliMesh();
+    this._unhookHeli();
     this._trauma = 0;
     this._forcedCity = 0;
     if (typeof app._updateModeAndCamBadges === "function") app._updateModeAndCamBadges();
@@ -291,6 +317,8 @@ export class KaijuMode {
 
     // Face the threat.
     const yaw = Math.atan2(spawn.x - app.pos.x, spawn.z - app.pos.z);
+    const gta = this.gtaHeli;
+    if (gta) gta.place(app.pos.x, app.pos.y, app.pos.z, yaw);
     app.yaw = yaw;
     app.camYaw = yaw;
     app.camYawOffset = 0;
@@ -346,9 +374,45 @@ export class KaijuMode {
   }
 
   // ---------------------------------------------------------------- heli
+  get gtaHeli() {
+    const h = this.app.heli;
+    return h && typeof h.place === "function" ? h : null;
+  }
+
+  _hookHeli() {
+    const h = this.gtaHeli;
+    if (!h || this._heliHooked === h) return;
+    this._unhookHeli();
+    this._heliHooked = h;
+    this._prevOnDamage = h.onDamage || null;
+    this._prevOnImpact = h.onImpact || null;
+    h.onDamage = this._onHeliDamage;
+    h.onImpact = this._onHeliImpact;
+  }
+
+  _unhookHeli() {
+    const h = this._heliHooked;
+    if (!h) return;
+    if (h.onDamage === this._onHeliDamage) h.onDamage = this._prevOnDamage;
+    if (h.onImpact === this._onHeliImpact) h.onImpact = this._prevOnImpact;
+    h.inputEnabled = true;
+    this._heliHooked = null;
+    this._prevOnDamage = this._prevOnImpact = null;
+  }
+
+  // Flight input allowed only while flying a live heli in an unpaused round.
+  _syncHeliInput() {
+    const h = this.gtaHeli;
+    if (!h) return;
+    const want = !this.active || (!this.paused && this.heli.alive && (this.state === "intro" || this.state === "fight"));
+    if (h.inputEnabled !== want) h.inputEnabled = want;
+  }
+
   _placeHeli(x, z, alt, yaw) {
     const app = this.app;
-    app.pos.set(x, getBeijingTerrainElevation(x, z) + alt, z);
+    const gta = this.gtaHeli;
+    if (gta) gta.place(x, getBeijingTerrainElevation(x, z) + alt, z, yaw);
+    else app.pos.set(x, getBeijingTerrainElevation(x, z) + alt, z);
     app.speed = 0;
     app.heliVelY = 0;
     app.yaw = yaw;
@@ -392,10 +456,18 @@ export class KaijuMode {
     const c = this._crash;
     c.t = 0;
     c.impactT = -1;
-    c.velY = Math.min(0, app.heliVelY || 0) - 4;
-    const spd = Math.min(40, Math.abs(app.speed || 0)) * 0.6 + 8;
-    c.vx = Math.sin(app.yaw) * spd;
-    c.vz = Math.cos(app.yaw) * spd;
+    const gv = this.gtaHeli && this.gtaHeli.state && this.gtaHeli.state.velocity;
+    if (gv) {
+      c.velY = Math.min(0, gv.y) - 4;
+      c.vx = gv.x * 0.6 + Math.sin(app.yaw) * 8;
+      c.vz = gv.z * 0.6 + Math.cos(app.yaw) * 8;
+      this.gtaHeli.inputEnabled = false;
+    } else {
+      c.velY = Math.min(0, app.heliVelY || 0) - 4;
+      const spd = Math.min(40, Math.abs(app.speed || 0)) * 0.6 + 8;
+      c.vx = Math.sin(app.yaw) * spd;
+      c.vz = Math.cos(app.yaw) * spd;
+    }
     c.yaw = app.yaw;
     c.spin = 3.2 + Math.random() * 1.6;
     c.smokeT = 0;
@@ -446,6 +518,12 @@ export class KaijuMode {
     app.pos.copy(p);
     app.speed = 0;
     app.heliVelY = 0;
+    const gta = this.gtaHeli;
+    if (gta && gta.state && gta.state.velocity) {
+      // Keep its velocity equal to the spiral so per-frame steps never read as a teleport (> 3 m + v*dt*3).
+      if (c.impactT < 0) gta.state.velocity.set(c.vx, c.velY, c.vz);
+      else gta.state.velocity.set(0, 0, 0);
+    }
     const m = app.heliMesh;
     if (m && c.impactT < 0) {
       m.position.copy(p);
@@ -492,6 +570,8 @@ export class KaijuMode {
     if (!this.active) return;
     const st = this.state;
     if (this._hitCooldown > 0) this._hitCooldown -= rawDt;
+    if (this.app.heli && this._heliHooked !== this.app.heli) this._hookHeli();
+    this._syncHeliInput();
 
     if (!this.paused) {
       if (st === "intro" || st === "fight") this.time += dt;
@@ -535,13 +615,28 @@ export class KaijuMode {
   }
 
   postCamera(dt, rawDt = dt) {
-    if (!this.active || this.paused) return;
+    const cam = this.app.camera;
+    const ownCam = !!(this.app.heli && typeof this.app.heli.getAimRay === "function");
+    const wantG = this.active && !ownCam && this.heli.alive && (this.state === "intro" || this.state === "fight" || this.state === "dying") ? 1 : 0;
+    if (!this.paused) this._gunner += (wantG - this._gunner) * Math.min(1, rawDt * 2.5);
+    if (Math.abs(this._gunner - wantG) < 0.002) this._gunner = wantG;
+    if (this._gunner > 0 && !ownCam) {
+      cam.translateX(CFG.GUNNER_CAM_RIGHT * this._gunner);
+      cam.translateY(CFG.GUNNER_CAM_UP * this._gunner);
+    }
+    if (!this.active) {
+      this._aimValid = false;
+      return;
+    }
+    this._aimPos.copy(cam.position);
+    this._aimQuat.copy(cam.quaternion);
+    this._aimValid = true;
+    if (this.paused) return;
     this._trauma = Math.max(0, this._trauma - rawDt * 0.9);
     if (this._trauma <= 0.001) return;
     this._shakeT += rawDt;
     const t = this._shakeT;
     const a = this._trauma * this._trauma;
-    const cam = this.app.camera;
     // Sum of incommensurate sines: cheap smooth noise, no allocations.
     const nx = Math.sin(t * 37.1) * 0.6 + Math.sin(t * 13.7 + 1.3) * 0.4;
     const ny = Math.sin(t * 41.3 + 2.1) * 0.6 + Math.sin(t * 17.9 + 0.7) * 0.4;

@@ -14,6 +14,7 @@
 // only makes the game slightly harder.
 import * as THREE from '../../../vendor/three.module.js';
 import { CFG } from './kaiju_config.js';
+import { getBeijingTerrainElevation } from '../../environment.js';
 
 const TEX_W = 1024; // texels per chunk row (server caps chunks at ~420 buildings)
 const SLOT_M = 8; // streaming window is at most 7x7 chunks
@@ -218,6 +219,12 @@ export class KaijuDestruction {
     this._p = new THREE.Vector3();
     this._s = new THREE.Vector3();
     this._c = new THREE.Color();
+    // Beijing skyline LOD: instances of destroyed buildings stay hidden after their chunk unloads
+    // (main.js restores a chunk's skyline instances on unload; update() re-hides ours).
+    this.skyHide = [];
+    this.skyKey = [];
+    this.skySet = new Set();
+    this._skyHidden = new THREE.Matrix4().compose(new THREE.Vector3(0, -5000, 0), new THREE.Quaternion(), new THREE.Vector3(1e-4, 1e-4, 1e-4));
     this._initRubble();
   }
 
@@ -575,6 +582,68 @@ export class KaijuDestruction {
       }
     }
     if (hit) this.placesDirty = true;
+  }
+
+  _hideSkyline(rec, r) {
+    const app = this.app, sky = app.skylineInstanced, map = app.chunkToSkylineIndices, dv = app.skylineDataView;
+    if (!sky || !map || !dv) return;
+    const idxs = map.get(rec.key);
+    if (!idxs) return;
+    const kept = app.skylineKeptIndices;
+    const x0 = rec.rMinX[r] - 1, x1 = rec.rMaxX[r] + 1, z0 = rec.rMinZ[r] - 1, z1 = rec.rMaxZ[r] + 1;
+    for (let k = 0; k < idxs.length; k++) {
+      const idx = idxs[k];
+      if (this.skySet.has(idx)) continue;
+      const off = 4 + (kept ? kept[idx] : idx) * 28;
+      const wx = dv.getFloat32(off, true), wz = dv.getFloat32(off + 4, true);
+      if (wx < x0 || wx > x1 || wz < z0 || wz > z1) continue;
+      if (this.skyRef !== sky) { this.skyHide.length = 0; this.skyKey.length = 0; this.skySet.clear(); this.skyRef = sky; }
+      this.skySet.add(idx);
+      this.skyHide.push(idx);
+      this.skyKey.push(rec.key);
+    }
+  }
+
+  _enforceSkyline() {
+    const sky = this.app.skylineInstanced;
+    if (!sky || !this.skyHide.length || !sky.tiles || sky !== this.skyRef) return;
+    let dirty = false;
+    for (let i = 0; i < this.skyHide.length; i++) {
+      const idx = this.skyHide[i];
+      const tile = sky.tiles[sky.tileOf[idx]];
+      if (!tile) continue;
+      if (tile.instanceMatrix.array[(idx - tile.userData.start) * 16 + 13] < -4000) continue;
+      sky.setMatrixAt(idx, this._skyHidden);
+      dirty = true;
+    }
+    if (dirty) sky.instanceMatrix.needsUpdate = true;
+  }
+
+  _restoreSkyline() {
+    const app = this.app, sky = app.skylineInstanced, dv = app.skylineDataView;
+    if (sky && dv && this.skyHide.length && sky === this.skyRef) {
+      const kept = app.skylineKeptIndices;
+      const m4 = this._m4, p = this._p, s = this._s, q = this._q, eu = this._e;
+      for (let i = 0; i < this.skyHide.length; i++) {
+        if (app.loadedChunks && app.loadedChunks.has(this.skyKey[i])) continue; // main.js keeps loaded chunks hidden
+        const idx = this.skyHide[i];
+        const off = 4 + (kept ? kept[idx] : idx) * 28;
+        const wx = dv.getFloat32(off, true), wz = dv.getFloat32(off + 4, true);
+        const w = dv.getFloat32(off + 8, true), depth = dv.getFloat32(off + 12, true);
+        const rawH = dv.getUint16(off + 16, true) * 0.1, rawMinH = dv.getUint16(off + 18, true) * 0.1;
+        const yaw = dv.getInt16(off + 20, true) * 0.0001;
+        const tY = getBeijingTerrainElevation(wx, wz);
+        const baseH = rawMinH > 0 ? tY + rawMinH : tY - (tY > 1.5 ? 2.0 : 0.05);
+        const topH = tY + rawH + (idx % 31) * 0.01;
+        eu.set(0, yaw, 0);
+        m4.compose(p.set(wx, baseH, wz), q.setFromEuler(eu), s.set(w, Math.max(2.0, topH - baseH), depth));
+        sky.setMatrixAt(idx, m4);
+      }
+      sky.instanceMatrix.needsUpdate = true;
+    }
+    this.skyHide.length = 0;
+    this.skyKey.length = 0;
+    this.skySet.clear();
   }
 
   // ---------------------------------------------------------------- emitters
@@ -989,8 +1058,9 @@ export class KaijuDestruction {
     }
     while (this.jobs.length && performance.now() - t0 < 1.5) {
       const j = this.jobs.shift();
-      if (j.type === 0) this._hidePlaces(j.rec, j.r);
+      if (j.type === 0) { this._hidePlaces(j.rec, j.r); this._hideSkyline(j.rec, j.r); }
     }
+    this._enforceSkyline();
     // Drop expired emitter handles
     if (this.emitters.length) {
       let k = 0;
@@ -1024,6 +1094,7 @@ export class KaijuDestruction {
     for (let i = 0; i + 1 < rp.length; i += 2) rp[i][rp[i + 1]] += HIDE_Y;
     if (rp.length) this.placesDirty = true;
     rp.length = 0;
+    this._restoreSkyline();
     this.placesT = 1;
     this.rubble.count = 1;
     this.rubbleNext = 1;
