@@ -13,6 +13,7 @@ import {
 } from './environment.js';
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
+import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
@@ -814,8 +815,9 @@ const ROAD_COLORS = {
   service:        [0.38, 0.40, 0.44],
   pedestrian:     [0.52, 0.50, 0.47],
   footway:        [0.50, 0.48, 0.45],
-  cycleway:       [0.32, 0.44, 0.38],
+  cycleway:       [0.24, 0.56, 0.32], // [terrain-roads] green bike lanes
 };
+const UNPAVED_TRAIL_RGB = [0.52, 0.43, 0.31]; // [terrain-roads] dirt trails (roads[11] = unpaved)
 
 // Widened vertical separation between road classes to prevent Z-fighting at all altitudes
 const ROAD_Y_BIAS = {
@@ -1499,6 +1501,8 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     return false;
   };
 
+  const SEA_DRAPE_MAX_M = 3.0; // [terrain-roads]
+  const seaWaterY = (t) => (t > 1.6 ? t : Math.min(0.42, t)); // sea level, or draped over low marsh/salt-pond ground
   for (let wIdx = 0; wIdx < (data.water_polys || []).length; wIdx++) {
     const wp = data.water_polys[wIdx];
     const [osmId, , flatOuter, flatHoles] = wp;
@@ -1551,7 +1555,9 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
         const hCount = (inAnyIslandHole(ax, az) ? 1 : 0) + (inAnyIslandHole(bx, bz) ? 1 : 0) + (inAnyIslandHole(cx, cz) ? 1 : 0);
         if (hCount >= 2) continue;
       }
-      if (isSeaLevelPoly && getBeijingTerrainElevation(ox + mx, oz + mz) > 1.6) {
+      // [terrain-roads] Low diked salt ponds / tidal marsh (DEM ~1.6-3 m, e.g. Palo Alto Baylands) are still OSM ocean:
+      // keep them (draped below) instead of leaving bare light-grey ground. Only clearly raised land is culled.
+      if (isSeaLevelPoly && getBeijingTerrainElevation(ox + mx, oz + mz) > SEA_DRAPE_MAX_M) {
         continue;
       }
       keptSubTris.push(ax, az, bx, bz, cx, cz);
@@ -1566,49 +1572,18 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
       const ta = getBeijingTerrainElevation(ox + ax, oz + az);
       const tb = getBeijingTerrainElevation(ox + bx, oz + bz);
       const tc = getBeijingTerrainElevation(ox + cx, oz + cz);
-      const ya = (isSeaLevelPoly ? Math.min(0.42, ta) : ta) + wyOff;
-      const yb = (isSeaLevelPoly ? Math.min(0.42, tb) : tb) + wyOff;
-      const yc = (isSeaLevelPoly ? Math.min(0.42, tc) : tc) + yOffWater(wyOff);
+      const ya = (isSeaLevelPoly ? seaWaterY(ta) : ta) + wyOff;
+      const yb = (isSeaLevelPoly ? seaWaterY(tb) : tb) + wyOff;
+      const yc = (isSeaLevelPoly ? seaWaterY(tc) : tc) + yOffWater(wyOff);
       waterPos.push(ax, ya, az, cx, yc, cz, bx, yb, bz);
       waterNorm.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
     }
     appendPolyShoreUv(waterUv, keptSubTris, flatOuter, chunkHoleRings.length > 0 ? chunkHoleRings : flatHoles); // feature/atmosphere
   }
 
-  for (let lIdx = 0; lIdx < (data.water_lines || []).length; lIdx++) {
-    const wl = data.water_lines[lIdx];
-    const [osmId, , , widthM, flat] = wl;
-    if (!flat || flat.length < 4) continue;
-    const halfW = (widthM || 10) * 0.5;
-    const wyOff = 0.25 + ((osmId || lIdx) % 17) * 0.002;
-    for (let i = 0; i < flat.length - 2; i += 2) {
-      const x1 = flat[i], z1 = flat[i + 1];
-      const x2 = flat[i + 2], z2 = flat[i + 3];
-      const mx = (x1 + x2) * 0.5;
-      const mz = (z1 + z2) * 0.5;
-      if (mx < -500.0 || mx >= 500.0 || mz < -500.0 || mz >= 500.0) continue;
-      const dx = x2 - x1, dz = z2 - z1;
-      const len = Math.hypot(dx, dz);
-      if (len < 0.2) continue;
-      const nx = (-dz / len) * halfW;
-      const nz = (dx / len) * halfW;
-      const y1 = getBeijingTerrainElevation(ox + x1, oz + z1) + wyOff;
-      const y2 = getBeijingTerrainElevation(ox + x2, oz + z2) + wyOff;
-      waterPos.push(
-        x1 + nx, y1, z1 + nz,
-        x2 + nx, y2, z2 + nz,
-        x2 - nx, y2, z2 - nz,
-        x1 + nx, y1, z1 + nz,
-        x2 - nx, y2, z2 - nz,
-        x1 - nx, y1, z1 - nz
-      );
-      waterNorm.push(
-        0, 1, 0, 0, 1, 0, 0, 1, 0,
-        0, 1, 0, 0, 1, 0, 0, 1, 0
-      );
-      appendRibbonShoreUv(waterUv, halfW); // feature/atmosphere
-    }
-  }
+  // [terrain-roads] waterway lines: draped mitered ribbons with downstream flow (features/waterways.js)
+  const waterwayMesh = buildWaterwayMesh(data.water_lines, ox, oz, getBeijingTerrainElevation, mats);
+  if (waterwayMesh) targetGroup.add(waterwayMesh);
 
   if (waterPos.length > 0) {
     const geom = new THREE.BufferGeometry();
@@ -1768,6 +1743,40 @@ function buildRoadsAndBridges(
     }
   }
 
+  // [terrain-roads] Street sidewalks must not bury a parallel bike path running along the kerb (e.g. the Panhandle):
+  // index cycleway segments so the sidewalk strip on that side can be skipped.
+  const cycGrid = new Map();
+  const CYC_CELL = 16;
+  for (let i = 0; i < roads.length; i++) {
+    const [, cCls, , , , cW, , cBridge, cTunnel, , cFlat] = roads[i];
+    if (cCls !== 'cycleway' || cBridge || cTunnel || !cFlat || cFlat.length < 6) continue;
+    const hw = Math.max(1.0, cW * 0.5);
+    for (let k = 0; k + 5 < cFlat.length; k += 3) {
+      const seg = [cFlat[k], cFlat[k + 2], cFlat[k + 3], cFlat[k + 5], hw];
+      const gx0 = Math.floor((Math.min(seg[0], seg[2]) - 4) / CYC_CELL), gx1 = Math.floor((Math.max(seg[0], seg[2]) + 4) / CYC_CELL);
+      const gz0 = Math.floor((Math.min(seg[1], seg[3]) - 4) / CYC_CELL), gz1 = Math.floor((Math.max(seg[1], seg[3]) + 4) / CYC_CELL);
+      for (let gx = gx0; gx <= gx1; gx++) for (let gz = gz0; gz <= gz1; gz++) {
+        const key = gx * 4099 + gz;
+        let list = cycGrid.get(key);
+        if (!list) cycGrid.set(key, (list = []));
+        list.push(seg);
+      }
+    }
+  }
+  const sidewalkOverCycleway = (px, pz, dx, dz, swHalf) => {
+    if (cycGrid.size === 0) return false;
+    const list = cycGrid.get(Math.floor(px / CYC_CELL) * 4099 + Math.floor(pz / CYC_CELL));
+    if (!list) return false;
+    for (const [ax, az, bx, bz, hw] of list) {
+      const ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez;
+      if (l2 < 1e-6) continue;
+      if (Math.abs(ex * dx + ez * dz) / Math.sqrt(l2) < 0.85) continue; // only parallel paths
+      const t = Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / l2));
+      if (Math.hypot(ax + ex * t - px, az + ez * t - pz) < hw + swHalf) return true;
+    }
+    return false;
+  };
+
   for (let rIdx = 0; rIdx < roads.length; rIdx++) {
     const r = roads[rIdx];
     const [wid, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flat] = r;
@@ -1834,7 +1843,7 @@ function buildRoadsAndBridges(
     }
     const wayMicroBias = ((wayHash % 997) / 997.0) * 0.14;
     const yBias = (ROAD_Y_BIAS[cls] || 0.43) + wayMicroBias;
-    const baseRgb = ROAD_COLORS[cls] || [0.30, 0.32, 0.36];
+    const baseRgb = r[11] ? UNPAVED_TRAIL_RGB : ROAD_COLORS[cls] || [0.30, 0.32, 0.36]; // [terrain-roads]
     const nPts = flat.length / 3;
     const leftPts = [];
     const rightPts = [];
@@ -2107,7 +2116,10 @@ function buildRoadsAndBridges(
           const swY1 = ly1 + 0.04;
           const swY2 = ly2 + 0.04;
           const swCol = [0.55, 0.57, 0.61];
+          const swMx = (lx1 + lx2 + rx1 + rx2) * 0.25, swMz = (lz1 + lz2 + rz1 + rz2) * 0.25;
+          const swHalfRoad = Math.hypot(lx1 - rx1, lz1 - rz1) * 0.5 + swW * 0.5;
           // Left sidewalk strip
+          if (!sidewalkOverCycleway(swMx + nx * swHalfRoad, swMz + nz * swHalfRoad, dx, dz, swW * 0.5)) {
           rPos.push(
             lx1 + nx * swW, swY1, lz1 + nz * swW,
             lx2, swY2, lz2,
@@ -2116,7 +2128,10 @@ function buildRoadsAndBridges(
             lx2 + nx * swW, swY2, lz2 + nz * swW,
             lx2, swY2, lz2
           );
+          for (let k = 0; k < 6; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          }
           // Right sidewalk strip
+          if (!sidewalkOverCycleway(swMx - nx * swHalfRoad, swMz - nz * swHalfRoad, dx, dz, swW * 0.5)) {
           rPos.push(
             rx1, swY1, rz1,
             rx2 - nx * swW, swY2, rz2 - nz * swW,
@@ -2125,7 +2140,8 @@ function buildRoadsAndBridges(
             rx2, swY2, rz2,
             rx2 - nx * swW, swY2, rz2 - nz * swW
           );
-          for (let k = 0; k < 12; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          for (let k = 0; k < 6; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          }
         }
 
         // Lane Markings: +0.025m above road surface + polygonOffset (-4, -6) + depthWrite: false

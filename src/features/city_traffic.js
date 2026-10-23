@@ -46,7 +46,7 @@ const CAR_SPEED = [25, 20, 14, 12.5, 11, 8, 6, 12, 0, 0];
 // Physical vehicle mass (kg) by CAR_TYPES index: sedan, taxi, coupe, police, bus, tesla, cybertruck, ambulance, tow_truck
 const CAR_MASS_KG = [1500, 1550, 1420, 1850, 11000, 2100, 3100, 4500, 6200];
 const CAR_W = [3, 2.6, 2.2, 1.6, 1.1, 0.35, 0, 0.8, 0, 0];
-const PED_W = [0, 0, 1.15, 1.0, 0.45, 0.18, 0, 0, 0.55, 0];
+const PED_W = [0, 0, 1.15, 1.0, 0.45, 0.18, 0, 0, 1.0, 0]; // [terrain-roads] footways/trails weigh more
 
 const PAINTS = [
   0xf2f2f0, 0xf2f2f0, 0xe8e8e6, 0x161719, 0x161719, 0x1f2124, 0xa7abb0, 0xa7abb0, 0x6c7177,
@@ -1377,8 +1377,10 @@ export class CityTraffic {
       const carry = ped.s - e.len;
       const cands = node.adj.filter((a) => a.e !== e && a.e.alive);
       let nx;
-      if (cands.length) nx = pick(cands);
-      else nx = { e, fwd: !ped.fwd };
+      if (cands.length) {
+        const foot = cands.filter((a) => a.e.cls === 8); // [terrain-roads] pedestrians prefer footpaths/trails
+        nx = foot.length && Math.random() < 0.7 ? pick(foot) : pick(cands);
+      } else nx = { e, fwd: !ped.fwd };
       // Keep the pedestrian on the same physical side of the street.
       const wx = ped.x - node.x, wz = ped.z - node.z;
       this._enterPedEdge(ped, nx.e, nx.fwd, carry);

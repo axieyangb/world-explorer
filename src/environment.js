@@ -121,7 +121,19 @@ export function getBeijingTerrainElevation(wx, wz) {
 /**
  * Computes terrain vertex color based on real DEM elevation, slope, and urban distance.
  */
+// [terrain-roads] Coarse DEM snowcaps: snowline falls with latitude (~5000 m ASL in the tropics, ~1500 m at 60°);
+// steep faces stay bare rock.
 function sampleTerrainBiomeColor(wx, wz, elev, slope) {
+  const rgb = sampleTerrainBiomeColorBase(wx, wz, elev, slope);
+  if (!demState || !Number.isFinite(demState.centerLat)) return rgb;
+  const asl = elev + (demState.baseAslM || 0);
+  const line = Math.max(700, Math.min(5000, 5000 - Math.max(0, Math.abs(demState.centerLat) - 25) * 95));
+  if (asl < line - 200) return rgb;
+  const t = THREE.MathUtils.smoothstep(asl, line - 200, line + 250) * (1 - THREE.MathUtils.smoothstep(slope, 0.75, 1.3));
+  return [rgb[0] + (0.93 - rgb[0]) * t, rgb[1] + (0.95 - rgb[1]) * t, rgb[2] + (0.98 - rgb[2]) * t];
+}
+
+function sampleTerrainBiomeColorBase(wx, wz, elev, slope) {
   const distCenter = Math.hypot(wx, wz);
 
   // High mountain rocky ridges & alpine pine (Western Hills / Fragrant Hills > 140m above plain)

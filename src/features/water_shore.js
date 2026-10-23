@@ -74,7 +74,12 @@ export function appendPolyShoreUv(out, subTris, flatOuter, flatHoles) {
     const da = shoreDistance(g, subTris[i], subTris[i + 1]);
     const db = shoreDistance(g, subTris[i + 2], subTris[i + 3]);
     const dc = shoreDistance(g, subTris[i + 4], subTris[i + 5]);
-    out.push(0, da + 1, 0, dc + 1, 0, db + 1);
+    // [terrain-roads] A triangle spanning shore-to-shore (all vertices on the bank, e.g. narrow salt-pond
+    // channels) would interpolate ~0 m everywhere and turn solid foam-white. Lift it so its centroid
+    // carries the true distance.
+    const dm = shoreDistance(g, (subTris[i] + subTris[i + 2] + subTris[i + 4]) / 3, (subTris[i + 1] + subTris[i + 3] + subTris[i + 5]) / 3);
+    const lift = Math.max(0, dm - (da + db + dc) / 3);
+    out.push(0, da + lift + 1, 0, dc + lift + 1, 0, db + lift + 1);
   }
 }
 

@@ -36,6 +36,7 @@ import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
 import { CAR_TYPES } from "./features/traffic_models.js"; // [feature/vehicles]
 import { playVehicleHornOrSiren, stopVehicleSirenAudio, showVehicleToast } from "./features/vehicles.js"; // [feature/vehicles]
 import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
+import { createWaterwayMaterial } from "./features/waterways.js"; // [terrain-roads]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import { PlacesSystem } from "./features/places.js"; // feature/places
@@ -190,6 +191,7 @@ class WorldExplorerApp {
     this.mats = createSharedMaterials();
     this.streetFeatures = new StreetFeatures(this.scene, this.mats); // [feature/street]
     this.vegetation = new VegetationSystem(this.scene, this.mats); // [feature/vegetation] instanced trees + landcoverMat
+    this.mats.waterwayMat = createWaterwayMaterial(); // [terrain-roads] flowing rivers/streams
     this.chunksRoot = new THREE.Group();
     this.scene.add(this.chunksRoot);
 
