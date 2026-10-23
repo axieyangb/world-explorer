@@ -1800,13 +1800,7 @@ class WorldExplorerApp {
   }
 
   _bindInputs() {
-    const fadeControlsHint = () => {
-      const hint = document.getElementById("hud-controls-hint");
-      if (hint && !hint.classList.contains("faded") && performance.now() - (this._hintShownAt || 0) > 2500) {
-        hint.classList.add("faded");
-      }
-    };
-    setTimeout(fadeControlsHint, 8000);
+    this._showControlsHint();
 
     window.addEventListener("keydown", (e) => {
       if (document.activeElement && document.activeElement.tagName === "INPUT") {
@@ -1830,10 +1824,6 @@ class WorldExplorerApp {
       }
 
       this.keys.add(e.code);
-
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyE", "KeyQ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
-        fadeControlsHint();
-      }
 
       if (e.code === "KeyL" && !e.repeat && this.mode === "helicopter") {
         this._ensureHeli().toggleAutoLand();
@@ -1946,19 +1936,23 @@ class WorldExplorerApp {
     const hint = document.getElementById("hud-controls-hint");
     if (!hint) return;
     const zh = getLang() === "zh";
-    const text =
-      this.mode === "helicopter"
-        ? zh
-          ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · L 降落 · F 下机"
-          : "W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · L Land · F Exit"
-        : zh
-          ? "WASD 驾驶 · Shift 加速 · 空格 刹车 · V 换车 · E 夺车/上下车 · H 警笛/喇叭 · C 直升机"
-          : "WASD Drive · Shift Boost · Space Brake · V Vehicle · E Hijack/Exit · H Siren/Horn · C Heli";
+    let text;
+    if (this.mode === "helicopter") {
+      text = zh
+        ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · L 降落 · F 下机"
+        : "W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · L Land · F Exit";
+    } else if (this.mode === "walk") {
+      text = zh
+        ? "WASD 步行 · Shift 疾跑 · 空格 跳跃 · E 驾车 · C 直升机"
+        : "WASD Walk · Shift Run · Space Jump · E Drive · C Heli";
+    } else {
+      text = zh
+        ? "WASD 驾驶 · Shift 加速 · 空格 刹车 · V 换车 · H 喇叭/警笛 · E 夺车/下车 · C 直升机"
+        : "WASD Drive · Shift Boost · Space Brake · V Vehicle · H Horn · E Exit · C Heli";
+    }
     if (hint.textContent !== text) hint.textContent = text;
     hint.classList.remove("faded");
-    this._hintShownAt = performance.now();
     clearTimeout(this._hintTimer);
-    this._hintTimer = setTimeout(() => hint.classList.add("faded"), 6000);
   }
 
   _updateModeAndCamBadges() {

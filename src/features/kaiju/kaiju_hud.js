@@ -283,9 +283,8 @@ export class KaijuHud {
       this._alertT -= dt;
       if (this._alertT <= 0) this.alert.classList.remove("on");
     }
-    if (this._hintT > 0) {
-      this._hintT -= dt;
-      if (this._hintT <= 0) this.hint.classList.remove("on");
+    if (this.hint && !this.hint.classList.contains("on")) {
+      this.hint.classList.add("on");
     }
 
     // Kaiju HP.
