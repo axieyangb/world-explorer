@@ -4,6 +4,7 @@
 // Pedestrians: one low-poly merged figure, walk cycle animated in the vertex shader.
 import * as THREE from '../../vendor/three.module.js';
 import { createVehicleModel } from '../entities.js';
+import { personParts, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL } from './person_model.js';
 
 const HEAD_HEX = 0xfff3c4;
 const TAIL_HEX = 0xff2a2a;
@@ -121,53 +122,30 @@ export function createCarMeshes(capacity, uniforms) {
 }
 
 // ---------------- Pedestrians ----------------
-// aPart: 0 static, 1 left leg, 2 right leg, 3 left arm, 4 right arm
-// aMat: 0 skin, 1 shirt, 2 pants, 3 fixed vertex color (hair / shoes)
-function pushBox(acc, w, h, d, x, y, z, part, matId, rgb) {
-  const g = new THREE.BoxGeometry(w, h, d).toNonIndexed();
-  g.translate(x, y, z);
-  const p = g.attributes.position, n = g.attributes.normal;
-  for (let i = 0; i < p.count; i++) {
-    acc.pos.push(p.getX(i), p.getY(i), p.getZ(i));
-    acc.nor.push(n.getX(i), n.getY(i), n.getZ(i));
-    acc.col.push(rgb[0], rgb[1], rgb[2]);
-    acc.part.push(part);
-    acc.mat.push(matId);
-  }
-  g.dispose();
-}
-
+// Shared person model (src/features/person_model.js): rounded head with a face on the front, hair covering
+// the back, forward shoe toes, V-neck/zipper fronts, optional backpack/bag/cap/glasses/coat/umbrella toggled
+// per instance by a style bitmask (disabled parts collapse to a degenerate point in the vertex shader).
 function createPedGeometry() {
-  const acc = { pos: [], nor: [], col: [], part: [], mat: [] };
-  const dark = [0.08, 0.07, 0.07];
-  pushBox(acc, 0.22, 0.24, 0.24, 0, 1.6, 0, 0, 0, dark);           // head
-  pushBox(acc, 0.24, 0.07, 0.25, 0, 1.735, -0.01, 0, 3, dark);     // hair
-  pushBox(acc, 0.42, 0.58, 0.24, 0, 1.18, 0, 0, 1, dark);          // torso
-  pushBox(acc, 0.4, 0.12, 0.22, 0, 0.86, 0, 0, 2, dark);           // hips
-  for (const [sx, part] of [[-0.11, 1], [0.11, 2]]) {
-    pushBox(acc, 0.15, 0.78, 0.16, sx, 0.47, 0, part, 2, dark);    // leg
-    pushBox(acc, 0.15, 0.08, 0.26, sx, 0.04, 0.04, part, 3, [0.12, 0.12, 0.13]); // shoe
-  }
-  for (const [sx, part] of [[-0.28, 3], [0.28, 4]]) {
-    pushBox(acc, 0.11, 0.52, 0.12, sx, 1.18, 0, part, 1, dark);    // sleeve/arm
-    pushBox(acc, 0.1, 0.1, 0.1, sx, 0.88, 0, part, 0, dark);       // hand
+  const pos = [], nor = [], col = [], info = [];
+  for (const pt of personParts()) {
+    const g = pt.geom;
+    const p = g.attributes.position, n = g.attributes.normal;
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i));
+      nor.push(n.getX(i), n.getY(i), n.getZ(i));
+      col.push(pt.rgb[0], pt.rgb[1], pt.rgb[2]);
+      info.push(pt.part, pt.mat, pt.opt);
+    }
+    g.dispose();
   }
   const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.Float32BufferAttribute(acc.pos, 3));
-  geom.setAttribute('normal', new THREE.Float32BufferAttribute(acc.nor, 3));
-  geom.setAttribute('color', new THREE.Float32BufferAttribute(acc.col, 3));
-  geom.setAttribute('aPart', new THREE.Float32BufferAttribute(acc.part, 1));
-  geom.setAttribute('aMat', new THREE.Float32BufferAttribute(acc.mat, 1));
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geom.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geom.setAttribute('aInfo', new THREE.Float32BufferAttribute(info, 3));
   geom.computeBoundingSphere();
   return geom;
 }
-
-const PED_ANIM_GLSL = `
-  float pSw = sin(iAnim.x) * iAnim.y;
-  float pAng = aPart < 0.5 ? 0.0 : aPart < 1.5 ? pSw : aPart < 2.5 ? -pSw : aPart < 3.5 ? -pSw * 0.8 : pSw * 0.8;
-  float pPivot = aPart < 2.5 ? 0.9 : 1.45;
-  float pC = cos(pAng), pS = sin(pAng);
-`;
 
 export function createPedMesh(capacity) {
   const geom = createPedGeometry();
@@ -176,39 +154,38 @@ export function createPedMesh(capacity) {
     a.setUsage(THREE.DynamicDrawUsage);
     return a;
   };
-  const iAnim = mk(2), iShirt = mk(3), iPants = mk(3), iSkin = mk(3);
+  // iAnim = (walk phase, swing amplitude, style bits)
+  const iAnim = mk(3), iShirt = mk(3), iPants = mk(3), iSkin = mk(3), iHair = mk(3), iAcc = mk(3);
   geom.setAttribute('iAnim', iAnim);
   geom.setAttribute('iShirt', iShirt);
   geom.setAttribute('iPants', iPants);
   geom.setAttribute('iSkin', iSkin);
+  geom.setAttribute('iHair', iHair);
+  geom.setAttribute('iAcc', iAcc);
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.0 });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute float aPart;\nattribute float aMat;\nattribute vec2 iAnim;\nattribute vec3 iShirt;\nattribute vec3 iPants;\nattribute vec3 iSkin;'
+        '#include <common>\nattribute vec3 aInfo;\nattribute vec3 iAnim;\nattribute vec3 iShirt;\nattribute vec3 iPants;\nattribute vec3 iSkin;\nattribute vec3 iHair;\nattribute vec3 iAcc;'
       )
       .replace(
         '#include <beginnormal_vertex>',
         `#include <beginnormal_vertex>
-${PED_ANIM_GLSL}
+${PERSON_ANIM_GLSL}
   objectNormal = vec3(objectNormal.x, pC * objectNormal.y - pS * objectNormal.z, pS * objectNormal.y + pC * objectNormal.z);`
       )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-  {
-    float ry = transformed.y - pPivot;
-    transformed.yz = vec2(pPivot + pC * ry - pS * transformed.z, pS * ry + pC * transformed.z);
-  }`
-      )
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${PERSON_BEGIN_GLSL}`)
       .replace(
         '#include <color_vertex>',
         `#include <color_vertex>
-  vColor.rgb = aMat < 0.5 ? iSkin : aMat < 1.5 ? iShirt : aMat < 2.5 ? iPants : vColor.rgb;`
+  {
+    float m = aInfo.y;
+    vColor.rgb = m < 0.5 ? iSkin : m < 1.5 ? iShirt : m < 2.5 ? iPants : m < 3.5 ? vColor.rgb : m < 4.5 ? iHair : iAcc;
+  }`
       );
   };
-  mat.customProgramCacheKey = () => 'we-traffic-ped-v1';
+  mat.customProgramCacheKey = () => 'we-traffic-ped-v2';
   const mesh = new THREE.InstancedMesh(geom, mat, capacity);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.count = 0;
@@ -216,5 +193,5 @@ ${PED_ANIM_GLSL}
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   mesh.name = 'traffic_pedestrians';
-  return { mesh, iAnim, iShirt, iPants, iSkin };
+  return { mesh, iAnim, iShirt, iPants, iSkin, iHair, iAcc, tris: geom.attributes.position.count / 3 };
 }
