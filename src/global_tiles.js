@@ -690,7 +690,10 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           if (lz < minZ) minZ = lz;
           if (lz > maxZ) maxZ = lz;
         }
-        if (maxX < -540 || minX > 540 || maxZ < -540 || minZ > 540) continue;
+        // fix/bridge-continuity: ways just outside the chunk are kept as `road_context` so bridge approach ramps
+        // that start in a neighbouring chunk are computed from the same ways in both chunks
+        if (maxX < -1000 || minX > 1000 || maxZ < -1000 || minZ > 1000) continue;
+        const isContext = maxX < -540 || minX > 540 || maxZ < -540 || minZ > 540;
 
         const startKey = `${Math.round(ptsXZ[0][0] / 2)},${Math.round(ptsXZ[0][1] / 2)}`;
         const endKey = `${Math.round(ptsXZ[ptsXZ.length - 1][0] / 2)},${Math.round(ptsXZ[ptsXZ.length - 1][1] / 2)}`;
@@ -717,6 +720,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           ptsXZ,
           startKey,
           endKey,
+          isContext,
         });
       }
     }
@@ -724,10 +728,11 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
 
   // 3. Match road names & compute 3D elevation profile with smooth cosine ramps at bridge abutments
   const roads = [];
+  const roadContext = []; // fix/bridge-continuity
   const intersectionNodes = new Map();
 
   for (const r of rawRoads) {
-    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey } = r;
+    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, isContext } = r;
 
     const isPedOrService = cls === "footway" || cls === "pedestrian" || cls === "steps" || cls === "cycleway" || cls === "service";
     if (!isPedOrService && (!name || !ref) && namedRoadSamples.length > 0) {
@@ -789,6 +794,11 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       const [lx, lz] = ptsXZ[i];
       const y = targetElev;
       flatXYZ.push(Math.round(lx * 10) / 10, Math.round(y * 100) / 100, Math.round(lz * 10) / 10);
+    }
+
+    if (isContext) {
+      roadContext.push([id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ]);
+      continue;
     }
 
     // Track major intersections for traffic lights & highway gantries
@@ -1308,6 +1318,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
 
   return {
     roads,
+    road_context: roadContext, // fix/bridge-continuity: approach context for computeRoadLiftProfiles only
     railways,
     buildings,
     water_polys,
