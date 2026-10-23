@@ -7,7 +7,7 @@ import {
   buildChunkTerrainMesh,
   buildChunkTerrainArrays,
 } from './environment.js';
-import { appendCompactChunkBuildingWFC, FACADE_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
+import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
@@ -366,11 +366,118 @@ export async function loadFacadeArrayTexture(mats) {
       mats.wfcBldgMat.userData.nightUniforms.uFacadeArray.value = arrayTex;
       if (prev && prev !== arrayTex && prev.dispose) prev.dispose();
     }
+
+    // Also load the 12-layer 512x512 architectural entrance door array texture in parallel
+    try {
+      const doorStripSrc =
+        (typeof window !== 'undefined' && window.__EMBEDDED_DOOR_STRIP__) ||
+        '/assets/doors/door_strip.jpg';
+      const doorMaskSrc =
+        (typeof window !== 'undefined' && window.__EMBEDDED_DOOR_MASK_STRIP__) ||
+        '/assets/doors/door_mask_strip.jpg';
+      const [dRgbImg, dMaskImg] = await Promise.all([
+        loadImageElement(doorStripSrc),
+        loadImageElement(doorMaskSrc),
+      ]);
+      const dN = Math.max(1, Math.round(dRgbImg.height / S));
+      const dTotalH = S * dN;
+
+      const dcRgb = document.createElement('canvas');
+      dcRgb.width = S;
+      dcRgb.height = dTotalH;
+      const dCtxRgb = dcRgb.getContext('2d');
+      dCtxRgb.drawImage(dRgbImg, 0, 0, S, dTotalH);
+      const dRgbBytes = dCtxRgb.getImageData(0, 0, S, dTotalH).data;
+
+      const dcMask = document.createElement('canvas');
+      dcMask.width = S;
+      dcMask.height = dTotalH;
+      const dCtxMask = dcMask.getContext('2d');
+      dCtxMask.drawImage(dMaskImg, 0, 0, S, dTotalH);
+      const dMaskBytes = dCtxMask.getImageData(0, 0, S, dTotalH).data;
+
+      const dRgba = new Uint8Array(S * S * dN * 4);
+      for (let layer = 0; layer < dN; layer++) {
+        const layerDstBase = layer * S * S * 4;
+        for (let r = 0; r < S; r++) {
+          const srcRow = layer * S + (S - 1 - r);
+          const srcRowBase = srcRow * S * 4;
+          const dstRowBase = layerDstBase + r * S * 4;
+          for (let c = 0; c < S; c++) {
+            const sOff = srcRowBase + c * 4;
+            const dOff = dstRowBase + c * 4;
+            dRgba[dOff] = dRgbBytes[sOff];
+            dRgba[dOff + 1] = dRgbBytes[sOff + 1];
+            dRgba[dOff + 2] = dRgbBytes[sOff + 2];
+            dRgba[dOff + 3] = dMaskBytes[sOff];
+          }
+        }
+      }
+
+      const doorArrayTex = new THREE.DataArrayTexture(dRgba, S, S, dN);
+      doorArrayTex.format = THREE.RGBAFormat;
+      doorArrayTex.type = THREE.UnsignedByteType;
+      doorArrayTex.colorSpace = THREE.SRGBColorSpace;
+      doorArrayTex.wrapS = THREE.ClampToEdgeWrapping;
+      doorArrayTex.wrapT = THREE.ClampToEdgeWrapping;
+      doorArrayTex.minFilter = THREE.LinearMipmapLinearFilter;
+      doorArrayTex.magFilter = THREE.LinearFilter;
+      doorArrayTex.generateMipmaps = true;
+      doorArrayTex.anisotropy = 8;
+      doorArrayTex.needsUpdate = true;
+
+      if (mats && mats.wfcBldgMat && mats.wfcBldgMat.userData.nightUniforms) {
+        const prevD = mats.wfcBldgMat.userData.nightUniforms.uDoorArray?.value;
+        if (mats.wfcBldgMat.userData.nightUniforms.uDoorArray) {
+          mats.wfcBldgMat.userData.nightUniforms.uDoorArray.value = doorArrayTex;
+        }
+        if (prevD && prevD !== doorArrayTex && prevD.dispose) prevD.dispose();
+      }
+    } catch (doorErr) {
+      console.warn('Door array texture load fallback:', doorErr);
+    }
+
     return arrayTex;
   } catch (err) {
     console.warn('Facade array texture load fallback:', err);
     return null;
   }
+}
+
+function createFallbackDoorArrayTexture() {
+  const N = DOOR_CATALOG.length;
+  const S = 16;
+  const data = new Uint8Array(S * S * N * 4);
+  for (let i = 0; i < N; i++) {
+    const spec = DOOR_CATALOG[i];
+    const avg = spec.avgColor || [0.45, 0.42, 0.38];
+    const rWall = Math.round(avg[0] * 255);
+    const gWall = Math.round(avg[1] * 255);
+    const bWall = Math.round(avg[2] * 255);
+    const baseOff = i * S * S * 4;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const inFrame = x >= 2 && x <= 13 && y <= 14;
+        const inGlass = x >= 4 && x <= 11 && y >= 1 && y <= 11;
+        const off = baseOff + (y * S + x) * 4;
+        data[off] = inGlass ? Math.round(rWall * 0.65) : rWall;
+        data[off + 1] = inGlass ? Math.round(gWall * 0.68) : gWall;
+        data[off + 2] = inGlass ? Math.round(bWall * 0.72) : bWall;
+        data[off + 3] = inGlass ? 210 : (inFrame ? 102 : 8);
+      }
+    }
+  }
+  const tex = new THREE.DataArrayTexture(data, S, S, N);
+  tex.format = THREE.RGBAFormat;
+  tex.type = THREE.UnsignedByteType;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 export function createSharedMaterials() {
@@ -511,9 +618,11 @@ export function createSharedMaterials() {
   });
 
   const fallbackFacadeArray = createFallbackFacadeArrayTexture();
+  const fallbackDoorArray = createFallbackDoorArrayTexture();
   const wfcNightUniforms = {
     uNightEmissive: { value: 0.08 },
     uFacadeArray: { value: fallbackFacadeArray },
+    uDoorArray: { value: fallbackDoorArray },
   };
   const wfcBldgMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -526,6 +635,7 @@ export function createSharedMaterials() {
   wfcBldgMat.onBeforeCompile = (shader) => {
     shader.uniforms.uNightEmissive = wfcNightUniforms.uNightEmissive;
     shader.uniforms.uFacadeArray = wfcNightUniforms.uFacadeArray;
+    shader.uniforms.uDoorArray = wfcNightUniforms.uDoorArray;
     shader.vertexShader =
       'varying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
       shader.vertexShader.replace(
@@ -533,11 +643,47 @@ export function createSharedMaterials() {
         '#include <beginnormal_vertex>\nvEmissive = step(1.5, length(objectNormal));\nobjectNormal = normalize(objectNormal);\nvFacadeUv = uv;\nvWorldNorm = objectNormal;'
       );
     shader.fragmentShader =
-      'uniform float uNightEmissive;\nuniform mediump sampler2DArray uFacadeArray;\nvarying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
+      'uniform float uNightEmissive;\nuniform mediump sampler2DArray uFacadeArray;\nuniform mediump sampler2DArray uDoorArray;\nvarying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
       shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45) {
+        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45 && vFacadeUv.x >= 23999.5) {
+          float doorLayer = clamp(floor((vFacadeUv.x - 24000.0 + 0.5) / 1000.0), 0.0, 11.0);
+          float uDoor = clamp(vFacadeUv.x - 24000.0 - doorLayer * 1000.0, 0.0, 1.0);
+          float vDoor = clamp(vFacadeUv.y - 1.0, 0.0, 1.0);
+          float doorDistFade = 1.0 - smoothstep(245.0, 310.0, length(vViewPosition));
+
+          vec4 doorSample = texture(uDoorArray, vec3(uDoor, vDoor, doorLayer));
+          vec3 doorRgb = doorSample.rgb;
+          float dAlpha = doorSample.a;
+
+          float glassMask = smoothstep(0.52, 0.78, dAlpha) * doorDistFade;
+          float nightLevel = clamp((uNightEmissive - 0.15) / 1.15, 0.0, 1.0);
+          vec3 skyRefl = mix(vec3(0.56, 0.69, 0.84), vec3(0.10, 0.15, 0.24), nightLevel);
+          vec3 shadedDoor = mix(doorRgb * 1.06, mix(doorRgb * 1.12, skyRefl, 0.22), glassMask);
+
+          diffuseColor.rgb = mix(diffuseColor.rgb, shadedDoor, doorDistFade);
+
+          float dLum = dot(doorRgb, vec3(0.299, 0.587, 0.114));
+          float dLx = clamp(dFdx(dLum), -0.09, 0.09);
+          float dLy = clamp(dFdy(dLum), -0.09, 0.09);
+          float dGrad = max(fwidth(uDoor), fwidth(vDoor));
+          float dBumpFade = (1.0 - smoothstep(0.03, 0.20, dGrad)) * doorDistFade;
+          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.85 * dBumpFade * (1.0 - 0.55 * glassMask)));
+
+          roughnessFactor = mix(roughnessFactor, mix(0.58, 0.16, glassMask), doorDistFade);
+          metalnessFactor = mix(metalnessFactor, mix(0.06, 0.18, glassMask), doorDistFade);
+
+          if (nightLevel > 0.001 && glassMask > 0.02) {
+            float isLobbyOrShop = (
+              doorLayer < 1.5 || abs(doorLayer - 2.0) < 0.5 ||
+              abs(doorLayer - 6.0) < 0.5 || abs(doorLayer - 9.0) < 0.5
+            ) ? 1.0 : 0.0;
+            vec3 warmLobby = vec3(1.0, 0.78, 0.42);
+            vec3 glowCol = warmLobby * (0.24 + 0.76 * doorRgb) * mix(0.65, 1.05, isLobbyOrShop);
+            totalEmissiveRadiance += glowCol * glassMask * nightLevel * (uNightEmissive * 0.46);
+          }
+        } else if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45) {
           float texLayer = clamp(floor((vFacadeUv.x + 0.5) / 1000.0), 0.0, 23.0);
           float uRep = max(0.0, vFacadeUv.x - texLayer * 1000.0);
           float vRep = max(0.0, vFacadeUv.y - 1.0);
@@ -546,9 +692,12 @@ export function createSharedMaterials() {
           vec3 facadeRgb = texSample.rgb;
           float rawAlpha = texSample.a;
           float winMask = smoothstep(0.22, 0.56, rawAlpha);
+          float nightLevel = clamp((uNightEmissive - 0.15) / 1.15, 0.0, 1.0);
 
-          // Pure photographic AI facade albedo modulated by subtle per-building tint & vertical AO
-          diffuseColor.rgb = facadeRgb * diffuseColor.rgb * 1.08;
+          // Pure photographic AI facade albedo modulated by subtle per-building tint, vertical AO & analytical sky reflection on glass
+          vec3 baseAlbedo = facadeRgb * diffuseColor.rgb * 1.08;
+          vec3 skyRefl = mix(vec3(0.54, 0.68, 0.84), vec3(0.08, 0.13, 0.22), nightLevel);
+          diffuseColor.rgb = mix(baseAlbedo, mix(baseAlbedo * 1.15, skyRefl, 0.24), winMask);
 
           // Screen-space micro-bump normal relief on masonry/mullions (fades smoothly at distance)
           float lum = dot(facadeRgb, vec3(0.299, 0.587, 0.114));
@@ -558,13 +707,12 @@ export function createSharedMaterials() {
           float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
           normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask)));
 
-          // PBR Roughness & Metalness modulated by pixel-accurate window glass mask
+          // Keep metalness moderate so Three.js PBR without envMap never crushes shaded street-canyon glass to black
           float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;
-          roughnessFactor = mix(mix(0.78, 0.40, isCurtain), 0.14, winMask);
-          metalnessFactor = mix(mix(0.06, 0.46, isCurtain), 0.68, winMask);
+          roughnessFactor = mix(mix(0.78, 0.42, isCurtain), 0.16, winMask);
+          metalnessFactor = mix(mix(0.04, 0.16, isCurtain), 0.20, winMask);
 
           // Per-window interior lighting strictly at sunset and night (0 at noon)
-          float nightLevel = clamp((uNightEmissive - 0.15) / 1.15, 0.0, 1.0);
           if (nightLevel > 0.001 && winMask > 0.02) {
             float isRetail = (abs(texLayer - 17.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;
             float gridBays = (
@@ -585,14 +733,14 @@ export function createSharedMaterials() {
                              smoothstep(0.0, 0.08, cellFract.y) * smoothstep(1.0, 0.92, cellFract.y);
             float wallSeed = floor((vWorldNorm.x * 19.0 + vWorldNorm.z * 31.0) * 8.0);
             float hRoom = fract(sin(dot(winCell + vec2(texLayer * 13.0, wallSeed * 7.0), vec2(127.1, 311.7))) * 43758.5453);
-            float litProb = mix(0.44 * nightLevel, 0.78 * nightLevel, isRetail);
+            float litProb = mix(0.46 * nightLevel, 0.80 * nightLevel, isRetail);
             float isLit = step(1.0 - litProb, hRoom);
 
-            vec3 warmAmber = vec3(1.0, 0.76, 0.42);
-            vec3 coolOffice = vec3(0.76, 0.89, 1.0);
+            vec3 warmAmber = vec3(1.0, 0.76, 0.38);
+            vec3 coolOffice = vec3(0.72, 0.86, 1.0);
             vec3 roomCol = mix(warmAmber, coolOffice, step(0.66, fract(hRoom * 13.7)));
-            vec3 interiorTex = roomCol * (0.38 + 0.62 * facadeRgb) * (0.72 + 0.28 * fract(hRoom * 7.3));
-            totalEmissiveRadiance += interiorTex * winMask * cellEdge * isLit * (uNightEmissive * 0.72);
+            vec3 interiorTex = roomCol * (0.18 + 0.82 * facadeRgb) * (0.64 + 0.36 * fract(hRoom * 7.3));
+            totalEmissiveRadiance += interiorTex * winMask * cellEdge * isLit * (uNightEmissive * 0.38);
           }
         }
         totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uNightEmissive;`
@@ -2294,6 +2442,30 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
     }
   }
 
+  // Pre-collect local ground-level road segments for road-facing building entrance placement
+  const localRoads = [];
+  for (let rIdx = 0; rIdx < roadSegments.length; rIdx++) {
+    const seg = roadSegments[rIdx];
+    if (seg.bridge || seg.tunnel || (seg.layer || 0) !== 0) continue;
+    const rx1 = seg.x1 - ox, rz1 = seg.z1 - oz;
+    const rx2 = seg.x2 - ox, rz2 = seg.z2 - oz;
+    const rdx = rx2 - rx1, rdz = rz2 - rz1;
+    const rlen = Math.hypot(rdx, rdz);
+    if (rlen < 0.5) continue;
+    localRoads.push({
+      x1: rx1,
+      z1: rz1,
+      x2: rx2,
+      z2: rz2,
+      mx: (rx1 + rx2) * 0.5,
+      mz: (rz1 + rz2) * 0.5,
+      tx: rdx / rlen,
+      tz: rdz / rlen,
+      isFootway: seg.cls === 'footway' || seg.cls === 'path' || seg.cls === 'steps',
+    });
+  }
+  const getEdgeGroundY = (lx, lz) => getBeijingTerrainElevation(ox + lx, oz + lz);
+
   // Pre-collect named road segment midpoints (sampled at >= 20m spacing per road name) so nearest-road lookup is fast
   const namedRoadPts = [];
   for (let rIdx = 0; rIdx < roadSegments.length; rIdx++) {
@@ -2481,12 +2653,27 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         };
         entityTable.push(entityRecord);
 
+        let overlapsExistingBldg = false;
         if (rawMinH <= 2.0 && !isPart) {
+          const curMinX = minX + ox, curMaxX = maxX + ox;
+          const curMinZ = minZ + oz, curMaxZ = maxZ + oz;
+          const curArea = Math.max(1.0, (curMaxX - curMinX) * (curMaxZ - curMinZ));
+          for (let cIdx = 0; cIdx < buildingColliders.length; cIdx++) {
+            const bc = buildingColliders[cIdx];
+            const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
+            const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
+            const interArea = ix * iz;
+            const bcArea = Math.max(1.0, (bc.maxX - bc.minX) * (bc.maxZ - bc.minZ));
+            if (interArea > 0.32 * Math.min(curArea, bcArea)) {
+              overlapsExistingBldg = true;
+              break;
+            }
+          }
           buildingColliders.push({
-            minX: minX + ox,
-            maxX: maxX + ox,
-            minZ: minZ + oz,
-            maxZ: maxZ + oz,
+            minX: curMinX,
+            maxX: curMaxX,
+            minZ: curMinZ,
+            maxZ: curMaxZ,
             h,
             flatOuter,
             ox,
@@ -2496,7 +2683,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
 
         // Skip generic WFC extrusion if this footprint belongs to one of the 40 bespoke Beijing 3D landmarks
-        if (matchedLm) {
+        if (matchedLm || (overlapsExistingBldg && !isPart)) {
           continue;
         }
 
@@ -2517,6 +2704,9 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             wz,
             baseY: minH,
             topY: h,
+            groundY: terrainY,
+            getEdgeGroundY,
+            localRoads,
             wallOutOffset,
             region: regionTag,
           },
