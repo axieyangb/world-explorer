@@ -4,6 +4,7 @@ import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
 import { extractVenues } from "./features/venues.js"; // [venues]
+import { makeLandmarkSuppressor } from "./features/landmarks/registry.js"; // feature/famous-landmarks
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -15,6 +16,7 @@ const MAX_CACHED_TILES = 160;
 
 export const QUICK_WORLD_DESTINATIONS = [
   { id: "nyc_times_sq", name: "New York · Times Square", nameZh: "纽约 · 时代广场", street: "Broadway & 7th Ave", city: "New York, US", cityZh: "美国 纽约", lat: 40.7580, lon: -73.9855 },
+  { id: "nyc_liberty", name: "New York · Statue of Liberty", nameZh: "纽约 · 自由女神像", street: "Liberty Island", city: "New York, US", cityZh: "美国 纽约", lat: 40.6892, lon: -74.0445 }, // feature/famous-landmarks
   { id: "tokyo_shibuya", name: "Tokyo · Shibuya", nameZh: "东京 · 涩谷十字路口", street: "Shibuya Crossing", city: "Tokyo, JP", cityZh: "日本 东京", lat: 35.6595, lon: 139.7004 },
   { id: "sf_embarcadero", name: "San Francisco · Embarcadero", nameZh: "旧金山 · 内河码头", street: "The Embarcadero", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.7955, lon: -122.3937 },
   { id: "sf_golden_gate", name: "San Francisco · Golden Gate", nameZh: "旧金山 · 金门大桥", street: "Golden Gate Bridge · US 101", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.8199, lon: -122.4783 },
@@ -1247,6 +1249,19 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     } else if (info.deg >= 3 && info.y === 0) {
       facilities.push(["tl", Math.round((info.lx + 5.5) * 10) / 10, 0, Math.round((info.lz + 5.5) * 10) / 10]);
       facilities.push(["cr", Math.round((info.lx - 4.5) * 10) / 10, 0, Math.round(info.lz * 10) / 10]);
+    }
+  }
+
+  // feature/famous-landmarks: drop generic OSM buildings inside hand-built landmark footprints
+  const lmSuppress = makeLandmarkSuppressor(origin);
+  if (lmSuppress) {
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      const fo = buildings[i][11];
+      if (!fo || fo.length < 6) continue;
+      let sx = 0, sz = 0;
+      for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
+      const n = fo.length / 2;
+      if (lmSuppress(ox + sx / n, oz + sz / n)) buildings.splice(i, 1);
     }
   }
 

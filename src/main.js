@@ -81,6 +81,7 @@ import { initLiveWeather } from "./features/live_weather.js"; // [live-sky-weath
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
 import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
+import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
@@ -285,6 +286,7 @@ class WorldExplorerApp {
 
     this.water = new WaterPhysics(this); // fix/water
     this.collision = new BuildingCollision(this); // fix/water
+    this.landmarks = new LandmarkSystem(this); // feature/famous-landmarks
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
     this.cityTraffic = this.traffic;
@@ -2711,6 +2713,7 @@ class WorldExplorerApp {
     if (this.liveWeather) this.liveWeather.update(dt); // [live-sky-weather]
     if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
     if (this.placesInfo) this.placesInfo.update(dt); // places-info
+    if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
