@@ -736,8 +736,16 @@ export class CityTraffic {
       if (Math.abs(c.y - app.pos.y) > 3) continue;
       const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, pl, pw, c.x, c.z, c.ux, c.uz, c.len * 0.5, c.wid * 0.5);
       if (!r) continue;
+      const px0 = app.pos.x, pz0 = app.pos.z;
       app.pos.x += r.nx * r.depth;
       app.pos.z += r.nz * r.depth;
+      if (app.collision) { // fix/water: an AI car must never shove the player into a building
+        const rc = drive
+          ? app.collision.resolveCar(app.pos.x, app.pos.y, app.pos.z, app.yaw, spec, px0, pz0)
+          : app.collision.resolve(app.pos.x, app.pos.y, app.pos.z, app.yaw, 0.45, [0], null, px0, pz0);
+        app.pos.x = rc.x;
+        app.pos.z = rc.z;
+      }
       if (drive) {
         const into = (hx * r.nx + hz * r.nz) * Math.sign(app.speed || 0);
         if (into < 0) app.speed *= 0.35;

@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
 import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
+import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
 import {
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
@@ -909,6 +910,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
       if (stage === 0) {
         isPointInWater = createWaterMaskChecker(data);
+        root.userData.waterMask = buildWaterMask(data); // fix/water: bit raster for car/walk/heli water physics
         isPointInSunkenTrench = createSunkenTrenchChecker(data.roads || []);
 
         // 0. 3D Heightfield Terrain Mesh for this 1km x 1km chunk (with open-trench cutouts for sunken roads)
@@ -2654,11 +2656,11 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         entityTable.push(entityRecord);
 
         let overlapsExistingBldg = false;
-        if (rawMinH <= 2.0 && !isPart) {
+        if (rawMinH <= 2.0) { // fix/water: include ground-level parts (tiles flag any min_height > 0 as a part)
           const curMinX = minX + ox, curMaxX = maxX + ox;
           const curMinZ = minZ + oz, curMaxZ = maxZ + oz;
           const curArea = Math.max(1.0, (curMaxX - curMinX) * (curMaxZ - curMinZ));
-          for (let cIdx = 0; cIdx < buildingColliders.length; cIdx++) {
+          for (let cIdx = 0; !isPart && cIdx < buildingColliders.length; cIdx++) { // [integration] entrances' duplicate-footprint filter: whole buildings only
             const bc = buildingColliders[cIdx];
             const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
             const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
@@ -3240,6 +3242,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       street: root.userData.street || null, // [feature/street]
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
       places: root.userData.places || null, // feature/places
+      waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
     },
     transferList: (collectPlacesTransfer(root.userData.places, transferSet), Array.from(transferSet)), // feature/places
   };
@@ -3311,6 +3314,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     street: payload.street || null, // [feature/street]
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
     places: payload.places || null, // feature/places
+    waterMask: payload.waterMask || null, // fix/water
   };
 
   return root;
