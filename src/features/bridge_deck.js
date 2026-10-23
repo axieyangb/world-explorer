@@ -77,7 +77,7 @@ export function buildBridgeDecks(roadSegments, ox, oz) {
     const cx1 = mx + dx * hi + nx * o * 0.5, cz1 = mz + dz * hi + nz * o * 0.5;
     segs.push({
       x1: cx0, y1: y0, z1: cz0, x2: cx1, y2: y1, z2: cz1, width: o,
-      bridge: true, tunnel: false, deck: true, layer: A.layer, cls: A.cls, name: A.name, rawName: A.rawName, ref: A,
+      bridge: true, tunnel: false, deck: true, layer: A.layer, cls: A.cls, name: A.name, nameZh: A.nameZh, rawName: A.rawName, ref: A,
     });
     // rendered strip from A's edge to B's edge (slightly overlapping under both, 3 cm below the ways)
     const e0 = A.width * 0.5 - 0.2, e1 = o - B.width * 0.5 + 0.2;

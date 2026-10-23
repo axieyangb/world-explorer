@@ -552,7 +552,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   for (const t of tiles) {
     for (const f of t.transportation_name || []) {
       const nm = f.tags["name:en"] || f.tags.name_en || f.tags["name:latin"] || f.tags.name || "";
-      const nmZh = f.tags.name || nm;
+      const nmZh = f.tags["name:zh-Hans"] || f.tags["name:zh"] || f.tags.name || nm; // [road-names-zh] native/Chinese name
       const subCls = f.tags.subclass || "";
       const rawCls = f.tags.class || "";
       if (subCls === "junction" || rawCls === "junction") {
@@ -721,6 +721,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           cls,
           rawCls,
           name: f.tags["name:en"] || f.tags.name_en || f.tags.name || "",
+          nameZh: f.tags["name:zh-Hans"] || f.tags["name:zh"] || f.tags.name || "", // [road-names-zh]
           ref: f.tags.ref || "",
           lanes,
           widthM,
@@ -744,7 +745,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   const intersectionNodes = new Map();
 
   for (const r of rawRoads) {
-    let { id, cls, rawCls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, isContext, unpaved } = r; // [fix/bridge-continuity] isContext, [terrain-roads] unpaved
+    let { id, cls, rawCls, name, nameZh, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, ptsXZ, startKey, endKey, isContext, unpaved } = r; // [fix/bridge-continuity] isContext, [terrain-roads] unpaved
 
     const isPedOrService = cls === "footway" || cls === "pedestrian" || cls === "steps" || cls === "cycleway" || cls === "service";
     if (!isPedOrService && (!name || !ref) && namedRoadSamples.length > 0) {
@@ -770,7 +771,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         const d2 = Math.min(dMid, dQ1, dQ2);
         if (d2 < bestD2) {
           bestD2 = d2;
-          if (!name && ns.name) name = ns.name;
+          if (!name && ns.name) { name = ns.name; nameZh = ns.nameZh; }
           if (!ref && ns.ref) ref = ns.ref;
         }
       }
@@ -809,7 +810,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
 
     if (isContext) {
-      roadContext.push([id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]);
+      roadContext.push([id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0, nameZh && nameZh !== name ? nameZh : ""]);
       continue;
     }
 
@@ -830,7 +831,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       }
     }
 
-    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0]; // [11] unpaved [terrain-roads]
+    const roadTuple = [id, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flatXYZ, unpaved ? 1 : 0, nameZh && nameZh !== name ? nameZh : ""]; // [11] unpaved [terrain-roads], [12] native/zh name when != name [road-names-zh]
     roads.push(roadTuple);
   }
 

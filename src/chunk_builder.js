@@ -1745,6 +1745,7 @@ function buildRoadsAndBridges(
       const midIdx = Math.floor(rFlat.length / 6) * 3;
       namedChunkRoads.push({
         name: baseName,
+        nameZh: (rName && roads[i][12]) || baseName, // [road-names-zh]
         cls: rCls,
         mx: rFlat[midIdx],
         mz: rFlat[midIdx + 2],
@@ -1792,11 +1793,13 @@ function buildRoadsAndBridges(
     if (!flat || flat.length < 6) continue;
 
     let resolvedRoadName = name || ref;
+    let resolvedRoadNameZh = (name && r[12]) || ''; // [road-names-zh] only when it differs from the EN-first name
     if (!resolvedRoadName) {
       const midIdx = Math.floor(flat.length / 6) * 3;
       const mx = flat[midIdx];
       const mz = flat[midIdx + 2];
       let nearestName = '';
+      let nearestZh = '';
       let bestDist = 140.0;
       for (let k = 0; k < namedChunkRoads.length; k++) {
         const nr = namedChunkRoads[k];
@@ -1804,6 +1807,7 @@ function buildRoadsAndBridges(
         if (d < bestDist) {
           bestDist = d;
           nearestName = nr.name;
+          nearestZh = nr.nameZh;
         }
       }
       const clsZh = ROAD_CLASS_ZH[cls] || '城市道路';
@@ -1815,6 +1819,7 @@ function buildRoadsAndBridges(
         } else {
           resolvedRoadName = `${nearestName}旁 · ${clsZh}`;
         }
+        if (nearestZh && nearestZh !== nearestName) resolvedRoadNameZh = nearestZh + resolvedRoadName.slice(nearestName.length);
       } else {
         resolvedRoadName = `${clsZh}${isBridge ? ' (高架桥)' : isTunnel ? ' (隧道)' : ''}`;
       }
@@ -2094,6 +2099,7 @@ function buildRoadsAndBridges(
             lanes,
             cls,
             name: resolvedRoadName,
+            nameZh: resolvedRoadNameZh || undefined, // [road-names-zh]
             rawName: name || ref || '',
             signName: name || '',
             ref: ref || '',

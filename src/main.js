@@ -422,7 +422,7 @@ class WorldExplorerApp {
         y: Number(this.pos.y.toFixed(2)),
         groundY: Number(getBeijingTerrainElevation(this.pos.x, this.pos.z).toFixed(2)), // [integration] test probe
         z: Math.round(this.pos.z),
-        road: getLang() === "en" ? translateRoadName(this.currentRoadName) : this.currentRoadName,
+        road: this._roadDisplayName(this.currentRoadName),
         layer: this.currentLayer,
         loadedChunks: this.loadedChunks.size,
         pendingChunks: this.pendingChunks.size,
@@ -632,6 +632,7 @@ class WorldExplorerApp {
     }
     if (bestS) {
       this.currentRoadName = streetName || bestS.name || this.currentRoadName;
+      this._noteRoadZh(bestS);
       if (this.mode !== "helicopter") {
         this.pos.set(
           (bestS.x1 + bestS.x2) * 0.5,
@@ -1400,6 +1401,7 @@ class WorldExplorerApp {
         this.camYawOffset = 0;
         this.camPivot.copy(this.pos);
         this.currentRoadName = label || bestS.name;
+        this._noteRoadZh(bestS);
         this.currentLayer = bestS.layer;
       }
     } else {
@@ -1409,6 +1411,7 @@ class WorldExplorerApp {
       if (surf) {
         exactY = surf.y;
         this.currentRoadName = surf.seg.name || label || t("map_teleport_label");
+        this._noteRoadZh(surf.seg);
         this.currentLayer = surf.seg.layer;
       } else if (bldgCeil !== null) {
         exactY = Math.max(exactY, bldgCeil + 0.22);
@@ -1513,6 +1516,7 @@ class WorldExplorerApp {
       const groundY = Math.max(surf ? Math.max(surf.y, minTerrY) : minTerrY, roofY + 0.12);
       if (surf) {
         this.currentRoadName = surf.seg.name;
+        this._noteRoadZh(surf.seg);
         this.currentLayer = surf.seg.layer;
       }
       if (this.pos.y <= groundY) {
@@ -1700,6 +1704,7 @@ class WorldExplorerApp {
     this.water.recordSafe(dt, centerSup.surf); // fix/water: respawn pose
     if (centerSup.surf) {
       this.currentRoadName = centerSup.surf.seg.name;
+      this._noteRoadZh(centerSup.surf.seg);
       this.currentLayer = centerSup.surf.seg.layer;
     } else {
       this.currentLayer = 0;
@@ -1829,9 +1834,20 @@ class WorldExplorerApp {
     }
   }
 
+  // [road-names-zh] remember the segment's native/Chinese name (only set when it differs from the EN-first name)
+  _noteRoadZh(seg) {
+    this._roadZh = seg && seg.nameZh ? { en: seg.name, zh: seg.nameZh } : null;
+  }
+
+  // [road-names-zh] pick the road label for the current language at display time
+  _roadDisplayName(raw) {
+    if (getLang() === "en") return translateRoadName(raw);
+    return this._roadZh && this._roadZh.en === raw ? this._roadZh.zh : raw;
+  }
+
   _updateHud() {
     const roadRaw = this.currentRoadName || t("urban_road_fallback");
-    const streetText = getLang() === "en" ? translateRoadName(roadRaw) : roadRaw;
+    const streetText = this._roadDisplayName(roadRaw);
     const cityText = this.currentCityName || "Beijing, CN";
 
     const pillTextEl = document.getElementById("location-pill-text");
