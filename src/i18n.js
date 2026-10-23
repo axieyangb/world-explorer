@@ -1076,11 +1076,15 @@ const PINYIN_ROAD_CLASS = {
   Lu: "Road", Jie: "Street", Dajie: "Avenue", Dadao: "Avenue", Dao: "Road", Xiang: "Lane", Hutong: "Alley",
   Tiao: "Lane", Gonglu: "Highway", Gaosu: "Expressway", Huanlu: "Ring Road", Huandao: "Roundabout",
   Beilu: "North Road", Nanlu: "South Road", Donglu: "East Road", Xilu: "West Road", Zhonglu: "Middle Road",
-  Beijie: "North Street", Nanjie: "South Street", Dongjie: "East Street", Xijie: "West Street"
+  Beijie: "North Street", Nanjie: "South Street", Dongjie: "East Street", Xijie: "West Street",
+  Beixiang: "North Lane", Nanxiang: "South Lane", Dongxiang: "East Lane", Xixiang: "West Lane"
 };
 function englishRoadClass(s) {
-  const m = s.match(/^(.+\S)\s+([A-Z][a-z]+)$/);
-  return m && PINYIN_ROAD_CLASS[m[2]] ? `${m[1]} ${PINYIN_ROAD_CLASS[m[2]]}` : s;
+  const m = s.match(/^(.+\S)\s+([A-Za-z]+)$/);
+  const key = m ? m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase() : "";
+  if (!m || !PINYIN_ROAD_CLASS[key] || (m[2] !== key && m[2] !== m[2].toUpperCase())) return s;
+  const en = PINYIN_ROAD_CLASS[key];
+  return `${m[1]} ${m[2] === key ? en : en.toUpperCase()}`;
 }
 
 // [road-names-en] Labels chunk_builder generates for unnamed ways; English never falls back to pinyin here.
