@@ -4,7 +4,7 @@ import * as THREE from "../../../vendor/three.module.js";
 import { getBeijingTerrainElevation } from "../../environment.js";
 import { CFG } from "./kaiju_config.js";
 import { KaijuFx } from "./kaiju_fx.js";
-import { KaijuAudio } from "./kaiju_audio.js";
+import { getWeaponSfx } from "../weapon_sfx.js"; // shared weapon/kaiju audio engine
 import { KaijuDestruction } from "./kaiju_destruction.js";
 import { KaijuCrowd } from "./kaiju_crowd.js";
 import { KaijuWeapons } from "./kaiju_weapons.js";
@@ -153,7 +153,7 @@ export class KaijuMode {
     if (this._systemsReady) return;
     this._systemsReady = true;
     this.fx = this.fx || safeNew(KaijuFx, this, "KaijuFx"); // may already exist from Fly mode (_updateAmbient)
-    this.audio = safeNew(KaijuAudio, this, "KaijuAudio");
+    this.audio = getWeaponSfx(this.app); // same engine as Fly-mode weapon sounds (one context, one mute)
     this.crowd = safeNew(KaijuCrowd, this, "KaijuCrowd");
     this.weapons = safeNew(KaijuWeapons, this, "KaijuWeapons");
     this.supply = safeNew(KaijuSupply, this, "KaijuSupply");
@@ -873,9 +873,9 @@ export class KaijuMode {
   }
 
   _onCollapse(x, z, size) {
-    if (!this.active) return;
     this._tmpV.set(x, getBeijingTerrainElevation(x, z), z);
-    this._call(this.audio, "play", "collapse", { pos: this._tmpV, gain: Math.min(1, 0.4 + (size || 20) / 80) });
+    this._call(this.audio || getWeaponSfx(this.app), "play", "collapse", { pos: this._tmpV, gain: Math.min(1, 0.4 + (size || 20) / 80) }); // Fly mode too
+    if (!this.active) return;
     this.shake(Math.min(0.8, 0.2 + (size || 20) / 100), x, this._tmpV.y, z);
   }
 

@@ -45,6 +45,7 @@ import { VenueRides } from "./features/venue_rides.js"; // [venues]
 import { PlacesInfo } from "./features/places_info/index.js"; // places-info
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
+import { getWeaponSfx } from "./features/weapon_sfx.js";
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
 import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
 import {
@@ -2337,6 +2338,7 @@ class WorldExplorerApp {
 
   triggerPlayerPunch() {
     if (this.mode !== "walk") return 0;
+    getWeaponSfx(this).play("punch", { gain: 0.6 });
     this._punchDuration = 0.32;
     this._punchTimer = this._punchDuration;
     this._punchHand = this._punchHand === "L" ? "R" : "L";
