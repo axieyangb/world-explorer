@@ -11,6 +11,7 @@ import { buildTrafficGraph, isLeftHandTraffic } from './traffic_graph.js';
 import { getSignalPhase, getSignalInfo, approachAxis, signalTime } from './signals.js';
 import * as daylight from './daylight.js';
 import { CAR_TYPES, createCarMeshes, createPedMesh } from './traffic_models.js';
+import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehicles]
 import { randomPersonLook, bit, OPT } from './person_model.js'; // [feature/people]
 
 const UMBRELLA_BIT = bit(OPT.UMBRELLA);
@@ -397,16 +398,20 @@ export class CityTraffic {
       const cls = de.e.cls;
       const r = Math.random();
       let type = 0;
-      if (cls >= 1 && cls <= 4 && r < 0.06) type = 4;
-      else if (r < 0.1) type = 3;
-      else if (r < 0.25) type = 1;
-      else if (r < 0.35) type = 2;
+      if (cls >= 1 && cls <= 4 && r < 0.05) type = 4;
+      else if (r < 0.09) type = 3;
+      else if (r < 0.21) type = 1;
+      else if (r < 0.30) type = 2;
+      else if (r < 0.43) type = 5; // tesla
+      else if (r < 0.52) type = 6; // cybertruck
+      else if (r < 0.60) type = 7; // ambulance
+      else if (r < 0.68) type = 8; // tow_truck
       c.type = type;
       const spec = CAR_TYPES[type];
       c.len = spec.length; c.wid = spec.width;
-      c.drv = (0.85 + Math.random() * 0.3) * (type === 4 ? 0.8 : 1);
+      c.drv = (0.85 + Math.random() * 0.3) * (type === 4 ? 0.8 : type === 7 ? 1.15 : type === 5 ? 1.1 : 1);
       c.v = CAR_SPEED[cls] * c.drv * 0.8;
-      c.paint = type === 1 ? this.taxiPaint : type === 0 || type === 2 ? pick(PAINTS) : null;
+      c.paint = type === 1 ? this.taxiPaint : type === 5 ? pick(TESLA_PAINTS) : type === 8 ? pick(TOW_TRUCK_PAINTS) : type === 0 || type === 2 ? pick(PAINTS) : null;
       c.next = this._chooseNext(de);
       c.brake = 0; c.blockedT = 0; c.ignoreT = 0; c.bumpT = 0; c.stuckT = 0;
       c.kWreck = 0; c.kPanic = 0; c.kSw = 0; c.kDrv = 0; // [kaiju]
