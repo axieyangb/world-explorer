@@ -84,6 +84,8 @@ export class KaijuCrowd {
   }
 
   _wreck(c) {
+    const D = this.traffic && this.traffic.damage; // [car-explosions] full explosion + charred wreck
+    if (D) { if (D.hit(c, 99, c.x, c.y, c.z, 'breath', 0)) this.stats.carsDestroyed++; return; }
     c.kWreck = 1;
     c.v = 0;
     c.brake = 0;

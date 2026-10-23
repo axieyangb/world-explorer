@@ -22,6 +22,7 @@ import {
 } from './traffic_models.js';
 import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehicles]
 import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.js'; // [feature/people]
+import { VehicleDamage, DAMAGE_BY_SOURCE } from './vehicle_damage.js'; // [car-explosions]
 
 const UMBRELLA_BIT = bit(OPT.UMBRELLA);
 
@@ -174,6 +175,8 @@ export class CityTraffic {
     this._tmpVecA = new THREE.Vector3();
     this._tmpVecB = new THREE.Vector3();
     this.stats = { cars: 0, peds: 0, ragdolls: 0, lying: 0, hits: 0, edges: 0, nodes: 0 };
+    this.damage = new VehicleDamage(app, this); // [car-explosions] HP, explosions, wrecks
+    app.vehicleDamage = this.damage;
     if (typeof window !== 'undefined') window.__cityTraffic = this; // debug/test handle
   }
 
@@ -361,6 +364,7 @@ export class CityTraffic {
       p.partsByName = null;
     }
     for (const pf of this.puffs) pf.active = false;
+    if (this.damage) this.damage.reset(); // [car-explosions]
     const o = this.app.worldOrigin || {};
     this.lht = isLeftHandTraffic(o.centerLat, o.centerLon);
     const uk = o.centerLat > 49.8 && o.centerLat < 61 && o.centerLon > -11 && o.centerLon < 2;
@@ -527,6 +531,7 @@ export class CityTraffic {
       c.next = this._chooseNext(de);
       c.brake = 0; c.blockedT = 0; c.ignoreT = 0; c.bumpT = 0; c.stuckT = 0;
       c.kWreck = 0; c.kPanic = 0; c.kSw = 0; c.kDrv = 0; // [kaiju]
+      if (this.damage) this.damage.onSpawn(c); // [car-explosions]
       c.rx = c.x; c.ry = c.y; c.rz = c.z; c.ryaw = Math.atan2(c.ux, c.uz); c.rpitch = 0;
       c.active = true;
       return true;
@@ -561,6 +566,7 @@ export class CityTraffic {
     const app = this.app;
     for (const c of this.cars) {
       if (!c.active) continue;
+      if (c.dFly && c.ry > (c.dGround || c.y || 0) + 1.8) continue; // [car-explosions] airborne wreck doesn't block ground
       c.obs = this._addObstacle(c.x, c.z, c.ux, c.uz, c.len * 0.5, c.wid * 0.5, c.v, 0, c);
     }
     for (const p of this.peds) {
@@ -580,10 +586,11 @@ export class CityTraffic {
   }
 
   _updateCar(c, dt, now) {
+    if (c.kWreck || c.dState >= 2) { c.v = 0; c.brake = c.kWreck ? 0 : 1; return; } // [car-explosions] wreck / burning: static obstacle
     if (this.kaiju && this.kaiju.car(c, dt)) return; // [kaiju] wreck / panic reverse
     const de = c.de, e = de.e;
     const o = this.obs;
-    let gap = Infinity, leadV = 0;
+    let gap = Infinity, leadV = 0, leadK = -1;
     const lx = c.x + c.ux * 15, lz = c.z + c.uz * 15;
     const cxk = Math.floor(lx / HASH), czk = Math.floor(lz / HASH);
     for (let i = -1; i <= 1; i++) {
@@ -598,14 +605,19 @@ export class CityTraffic {
           const hdot = o.hx[k] * c.ux + o.hz[k] * c.uz;
           if (o.kind[k] === 0 && hdot < -0.5) continue;
           if (c.ignoreT > 0 && o.kind[k] === 0 && hdot < 0.6) continue;
+          if (c.dPassT > 0 && o.kind[k] === 0 && o.ref[k] && (o.ref[k].kWreck || o.ref[k].dState >= 2)) continue; // [car-explosions] squeezing past
           const ah = Math.abs(hdot);
           const ext = ah * o.hw[k] + Math.sqrt(Math.max(0, 1 - ah * ah)) * o.hl[k];
           const lat = Math.abs(dx * c.uz - dz * c.ux);
           if (lat > c.wid * 0.5 + ext + 0.25) continue;
           const g = along - c.len * 0.5 - (ah * o.hl[k] + Math.sqrt(Math.max(0, 1 - ah * ah)) * o.hw[k]);
-          if (g < gap) { gap = g; leadV = o.v[k] * Math.max(0, hdot); }
+          if (g < gap) { gap = g; leadV = o.v[k] * Math.max(0, hdot); leadK = k; }
         }
       }
+    }
+    if (leadK >= 0 && this.damage && o.kind[leadK] === 0 && gap < 14 && c.v < 2) { // [car-explosions] route around wrecks
+      const L = o.ref[leadK];
+      if (L && (L.kWreck || L.dState >= 2)) this.damage.avoid(c, dt);
     }
 
     // Traffic signal at the end of this edge.
@@ -664,6 +676,7 @@ export class CityTraffic {
       c.next = this._chooseNext(nx);
     }
     this._carPose(c);
+    if (this.damage) this.damage.postPose(c, dt); // [car-explosions]
     if (this.kaiju) this.kaiju.carPost(c, dt); // [kaiju] swerve
   }
 
@@ -676,6 +689,7 @@ export class CityTraffic {
       if (!c.active) continue;
       const d = Math.hypot(c.x - p.x, c.z - p.z);
       if (d > CAR_DESPAWN || (c.stuckT > 30 && !this._visible(c.x, c.y, c.z))) { c.active = false; continue; }
+      if (c.dPose) { active++; continue; } // [car-explosions] flight / wreck pose owned by VehicleDamage
       if (c.kvx || c.kvz || c.kyawVel) {
         const drag = Math.exp(-4.2 * dt);
         c.kvx = (c.kvx || 0) * drag;
@@ -794,7 +808,7 @@ export class CityTraffic {
       ped.amp = 0.5;
       ped.ryaw = Math.atan2(ped.hx, ped.hz);
       ped.px = ped.x; ped.pz = ped.z;
-      ped.kFlee = 0; ped.kOff = 0; // [kaiju]
+      ped.kFlee = 0; ped.kOff = 0; ped.dFlee = 0; // [kaiju] [car-explosions]
       ped.active = true;
       return true;
     }
@@ -1034,6 +1048,7 @@ export class CityTraffic {
     const vx = isObj ? (opts.vx || 0) : (Number.isFinite(opts) ? opts : 0);
     const vy = isObj ? (opts.vy || 0) : 0;
     const vz = isObj ? (opts.vz || 0) : (Number.isFinite(vzArg) ? vzArg : 0);
+    const dmg = isObj ? (opts.damage ?? DAMAGE_BY_SOURCE[opts.source] ?? 0) : 0; // [car-explosions]
     const r2 = radius * radius;
     let count = 0;
     for (const ped of this.peds) {
@@ -1051,11 +1066,15 @@ export class CityTraffic {
     const carR = radius * 1.15;
     const carR2 = carR * carR;
     for (const c of this.cars) {
-      if (!c.active) continue;
-      const dx = c.x - x, dz = c.z - z;
+      if (!c.active || c.dPose || (isObj && opts.skip === c)) continue; // [car-explosions] flying / wrecked
+      const dx = (c.rx ?? c.x) - x, dz = (c.rz ?? c.z) - z; // [car-explosions] rendered pose (incl. knock offsets)
       const d2 = dx * dx + dz * dz;
       if (d2 <= carR2 && (!Number.isFinite(y) || Math.abs((c.y || 0) - y) <= Math.max(8.5, carR))) {
         const d = Math.sqrt(d2) || 0.2;
+        if (dmg > 0 && this.damage) { // [car-explosions] full damage within 3 m, quadratic falloff to the edge
+          const f = d <= 3 ? 1 : Math.max(0, 1 - (d - 3) / Math.max(0.1, carR - 3));
+          this.damage.hit(c, dmg * f * f, x, y, z, opts.source, opts.depth || 0);
+        }
         const falloff = Math.max(0.25, 1 - 0.55 * (d / carR));
         const outSpd = (12.0 + 7.5 * force) * falloff;
         c.kvx = (c.kvx || 0) + (dx / d) * outSpd + vx * 0.35;
@@ -1068,6 +1087,7 @@ export class CityTraffic {
         count++;
       }
     }
+    if (dmg > 0 && this.damage && !opts.noPlayer) this.damage.hitPlayerSphere(x, y, z, carR, dmg); // [car-explosions]
     return count;
   }
 
@@ -1162,14 +1182,14 @@ export class CityTraffic {
       const kvz = Math.cos(kj.yaw || 0) * 11;
       // Body & feet (18m)
       hits += this.triggerImpactSphere(kj.position.x, kj.position.y, kj.position.z, 18 * s, {
-        vx: kvx, vz: kvz, force: 1.5,
+        vx: kvx, vz: kvz, force: 1.5, source: 'kaijuBody',
       });
       if (kj.model && kj.model.soles) {
         for (let leg = 0; leg < kj.model.soles.length; leg++) {
           const sole = kj.model.anchorWorld(kj.model.soles[leg], this._tmpVecA);
           if (sole) {
             hits += this.triggerImpactSphere(sole.x, sole.y, sole.z, 18 * s, {
-              vx: kvx, vz: kvz, force: 1.55,
+              vx: kvx, vz: kvz, force: 1.55, source: 'kaijuBody',
             });
           }
         }
@@ -1178,11 +1198,11 @@ export class CityTraffic {
       if (kj.state === 'tailSwipe' && kj.model) {
         if (kj.model.tailTip) {
           const tip = kj.model.anchorWorld(kj.model.tailTip, this._tmpVecA);
-          hits += this.triggerImpactSphere(tip.x, tip.y, tip.z, 28 * s, { force: 1.65 });
+          hits += this.triggerImpactSphere(tip.x, tip.y, tip.z, 28 * s, { force: 1.65, source: 'tail' });
         }
         if (kj.model.tailMid) {
           const mid = kj.model.anchorWorld(kj.model.tailMid, this._tmpVecB);
-          hits += this.triggerImpactSphere(mid.x, mid.y, mid.z, 28 * s, { force: 1.6 });
+          hits += this.triggerImpactSphere(mid.x, mid.y, mid.z, 28 * s, { force: 1.6, source: 'tail' });
         }
         hits += this.triggerImpactSphere(kj.position.x, kj.position.y, kj.position.z, 28 * s, { force: 1.55 });
       }
@@ -1196,7 +1216,7 @@ export class CityTraffic {
           const bz = o.z + d.z * dist;
           if (by - kj.position.y < 45) {
             hits += this.triggerImpactSphere(bx, kj.position.y, bz, 18 * s, {
-              vx: d.x * 14, vz: d.z * 14, force: 1.65,
+              vx: d.x * 14, vz: d.z * 14, force: 1.65, source: 'breath',
             });
           }
         }
@@ -1324,6 +1344,7 @@ export class CityTraffic {
       return;
     }
     if (this.kaiju && this.kaiju.ped(ped, dt)) return; // [kaiju] panic flee (off the sidewalk graph)
+    if (this.damage && this.damage.ped(ped, dt)) return; // [car-explosions] flee from explosions
     const e = ped.e;
     if (!e.alive) { ped.active = false; return; }
     let speed = ped.v;
@@ -1627,6 +1648,11 @@ export class CityTraffic {
           c.kvz = (c.kvz || 0) - r.nz * dvAi;
           const torqueArm = (cxEff - app.pos.x) * r.nz - (czEff - app.pos.z) * r.nx;
           c.kyawVel = clamp((c.kyawVel || 0) + torqueArm * dvAi * 0.085, -4.8, 4.8);
+          if (this.damage && -relVn > 25) { // [car-explosions] very high-speed ram (> 90 km/h closing)
+            const ex = (-relVn - 20) * 0.3;
+            this.damage.hit(c, ex * 2 * mPlayer / (mPlayer + mAi), cxEff, c.y, czEff, 'ram', 0);
+            this.damage.hitPlayer(ex * mAi / (mPlayer + mAi));
+          }
         }
       }
       c.v *= 0.25;
@@ -1648,16 +1674,17 @@ export class CityTraffic {
       if (!c.active) continue;
       const cm = this.carMeshes[c.type];
       const i = counts[c.type]++;
-      eul.set(c.rpitch, c.ryaw, 0, 'YXZ');
+      eul.set(c.rpitch + (c.xPitch || 0), c.ryaw, c.xRoll || 0, 'YXZ'); // [car-explosions] spin
       q.setFromEuler(eul);
-      v3.set(c.rx, c.ry + 0.02, c.rz);
+      v3.set(c.rx, c.ry + 0.02 + (c.xLift || 0), c.rz);
       m4.compose(v3, q, s3);
       cm.mesh.setMatrixAt(i, m4);
       const pa = cm.iPaint.array;
       const paint = c.kWreck ? WRECK_PAINT : c.paint; // [kaiju]
       if (paint) { pa[i * 4] = paint.r; pa[i * 4 + 1] = paint.g; pa[i * 4 + 2] = paint.b; pa[i * 4 + 3] = 1; }
       else pa[i * 4 + 3] = 0;
-      cm.iBrake.array[i] = c.kWreck ? 0 : c.brake; // [kaiju]
+      const ch = c.kWreck ? 1 : (c.dChar || 0); // [car-explosions] negative iBrake = char amount (dark, lights off)
+      cm.iBrake.array[i] = ch > 0 ? -ch : c.brake; // [kaiju]
     }
     for (let t = 0; t < this.carMeshes.length; t++) {
       const cm = this.carMeshes[t];
@@ -1794,6 +1821,7 @@ export class CityTraffic {
     this._updatePuffs(dt);
     if (this.fillBoost > 0 && cars >= this.carTarget * 0.9 && peds >= this.pedTarget * 0.9 && this.carTarget > 0) this.fillBoost = 0;
     this._collidePlayer();
+    this.damage.update(dt); // [car-explosions]
     this.uniforms.uLights.value = this._lightsLevel();
     this._writeInstances(!camHigh);
     this.stats.cars = cars;

@@ -847,7 +847,7 @@ export class HeliFlight {
       for (let i = 0; i < cars.length; i++) {
         const c = cars[i];
         if (!c.active) continue;
-        const cx = c.x - o.x, cy = (c.y || 0) + 0.9 - o.y, cz = c.z - o.z;
+        const cx = (c.rx ?? c.x) - o.x, cy = (c.ry ?? c.y ?? 0) + 0.9 - o.y, cz = (c.rz ?? c.z) - o.z; // [car-explosions] rendered pose
         const along = cx * d.x + cy * d.y + cz * d.z;
         if (along <= 0 || along >= best) continue;
         const px = cx - d.x * along, py = cy - d.y * along, pz = cz - d.z * along;
@@ -1020,9 +1020,10 @@ export class HeliFlight {
       const carHitR2 = isRocket ? 4.4 * 4.4 : 2.8 * 2.8;
       for (const c of traffic.cars || []) {
         if (!c.active) continue;
-        const dx = c.x - p.x, dz = c.z - p.z, dy = (c.y || 0) + 0.9 - p.y;
+        const cx = c.rx ?? c.x, cy = c.ry ?? c.y ?? 0, cz = c.rz ?? c.z; // [car-explosions] rendered pose
+        const dx = cx - p.x, dz = cz - p.z, dy = cy + 0.9 - p.y;
         if (dx * dx + dz * dz <= carHitR2 && Math.abs(dy) <= 3.2) {
-          return { x: c.x, y: c.y || floorY, z: c.z };
+          return { x: cx, y: cy || floorY, z: cz };
         }
       }
       const pedHitR2 = isRocket ? 3.5 * 3.5 : 2.2 * 2.2;
@@ -1102,6 +1103,7 @@ export class HeliFlight {
         vy: isRocket ? 7.5 : 3.5,
         vz: p.vz * 0.08,
         force: isRocket ? 2.2 : 1.4,
+        damage: isRocket ? 6 : 1, source: isRocket ? 'rocket' : 'heliCannon', // [car-explosions]
       });
       this.weaponStats.trafficHits += hits;
     }
