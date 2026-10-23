@@ -41,6 +41,7 @@ import { StreetFeatures } from "./features/street_furniture.js"; // [feature/str
 import { PlacesSystem } from "./features/places.js"; // feature/places
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
+import { getWeaponSfx } from "./features/weapon_sfx.js";
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
 import {
   getLang,
@@ -2321,6 +2322,7 @@ class WorldExplorerApp {
 
   triggerPlayerPunch() {
     if (this.mode !== "walk") return 0;
+    getWeaponSfx(this).play("punch", { gain: 0.6 });
     this._punchDuration = 0.32;
     this._punchTimer = this._punchDuration;
     this._punchHand = this._punchHand === "L" ? "R" : "L";
