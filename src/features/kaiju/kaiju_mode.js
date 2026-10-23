@@ -65,6 +65,7 @@ export class KaijuMode {
     this.supply = null;
     this.super = null;
     this.kaiju = null;
+      this.monster = null;
     this._systemsReady = false;
 
     this._introT = 0;
@@ -614,6 +615,7 @@ export class KaijuMode {
       spawn = { x: app.pos.x + Math.sin(a) * CFG.SPAWN_DIST, z: app.pos.z + Math.cos(a) * CFG.SPAWN_DIST, fromWater: false, targetX: app.pos.x, targetZ: app.pos.z };
     }
     this.kaiju = safeNew(Kaiju, this, "Kaiju");
+    this.monster = this.kaiju;
     this._call(this.kaiju, "spawn", spawn);
     this._call(this.destruction, "beginTracking", spawn.x, spawn.z, CFG.CITY_TRACK_RADIUS);
     this._call(this.crowd, "activate");
@@ -884,7 +886,7 @@ export class KaijuMode {
   _updateAmbient(dt) {
     if (!this.destruction) return;
     if (!this._ambient) {
-      if (this.app.mode !== "helicopter") return;
+      if (this.app.mode !== "helicopter" && this.app.mode !== "walk" && this.app.mode !== "drive") return;
       this._ambient = true;
       if (!this.fx) this.fx = safeNew(KaijuFx, this, "KaijuFx");
     }

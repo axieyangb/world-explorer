@@ -134,6 +134,8 @@ export const I18N = {
       chunks_unit: '区块',
       sonic_boom: '音爆',
       mode_walk_badge: '街头步行 (Shift 量子疾跑)',
+      mode_hint_walking: 'WASD 移动 · Shift 疾跑 · 空格 射击 · X 火箭筒 · R 切枪 · F 出拳 · E 驾车',
+      mode_hint_tank: 'WASD 驾驶 · 空格/左键 120mm主炮 · Shift 加速 · V 换车 · E 下车',
       mode_heli_badge: '涡轴直升机 (Shift 双发加力)',
       mode_drive_fallback: '实车驾驶',
       cam_chase: '3D 追尾',
@@ -176,6 +178,11 @@ export const I18N = {
       taxi: '城市出租车',
       police: '警用巡逻车',
       bus: '城市巴士',
+      tesla: 'Model S',
+      cybertruck: '赛博皮卡',
+      ambulance: '急救车',
+      tow_truck: '救援清障车',
+      tank: '主战坦克',
     },
     bookmarks: {
       tiananmen: {
@@ -443,6 +450,8 @@ export const I18N = {
       chunks_unit: 'chunks',
       sonic_boom: 'Sonic Boom',
       mode_walk_badge: 'Walking (Shift Cyber-Sprint)',
+      mode_hint_walking: 'WASD Walk · Shift Run · Space Shoot · X RPG · R Weapon · F Punch · E Drive',
+      mode_hint_tank: 'WASD Drive · Space/LClick 120mm Cannon · Shift Boost · V Vehicle · E Exit',
       mode_heli_badge: 'Turbine Helicopter (Shift Afterburner)',
       mode_drive_fallback: 'Driving',
       cam_chase: '3D Chase',
@@ -485,6 +494,11 @@ export const I18N = {
       taxi: 'City Taxi',
       police: 'Police Cruiser',
       bus: 'City Bus',
+      tesla: 'Model S',
+      cybertruck: 'Cybertruck',
+      ambulance: 'Ambulance',
+      tow_truck: 'Tow Truck',
+      tank: 'Main Battle Tank',
     },
     bookmarks: {
       tiananmen: {
