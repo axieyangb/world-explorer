@@ -20,6 +20,7 @@ import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
 } from './landmarks_40.js';
+import { buildRailTrack } from './features/rail_build.js'; // [feature/rail-transit]
 
 /**
  * Converts a float [0..1] RGB array into a compact normalized Uint8Array (3 bytes/vertex instead of 12).
@@ -964,7 +965,9 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         }
 
         // 3. Railways & Elevated Subway Viaducts
-        buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
+        // [feature/rail-transit] real-geometry tracks (ballast/street/catenary/viaducts) + vehicle network payload
+        if (data.rail) root.userData.rail = buildRailTrack(data.rail, ox, oz, subGroups.railways, mats, roadSegments);
+        else buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
 
         buildingTask = createBuildingBuildTask(
           data.buildings || [],
@@ -3484,6 +3487,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       street: root.userData.street || null, // [feature/street]
       vegInstances: vegInstancesForTransfer(root.userData.vegInstances, transferSet), // [feature/vegetation]
       places: root.userData.places || null, // feature/places
+      rail: root.userData.rail || null, // [feature/rail-transit]
       waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
       deckSegments: root.userData.deckSegments || [], // fix/water
       roadGrid: roadGridTransfer(buildRoadGrid(root.userData.roadSegments, root.userData.deckSegments), transferSet), // fix/water
@@ -3560,6 +3564,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     street: payload.street || null, // [feature/street]
     vegInstances: payload.vegInstances || null, // [feature/vegetation]
     places: payload.places || null, // feature/places
+    rail: payload.rail || null, // [feature/rail-transit]
     waterMask: payload.waterMask || null, // fix/water
     deckSegments: payload.deckSegments || [], // fix/water
     roadGrid: payload.roadGrid !== undefined ? payload.roadGrid : undefined, // fix/water (built lazily if absent)

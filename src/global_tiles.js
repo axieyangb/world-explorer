@@ -1,6 +1,7 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
+import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
 
 const DEFAULT_TILE_TEMPLATE = "https://tiles.openfreemap.org/planet/20261018_080001_pt/{z}/{x}/{y}.pbf";
 let resolvedTileTemplate = null;
@@ -507,9 +508,11 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   const [tx1, ty1] = latLonToTileXY(minLat, maxLon, z);
 
   const tilePromises = [];
+  const tileXY = []; // [feature/rail-transit] tile coords for exact-extent rail clipping
   for (let tx = Math.min(tx0, tx1); tx <= Math.max(tx0, tx1); tx++) {
     for (let ty = Math.min(ty0, ty1); ty <= Math.max(ty0, ty1); ty++) {
       tilePromises.push(fetchDecodedMvtTile(z, tx, ty));
+      tileXY.push([z, tx, ty]); // [feature/rail-transit]
     }
   }
   const tiles = await Promise.all(tilePromises);
@@ -1316,6 +1319,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     osm_trees: [],
     vegetation: { lat: centerLat, landcover: extractLandcoverPolys(tiles, toLocalXZ) }, // [feature/vegetation]
     places: extractPlaceFeatures(tiles, toLocalXZ, origin), // feature/places
+    rail: extractRailFeatures(tiles, tileXY, toLocalXZ), // [feature/rail-transit]
   };
 }
 

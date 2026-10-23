@@ -1178,7 +1178,7 @@ export function computePlacesPayload(ctx) {
   }
 
   // ---------------------------------------------------------------- 7. Rail polylines for moving trains (world coords)
-  for (const rw of data.railways || []) {
+  for (const rw of data.rail ? [] : data.railways || []) { // [feature/rail-transit] owns trains when data.rail exists
     const [, rtype, , , , isTunnel, , flat] = rw;
     if (isTunnel || !flat || flat.length < 6) continue;
     if (rtype !== 'rail' && rtype !== 'subway') continue;
