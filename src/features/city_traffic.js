@@ -691,9 +691,17 @@ export class CityTraffic {
         c.kxOff *= rec;
         c.kzOff *= rec;
       }
+      if (c.kvy || (c.kyOff && c.kyOff > 0)) {
+        c.kyOff = (c.kyOff || 0) + (c.kvy || 0) * dt;
+        c.kvy = (c.kvy || 0) - 18.5 * dt;
+        if (c.kyOff <= 0) {
+          c.kyOff = 0;
+          c.kvy = Math.abs(c.kvy) > 2.2 ? -c.kvy * 0.28 : 0;
+        }
+      }
       const k = 1 - Math.exp(-dt * 10);
       c.rx += (c.x + (c.kxOff || 0) - c.rx) * k;
-      c.ry += (c.y - c.ry) * k;
+      c.ry += (c.y + (c.kyOff || 0) - c.ry) * k;
       c.rz += (c.z + (c.kzOff || 0) - c.rz) * k;
       let dy = Math.atan2(c.ux, c.uz) - c.ryaw;
       dy -= Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
@@ -1037,6 +1045,26 @@ export class CityTraffic {
         const ivx = vx + (dx / d) * outSpd;
         const ivz = vz + (dz / d) * outSpd;
         if (this.hitPedestrian(ped, x, Number.isFinite(y) ? y : ped.y, z, ivx, vy, ivz, force)) count++;
+      }
+    }
+    const carR = radius * 1.15;
+    const carR2 = carR * carR;
+    for (const c of this.cars) {
+      if (!c.active) continue;
+      const dx = c.x - x, dz = c.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 <= carR2 && (!Number.isFinite(y) || Math.abs((c.y || 0) - y) <= Math.max(8.5, carR))) {
+        const d = Math.sqrt(d2) || 0.2;
+        const falloff = Math.max(0.25, 1 - 0.55 * (d / carR));
+        const outSpd = (12.0 + 7.5 * force) * falloff;
+        c.kvx = (c.kvx || 0) + (dx / d) * outSpd + vx * 0.35;
+        c.kvz = (c.kvz || 0) + (dz / d) * outSpd + vz * 0.35;
+        c.kvy = Math.max(c.kvy || 0, (4.2 + 3.8 * force) * falloff);
+        c.kyawVel = (c.kyawVel || 0) + ((c.obs & 1) ? 1 : -1) * (4.2 + 3.0 * force) * falloff;
+        c.bumpT = Math.max(c.bumpT || 0, 2.8);
+        c.v = 0;
+        this._spawnImpactPuff(c.x, (c.y || 0) + 0.8, c.z, c.kvx, c.kvz, force);
+        count++;
       }
     }
     return count;

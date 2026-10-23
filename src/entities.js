@@ -819,7 +819,7 @@ export function createHelicopterModel() {
   noseGlass.position.set(0, 1.35, 1.65);
   fuselage.add(noseGlass);
 
-  // Side stub-wings (for high-speed compound helicopter lift & contrails)
+  // Side stub-wings (for high-speed compound helicopter lift, contrails & under-wing rocket pods)
   const stubWing = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.12, 0.85), bodyMat);
   stubWing.position.set(0, 1.18, -0.15);
   fuselage.add(stubWing);
@@ -828,6 +828,20 @@ export function createHelicopterModel() {
     wingPod.position.set(sx, 1.18, -0.10);
     fuselage.add(wingPod);
   }
+  // Under-wing Hydra 70 rocket pods (±1.68m) + nose chin 30mm rotary cannon turret
+  for (const sx of [-1.68, 1.68]) {
+    const rocketPod = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 1.35, 10), darkMetal);
+    rocketPod.rotation.x = Math.PI * 0.5;
+    rocketPod.position.set(sx, 0.94, 0.05);
+    fuselage.add(rocketPod);
+  }
+  const chinTurret = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), darkMetal);
+  chinTurret.position.set(0, 0.72, 2.25);
+  fuselage.add(chinTurret);
+  const cannonBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 1.15, 8), darkMetal);
+  cannonBarrel.rotation.x = Math.PI * 0.5;
+  cannonBarrel.position.set(0, 0.68, 2.75);
+  fuselage.add(cannonBarrel);
 
   // 3. Twin Turbine Engine Nacelles on Top Deck
   for (const sx of [-0.58, 0.58]) {

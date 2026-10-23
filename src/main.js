@@ -403,6 +403,7 @@ class WorldExplorerApp {
         nitroActive: Boolean(this.nitroActive),
         heliLanded: Boolean(this.heliLanded),
         heliAutoLanding: Boolean(this.heliAutoLanding),
+        heliWeapons: this.heli ? { ...this.heli.weaponStats } : null,
         x: Math.round(this.pos.x),
         y: Number(this.pos.y.toFixed(2)),
         groundY: Number(getBeijingTerrainElevation(this.pos.x, this.pos.z).toFixed(2)), // [integration] test probe
@@ -1880,9 +1881,15 @@ class WorldExplorerApp {
 
       if (e.code === "KeyL" && !e.repeat && this.mode === "helicopter") {
         this._ensureHeli().toggleAutoLand();
+      } else if (e.code === "KeyX" && !e.repeat && this.mode === "helicopter") {
+        this._ensureHeli().fireRockets();
       } else if (e.code === "KeyF" && !e.repeat) {
         if (this.mode === "helicopter") {
-          this.setMode(this.heliLanded ? "walk" : "drive");
+          if (this.heliLanded || (this.heli && this.heli.state.grounded)) {
+            this.setMode("walk");
+          } else {
+            this._ensureHeli().fireRockets();
+          }
         } else if (this.mode === "walk") {
           const hits = this.triggerPlayerPunch();
           if (hits === 0 && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 8) {
@@ -1967,12 +1974,15 @@ class WorldExplorerApp {
     });
 
     this.canvas.addEventListener("pointerup", (e) => {
+      const moveDist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
       if (e.button === 0 && this.mode === "walk") {
-        const moveDist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
         if (moveDist < 6) {
           this._lastPointerPunchAt = performance.now();
           this.triggerPlayerPunch();
         }
+      } else if (this.mode === "helicopter" && moveDist < 6) {
+        if (e.button === 0) this._ensureHeli().fireCannon();
+        else if (e.button === 2) this._ensureHeli().fireRockets();
       }
     });
 
@@ -2019,8 +2029,8 @@ class WorldExplorerApp {
     let text;
     if (this.mode === "helicopter") {
       text = zh
-        ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · L 降落 · F 下机"
-        : "W/S Move · A/D Turn · Q/E Down/Up · ←/→ Strafe · L Land · F Exit";
+        ? "W/S 移动 · A/D 转向 · Q/E 升降 · ←/→ 平移 · 空格 机炮 · F 火箭弹 · L 降落"
+        : "W/S Move · A/D Turn · Q/E Alt · ←/→ Strafe · Space Cannon · F Rockets · L Land";
     } else if (this.mode === "walk") {
       text = zh
         ? "WASD 步行 · Shift 疾跑 · 空格 跳跃 · F/点击 出拳 · E 驾车 · C 直升机"

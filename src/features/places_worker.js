@@ -1134,14 +1134,19 @@ export function computePlacesPayload(ctx) {
 
   // ---------------------------------------------------------------- 6. Steel bridge railings + girders over water
   if (isPointInWater) {
-    const RAIL = [0.30, 0.33, 0.35];
-    const GIRDER = [0.42, 0.45, 0.47];
+    const BASE_RAIL = [0.30, 0.33, 0.35];
+    const BASE_GIRDER = [0.42, 0.45, 0.47];
+    const GGB_RAIL = [0.78, 0.23, 0.18];
+    const GGB_GIRDER = [0.66, 0.19, 0.15];
     let budget = 9000;
     for (const s of roadSegments) {
       if (!s.bridge || s.tunnel || budget <= 0) continue;
       if (s.cls === 'footway' || s.cls === 'path' || s.cls === 'pedestrian') continue;
       const lx1 = s.x1 - ox, lz1 = s.z1 - oz, lx2 = s.x2 - ox, lz2 = s.z2 - oz;
       if (!inWater((lx1 + lx2) / 2, (lz1 + lz2) / 2)) continue;
+      const isGgb = /golden\s*gate|金门大桥/i.test(s.name || s.rawName || '') || (s.y1 > 54.0 && s.y2 > 54.0);
+      const RAIL = isGgb ? GGB_RAIL : BASE_RAIL;
+      const GIRDER = isGgb ? GGB_GIRDER : BASE_GIRDER;
       const len = Math.hypot(lx2 - lx1, lz2 - lz1);
       if (len < 1) continue;
       const dx = (lx2 - lx1) / len, dz = (lz2 - lz1) / len;

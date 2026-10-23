@@ -14,6 +14,8 @@ export const QUICK_WORLD_DESTINATIONS = [
   { id: "nyc_times_sq", name: "New York · Times Square", nameZh: "纽约 · 时代广场", street: "Broadway & 7th Ave", city: "New York, US", cityZh: "美国 纽约", lat: 40.7580, lon: -73.9855 },
   { id: "tokyo_shibuya", name: "Tokyo · Shibuya", nameZh: "东京 · 涩谷十字路口", street: "Shibuya Crossing", city: "Tokyo, JP", cityZh: "日本 东京", lat: 35.6595, lon: 139.7004 },
   { id: "sf_embarcadero", name: "San Francisco · Embarcadero", nameZh: "旧金山 · 内河码头", street: "The Embarcadero", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.7955, lon: -122.3937 },
+  { id: "sf_golden_gate", name: "San Francisco · Golden Gate", nameZh: "旧金山 · 金门大桥", street: "Golden Gate Bridge · US 101", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.8199, lon: -122.4783 },
+  { id: "sf_alcatraz", name: "San Francisco · Alcatraz Island", nameZh: "旧金山 · 恶魔岛", street: "Alcatraz Island · SF Bay", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.8267, lon: -122.4230 },
   { id: "london_westminster", name: "London · Westminster", nameZh: "伦敦 · 威斯敏斯特", street: "Bridge St · Westminster", city: "London, UK", cityZh: "英国 伦敦", lat: 51.5007, lon: -0.1246 },
   { id: "paris_eiffel", name: "Paris · Eiffel Tower", nameZh: "巴黎 · 埃菲尔铁塔", street: "Quai Jacques Chirac", city: "Paris, FR", cityZh: "法国 巴黎", lat: 48.8584, lon: 2.2945 },
   { id: "hk_central", name: "Hong Kong · Central", nameZh: "香港 · 中环维港", street: "Connaught Rd Central", city: "Hong Kong, CN", cityZh: "中国 香港", lat: 22.2819, lon: 114.1581 },
@@ -1083,11 +1085,40 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     buildings[i] = buildings[i].tuple;
   }
 
-  // 5. Extract `water_polys` and `water_lines`
+  // 5. Extract `water_polys`, cross-tile `island_holes`, and `water_lines`
   const water_polys = [];
   const water_lines = [];
+  const island_holes = [];
   const seenWaterKeys = new Set();
+  const seenHoleKeys = new Set();
   let waterIdSeq = (cx * 40 + cz) * 5000 + 1;
+
+  // First pass: collect all island holes across all overlapping tiles so an adjacent tile un-holed water polygon never drowns an island
+  for (const t of tiles) {
+    for (const f of t.water || []) {
+      if (f.type !== 3) continue;
+      for (const poly of f.geom) {
+        for (const hRing of poly.holes || []) {
+          const rawH = [];
+          for (let i = 0; i < hRing.length; i++) {
+            const [lx, lz] = toLocalXZ(hRing[i][0], hRing[i][1]);
+            rawH.push(lx, lz);
+          }
+          const ch = clipRingToBoxXZ(rawH, -504.0, 504.0);
+          if (ch.length >= 6) {
+            let hsx = 0, hsz = 0;
+            for (let i = 0; i < ch.length; i += 2) { hsx += ch[i]; hsz += ch[i + 1]; }
+            const hn = ch.length / 2;
+            const hKey = `${Math.round(hsx / hn / 6)},${Math.round(hsz / hn / 6)},${hn}`;
+            if (!seenHoleKeys.has(hKey)) {
+              seenHoleKeys.add(hKey);
+              island_holes.push(ch);
+            }
+          }
+        }
+      }
+    }
+  }
 
   for (const t of tiles) {
     for (const f of t.water || []) {
@@ -1196,12 +1227,89 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
   }
 
+  // Ensure Alcatraz Island (37.8267, -122.4230) has an explicit water cutout hole, rocky dry-land ground, and iconic 3D Cellhouse/Lighthouse/Water Tower
+  if (Math.abs(centerLat - 37.8267) < 0.25 && Math.abs(centerLon - -122.4230) < 0.25) {
+    const [acx, acz] = toLocalXZ(37.8267, -122.4230);
+    if (Math.abs(acx) < 820 && Math.abs(acz) < 820) {
+      const ang = -0.62; // NW-SE axis of Alcatraz Island (-35.5 deg)
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const makeEllipticalRing = (rx, rz, nPts = 24) => {
+        const ring = [];
+        for (let i = 0; i < nPts; i++) {
+          const th = (i / nPts) * Math.PI * 2;
+          const ex = Math.cos(th) * rx, ez = Math.sin(th) * rz;
+          const lx = acx + ex * ca - ez * sa;
+          const lz = acz + ex * sa + ez * ca;
+          ring.push(Math.round(lx * 10) / 10, Math.round(lz * 10) / 10);
+        }
+        return ring;
+      };
+      const rawShore = makeEllipticalRing(295.0, 136.0, 24);
+      const clippedShore = clipRingToBoxXZ(rawShore, -504.0, 504.0);
+      if (clippedShore.length >= 6) {
+        island_holes.push(clippedShore);
+        const clippedGround = clipRingToBoxXZ(makeEllipticalRing(284.0, 128.0, 24), -500.0, 500.0);
+        if (clippedGround.length >= 6) {
+          parks.push([parkIdSeq++, "Alcatraz Island · 恶魔岛", "square", clippedGround]);
+        }
+        const clippedGarden = clipRingToBoxXZ(makeEllipticalRing(245.0, 102.0, 20), -500.0, 500.0);
+        if (clippedGarden.length >= 6) {
+          parks.push([parkIdSeq++, "Alcatraz Gardens", "park", clippedGarden]);
+        }
+      }
+      // Boost height of existing Alcatraz buildings & add signature 3D landmarks if center is in chunk
+      for (const b of buildings) {
+        const fo = b[11];
+        if (!fo || fo.length < 6) continue;
+        const bx = fo[0], bz = fo[1];
+        if (Math.hypot(bx - acx, bz - acz) < 280.0) {
+          if (b[4] < 11.5) b[4] = 12.5;
+          if (!b[1]) b[1] = "Alcatraz Historic Building · 恶魔岛建筑";
+          if (!b[9]) b[9] = "#d6c7b2";
+        }
+      }
+      const addAlcatrazLandmark = (idOff, name, lat, lon, hw, hd, heightM, colorHex) => {
+        const [lx, lz] = toLocalXZ(lat, lon);
+        if (lx < -500 || lx >= 500 || lz < -500 || lz >= 500) return;
+        const corners = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]];
+        const ring = [];
+        for (const [cx0, cz0] of corners) {
+          ring.push(
+            Math.round((lx + cx0 * ca - cz0 * sa) * 10) / 10,
+            Math.round((lz + cx0 * sa + cz0 * ca) * 10) / 10
+          );
+        }
+        ring.push(ring[0], ring[1]);
+        buildings.push([
+          980000 + idOff,
+          name,
+          "public",
+          0,
+          heightM,
+          0,
+          Math.max(2, Math.round(heightM / 3.8)),
+          "modern",
+          "flat",
+          colorHex,
+          null,
+          ring,
+          [],
+        ]);
+      };
+      addAlcatrazLandmark(1, "Alcatraz Main Cellhouse · 恶魔岛主监狱大楼", 37.8267, -122.4230, 54.0, 18.0, 21.0, "#d8cbb8");
+      addAlcatrazLandmark(2, "Alcatraz Lighthouse · 恶魔岛灯塔", 37.8260, -122.4222, 5.5, 5.5, 28.5, "#f2efe9");
+      addAlcatrazLandmark(3, "Alcatraz Water Tower · 恶魔岛水塔", 37.8275, -122.4239, 6.2, 6.2, 30.0, "#c7beb0");
+      addAlcatrazLandmark(4, "Alcatraz Ferry Dock & Barracks · 恶魔岛码头营房", 37.8269, -122.4215, 32.0, 11.0, 14.5, "#cbbca8");
+    }
+  }
+
   return {
     roads,
     railways,
     buildings,
     water_polys,
     water_lines,
+    island_holes,
     parks,
     facilities,
     highwayJunctions,
@@ -1294,7 +1402,13 @@ export async function fetchGlobalDem(centerLat, centerLon) {
     return Math.max(0.0, elev);
   };
 
-  const baseAslM = sampleRawAsl(centerLat, centerLon);
+  // Use minimum ASL within ~6 km so coastal cities/islands (e.g. Alcatraz, Golden Gate) keep 0.0m sea-level baseline
+  let baseAslM = sampleRawAsl(centerLat, centerLon);
+  for (let dLat = -0.05; dLat <= 0.05; dLat += 0.025) {
+    for (let dLon = -0.06; dLon <= 0.06; dLon += 0.03) {
+      baseAslM = Math.min(baseAslM, sampleRawAsl(centerLat + dLat, centerLon + dLon));
+    }
+  }
   const elevations = new Array(gridSize * gridSize);
   let ptr = 0;
   for (let iz = 0; iz < gridSize; iz++) {
@@ -1308,13 +1422,30 @@ export async function fetchGlobalDem(centerLat, centerLon) {
     }
   }
 
+  const osmPeaks = [];
+  if (Math.abs(centerLat - 37.82) < 0.35 && Math.abs(centerLon - -122.44) < 0.35) {
+    const addPeak = (name, pLat, pLon, relEle) => {
+      const wx = Math.round((pLon - centerLon) * mPerDegLon);
+      const wz = Math.round((centerLat - pLat) * mPerDegLat);
+      osmPeaks.push([name, wx, wz, relEle]);
+    };
+    // Alcatraz Island rocky sandstone ridge (~28m-39m ASL)
+    addPeak("Alcatraz North Ridge", 37.8278, -122.4243, 28.0);
+    addPeak("Alcatraz Cellhouse Plateau", 37.8267, -122.4230, 39.0);
+    addPeak("Alcatraz South Lighthouse Bluff", 37.8256, -122.4216, 31.0);
+    // Golden Gate Bridge North (Marin) & South (Presidio) approach bluffs + Yerba Buena Island
+    addPeak("Marin Headlands GGB Bluff", 37.8328, -122.4798, 66.0);
+    addPeak("Presidio Fort Point Bluff", 37.8075, -122.4754, 58.0);
+    addPeak("Yerba Buena Island", 37.8105, -122.3655, 48.0);
+  }
+
   return {
     gridSize,
     stepM,
     minWorld,
     baseAslM: Math.round(baseAslM * 10) / 10,
     elevations,
-    osmPeaks: [],
+    osmPeaks,
     isBeijing,
   };
 }

@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three.module.js';
 import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
 import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
 import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
-import { buildBridgeDecks, levelWaterBridgeRawYs, collectMajorBridgeWays } from './features/bridge_deck.js'; // fix/water
+import { buildBridgeDecks, levelWaterBridgeRawYs, collectMajorBridgeWays, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js'; // fix/water
 import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js'; // fix/water
 import {
   getBeijingTerrainElevation,
@@ -619,6 +619,7 @@ export function createSharedMaterials() {
     vertexColors: true,
     roughness: 0.45,
     metalness: 0.22,
+    side: THREE.DoubleSide,
   });
 
   const fallbackFacadeArray = createFallbackFacadeArrayTexture();
@@ -943,7 +944,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           roadSegments,
           isPointInWater,
           isPointInSunkenTrench,
-          roadEntities
+          roadEntities,
+          worldOrigin
         );
 
         // fix/water: fill gaps between parallel narrow bridge ways (deck strip + physics-only deck segments)
@@ -1050,6 +1052,20 @@ export function pointInRing2D(px, pz, flat) {
  */
 function createWaterMaskChecker(data) {
   const polys = [];
+  const allIslandHoles = [];
+  const pushHoleRing = (ring) => {
+    if (!ring || ring.length < 6) return;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i < ring.length; i += 2) {
+      const x = ring[i], z = ring[i + 1];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+    allIslandHoles.push({ minX, maxX, minZ, maxZ, ring });
+  };
+  for (const h of data.island_holes || []) pushHoleRing(h);
   for (const wp of data.water_polys || []) {
     const [, , fo, fh] = wp;
     if (!fo || fo.length < 6) continue;
@@ -1061,6 +1077,7 @@ function createWaterMaskChecker(data) {
       if (z < minZ) minZ = z;
       if (z > maxZ) maxZ = z;
     }
+    for (const h of fh || []) pushHoleRing(h);
     polys.push({ minX, maxX, minZ, maxZ, outer: fo, holes: fh || [] });
   }
 
@@ -1081,6 +1098,11 @@ function createWaterMaskChecker(data) {
   }
 
   const isSinglePointInWater = (lx, lz) => {
+    for (let h = 0; h < allIslandHoles.length; h++) {
+      const hr = allIslandHoles[h];
+      if (lx < hr.minX || lx > hr.maxX || lz < hr.minZ || lz > hr.maxZ) continue;
+      if (pointInRing2D(lx, lz, hr.ring)) return false;
+    }
     for (let i = 0; i < polys.length; i++) {
       const p = polys[i];
       if (lx < p.minX || lx > p.maxX || lz < p.minZ || lz > p.maxZ) continue;
@@ -1454,10 +1476,23 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     targetGroup.add(mesh);
   }
 
-  // Water polygons & river ribbons (subdivided to 32m to follow 3D DEM terrain + pure vertical (0,1,0) normals)
+  // Water polygons & river ribbons (subdivided to follow 3D DEM terrain + pure vertical (0,1,0) normals)
   const waterPos = [];
   const waterNorm = [];
   const waterUv = []; // feature/atmosphere: shore distance for the water shader
+  const chunkHoleRings = [...(data.island_holes || [])];
+  for (const wp of data.water_polys || []) {
+    for (const fh of wp[3] || []) {
+      if (fh && fh.length >= 6) chunkHoleRings.push(fh);
+    }
+  }
+  const inAnyIslandHole = (lx, lz) => {
+    for (let h = 0; h < chunkHoleRings.length; h++) {
+      if (pointInRing2D(lx, lz, chunkHoleRings[h])) return true;
+    }
+    return false;
+  };
+
   for (let wIdx = 0; wIdx < (data.water_polys || []).length; wIdx++) {
     const wp = data.water_polys[wIdx];
     const [osmId, , flatOuter, flatHoles] = wp;
@@ -1465,6 +1500,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
 
     // Render each multi-chunk water polygon only once in its unique bbox-center owner chunk
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    let minPolyTerr = Infinity;
     const contour = [];
     for (let i = 0; i < flatOuter.length; i += 2) {
       const x = flatOuter[i], z = flatOuter[i + 1];
@@ -1472,6 +1508,8 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
       if (x > maxX) maxX = x;
       if (z < minZ) minZ = z;
       if (z > maxZ) maxZ = z;
+      const tElev = getBeijingTerrainElevation(ox + x, oz + z);
+      if (tElev < minPolyTerr) minPolyTerr = tElev;
       contour.push(new THREE.Vector2(x, z));
     }
     const wcx = (minX + maxX) * 0.5;
@@ -1493,19 +1531,42 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     const allPts = [...contour];
     for (const h of holes) allPts.push(...h);
     const tris = THREE.ShapeUtils.triangulateShape(contour, holes);
-    const subTris = subdivideTriangles2D(allPts, tris, 32.0);
-    const wyOff = 0.28 + ((osmId || wIdx) % 19) * 0.002;
+    const subTris = subdivideTriangles2D(allPts, tris, chunkHoleRings.length > 0 ? 18.0 : 32.0);
+    const isSeaLevelPoly = minPolyTerr <= 1.2;
+    const keptSubTris = [];
     for (let i = 0; i < subTris.length; i += 6) {
       const ax = subTris[i], az = subTris[i + 1];
       const bx = subTris[i + 2], bz = subTris[i + 3];
       const cx = subTris[i + 4], cz = subTris[i + 5];
-      const ya = getBeijingTerrainElevation(ox + ax, oz + az) + wyOff;
-      const yb = getBeijingTerrainElevation(ox + bx, oz + bz) + wyOff;
-      const yc = getBeijingTerrainElevation(ox + cx, oz + cz) + yOffWater(wyOff);
+      const mx = (ax + bx + cx) / 3.0;
+      const mz = (az + bz + cz) / 3.0;
+      if (chunkHoleRings.length > 0) {
+        if (inAnyIslandHole(mx, mz)) continue;
+        const hCount = (inAnyIslandHole(ax, az) ? 1 : 0) + (inAnyIslandHole(bx, bz) ? 1 : 0) + (inAnyIslandHole(cx, cz) ? 1 : 0);
+        if (hCount >= 2) continue;
+      }
+      if (isSeaLevelPoly && getBeijingTerrainElevation(ox + mx, oz + mz) > 1.6) {
+        continue;
+      }
+      keptSubTris.push(ax, az, bx, bz, cx, cz);
+    }
+    if (keptSubTris.length === 0) continue;
+
+    const wyOff = 0.28 + ((osmId || wIdx) % 19) * 0.002;
+    for (let i = 0; i < keptSubTris.length; i += 6) {
+      const ax = keptSubTris[i], az = keptSubTris[i + 1];
+      const bx = keptSubTris[i + 2], bz = keptSubTris[i + 3];
+      const cx = keptSubTris[i + 4], cz = keptSubTris[i + 5];
+      const ta = getBeijingTerrainElevation(ox + ax, oz + az);
+      const tb = getBeijingTerrainElevation(ox + bx, oz + bz);
+      const tc = getBeijingTerrainElevation(ox + cx, oz + cz);
+      const ya = (isSeaLevelPoly ? Math.min(0.42, ta) : ta) + wyOff;
+      const yb = (isSeaLevelPoly ? Math.min(0.42, tb) : tb) + wyOff;
+      const yc = (isSeaLevelPoly ? Math.min(0.42, tc) : tc) + yOffWater(wyOff);
       waterPos.push(ax, ya, az, cx, yc, cz, bx, yb, bz);
       waterNorm.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
     }
-    appendPolyShoreUv(waterUv, subTris, flatOuter, flatHoles); // feature/atmosphere
+    appendPolyShoreUv(waterUv, keptSubTris, flatOuter, chunkHoleRings.length > 0 ? chunkHoleRings : flatHoles); // feature/atmosphere
   }
 
   for (let lIdx = 0; lIdx < (data.water_lines || []).length; lIdx++) {
@@ -1644,7 +1705,8 @@ function buildRoadsAndBridges(
   roadSegments,
   isPointInWater,
   isPointInSunkenTrench = null,
-  entityTable = []
+  entityTable = [],
+  worldOrigin = null
 ) {
   const rPos = [];
   const rCol = [];
@@ -1653,6 +1715,24 @@ function buildRoadsAndBridges(
   const mCol = [];
 
   const bPos = []; // Bridge concrete parapets, deck soffits & piers
+  const bColPos = []; // Colored structural steel (e.g. Golden Gate Bridge International Orange #c0362c towers, cables & trusses)
+  const bColClr = [];
+  const ggbDoneBins = new Set();
+  const ggbDoneTowers = new Set();
+  const pushColQuad = (x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, rgb) => {
+    pushQuad(bColPos, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4);
+    for (let k = 0; k < 6; k++) bColClr.push(rgb[0], rgb[1], rgb[2]);
+  };
+  const pushCableBeam = (ax, ay, az, bx, by, bz, rad, rgb) => {
+    const dx = bx - ax, dz = bz - az;
+    const hl = Math.hypot(dx, dz) || 1;
+    const nx = (-dz / hl) * rad, nz = (dx / hl) * rad;
+    // Top, bottom, left, right faces of cable tube
+    pushColQuad(ax - nx, ay + rad, az - nz, ax + nx, ay + rad, az + nz, bx + nx, by + rad, bz + nz, bx - nx, by + rad, bz - nz, rgb);
+    pushColQuad(ax + nx, ay - rad, az + nz, ax - nx, ay - rad, az - nz, bx - nx, by - rad, bz - nz, bx + nx, by - rad, bz + nz, rgb);
+    pushColQuad(ax - nx, ay - rad, az - nz, ax - nx, ay + rad, az - nz, bx - nx, by + rad, bz - nz, bx - nx, by - rad, bz - nz, rgb);
+    pushColQuad(ax + nx, ay + rad, az + nz, ax + nx, ay - rad, az + nz, bx + nx, by - rad, bz + nz, bx + nx, by + rad, bz + nz, rgb);
+  };
   let majorBridgeWays = null; // fix/water: lazily collected for levelWaterBridgeRawYs
 
   // Pre-collect named roads in this chunk so unnamed ramps/service ways can inherit nearby road names
@@ -1804,10 +1884,25 @@ function buildRoadsAndBridges(
             ? Math.max(-0.8, Math.min(0.2, rY * 0.14))
             : Math.min(0.2, rY);
     }
-    // fix/water: one consistent deck height for water-crossing bridges (+ no riverbed dips), while keeping >= 6.8m overpass height
-    if (isBridge && isOverWater && isScenicArchBridge) {
-      levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, true, isPointInWater, getBeijingTerrainElevation,
-        majorBridgeWays || (majorBridgeWays = collectMajorBridgeWays(roads)));
+    const isGoldenGateBridge = Boolean(
+      isBridge && isGoldenGateBridgeWay(name || resolvedRoadName, ox + flat[midIdx], oz + flat[midIdx + 2], worldOrigin)
+    );
+    // fix/water: one consistent deck height for all water-crossing bridges (+ Golden Gate 64m suspension profile & Bay Bridge 52m profile)
+    if (isBridge && (isPointInWater || isGoldenGateBridge)) {
+      levelWaterBridgeRawYs(
+        flat,
+        rawYs,
+        nPts,
+        ox,
+        oz,
+        isScenicArchBridge || isMinorWay,
+        isPointInWater || (() => false),
+        getBeijingTerrainElevation,
+        majorBridgeWays || (majorBridgeWays = collectMajorBridgeWays(roads)),
+        name || resolvedRoadName,
+        cls,
+        worldOrigin
+      );
     }
     // Skip rendering 3D mesh for 1D topological _link connectors that dive directly into a sunken open-trench highway
     // (where the sunken highway and ground auxiliary road already touch at the trench retaining wall).
@@ -2115,17 +2210,20 @@ function buildRoadsAndBridges(
             isPointInSunkenTrench &&
             isPointInSunkenTrench.isEdgeInsideOtherElevated(rx1, rz1, rx2, rz2, wid, midRawY);
 
-          // Only build raised concrete parapet wall on true outer edges of a multi-way bridge / Y-split ramp
+          const ggbOrange = [0.76, 0.22, 0.17]; // International Orange (#c0362c)
+          const ggbDarkOrange = [0.58, 0.16, 0.13];
+          const effDeckDepth = isGoldenGateBridge ? 2.6 : deckDepth;
+          const effRailH = isGoldenGateBridge ? 1.35 : railH;
+
+          // Only build raised parapet wall on true outer edges of a multi-way bridge / Y-split ramp
           if (!hasBridgeLeft) {
-            const topL1 = leftInOtherDeck ? ly1 - 0.04 : ly1 + railH;
-            const topL2 = leftInOtherDeck ? ly2 - 0.04 : ly2 + railH;
-            pushQuad(
-              bPos,
-              lx1, ly1 - deckDepth, lz1,
-              lx2, ly2 - deckDepth, lz2,
-              lx2, topL2, lz2,
-              lx1, topL1, lz1
-            );
+            const topL1 = leftInOtherDeck ? ly1 - 0.04 : ly1 + effRailH;
+            const topL2 = leftInOtherDeck ? ly2 - 0.04 : ly2 + effRailH;
+            if (isGoldenGateBridge) {
+              pushColQuad(lx1, ly1 - effDeckDepth, lz1, lx2, ly2 - effDeckDepth, lz2, lx2, topL2, lz2, lx1, topL1, lz1, ggbOrange);
+            } else {
+              pushQuad(bPos, lx1, ly1 - effDeckDepth, lz1, lx2, ly2 - effDeckDepth, lz2, lx2, topL2, lz2, lx1, topL1, lz1);
+            }
           } else {
             // Seal the deck gap to the adjacent parallel bridge way on the left (+nx, +nz)
             const sealW = 7.5;
@@ -2138,25 +2236,21 @@ function buildRoadsAndBridges(
               lx2, ly2 - 0.03, lz2
             );
             for (let k = 0; k < 6; k++) rCol.push(rgb[0] * 0.92, rgb[1] * 0.92, rgb[2] * 0.92);
-            pushQuad(
-              bPos,
-              lx1 + nx * sealW, ly1 - deckDepth, lz1 + nz * sealW,
-              lx1, ly1 - deckDepth, lz1,
-              lx2, ly2 - deckDepth, lz2,
-              lx2 + nx * sealW, ly2 - deckDepth, lz2 + nz * sealW
-            );
+            if (isGoldenGateBridge) {
+              pushColQuad(lx1 + nx * sealW, ly1 - effDeckDepth, lz1 + nz * sealW, lx1, ly1 - effDeckDepth, lz1, lx2, ly2 - effDeckDepth, lz2, lx2 + nx * sealW, ly2 - effDeckDepth, lz2 + nz * sealW, ggbDarkOrange);
+            } else {
+              pushQuad(bPos, lx1 + nx * sealW, ly1 - effDeckDepth, lz1 + nz * sealW, lx1, ly1 - effDeckDepth, lz1, lx2, ly2 - effDeckDepth, lz2, lx2 + nx * sealW, ly2 - effDeckDepth, lz2 + nz * sealW);
+            }
           }
 
           if (!hasBridgeRight) {
-            const topR1 = rightInOtherDeck ? ry1 - 0.04 : ry1 + railH;
-            const topR2 = rightInOtherDeck ? ry2 - 0.04 : ry2 + railH;
-            pushQuad(
-              bPos,
-              rx2, ry2 - deckDepth, rz2,
-              rx1, ry1 - deckDepth, rz1,
-              rx1, topR1, rz1,
-              rx2, topR2, rz2
-            );
+            const topR1 = rightInOtherDeck ? ry1 - 0.04 : ry1 + effRailH;
+            const topR2 = rightInOtherDeck ? ry2 - 0.04 : ry2 + effRailH;
+            if (isGoldenGateBridge) {
+              pushColQuad(rx2, ry2 - effDeckDepth, rz2, rx1, ry1 - effDeckDepth, rz1, rx1, topR1, rz1, rx2, topR2, rz2, ggbOrange);
+            } else {
+              pushQuad(bPos, rx2, ry2 - effDeckDepth, rz2, rx1, ry1 - effDeckDepth, rz1, rx1, topR1, rz1, rx2, topR2, rz2);
+            }
           } else {
             // Seal the deck gap to the adjacent parallel bridge way on the right (-nx, -nz)
             const sealW = 7.5;
@@ -2169,41 +2263,110 @@ function buildRoadsAndBridges(
               rx2 - nx * sealW, ry2 - 0.03, rz2 - nz * sealW
             );
             for (let k = 0; k < 6; k++) rCol.push(rgb[0] * 0.92, rgb[1] * 0.92, rgb[2] * 0.92);
-            pushQuad(
-              bPos,
-              rx1, ry1 - deckDepth, rz1,
-              rx1 - nx * sealW, ry1 - deckDepth, rz1 - nz * sealW,
-              rx2 - nx * sealW, ry2 - deckDepth, rz2 - nz * sealW,
-              rx2, ry2 - deckDepth, rz2
-            );
+            if (isGoldenGateBridge) {
+              pushColQuad(rx1, ry1 - effDeckDepth, rz1, rx1 - nx * sealW, ry1 - effDeckDepth, rz1 - nz * sealW, rx2 - nx * sealW, ry2 - effDeckDepth, rz2 - nz * sealW, rx2, ry2 - effDeckDepth, rz2, ggbDarkOrange);
+            } else {
+              pushQuad(bPos, rx1, ry1 - effDeckDepth, rz1, rx1 - nx * sealW, ry1 - effDeckDepth, rz1 - nz * sealW, rx2 - nx * sealW, ry2 - effDeckDepth, rz2 - nz * sealW, rx2, ry2 - effDeckDepth, rz2);
+            }
           }
 
-          // Solid concrete bridge deck underside soffit slab
-          pushQuad(
-            bPos,
-            lx1, ly1 - deckDepth, lz1,
-            rx1, ry1 - deckDepth, rz1,
-            rx2, ry2 - deckDepth, rz2,
-            lx2, ly2 - deckDepth, lz2
-          );
+          // Solid bridge deck underside soffit slab
+          if (isGoldenGateBridge) {
+            pushColQuad(lx1, ly1 - effDeckDepth, lz1, rx1, ry1 - effDeckDepth, rz1, rx2, ry2 - effDeckDepth, rz2, lx2, ly2 - effDeckDepth, lz2, ggbDarkOrange);
+          } else {
+            pushQuad(bPos, lx1, ly1 - effDeckDepth, lz1, rx1, ry1 - effDeckDepth, rz1, rx2, ry2 - effDeckDepth, rz2, lx2, ly2 - effDeckDepth, lz2);
+          }
+
+          // Golden Gate Bridge 3D H-Frame Suspension Towers, Parabolic Catenary Main Cables & Vertical Suspender Cables
+          if (isGoldenGateBridge && (cls === 'trunk' || cls === 'motorway' || cls === 'primary')) {
+            const ll1 = worldXZToLatLon(ox + cx1, oz + cz1, worldOrigin);
+            const ll2 = worldXZToLatLon(ox + cx2, oz + cz2, worldOrigin);
+            if (ll1 && ll2) {
+              const lat1 = ll1[0], lat2 = ll2[0];
+              const mLat = (lat1 + lat2) * 0.5;
+              const sampleGgbCableLift = (latVal) => {
+                // South Tower at 37.8143, North Tower at 37.8255 (main span 1,280m, side spans ~345m)
+                if (latVal >= 37.8143 && latVal <= 37.8255) {
+                  const u = (latVal - 37.8199) / 0.0056; // -1 at S Tower, 0 at Mid-Span, +1 at N Tower
+                  return 4.5 + 83.5 * u * u;
+                } else if (latVal >= 37.8082 && latVal < 37.8143) {
+                  const u = (latVal - 37.8082) / (37.8143 - 37.8082);
+                  return 2.0 + 86.0 * u * u;
+                } else if (latVal > 37.8255 && latVal <= 37.8316) {
+                  const u = (37.8316 - latVal) / (37.8316 - 37.8255);
+                  return 2.0 + 86.0 * u * u;
+                }
+                return 0.0;
+              };
+              const lift1 = sampleGgbCableLift(lat1);
+              const lift2 = sampleGgbCableLift(lat2);
+              const binKey = Math.round((oz + (cz1 + cz2) * 0.5) / 14.0);
+              if (lift1 > 1.5 && lift2 > 1.5 && !ggbDoneBins.has(binKey)) {
+                ggbDoneBins.add(binKey);
+                // Orient lateral offset consistently East/West so parallel NB/SB carriageways align
+                const sgn = nx >= 0 ? 1 : -1;
+                const ex = nx * sgn * 15.2, ez = nz * sgn * 15.2;
+                const cableY1 = cy1 + lift1, cableY2 = cy2 + lift2;
+                // Left & Right Parabolic Main Catenary Cables (0.62m radius International Orange steel tubes)
+                pushCableBeam(cx1 + ex, cableY1, cz1 + ez, cx2 + ex, cableY2, cz2 + ez, 0.58, ggbOrange);
+                pushCableBeam(cx1 - ex, cableY1, cz1 - ez, cx2 - ex, cableY2, cz2 - ez, 0.58, ggbOrange);
+                // Vertical Suspender Ropes every 14m from main catenary cable down to outer deck truss
+                const suspY = (cy1 + cy2) * 0.5 - 1.2;
+                const suspTop = (cableY1 + cableY2) * 0.5;
+                if (suspTop > suspY + 2.0) {
+                  pushColoredBox(bColPos, bColClr, mx + ex, suspY, mz + ez, 0.28, suspTop - suspY, 0.28, [0.68, 0.20, 0.16]);
+                  pushColoredBox(bColPos, bColClr, mx - ex, suspY, mz - ez, 0.28, suspTop - suspY, 0.28, [0.68, 0.20, 0.16]);
+                }
+              }
+              // Emit the two monumental 227m Art Deco H-Frame Suspension Towers at South Tower (37.8143) & North Tower (37.8255)
+              for (const [tTag, tLat] of [['S', 37.8143], ['N', 37.8255]]) {
+                if (!ggbDoneTowers.has(tTag) && Math.abs(mLat - tLat) < 0.00045) {
+                  ggbDoneTowers.add(tTag);
+                  const sgn = nx >= 0 ? 1 : -1;
+                  const ex = nx * sgn * 15.2, ez = nz * sgn * 15.2;
+                  const deckY = (cy1 + cy2) * 0.5;
+                  const towerTopY = deckY + 88.5;
+                  // 1. Concrete ocean pier fender base (-3.5m to +8.5m ASL)
+                  pushColoredBox(bColPos, bColClr, mx, -3.5, mz, 36.0, 12.0, 13.5, [0.64, 0.66, 0.69]);
+                  // 2. Twin stepped Art Deco H-Frame vertical tower legs at ±15.2m (clear of the roadway!)
+                  for (const side of [-1, 1]) {
+                    const lxT = mx + ex * side, lzT = mz + ez * side;
+                    pushColoredBox(bColPos, bColClr, lxT, 8.0, lzT, 4.8, deckY + 24.0 - 8.0, 5.2, ggbOrange);
+                    pushColoredBox(bColPos, bColClr, lxT, deckY + 24.0, lzT, 4.0, 34.0, 4.4, ggbOrange);
+                    pushColoredBox(bColPos, bColClr, lxT, deckY + 58.0, lzT, 3.2, 30.5, 3.6, ggbOrange);
+                  }
+                  // 3. Sub-deck horizontal portal struts (at y = 24m and y = 46m, well below the 64.5m roadway)
+                  for (const subY of [24.0, 46.0]) {
+                    pushCableBeam(mx - ex, subY, mz - ez, mx + ex, subY, mz + ez, 1.8, ggbDarkOrange);
+                  }
+                  // 4. Four iconic upper Art Deco horizontal portal cross-beams high above the roadway (+22m, +43m, +64m, +84m)
+                  for (const liftCross of [22.0, 43.0, 64.0, 84.0]) {
+                    pushCableBeam(mx - ex, deckY + liftCross, mz - ez, mx + ex, deckY + liftCross, mz + ez, 2.1, ggbOrange);
+                  }
+                }
+              }
+            }
+          }
+
           if (isHighPedOverpass && ((i === 0 && sStep === 0) || (i === nPts - 2 && sStep === subSteps - 1))) {
             const px = i === 0 && sStep === 0 ? cx1 : cx2;
             const pz = i === 0 && sStep === 0 ? cz1 : cz2;
             const baseTerr = i === 0 && sStep === 0 ? terrY1 : terrY2;
-            const pyTop = (i === 0 && sStep === 0 ? cy1 : cy2) - deckDepth * 0.5;
+            const pyTop = (i === 0 && sStep === 0 ? cy1 : cy2) - effDeckDepth * 0.5;
             if (pyTop > baseTerr + 0.5) {
               pushBox(bPos, px, baseTerr, pz, 1.3, pyTop - baseTerr, 1.3);
             }
           } else if (
             !isHighPedOverpass &&
             !isScenicArchBridge &&
+            !(isGoldenGateBridge && onWater) &&
             (rawY1 + rawY2) * 0.5 > 2.8 &&
             Math.floor((subAccumDist + segLen) / 36) > Math.floor(subAccumDist / 36)
           ) {
             const px = (cx1 + cx2) * 0.5;
             const pz = (cz1 + cz2) * 0.5;
             const baseTerr = (terrY1 + terrY2) * 0.5;
-            const pyTop = (cy1 + cy2) * 0.5 - deckDepth * 0.5;
+            const pyTop = (cy1 + cy2) * 0.5 - effDeckDepth * 0.5;
             const pw = Math.min(1.4, widthM * 0.16);
             if (pyTop > baseTerr + 0.5) {
               pushBox(bPos, px, baseTerr, pz, pw, pyTop - baseTerr, pw);
@@ -2386,6 +2549,17 @@ function buildRoadsAndBridges(
     geom.setAttribute('position', new THREE.Float32BufferAttribute(bPos, 3));
     finalizeAndReleaseGeometry(geom, true);
     const mesh = new THREE.Mesh(geom, mats.bridgeStructMat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    bridgeGroup.add(mesh);
+  }
+
+  if (bColPos.length > 0) {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(bColPos, 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(toUint8Colors(bColClr), 3, true));
+    finalizeAndReleaseGeometry(geom, true);
+    const mesh = new THREE.Mesh(geom, mats.facilityMat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     bridgeGroup.add(mesh);

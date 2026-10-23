@@ -17,6 +17,7 @@ const WATER_Y_OFFSET = 0.28; // matches buildParksAndWater's polygon offset
 const DRIVE_EXCLUDE = new Set(['footway', 'steps', 'cycleway', 'path', 'pedestrian', 'track', 'bridleway']);
 
 function setBit(bits, idx) { bits[idx >> 3] |= 1 << (idx & 7); }
+function clearBit(bits, idx) { bits[idx >> 3] &= ~(1 << (idx & 7)); }
 
 function fillPolygon(bits, outer, holes) {
   const rings = [outer];
@@ -88,6 +89,35 @@ export function buildWaterMask(data) {
     fillPolygon(bits, outer, wp[3]);
     any = true;
   }
+  const clearHoleRing = (ring) => {
+    if (!ring || ring.length < 6) return;
+    let minZ = Infinity, maxZ = -Infinity;
+    for (let i = 1; i < ring.length; i += 2) { if (ring[i] < minZ) minZ = ring[i]; if (ring[i] > maxZ) maxZ = ring[i]; }
+    const r0 = Math.max(0, Math.floor((minZ - MIN) / CELL));
+    const r1 = Math.min(N - 1, Math.floor((maxZ - MIN) / CELL));
+    const xs = [];
+    for (let r = r0; r <= r1; r++) {
+      const zc = MIN + (r + 0.5) * CELL;
+      xs.length = 0;
+      const n = ring.length;
+      for (let i = 0, j = n - 2; i < n; j = i, i += 2) {
+        const zi = ring[i + 1], zj = ring[j + 1];
+        if ((zi > zc) !== (zj > zc)) xs.push(ring[i] + ((zc - zi) * (ring[j] - ring[i])) / (zj - zi));
+      }
+      if (xs.length < 2) continue;
+      xs.sort((a, b) => a - b);
+      const row = r * N;
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const c0 = Math.max(0, Math.ceil((xs[k] - MIN) / CELL - 0.5));
+        const c1 = Math.min(N - 1, Math.ceil((xs[k + 1] - MIN) / CELL - 0.5) - 1);
+        for (let c = c0; c <= c1; c++) clearBit(bits, row + c);
+      }
+    }
+  };
+  for (const wp of polys) {
+    for (const h of wp[3] || []) clearHoleRing(h);
+  }
+  for (const h of data.island_holes || []) clearHoleRing(h);
   for (const wl of lines) {
     const [, cls, , widthM, flat] = wl;
     if (!flat || flat.length < 4) continue;

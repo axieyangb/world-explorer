@@ -114,10 +114,10 @@ const ICON_CLOSE =
 const ICON_LOCATE =
   '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.5l5.2 12.5L8 11 2.8 14z" fill="currentColor"/></svg>';
 
-const PLACE_PRIORITY = { country: 0, state: 1, city: 2, town: 3, suburb: 4, village: 5, quarter: 6, neighbourhood: 7, hamlet: 8 };
+const PLACE_PRIORITY = { country: 0, state: 1, city: 2, town: 3, island: 3, suburb: 4, village: 5, islet: 5, quarter: 6, neighbourhood: 7, hamlet: 8 };
 const PLACE_FONT = {
-  country: '600 15px', state: '500 13px', city: '600 15px', town: '600 13px',
-  suburb: '600 10.5px', village: '500 12px', quarter: '600 10px', neighbourhood: '600 10px', hamlet: '500 11px',
+  country: '600 15px', state: '500 13px', city: '600 15px', town: '600 13px', island: '600 13px',
+  suburb: '600 10.5px', village: '500 12px', islet: '600 11.5px', quarter: '600 10px', neighbourhood: '600 10px', hamlet: '500 11px',
 };
 const FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "PingFang SC", "Noto Sans CJK SC", sans-serif';
 

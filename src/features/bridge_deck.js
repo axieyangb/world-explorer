@@ -115,19 +115,46 @@ export function collectMajorBridgeWays(roads) {
   return out;
 }
 
-// bank-to-bank deck line (+1 m) through (lx, lz) along axis (ax, az), absolute Y
-function bankDeckY(lx, lz, ax, az, ox, oz, isPointInWater, terrainAt) {
+export function worldXZToLatLon(wx, wz, worldOrigin) {
+  if (!worldOrigin || !worldOrigin.mPerDegLat || !worldOrigin.mPerDegLon) return null;
+  return [
+    worldOrigin.centerLat - wz / worldOrigin.mPerDegLat,
+    worldOrigin.centerLon + wx / worldOrigin.mPerDegLon,
+  ];
+}
+
+export function isGoldenGateBridgeWay(name, wx, wz, worldOrigin) {
+  if (name && /golden\s*gate|金门大桥/i.test(name)) return true;
+  const ll = worldXZToLatLon(wx, wz, worldOrigin);
+  if (!ll) return false;
+  const [lat, lon] = ll;
+  return lat >= 37.803 && lat <= 37.837 && lon >= -122.486 && lon <= -122.470;
+}
+
+export function isBayBridgeWay(name, wx, wz, worldOrigin) {
+  if (name && /bay\s*bridge|海湾大桥/i.test(name)) return true;
+  const ll = worldXZToLatLon(wx, wz, worldOrigin);
+  if (!ll) return false;
+  const [lat, lon] = ll;
+  return lat >= 37.785 && lat <= 37.826 && lon >= -122.392 && lon <= -122.325;
+}
+
+// bank-to-bank deck line (+1 m, plus shipping-channel arch on wide water crossings) through (lx, lz) along axis (ax, az), absolute Y
+function bankDeckY(lx, lz, ax, az, ox, oz, isPointInWater, terrainAt, minor = false) {
   const march = (sx, sz) => {
-    for (let d = 3; d <= 420; d += 3) {
+    for (let d = 4; d <= 1200; d += 6) {
       const px = lx + sx * d, pz = lz + sz * d;
       if (!isPointInWater(px, pz, 0)) return [px, pz, d];
     }
-    return [lx + sx * 420, lz + sz * 420, 420];
+    return [lx + sx * 1200, lz + sz * 1200, 1200];
   };
   const [px0, pz0, d0] = march(-ax, -az);
   const [px1, pz1, d1] = march(ax, az);
   const h0 = terrainAt(ox + px0, oz + pz0), h1 = terrainAt(ox + px1, oz + pz1);
-  return h0 + (h1 - h0) * (d0 / (d0 + d1)) + 1.0;
+  const span = d0 + d1;
+  const u = d0 / Math.max(1e-6, span);
+  const arch = !minor && span >= 140 ? Math.min(24.0, span * 0.03) * (4 * u * (1 - u)) : 0.0;
+  return h0 + (h1 - h0) * u + 1.0 + arch;
 }
 
 // height of the nearest roughly-parallel major bridge way within 25 m, as rendered after levelling
@@ -155,7 +182,37 @@ function majorDeckY(majors, lx, lz, ax, az, ox, oz, terrainAt, isPointInWater) {
   return y;
 }
 
-export function levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, minor, isPointInWater, terrainAt, majors = null) {
+export function levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, minor, isPointInWater, terrainAt, majors = null, name = '', cls = '', worldOrigin = null) {
+  const midIdx = Math.floor(nPts * 0.5) * 3;
+  const mwx = ox + flat[midIdx], mwz = oz + flat[midIdx + 2];
+
+  // 1. Golden Gate Bridge high suspension deck profile (~58m at bluff anchorages -> 67.5m at mid-span 37.8199)
+  if (isGoldenGateBridgeWay(name, mwx, mwz, worldOrigin)) {
+    for (let i = 0; i < nPts; i++) {
+      const lx = flat[i * 3], lz = flat[i * 3 + 2];
+      const wx = ox + lx, wz = oz + lz;
+      const ll = worldXZToLatLon(wx, wz, worldOrigin);
+      const lat = ll ? ll[0] : 37.8199;
+      const u = Math.max(-1.0, Math.min(1.0, (lat - 37.8199) / 0.0125));
+      const targetAsl = 67.5 - 9.5 * u * u;
+      const t0 = terrainAt(wx, wz);
+      rawYs[i] = Math.max(rawYs[i], targetAsl - t0);
+    }
+    return true;
+  }
+
+  // 2. San Francisco-Oakland Bay Bridge high shipping-channel profile (~52m ASL over water)
+  if (isBayBridgeWay(name, mwx, mwz, worldOrigin)) {
+    for (let i = 0; i < nPts; i++) {
+      const lx = flat[i * 3], lz = flat[i * 3 + 2];
+      const wx = ox + lx, wz = oz + lz;
+      const t0 = terrainAt(wx, wz);
+      const targetAsl = 52.0;
+      rawYs[i] = Math.max(rawYs[i], targetAsl - t0);
+    }
+    return true;
+  }
+
   let wet = false;
   for (let i = 0; i < nPts && !wet; i++) {
     const x = flat[i * 3], z = flat[i * 3 + 2];
@@ -181,7 +238,7 @@ export function levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, minor, isPointI
     let tx = flat[ib * 3] - flat[ia * 3], tz = flat[ib * 3 + 2] - flat[ia * 3 + 2];
     const tl = Math.hypot(tx, tz);
     if (tl > 0.5) { tx /= tl; tz /= tl; } else { tx = ax; tz = az; }
-    let deckY = bankDeckY(lx, lz, tx, tz, ox, oz, isPointInWater, terrainAt);
+    let deckY = bankDeckY(lx, lz, tx, tz, ox, oz, isPointInWater, terrainAt, minor);
     // sidewalks / cycle tracks of a road bridge ride at the carriageway's height
     if (minor && majors && majors.length) {
       const my = majorDeckY(majors, lx, lz, tx, tz, ox, oz, terrainAt, isPointInWater);
@@ -193,23 +250,21 @@ export function levelWaterBridgeRawYs(flat, rawYs, nPts, ox, oz, minor, isPointI
   }
   // interior land vertices (e.g. a low riverside quay passing under the bridge) never dip below the
   // straight deck line between the neighbouring anchors (way ends / over-water vertices)
-  if (minor) {
-    const cum = new Float64Array(nPts);
-    for (let i = 1; i < nPts; i++) cum[i] = cum[i - 1] + Math.hypot(flat[i * 3] - flat[(i - 1) * 3], flat[i * 3 + 2] - flat[(i - 1) * 3 + 2]);
-    const absY = (i) => terrainAt(ox + flat[i * 3], oz + flat[i * 3 + 2]) + rawYs[i];
-    let prev = 0;
-    for (let i = 1; i < nPts; i++) {
-      if (!anchor[i]) continue;
-      if (i - prev > 1) {
-        const y0 = absY(prev), y1 = absY(i);
-        for (let k = prev + 1; k < i; k++) {
-          const u = (cum[k] - cum[prev]) / Math.max(1e-6, cum[i] - cum[prev]);
-          const tk = terrainAt(ox + flat[k * 3], oz + flat[k * 3 + 2]);
-          rawYs[k] = Math.max(rawYs[k], y0 + (y1 - y0) * u - tk);
-        }
+  const cum = new Float64Array(nPts);
+  for (let i = 1; i < nPts; i++) cum[i] = cum[i - 1] + Math.hypot(flat[i * 3] - flat[(i - 1) * 3], flat[i * 3 + 2] - flat[(i - 1) * 3 + 2]);
+  const absY = (i) => terrainAt(ox + flat[i * 3], oz + flat[i * 3 + 2]) + rawYs[i];
+  let prev = 0;
+  for (let i = 1; i < nPts; i++) {
+    if (!anchor[i]) continue;
+    if (i - prev > 1) {
+      const y0 = absY(prev), y1 = absY(i);
+      for (let k = prev + 1; k < i; k++) {
+        const u = (cum[k] - cum[prev]) / Math.max(1e-6, cum[i] - cum[prev]);
+        const tk = terrainAt(ox + flat[k * 3], oz + flat[k * 3 + 2]);
+        rawYs[k] = Math.max(rawYs[k], y0 + (y1 - y0) * u - tk);
       }
-      prev = i;
     }
+    prev = i;
   }
   return true;
 }

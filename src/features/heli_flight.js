@@ -119,6 +119,7 @@ export class HeliFlight {
     this._ray = new THREE.Raycaster();
     this._ndc = new THREE.Vector2();
     this._initWash();
+    this._initWeapons();
     this._audio = null;
     const unlock = () => { if (app.mode === 'helicopter') this._ensureAudio(); };
     window.addEventListener('keydown', unlock);
@@ -157,6 +158,10 @@ export class HeliFlight {
     this.app.heliAutoLanding = false;
     this._lastPos.copy(this.app.pos);
     this._camPivot.copy(this.app.pos);
+    if (this.app.heliMesh) {
+      this.app.heliMesh.position.copy(this.app.pos);
+      this.app.heliMesh.rotation.set(0, yaw, 0);
+    }
   }
 
   /** Called by app.setMode when switching into helicopter mode. */
@@ -554,6 +559,7 @@ export class HeliFlight {
 
     this._updateVisuals(dt);
     this._updateWash(dt, sup0);
+    this._updateWeapons(dt);
     this._updateAudio(dt);
     const surf = app.sampleRoadSurface(p.x, sup0 + 0.5, p.z);
     if (surf && surf.seg && surf.seg.name) app.currentRoadName = surf.seg.name;
@@ -662,10 +668,374 @@ export class HeliFlight {
     // Muted by default (silent helicopter/vehicle operation)
   }
 
-  /** Mute when leaving helicopter mode. */
+  // ---------------------------------------------------------------- gunship weapons (30mm nose cannon + wing-pod rockets)
+  _initWeapons() {
+    this.weaponStats = { cannonShots: 0, rocketsFired: 0, explosions: 0, trafficHits: 0 };
+    this._cannonCooldown = 0;
+    this._rocketCooldown = 0;
+    this._muzzleTimer = 0;
+    this._reticleFlash = 0;
+    this._tmpW = new THREE.Vector3();
+
+    this._weaponGroup = new THREE.Group();
+    this._weaponGroup.name = 'heli_weapons_vfx';
+    this.app.scene.add(this._weaponGroup);
+
+    // Muzzle flash at nose cannon barrel
+    const mfGeo = new THREE.SphereGeometry(0.42, 8, 8);
+    const mfMat = new THREE.MeshBasicMaterial({ color: 0xffd24c, transparent: true, opacity: 0.9, depthWrite: false });
+    this._muzzleFlash = new THREE.Mesh(mfGeo, mfMat);
+    this._muzzleFlash.visible = false;
+    this._weaponGroup.add(this._muzzleFlash);
+
+    // Pool of 30mm rotary cannon tracer bolts
+    this._cannonPool = [];
+    const boltGeo = new THREE.BoxGeometry(0.14, 0.14, 3.2);
+    const boltMat = new THREE.MeshBasicMaterial({ color: 0xffb830 });
+    for (let i = 0; i < 36; i++) {
+      const mesh = new THREE.Mesh(boltGeo, boltMat);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this._weaponGroup.add(mesh);
+      this._cannonPool.push({ active: false, mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0 });
+    }
+
+    // Pool of Hydra 70 wing-pod rockets
+    this._rocketPool = [];
+    const rBodyGeo = new THREE.CylinderGeometry(0.09, 0.09, 1.35, 8);
+    rBodyGeo.rotateX(Math.PI * 0.5);
+    const rBodyMat = new THREE.MeshBasicMaterial({ color: 0xf4f6f8 });
+    const rFlameGeo = new THREE.SphereGeometry(0.28, 8, 8);
+    const rFlameMat = new THREE.MeshBasicMaterial({ color: 0xff6218 });
+    for (let i = 0; i < 16; i++) {
+      const grp = new THREE.Group();
+      const body = new THREE.Mesh(rBodyGeo, rBodyMat);
+      const flame = new THREE.Mesh(rFlameGeo, rFlameMat);
+      flame.position.set(0, 0, -0.75);
+      grp.add(body, flame);
+      grp.visible = false;
+      grp.frustumCulled = false;
+      this._weaponGroup.add(grp);
+      this._rocketPool.push({ active: false, mesh: grp, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0 });
+    }
+
+    // Pool of 3D fireball explosions + shockwave rings
+    this._explosions = [];
+    const expSphereGeo = new THREE.SphereGeometry(1.0, 14, 12);
+    const expRingGeo = new THREE.RingGeometry(0.55, 1.0, 24);
+    expRingGeo.rotateX(-Math.PI * 0.5);
+    for (let i = 0; i < 18; i++) {
+      const fireMat = new THREE.MeshBasicMaterial({ color: 0xff7718, transparent: true, opacity: 0.9, depthWrite: false });
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false });
+      const fireMesh = new THREE.Mesh(expSphereGeo, fireMat);
+      const ringMesh = new THREE.Mesh(expRingGeo, ringMat);
+      fireMesh.visible = false;
+      ringMesh.visible = false;
+      fireMesh.frustumCulled = false;
+      ringMesh.frustumCulled = false;
+      this._weaponGroup.add(fireMesh, ringMesh);
+      this._explosions.push({ active: false, fireMesh, ringMesh, fireMat, ringMat, age: 0, dur: 0.5, maxR: 8.0 });
+    }
+
+    // Dynamic gunship HUD aiming reticle
+    if (typeof document !== 'undefined' && !document.getElementById('heli-reticle')) {
+      const el = document.createElement('div');
+      el.id = 'heli-reticle';
+      el.style.cssText = [
+        'position:fixed',
+        'left:50%',
+        'top:54%',
+        'width:44px',
+        'height:44px',
+        'transform:translate(-50%,-50%)',
+        'pointer-events:none',
+        'z-index:18',
+        'display:none',
+        'transition:transform 0.04s linear',
+      ].join(';');
+      el.innerHTML = '<svg width="44" height="44" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="14" stroke="rgba(255,196,72,0.82)" stroke-width="1.5" stroke-dasharray="5 4"/><circle cx="22" cy="22" r="2.2" fill="rgba(255,110,48,0.95)"/><path d="M22 3v6M22 35v6M3 22h6M35 22h6" stroke="rgba(255,196,72,0.85)" stroke-width="1.5" stroke-linecap="round"/></svg>';
+      document.body.appendChild(el);
+    }
+  }
+
+  _computeFireDirection(spread = 0.012) {
+    const s = this.state;
+    const pos = this.app.pos;
+    const liveAgl = Math.max(s.agl || 0, pos.y - Math.max(0, this._terrain(pos.x, pos.z)));
+    const leadYaw = s.yaw + clamp(s.angularVelocity.y * 0.14, -0.28, 0.28) + (Math.random() - 0.5) * spread;
+    // Pitch down toward the street/ground ahead depending on altitude AGL
+    const baseDownPitch = liveAgl > 6 ? clamp(-0.28 - Math.min(0.22, liveAgl * 0.0015) - s.pitch * 0.55, -0.55, -0.08) : -0.08;
+    const pitch = baseDownPitch + (Math.random() - 0.5) * spread;
+    const cp = Math.cos(pitch);
+    return {
+      dx: Math.sin(leadYaw) * cp,
+      dy: Math.sin(pitch),
+      dz: Math.cos(leadYaw) * cp,
+      yaw: leadYaw,
+      pitch,
+    };
+  }
+
+  /** Fires a 30mm rotary nose cannon tracer bolt. */
+  fireCannon() {
+    const s = this.state;
+    if (this.app.mode !== 'helicopter') return false;
+    let slot = null;
+    for (let i = 0; i < this._cannonPool.length; i++) {
+      if (!this._cannonPool[i].active) { slot = this._cannonPool[i]; break; }
+    }
+    if (!slot) slot = this._cannonPool[0];
+
+    const mesh = this.app.heliMesh;
+    this._tmpW.set(0, 0.55, 2.95).applyQuaternion(mesh.quaternion).add(this.app.pos);
+    const dir = this._computeFireDirection(0.016);
+    const speed = 310.0 + Math.max(0, this.app.speed || 0);
+
+    slot.active = true;
+    slot.x = this._tmpW.x;
+    slot.y = this._tmpW.y;
+    slot.z = this._tmpW.z;
+    slot.vx = dir.dx * speed;
+    slot.vy = dir.dy * speed;
+    slot.vz = dir.dz * speed;
+    slot.life = 2.4;
+    slot.mesh.position.set(slot.x, slot.y, slot.z);
+    slot.mesh.lookAt(slot.x + slot.vx, slot.y + slot.vy, slot.z + slot.vz);
+    slot.mesh.visible = true;
+
+    this._muzzleFlash.position.copy(this._tmpW);
+    this._muzzleFlash.visible = true;
+    this._muzzleTimer = 0.045;
+    this._reticleFlash = 0.12;
+    this._shake = Math.max(this._shake, 0.04);
+    this.weaponStats.cannonShots++;
+    return true;
+  }
+
+  /** Fires a dual salvo of wing-pod Hydra rockets from the left and right stub wings. */
+  fireRockets() {
+    if (this.app.mode !== 'helicopter') return false;
+    if (this._rocketCooldown > 0.05) return false;
+    this._rocketCooldown = 0.38;
+
+    const mesh = this.app.heliMesh;
+    const speed = 195.0 + Math.max(0, this.app.speed || 0);
+    let fired = 0;
+
+    for (const side of [-1, 1]) {
+      let slot = null;
+      for (let i = 0; i < this._rocketPool.length; i++) {
+        if (!this._rocketPool[i].active) { slot = this._rocketPool[i]; break; }
+      }
+      if (!slot) slot = this._rocketPool[fired % this._rocketPool.length];
+
+      this._tmpW.set(side * 1.68, 0.85, 0.55).applyQuaternion(mesh.quaternion).add(this.app.pos);
+      const dir = this._computeFireDirection(0.008);
+      slot.active = true;
+      slot.x = this._tmpW.x;
+      slot.y = this._tmpW.y;
+      slot.z = this._tmpW.z;
+      slot.vx = dir.dx * speed;
+      slot.vy = dir.dy * speed;
+      slot.vz = dir.dz * speed;
+      slot.life = 4.2;
+      slot.mesh.position.set(slot.x, slot.y, slot.z);
+      slot.mesh.lookAt(slot.x + slot.vx, slot.y + slot.vy, slot.z + slot.vz);
+      slot.mesh.visible = true;
+      this.weaponStats.rocketsFired++;
+      fired++;
+    }
+    this._reticleFlash = 0.25;
+    this._shake = Math.max(this._shake, 0.16);
+    return fired > 0;
+  }
+
+  _spawnExplosion(x, y, z, isRocket = false) {
+    let slot = null;
+    for (let i = 0; i < this._explosions.length; i++) {
+      if (!this._explosions[i].active) { slot = this._explosions[i]; break; }
+    }
+    if (!slot) slot = this._explosions[0];
+
+    slot.active = true;
+    slot.age = 0;
+    slot.dur = isRocket ? 0.58 : 0.28;
+    slot.maxR = isRocket ? 8.8 : 2.6;
+    slot.fireMesh.position.set(x, y + 0.35, z);
+    slot.fireMesh.scale.setScalar(0.5);
+    slot.fireMat.color.setHex(isRocket ? 0xffaa33 : 0xffcc44);
+    slot.fireMat.opacity = 0.95;
+    slot.fireMesh.visible = true;
+
+    slot.ringMesh.position.set(x, y + 0.18, z);
+    slot.ringMesh.scale.setScalar(0.6);
+    slot.ringMat.opacity = 0.85;
+    slot.ringMesh.visible = true;
+
+    this.weaponStats.explosions++;
+    this._shake = Math.max(this._shake, isRocket ? 0.42 : 0.10);
+  }
+
+  _checkProjectileHit(p, isRocket) {
+    const app = this.app;
+    const terrY = Math.max(0, getBeijingTerrainElevation(p.x, p.z), getChunkTerrainMeshElevation(p.x, p.z));
+    const supY = this._support(p.x, p.z, p.y + 0.8);
+    const floorY = Math.max(terrY, supY);
+    if (p.y <= floorY + 0.45) {
+      return { x: p.x, y: floorY, z: p.z };
+    }
+    let wallHit = null;
+    this._forBoxes(p.x, p.z, isRocket ? 1.4 : 0.8, (b) => {
+      if (!wallHit && p.y <= b.h && this._inside(b, p.x, p.z)) {
+        wallHit = { x: p.x, y: p.y, z: p.z };
+      }
+    });
+    if (wallHit) return wallHit;
+    // Check direct hit against AI traffic cars & walking pedestrians
+    const traffic = app.traffic;
+    if (traffic) {
+      const carHitR2 = isRocket ? 4.4 * 4.4 : 2.8 * 2.8;
+      for (const c of traffic.cars || []) {
+        if (!c.active) continue;
+        const dx = c.x - p.x, dz = c.z - p.z, dy = (c.y || 0) + 0.9 - p.y;
+        if (dx * dx + dz * dz <= carHitR2 && Math.abs(dy) <= 3.2) {
+          return { x: c.x, y: c.y || floorY, z: c.z };
+        }
+      }
+      const pedHitR2 = isRocket ? 3.5 * 3.5 : 2.2 * 2.2;
+      for (const ped of traffic.peds || []) {
+        if (!ped.active || ped.state !== 'walking') continue;
+        const dx = ped.x - p.x, dz = ped.z - p.z, dy = (ped.y || 0) + 0.9 - p.y;
+        if (dx * dx + dz * dz <= pedHitR2 && Math.abs(dy) <= 2.8) {
+          return { x: ped.x, y: ped.y || floorY, z: ped.z };
+        }
+      }
+    }
+    return null;
+  }
+
+  _detonateProjectile(p, isRocket) {
+    p.active = false;
+    p.mesh.visible = false;
+    const hit = this._checkProjectileHit(p, isRocket) || { x: p.x, y: p.y, z: p.z };
+    this._spawnExplosion(hit.x, hit.y, hit.z, isRocket);
+    const traffic = this.app.traffic;
+    if (traffic && typeof traffic.triggerImpactSphere === 'function') {
+      const blastR = isRocket ? 16.0 : 5.8;
+      const hits = traffic.triggerImpactSphere(hit.x, hit.y, hit.z, blastR, {
+        vx: p.vx * 0.08,
+        vy: isRocket ? 7.5 : 3.5,
+        vz: p.vz * 0.08,
+        force: isRocket ? 2.2 : 1.4,
+      });
+      this.weaponStats.trafficHits += hits;
+    }
+  }
+
+  _updateWeapons(dt) {
+    const s = this.state;
+    this._cannonCooldown = Math.max(0, this._cannonCooldown - dt);
+    this._rocketCooldown = Math.max(0, this._rocketCooldown - dt);
+    this._reticleFlash = Math.max(0, this._reticleFlash - dt);
+
+    if (this._muzzleTimer > 0) {
+      this._muzzleTimer -= dt;
+      if (this._muzzleTimer <= 0) this._muzzleFlash.visible = false;
+    }
+
+    // Hold Space to fire 30mm nose rotary cannon at 14 rounds/sec
+    if (this.inputEnabled && this.app.mode === 'helicopter' && !s.grounded && this.app.keys.has('Space')) {
+      if (this._cannonCooldown <= 0) {
+        this._cannonCooldown = 0.071;
+        this.fireCannon();
+      }
+    }
+
+    // Update cannon bolts
+    for (let i = 0; i < this._cannonPool.length; i++) {
+      const b = this._cannonPool[i];
+      if (!b.active) continue;
+      b.life -= dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.z += b.vz * dt;
+      b.mesh.position.set(b.x, b.y, b.z);
+      if (this._checkProjectileHit(b, false)) {
+        this._detonateProjectile(b, false);
+      } else if (b.life <= 0) {
+        b.active = false;
+        b.mesh.visible = false;
+      }
+    }
+
+    // Update Hydra wing-pod rockets
+    for (let i = 0; i < this._rocketPool.length; i++) {
+      const r = this._rocketPool[i];
+      if (!r.active) continue;
+      r.life -= dt;
+      r.vy -= 1.6 * dt;
+      r.x += r.vx * dt;
+      r.y += r.vy * dt;
+      r.z += r.vz * dt;
+      r.mesh.position.set(r.x, r.y, r.z);
+      r.mesh.lookAt(r.x + r.vx, r.y + r.vy, r.z + r.vz);
+      if (this._checkProjectileHit(r, true)) {
+        this._detonateProjectile(r, true);
+      } else if (r.life <= 0) {
+        r.active = false;
+        r.mesh.visible = false;
+      }
+    }
+
+    // Update 3D fireball explosions & shockwave rings
+    for (let i = 0; i < this._explosions.length; i++) {
+      const ex = this._explosions[i];
+      if (!ex.active) continue;
+      ex.age += dt;
+      const u = ex.age / ex.dur;
+      if (u >= 1) {
+        ex.active = false;
+        ex.fireMesh.visible = false;
+        ex.ringMesh.visible = false;
+        continue;
+      }
+      const fireScale = ex.maxR * (0.25 + 0.95 * Math.sin(Math.min(1, u * 1.4) * Math.PI * 0.5));
+      ex.fireMesh.scale.setScalar(fireScale);
+      if (u < 0.35) ex.fireMat.color.setHex(0xffb833);
+      else if (u < 0.7) ex.fireMat.color.setHex(0xff5214);
+      else ex.fireMat.color.setHex(0x3a3532);
+      ex.fireMat.opacity = Math.max(0, (1 - u) * 0.92);
+
+      const ringScale = ex.maxR * 1.65 * u;
+      ex.ringMesh.scale.setScalar(Math.max(0.5, ringScale));
+      ex.ringMat.opacity = Math.max(0, (1 - u) * 0.82);
+    }
+
+    // Update dynamic HUD aiming reticle
+    if (typeof document !== 'undefined') {
+      const ret = document.getElementById('heli-reticle');
+      if (ret) {
+        const show = this.app.mode === 'helicopter' && !s.grounded && (!this.app.mapSystem || !this.app.mapSystem.isOpen);
+        ret.style.display = show ? 'block' : 'none';
+        if (show) {
+          const shiftX = clamp(-s.angularVelocity.y * 28 - s.roll * 36, -68, 68);
+          const shiftY = clamp(-s.pitch * 42, -48, 48);
+          const scale = this._reticleFlash > 0 ? 1.18 : 1.0;
+          ret.style.transform = `translate(calc(-50% + ${shiftX.toFixed(1)}px), calc(-50% + ${shiftY.toFixed(1)}px)) scale(${scale})`;
+        }
+      }
+    }
+  }
+
+  /** Mute and hide reticle when leaving helicopter mode. */
   onExit() {
     this._wash.visible = false;
     this._washMat.opacity = 0;
+    if (this._muzzleFlash) this._muzzleFlash.visible = false;
+    if (typeof document !== 'undefined') {
+      const ret = document.getElementById('heli-reticle');
+      if (ret) ret.style.display = 'none';
+    }
     this._updateAudio();
   }
 }

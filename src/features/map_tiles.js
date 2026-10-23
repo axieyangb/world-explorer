@@ -253,7 +253,7 @@ function polysToLocal(geom, n, x, y) {
 
 const PLACE_MINZ = {
   continent: 0, country: 3, state: 6, city: 5, town: 9, village: 11, suburb: 11,
-  hamlet: 14, quarter: 14.5, neighbourhood: 15.8, isolated_dwelling: 16,
+  island: 11.5, islet: 13, hamlet: 14, quarter: 14.5, neighbourhood: 15.8, isolated_dwelling: 16,
 };
 
 function prepareTile(layers, z, x, y) {
@@ -428,7 +428,44 @@ function renderRaster(prep, z, x, y) {
   fill(prep.industrial, st.industrial);
   fill(prep.wood, st.wood);
   fill(prep.park, st.park);
-  fill(prep.water, st.water);
+  if (prep.water.length) {
+    ctx.fillStyle = st.water;
+    for (const rings of prep.water) {
+      if (rings.bb && !visible(rings.bb, ox, oy, span, 0)) continue;
+      ctx.beginPath();
+      for (const r of rings) {
+        if (r.length < 6) continue;
+        ctx.moveTo((r[0] - ox) * s, (r[1] - oy) * s);
+        for (let i = 2; i < r.length; i += 2) ctx.lineTo((r[i] - ox) * s, (r[i + 1] - oy) * s);
+        ctx.closePath();
+      }
+      ctx.fill('evenodd');
+    }
+    // Restore dry land + park/wood inside any island holes so overlapping water polygons never drown islands
+    let hasIslandHoles = false;
+    ctx.beginPath();
+    for (const rings of prep.water) {
+      for (let h = 1; h < rings.length; h++) {
+        const r = rings[h];
+        if (r.length < 6) continue;
+        hasIslandHoles = true;
+        ctx.moveTo((r[0] - ox) * s, (r[1] - oy) * s);
+        for (let i = 2; i < r.length; i += 2) ctx.lineTo((r[i] - ox) * s, (r[i + 1] - oy) * s);
+        ctx.closePath();
+      }
+    }
+    if (hasIslandHoles) {
+      ctx.save();
+      ctx.fillStyle = st.land;
+      ctx.fill();
+      ctx.clip();
+      fill(prep.residential, st.residential);
+      fill(prep.industrial, st.industrial);
+      fill(prep.wood, st.wood);
+      fill(prep.park, st.park);
+      ctx.restore();
+    }
+  }
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -529,7 +566,7 @@ export function getRoadLabelCandidates(prep, lang) {
   return out;
 }
 
-const PLACE_ORDER = { country: 0, state: 1, city: 2, town: 3, suburb: 4, village: 5, quarter: 6, neighbourhood: 7, hamlet: 8 };
+const PLACE_ORDER = { country: 0, state: 1, city: 2, town: 3, island: 3, suburb: 4, village: 5, islet: 5, quarter: 6, neighbourhood: 7, hamlet: 8 };
 
 export function getPlaceLabelCandidates(prep, lang) {
   const key = `_placeLabels_${lang}`;
