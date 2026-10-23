@@ -54,7 +54,7 @@ export const CFG = {
 
   // Missiles
   MISSILE_SALVO: 2,
-  MISSILE_DAMAGE: 130,          // [integration] was 260: locked salvos always home onto the weak core (x3) and ~96% hit with the GTA heli; 260 gave TTK ~3.6 min
+  MISSILE_DAMAGE: 200,          // [integration] was 260: locked salvos home onto the weak core (x3) and ~96% hit with the GTA heli; 260 gave TTK ~3.6 min
   MISSILE_COOLDOWN: 8.0,
   MISSILE_SPEED: 260,
   MISSILE_TURN_RATE: 2.6,       // rad/s

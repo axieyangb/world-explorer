@@ -229,6 +229,7 @@ export class KaijuMode {
     this.paused = false;
     this.state = "off";
     this._cleanupRound();
+    this._call(this.fx, "update", 0); // [integration] flush fx.reset() to the GPU now: update() stops once inactive, so cleared smoke/fire stayed frozen on screen after Exit
     this._call(this.crowd, "deactivate");
     this._call(this.audio, "stopAll");
     this._call(this.hud, "hidePause");

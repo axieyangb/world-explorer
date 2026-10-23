@@ -118,7 +118,7 @@ export const I18N = {
       kaiju_mute: '静音',
       kaiju_unmute: '取消静音',
       kaiju_down: '直升机坠毁',
-      kaiju_hint: '空格 / 左键 机炮 · F / 右键 导弹 · E / Q 升降 · Esc 暂停',
+      kaiju_hint: '空格 / 左键 机炮 · F / 右键 导弹 · W / S 升降 · Esc 暂停', // [integration] GTA heli: W/S collective
       default_road: '长安街 · 天安门广场',
       urban_road_fallback: '北京市区道路',
       chunks_unit: '区块',
@@ -417,7 +417,7 @@ export const I18N = {
       kaiju_mute: 'Mute',
       kaiju_unmute: 'Unmute',
       kaiju_down: 'Helicopter down',
-      kaiju_hint: 'Space / LMB Cannon · F / RMB Missiles · E / Q Up / Down · Esc Pause',
+      kaiju_hint: 'Space / LMB Cannon · F / RMB Missiles · W / S Up / Down · Esc Pause', // [integration] GTA heli: W/S collective
       default_road: "Chang'an Ave · Tiananmen Sq",
       urban_road_fallback: 'Beijing Urban Road',
       chunks_unit: 'chunks',
