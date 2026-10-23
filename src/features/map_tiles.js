@@ -262,6 +262,7 @@ function prepareTile(layers, z, x, y) {
     z, x, y,
     water: [], park: [], wood: [], residential: [], industrial: [], buildings: [],
     waterways: [], roads: [], roadNames: [], places: [], driveLines: [], rails: [], // [feature/rail-transit] rails
+    ferries: [], piers: [], // [feature/ferries-ships]
   };
 
   for (const f of layers.water || []) {
@@ -299,6 +300,15 @@ function prepareTile(layers, z, x, y) {
   if (z >= 13) {
     for (const f of layers.building || []) {
       if (f.type === 3) prep.buildings.push(...polysToLocal(f.geom, n, x, y));
+    }
+  }
+  // [feature/ferries-ships] ferry routes (dashed) + pier decks
+  for (const f of layers.transportation || []) {
+    if (f.tags.class === 'ferry' && f.type === 2) {
+      for (const line of f.geom) { const pts = ringToLocal(line, n, x, y); prep.ferries.push({ pts, bb: bboxOf(pts) }); }
+    } else if (f.tags.class === 'pier') {
+      if (f.type === 3) prep.piers.push(...polysToLocal(f.geom, n, x, y));
+      else if (f.type === 2) for (const line of f.geom) { const pts = ringToLocal(line, n, x, y); prep.ferries.push({ pts, bb: bboxOf(pts), pier: true }); }
     }
   }
   for (const f of layers.transportation || []) {
@@ -481,6 +491,25 @@ function renderRaster(prep, z, x, y) {
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  // [feature/ferries-ships] piers + dashed ferry routes
+  if (prep.piers.length) fill(prep.piers, '#3a3f47');
+  if (prep.ferries.length) {
+    for (const fr of prep.ferries) {
+      if (!visible(fr.bb, ox, oy, span, m)) continue;
+      ctx.beginPath();
+      pathLine(ctx, fr.pts, s, ox, oy);
+      if (fr.pier) {
+        ctx.strokeStyle = '#3a3f47';
+        ctx.lineWidth = Math.max(1, 3 * Math.pow(1.55, z - 14));
+      } else {
+        ctx.strokeStyle = 'rgba(120, 180, 240, 0.85)';
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([5, 4]);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
   if (prep.waterways.length) {
     ctx.strokeStyle = st.water;
     for (const ww of prep.waterways) {
