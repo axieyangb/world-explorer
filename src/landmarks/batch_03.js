@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer - Landmark Batch 03
+ * World Explorer - Landmark Batch 03
  * Architectural definitions for:
  * 1. Jingshan Wanchun Pavilion (景山万春亭)
  * 2. Beijing Bell Tower (北京钟楼)

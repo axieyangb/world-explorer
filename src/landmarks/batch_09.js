@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer — 3D Iconic Architectural Landmarks: Batch 09 (BATCH_09)
+ * World Explorer — 3D Iconic Architectural Landmarks: Batch 09 (BATCH_09)
  *
  * Contains 4 Beijing Landmarks:
  * 1. galaxy_soho (银河SOHO - Zaha Hadid Architects: 4 flowing canyon domes, ribbon windows, sweeping multi-level curved skybridges)

@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer — Landmarks Batch 07 (BATCH_07)
+ * World Explorer — Landmarks Batch 07 (BATCH_07)
  * 
  * 1. National Speed Skating Oval / Ice Ribbon (国家速滑馆 "冰丝带")
  *    - 210m x 150m elliptical stadium, 33.8m peak height

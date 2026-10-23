@@ -1,5 +1,5 @@
 /**
- * Beijing Explorer — 3D Procedural Landmark Geometry Kernel
+ * World Explorer — 3D Procedural Landmark Geometry Kernel
  * Batch 06 (BATCH_06): Southeast Corner Tower, Olympic Tower, Bird's Nest, Water Cube.
  */
 
