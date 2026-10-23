@@ -17,7 +17,7 @@ export const LANDMARKS = [
   { id: "arcdetriomphe", name: "Arc de Triomphe", nameZh: "凯旋门", lat: 48.87378, lon: 2.29504, heading: 115, height: 50, supp: { hw: 26, hd: 14 }, on: true },
   { id: "westminster", name: "Palace of Westminster & Big Ben", nameZh: "威斯敏斯特宫与大本钟", lat: 51.499516, lon: -0.124725, heading: 10.4, height: 98, supp: { hw: 56, hd: 142 }, on: true, chip: true },
   { id: "londoneye", name: "London Eye", nameZh: "伦敦眼", lat: 51.503428, lon: -0.120140, heading: 290, height: 135, supp: { r: 45 }, on: true },
-  { id: "towerbridge", name: "Tower Bridge", nameZh: "伦敦塔桥", lat: 51.5055, lon: -0.07535, heading: -6.4, height: 65, supp: { hw: 20, hd: 142 }, on: true },
+  { id: "towerbridge", name: "Tower Bridge", nameZh: "伦敦塔桥", lat: 51.505505, lon: -0.07537, heading: 22.9, height: 65, supp: { hw: 20, hd: 142 }, on: true }, // [release-6-integ] heading -6.4 -> 22.9 + centre nudged 1.5 m onto the OSM carriageway (was ~29 deg off; road ran into the piers)
   { id: "brandenburg", name: "Brandenburg Gate", nameZh: "勃兰登堡门", lat: 52.51628, lon: 13.3777, heading: 90, height: 26, supp: { hw: 34, hd: 8 }, on: true },
   { id: "colosseum", name: "Colosseum", nameZh: "罗马斗兽场", lat: 41.89021, lon: 12.49223, heading: 25, height: 48, supp: { r: 96 }, on: true },
   { id: "pisa", name: "Leaning Tower of Pisa", nameZh: "比萨斜塔", lat: 43.72297, lon: 10.39659, heading: 0, height: 56, supp: { r: 12 }, on: true},
