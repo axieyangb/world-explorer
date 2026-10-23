@@ -1,0 +1,445 @@
+// Kaiju Defense HUD (game): bars, reticle, status, radar overlay, cards, screen effects. See DESIGN.md.
+import { CFG } from "./kaiju_config.js";
+import { t, onLanguageChange } from "../../i18n.js";
+import { lonToMx, latToMy } from "../map_tiles.js";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const RING_R = 15;
+const RING_C = 2 * Math.PI * RING_R;
+const RADAR_SIZE = 168;
+
+function el(tag, cls, parent, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function fmtTime(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r < 10 ? "0" : ""}${r}`;
+}
+
+export class KaijuHud {
+  constructor(K) {
+    this.K = K;
+    this.visible = false;
+    this._alertT = 0;
+    this._hintT = 0;
+    this._pulse = 0;
+    this._radarT = 0;
+    this._last = {};
+    this._i18n = []; // [element, key]
+    this._build();
+    onLanguageChange(() => this._applyText());
+  }
+
+  // ---------------------------------------------------------------- DOM
+  _txt(e, key) {
+    this._i18n.push([e, key]);
+    e.textContent = t(key);
+    return e;
+  }
+
+  _build() {
+    const root = (this.root = el("div", "kj-hud", document.body));
+    root.style.display = "none";
+
+    // Screen effects (bottom of stack).
+    this.edge = el("div", "kj-edge", root);
+    this.vignette = el("div", "kj-vignette", root);
+    this.flash = el("div", "kj-flash", root);
+
+    // Top center: kaiju HP + city damage.
+    const top = el("div", "kj-top", root);
+    const nameRow = el("div", "kj-row", top);
+    this._txt(el("span", "kj-label", nameRow), "kaiju_name");
+    this.hpBar = el("div", "kj-bar kj-bar-hp", top);
+    this.hpFill = el("i", "", this.hpBar);
+    const cityRow = el("div", "kj-row kj-row-city", top);
+    this._txt(el("span", "kj-label kj-label-dim", cityRow), "kaiju_city");
+    this.cityVal = el("span", "kj-num", cityRow, "0%");
+    this.cityBar = el("div", "kj-bar kj-bar-city", top);
+    this.cityFill = el("i", "", this.cityBar);
+
+    this.alert = this._txt(el("div", "kj-alert", root), "kaiju_alert");
+    this.msg = el("div", "kj-msg", root);
+    this.hint = this._txt(el("div", "kj-hint", root), "kaiju_hint");
+
+    // Center crosshair + missile cooldown ring.
+    const cross = (this.cross = document.createElementNS(SVG_NS, "svg"));
+    cross.setAttribute("class", "kj-cross");
+    cross.setAttribute("viewBox", "-20 -20 40 40");
+    cross.innerHTML =
+      '<path class="kj-cross-lines" d="M-9 0h-5M9 0h5M0 -9v-5M0 9v5"/><circle class="kj-cross-dot" r="1.2"/>' +
+      `<circle class="kj-ring-bg" r="${RING_R}"/><circle class="kj-ring" r="${RING_R}" transform="rotate(-90)" stroke-dasharray="${RING_C.toFixed(2)}" stroke-dashoffset="0"/>`;
+    root.appendChild(cross);
+    this.ring = cross.querySelector(".kj-ring");
+
+    // Lock reticle: four brackets that close and stop rotating as lock rises.
+    const lock = (this.lock = document.createElementNS(SVG_NS, "svg"));
+    lock.setAttribute("class", "kj-lock");
+    lock.setAttribute("viewBox", "-40 -40 80 80");
+    lock.innerHTML =
+      '<g class="kj-lock-g">' +
+      [0, 90, 180, 270].map((a) => `<g transform="rotate(${a})"><path class="kj-brk" d="M-8 -20 L-20 -20 L-20 -8"/></g>`).join("") +
+      "</g>";
+    root.appendChild(lock);
+    this.lockG = lock.querySelector(".kj-lock-g");
+    this.brk = Array.from(lock.querySelectorAll(".kj-brk"));
+
+    // Bottom right status.
+    const st = el("div", "kj-status", root);
+    const hullRow = el("div", "kj-srow", st);
+    this._txt(el("span", "kj-label kj-label-dim", hullRow), "kaiju_hull");
+    const segs = el("div", "kj-segs", hullRow);
+    this.segs = [];
+    for (let i = 0; i < CFG.HELI_SEGMENTS; i++) this.segs.push(el("i", "", segs));
+
+    const heatRow = el("div", "kj-srow", st);
+    this.heatLabel = this._txt(el("span", "kj-label kj-label-dim", heatRow), "kaiju_heat");
+    this.heatBar = el("div", "kj-bar kj-bar-heat", heatRow);
+    this.heatFill = el("i", "", this.heatBar);
+
+    const misRow = el("div", "kj-srow", st);
+    this._txt(el("span", "kj-label kj-label-dim", misRow), "kaiju_missile");
+    this.misBar = el("div", "kj-bar kj-bar-mis", misRow);
+    this.misFill = el("i", "", this.misBar);
+
+    const livesRow = el("div", "kj-srow kj-lives", st);
+    this.pips = [];
+    for (let i = 0; i < CFG.LIVES; i++) this.pips.push(el("i", "", livesRow));
+
+    // Cards.
+    this.results = el("div", "kj-card", root);
+    this.results.style.display = "none";
+    this.resTitle = el("div", "kj-card-title", this.results);
+    this.resRows = el("div", "kj-card-rows", this.results);
+    const resBtns = el("div", "kj-card-btns", this.results);
+    this._txt(el("button", "kj-btn kj-btn-primary", resBtns), "kaiju_again").addEventListener("click", () => this.K.restart());
+    this._txt(el("button", "kj-btn", resBtns), "kaiju_exit").addEventListener("click", () => this.K.exit());
+    for (const b of resBtns.children) b.type = "button";
+
+    this.pause = el("div", "kj-card kj-card-pause", root);
+    this.pause.style.display = "none";
+    this._txt(el("div", "kj-card-title", this.pause), "kaiju_paused");
+    const pb = el("div", "kj-card-col", this.pause);
+    this._txt(el("button", "kj-btn kj-btn-primary", pb), "kaiju_resume").addEventListener("click", () => this.K.togglePause(false));
+    this._txt(el("button", "kj-btn", pb), "kaiju_restart").addEventListener("click", () => this.K.restart());
+    this.muteBtn = el("button", "kj-btn", pb);
+    this.muteBtn.addEventListener("click", () => {
+      this.K.toggleMute();
+      this._applyMute();
+    });
+    this._txt(el("button", "kj-btn", pb), "kaiju_exit").addEventListener("click", () => this.K.exit());
+    for (const b of pb.children) b.type = "button";
+    this._applyMute();
+
+    // Radar overlay on the minimap.
+    const mm = document.getElementById("minimap-container");
+    if (mm) {
+      const c = (this.radar = document.createElement("canvas"));
+      c.className = "kj-radar";
+      this.dpr = Math.min(2, window.devicePixelRatio || 1);
+      c.width = RADAR_SIZE * this.dpr;
+      c.height = RADAR_SIZE * this.dpr;
+      c.style.display = "none";
+      mm.appendChild(c);
+      this.rctx = c.getContext("2d");
+    }
+  }
+
+  _applyText() {
+    for (const [e, key] of this._i18n) e.textContent = t(key);
+    this._applyMute();
+    if (this._lastResults) this.showResults(this._lastResults);
+  }
+
+  _applyMute() {
+    if (this.muteBtn) this.muteBtn.textContent = t(this.K.audio && this.K.audio.muted ? "kaiju_unmute" : "kaiju_mute");
+  }
+
+  // ---------------------------------------------------------------- API
+  show() {
+    this.visible = true;
+    this._last = {};
+    this.root.style.display = "";
+    if (this.radar) this.radar.style.display = "";
+    this.results.style.display = "none";
+    this.pause.style.display = "none";
+    this._lastResults = null;
+    this._hintT = 7;
+    this.hint.classList.add("on");
+  }
+
+  hide() {
+    this.visible = false;
+    this.root.style.display = "none";
+    if (this.radar) {
+      this.radar.style.display = "none";
+      this.rctx && this.rctx.clearRect(0, 0, this.radar.width, this.radar.height);
+    }
+    this.results.style.display = "none";
+    this.pause.style.display = "none";
+    this.alert.classList.remove("on");
+    this._lastResults = null;
+  }
+
+  showAlert() {
+    this._alertT = CFG.ALERT_SECONDS;
+    this.alert.classList.add("on");
+    this.results.style.display = "none";
+    this._lastResults = null;
+    this._hintT = Math.max(this._hintT, CFG.ALERT_SECONDS + 5);
+    this.hint.classList.add("on");
+  }
+
+  showResults(r) {
+    this._lastResults = r;
+    this.resTitle.textContent = t(r.win ? "kaiju_saved" : "kaiju_fallen");
+    this.results.classList.toggle("kj-win", !!r.win);
+    const rows = [
+      ["kaiju_time", fmtTime(r.time)],
+      ["kaiju_city", `${Math.round((r.cityDamage || 0) * 100)}%`],
+      ["kaiju_accuracy", `${Math.round((r.accuracy || 0) * 100)}%`],
+      ["kaiju_missile_hits", String(r.missileHits || 0)],
+      ["kaiju_cannon_hits", String(r.cannonHits || 0)],
+    ];
+    this.resRows.textContent = "";
+    for (const [k, v] of rows) {
+      const row = el("div", "kj-card-row", this.resRows);
+      el("span", "", row, t(k));
+      el("span", "kj-num", row, v);
+    }
+    this.pause.style.display = "none";
+    this.results.style.display = "";
+    this.alert.classList.remove("on");
+    this.msg.classList.remove("on");
+  }
+
+  showPause() {
+    this._applyMute();
+    this.pause.style.display = "";
+  }
+
+  hidePause() {
+    this.pause.style.display = "none";
+  }
+
+  flashHit() {
+    if (!this.visible) return;
+    this.flash.animate([{ opacity: 0.5 }, { opacity: 0 }], { duration: 380, easing: "ease-out" });
+  }
+
+  // ---------------------------------------------------------------- frame
+  // Change detection: returns true (and stores v) only when the value differs from last frame.
+  _chg(key, v) {
+    if (this._last[key] === v) return false;
+    this._last[key] = v;
+    return true;
+  }
+
+  update(dt) {
+    if (!this.visible) return;
+    const K = this.K;
+    const k = K.kaiju;
+    const w = K.weapons;
+    this._pulse += dt;
+
+    if (this._alertT > 0) {
+      this._alertT -= dt;
+      if (this._alertT <= 0) this.alert.classList.remove("on");
+    }
+    if (this._hintT > 0) {
+      this._hintT -= dt;
+      if (this._hintT <= 0) this.hint.classList.remove("on");
+    }
+
+    // Kaiju HP.
+    const hp = k && k.maxHp > 0 ? Math.max(0, Math.min(1, k.hp / k.maxHp)) : 0;
+    const hpQ = Math.round(hp * 1000);
+    if (this._chg("hp", hpQ)) this.hpFill.style.transform = `scaleX(${hpQ / 1000})`;
+    const enr = !!(k && k.enraged);
+    if (this._chg("enr", enr)) this.hpBar.classList.toggle("kj-enraged", enr);
+
+    // City damage + edge glow.
+    const cd = K.getCityDamage ? K.getCityDamage() : 0;
+    const cdQ = Math.round(cd * 1000);
+    if (this._chg("cd", cdQ)) {
+      this.cityFill.style.transform = `scaleX(${cdQ / 1000})`;
+      this.cityVal.textContent = `${Math.floor(cdQ / 10)}%`;
+    }
+    const lvl = cd >= CFG.HUD_WARN_RED ? 2 : cd >= CFG.HUD_WARN_AMBER ? 1 : 0;
+    if (this._chg("lvl", lvl)) {
+      this.edge.classList.toggle("kj-amber", lvl === 1);
+      this.edge.classList.toggle("kj-red", lvl === 2);
+      this.cityBar.classList.toggle("kj-amber", lvl === 1);
+      this.cityBar.classList.toggle("kj-red", lvl === 2);
+    }
+
+    // Heli hull segments + lives.
+    const h = K.heli;
+    const hf = Math.max(0, Math.min(1, h.health / CFG.HELI_HP));
+    const segOn = Math.ceil(hf * CFG.HELI_SEGMENTS - 1e-6);
+    if (this._chg("seg", segOn)) {
+      for (let i = 0; i < this.segs.length; i++) {
+        this.segs[i].classList.toggle("on", i < segOn);
+        this.segs[i].classList.toggle("low", segOn <= 3);
+      }
+    }
+    if (this._chg("lives", h.lives)) {
+      for (let i = 0; i < this.pips.length; i++) this.pips[i].classList.toggle("on", i < h.lives);
+    }
+    // Low health vignette (pulsing below 35%).
+    const low = h.alive && hf < 0.35 ? (1 - hf / 0.35) * (0.75 + 0.25 * Math.sin(this._pulse * 6)) : 0;
+    const vig = Math.round(low * 50);
+    if (this._chg("vig", vig)) this.vignette.style.opacity = String(vig / 50);
+    const down = !h.alive && K.state !== "results";
+    if (this._chg("down", down)) {
+      this.msg.textContent = down ? t("kaiju_down") : "";
+      this.msg.classList.toggle("on", down);
+    }
+
+    // Weapons.
+    const heatQ = Math.round((w ? Math.max(0, Math.min(1, w.heat || 0)) : 0) * 200);
+    if (this._chg("heat", heatQ)) this.heatFill.style.transform = `scaleX(${heatQ / 200})`;
+    const oh = !!(w && w.overheated);
+    if (this._chg("oh", oh)) {
+      this.heatBar.classList.toggle("kj-red", oh);
+      this.heatLabel.textContent = t(oh ? "kaiju_overheat" : "kaiju_heat");
+      this.heatLabel.classList.toggle("kj-label-red", oh);
+    }
+    const misQ = Math.round((w ? Math.max(0, Math.min(1, w.missileCooldown || 0)) : 0) * 200);
+    if (this._chg("mis", misQ)) {
+      this.misFill.style.transform = `scaleX(${1 - misQ / 200})`;
+      this.ring.setAttribute("stroke-dashoffset", ((misQ / 200) * RING_C).toFixed(1));
+      this.misBar.classList.toggle("kj-ready", misQ === 0);
+      this.cross.classList.toggle("kj-mis-ready", misQ === 0);
+    }
+
+    // Lock reticle.
+    const ret = w && w.reticle;
+    const fighting = K.state === "fight" || K.state === "intro";
+    const showLock = !!(ret && fighting && h.alive);
+    if (this._chg("lockOn", showLock)) this.lock.style.display = showLock ? "" : "none";
+    if (showLock) {
+      const lp = Math.max(0, Math.min(1, w.lockProgress || 0));
+      const locked = !!w.locked;
+      const rx = Math.round(ret.x * 2), ry = Math.round(ret.y * 2);
+      if (this._chg("rx", rx) | this._chg("ry", ry)) this.lock.style.transform = `translate(${rx / 2}px, ${ry / 2}px)`;
+      const rot = locked ? 0 : Math.round(((1 - lp) * 90 + this._pulse * 120 * (1 - lp)) % 360);
+      const sc = locked ? 100 : Math.round(100 + (1 - lp) * 70);
+      if (this._chg("lrot", rot) | this._chg("lsc", sc)) this.lockG.setAttribute("transform", `rotate(${rot}) scale(${sc / 100})`);
+      if (this._chg("locked", locked)) this.lock.classList.toggle("kj-locked", locked);
+    }
+    const crossOn = fighting && h.alive;
+    if (this._chg("crossOn", crossOn)) this.cross.style.display = crossOn ? "" : "none";
+
+    // Radar overlay (30 Hz).
+    this._radarT -= dt;
+    if (this.rctx && this._radarT <= 0) {
+      this._radarT = 1 / 30;
+      this._drawRadar();
+    }
+  }
+
+  _proj(x, z, out) {
+    const p = this._pr, o = p.o;
+    out[0] = (lonToMx(o.centerLon + x / o.mPerDegLon) - p.pmx) * p.ws;
+    out[1] = (latToMy(o.centerLat - z / o.mPerDegLat) - p.pmy) * p.ws;
+    return out;
+  }
+
+  _drawRadar() {
+    const ctx = this.rctx;
+    const S = RADAR_SIZE;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.radar.width, this.radar.height);
+    const K = this.K;
+    const k = K.kaiju;
+    const ms = K.app.mapSystem;
+    const o = ms && ms.navigator && ms.navigator.origin;
+    if (!k || !k.position || !o) return;
+    const zoom = ms._mmZoom || 15.7;
+    const ws = 256 * Math.pow(2, zoom);
+    const p = K.app.pos;
+    const pmx = lonToMx(o.centerLon + p.x / o.mPerDegLon);
+    const pmy = latToMy(o.centerLat - p.z / o.mPerDegLat);
+    const pr = this._pr || (this._pr = { o: null, pmx: 0, pmy: 0, ws: 0 });
+    pr.o = o; pr.pmx = pmx; pr.pmy = pmy; pr.ws = ws;
+    const tmp = this._rtmp || (this._rtmp = [0, 0]);
+    const rot = (K.app.yaw || 0) - Math.PI; // same heading-up rotation as the minimap
+
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.save();
+    ctx.translate(S / 2, S / 2);
+    ctx.rotate(rot);
+
+    // Breath cone (telegraph -> active).
+    const charge = k.breathActive ? 1 : Math.max(0, Math.min(1, k.breathCharge || 0));
+    if (charge > 0 && k.breathDir) {
+      const bx = k.breathOrigin && (k.breathOrigin.x || k.breathOrigin.z) ? k.breathOrigin.x : k.position.x;
+      const bz = k.breathOrigin && (k.breathOrigin.x || k.breathOrigin.z) ? k.breathOrigin.z : k.position.z;
+      const base = Math.atan2(k.breathDir.x, k.breathDir.z);
+      const half = (CFG.BREATH_HALF_ANGLE_DEG * Math.PI) / 180;
+      const R = CFG.BREATH_RANGE * (k.breathActive ? 1 : 0.35 + 0.65 * charge);
+      this._proj(bx, bz, tmp);
+      ctx.beginPath();
+      ctx.moveTo(tmp[0], tmp[1]);
+      for (let i = 0; i <= 6; i++) {
+        const a = base - half + (2 * half * i) / 6;
+        this._proj(bx + Math.sin(a) * R, bz + Math.cos(a) * R, tmp);
+        ctx.lineTo(tmp[0], tmp[1]);
+      }
+      ctx.closePath();
+      ctx.fillStyle = k.breathActive ? "rgba(255, 120, 40, 0.55)" : `rgba(255, 80, 60, ${(0.12 + 0.25 * charge).toFixed(3)})`;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 150, 90, 0.7)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Kaiju marker (clamped to the radar edge when out of range).
+    this._proj(k.position.x, k.position.z, tmp);
+    let mx = tmp[0], my = tmp[1];
+    const lim = S * 0.46;
+    const d = Math.hypot(mx, my);
+    const edge = d > lim;
+    if (edge) {
+      mx = (mx / d) * lim;
+      my = (my / d) * lim;
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(this._pulse * 5);
+    ctx.fillStyle = "rgba(255, 70, 60, 0.95)";
+    if (edge) {
+      // Small arrow pointing outwards.
+      const a = Math.atan2(my, mx);
+      ctx.save();
+      ctx.translate(mx, my);
+      ctx.rotate(a);
+      ctx.beginPath();
+      ctx.moveTo(5, 0);
+      ctx.lineTo(-4, -4);
+      ctx.lineTo(-4, 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(mx, my, 7 + pulse * 5, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 70, 60, ${(0.35 - pulse * 0.3).toFixed(3)})`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(mx, my, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255, 70, 60, 0.95)";
+      ctx.fill();
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = "rgba(20, 0, 0, 0.8)";
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}

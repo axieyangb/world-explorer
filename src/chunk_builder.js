@@ -13,6 +13,7 @@ import { computeStreetFeatures } from './features/street_worker.js'; // [feature
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
+import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
@@ -746,11 +747,13 @@ export function createSharedMaterials() {
         }
         totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uNightEmissive;`
       );
+    kaijuPatchBuildingShader(shader); // [kaiju] per-building damage/collapse state
   };
 
   return {
     buildingMats,
     wfcBldgMat,
+    wfcBldgDepthMat: kaijuCreateBuildingDepthMaterial(), // [kaiju]
     roofMat,
     terrainMat,
     roadMat,
@@ -2417,6 +2420,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
 
   const rfPos = [];
   const rfCol = [];
+  const kaijuBid = []; // [kaiju] [v0, v1, entityIdx + 1] per building
 
   // Pre-collect named parent buildings in this chunk so unnamed `building:part` tiers or courtyard wings can inherit them
   const namedParentBuildings = [];
@@ -2690,6 +2694,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
 
         // 3. Emit 24-Style 3D WFC Building Geometry (1D Massing Setback + 2D Facade Columns + 3D Roof & Greebles)
+        const kaijuV0 = wfcPos.length / 3; // [kaiju]
         const wfcMeta = appendCompactChunkBuildingWFC(
           {
             id: osmId || (i + 1),
@@ -2719,6 +2724,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           entityIdx,
           wfcUv
         );
+        kaijuBid.push(kaijuV0, wfcPos.length / 3, entityIdx + 1); // [kaiju]
 
         if (wfcMeta && wfcMeta.arch) {
           entityRecord.styleDisplay = `${wfcMeta.facadeId || wfcMeta.arch.shortName} · ${wfcMeta.arch.category}`;
@@ -2759,8 +2765,10 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           if (wfcUv.length > 0) {
             geom.setAttribute('uv', new THREE.Float32BufferAttribute(wfcUv, 2));
           }
+          geom.setAttribute('kBid', kaijuBidAttribute(kaijuBid, wfcPos.length / 3)); // [kaiju]
           finalizeAndReleaseGeometry(geom, false);
           const mesh = new THREE.Mesh(geom, mats.wfcBldgMat);
+          if (mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           bldgGroup.add(mesh);
@@ -3200,6 +3208,8 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       const colNorm = colAttr ? Boolean(colAttr.normalized) : false;
       const uvArr = geom.attributes.uv ? geom.attributes.uv.array : null;
       const idxArr = geom.index ? geom.index.array : null;
+      const kBidArr = geom.attributes.kBid ? geom.attributes.kBid.array : null; // [kaiju]
+      if (kBidArr?.buffer) transferSet.add(kBidArr.buffer); // [kaiju]
 
       if (posArr?.buffer) transferSet.add(posArr.buffer);
       if (normArr?.buffer) transferSet.add(normArr.buffer);
@@ -3218,6 +3228,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
         colNorm,
         uvArr,
         idxArr,
+        kBidArr, // [kaiju]
       });
     }
   }
@@ -3290,11 +3301,13 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     if (m.idxArr) {
       geom.setIndex(new THREE.BufferAttribute(m.idxArr, 1));
     }
+    if (m.kBidArr) geom.setAttribute('kBid', new THREE.BufferAttribute(m.kBidArr, 1)); // [kaiju]
     finalizeAndReleaseGeometry(geom, !m.normArr, m.groupKey === 'terrain' || m.groupKey === 'roads');
     const mat = mats[m.matKey] || mats.roadMat;
     const mesh = new THREE.Mesh(geom, mat);
     mesh.castShadow = m.castShadow;
     mesh.receiveShadow = m.receiveShadow;
+    if (m.kBidArr && mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
     if (subGroups[m.groupKey]) {
       subGroups[m.groupKey].add(mesh);
     }

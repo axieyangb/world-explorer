@@ -38,6 +38,7 @@ import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import { PlacesSystem } from "./features/places.js"; // feature/places
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
+import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
 import {
   getLang,
   setLang,
@@ -266,6 +267,7 @@ class WorldExplorerApp {
     this.collision = new BuildingCollision(this); // fix/water
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
+    this.kaiju = new KaijuMode(this); // [kaiju]
     this.navigator = new RoadNavigator(this.scene);
 
     this.keys = new Set();
@@ -1945,10 +1947,11 @@ class WorldExplorerApp {
       } else {
         modeLabelEl.textContent = getLang() === "zh" ? "直升机巡航" : "HELICOPTER";
       }
+      if (this.kaiju && this.kaiju.active) modeLabelEl.textContent = t("kaiju_badge"); // [kaiju]
     }
 
     document.querySelectorAll(".popover-mode-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.mode === this.mode);
+      btn.classList.toggle("active", this.kaiju && this.kaiju.active ? btn.dataset.mode === "kaiju" : btn.dataset.mode === this.mode); // [kaiju]
     });
 
     this._renderVehiclePopoverList();
@@ -2005,6 +2008,8 @@ class WorldExplorerApp {
   }
 
   setMode(rawMode) {
+    if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
+    if (this.kaiju && this.kaiju.active) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" ? "helicopter" : rawMode;
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
@@ -2369,10 +2374,13 @@ class WorldExplorerApp {
   _animate() {
     requestAnimationFrame(() => this._animate());
 
-    const dt = Math.min(0.05, this.clock.getDelta());
+    const rawDt = Math.min(0.05, this.clock.getDelta());
+    const dt = this.kaiju ? this.kaiju.scaleDt(rawDt) : rawDt; // [kaiju] pause / death slow-mo
     this._updatePhysics(dt);
+    if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
     this._updateCamera(dt);
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
+    if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]
     // [integration] atmosphere first: daylight/sun/weather are then current for traffic, street, places and shadows
     if (this.atmosphere) this.atmosphere.update(dt); // feature/atmosphere
     this._updateStreamingChunks(false);

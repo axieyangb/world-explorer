@@ -17,6 +17,8 @@ const UMBRELLA_BIT = bit(OPT.UMBRELLA);
 
 const MAX_CARS = 110;
 const MAX_PEDS = 140;
+const MAX_PEDS_CAP = 360; // [kaiju] instanced capacity for the panic density boost (normal mode still caps at MAX_PEDS)
+const WRECK_PAINT = new THREE.Color(0x14120f); // [kaiju] burned wreck tint
 const CAR_R = 400;
 const CAR_DESPAWN = 470;
 const PED_R = 145;
@@ -83,13 +85,15 @@ export class CityTraffic {
     this.uniforms = { uLights: { value: 0 } };
     this.carMeshes = createCarMeshes(MAX_CARS, this.uniforms);
     for (const m of this.carMeshes) this.group.add(m.mesh);
-    this.ped = createPedMesh(MAX_PEDS);
+    this.ped = createPedMesh(MAX_PEDS_CAP); // [kaiju]
     this.group.add(this.ped.mesh);
 
     this.cars = [];
     for (let i = 0; i < MAX_CARS; i++) this.cars.push({ active: false, id: i });
     this.peds = [];
-    for (let i = 0; i < MAX_PEDS; i++) this.peds.push({ active: false, id: i });
+    for (let i = 0; i < MAX_PEDS_CAP; i++) this.peds.push({ active: false, id: i }); // [kaiju]
+    this.kaiju = null; // [kaiju] KaijuCrowd hooks (car/carPost/ped) while Kaiju Defense is active
+    this.pedCapBase = MAX_PEDS; this.pedCap = MAX_PEDS; this.pedMult = 1; // [kaiju]
 
     this.nodeCells = new Map();
     this.chunkRecs = new Map();
@@ -311,7 +315,7 @@ export class CityTraffic {
       }
     }
     this.carTarget = Math.min(MAX_CARS, Math.round(cw / 110));
-    this.pedTarget = Math.min(MAX_PEDS, Math.round(pw / 16));
+    this.pedTarget = Math.min(this.pedCap, Math.round((pw / 16) * this.pedMult)); // [kaiju] pedCap/pedMult
   }
 
   _pickWeighted(cand, cum) {
@@ -405,6 +409,7 @@ export class CityTraffic {
       c.paint = type === 1 ? this.taxiPaint : type === 0 || type === 2 ? pick(PAINTS) : null;
       c.next = this._chooseNext(de);
       c.brake = 0; c.blockedT = 0; c.ignoreT = 0; c.bumpT = 0; c.stuckT = 0;
+      c.kWreck = 0; c.kPanic = 0; c.kSw = 0; c.kDrv = 0; // [kaiju]
       c.rx = c.x; c.ry = c.y; c.rz = c.z; c.ryaw = Math.atan2(c.ux, c.uz); c.rpitch = 0;
       c.active = true;
       return true;
@@ -455,6 +460,7 @@ export class CityTraffic {
   }
 
   _updateCar(c, dt, now) {
+    if (this.kaiju && this.kaiju.car(c, dt)) return; // [kaiju] wreck / panic reverse
     const de = c.de, e = de.e;
     const o = this.obs;
     let gap = Infinity, leadV = 0;
@@ -535,6 +541,7 @@ export class CityTraffic {
       c.next = this._chooseNext(nx);
     }
     this._carPose(c);
+    if (this.kaiju) this.kaiju.carPost(c, dt); // [kaiju] swerve
   }
 
   _updateCars(dt, p, now, allowSpawn) {
@@ -618,6 +625,7 @@ export class CityTraffic {
       ped.amp = 0.5;
       ped.ryaw = Math.atan2(ped.hx, ped.hz);
       ped.px = ped.x; ped.pz = ped.z;
+      ped.kFlee = 0; ped.kOff = 0; // [kaiju]
       ped.active = true;
       return true;
     }
@@ -625,6 +633,7 @@ export class CityTraffic {
   }
 
   _updatePed(ped, dt, now, app) {
+    if (this.kaiju && this.kaiju.ped(ped, dt)) return; // [kaiju] panic flee (off the sidewalk graph)
     const e = ped.e;
     if (!e.alive) { ped.active = false; return; }
     let speed = ped.v;
@@ -776,9 +785,10 @@ export class CityTraffic {
       m4.compose(v3, q, s3);
       cm.mesh.setMatrixAt(i, m4);
       const pa = cm.iPaint.array;
-      if (c.paint) { pa[i * 4] = c.paint.r; pa[i * 4 + 1] = c.paint.g; pa[i * 4 + 2] = c.paint.b; pa[i * 4 + 3] = 1; }
+      const paint = c.kWreck ? WRECK_PAINT : c.paint; // [kaiju]
+      if (paint) { pa[i * 4] = paint.r; pa[i * 4 + 1] = paint.g; pa[i * 4 + 2] = paint.b; pa[i * 4 + 3] = 1; }
       else pa[i * 4 + 3] = 0;
-      cm.iBrake.array[i] = c.brake;
+      cm.iBrake.array[i] = c.kWreck ? 0 : c.brake; // [kaiju]
     }
     for (let t = 0; t < this.carMeshes.length; t++) {
       const cm = this.carMeshes[t];

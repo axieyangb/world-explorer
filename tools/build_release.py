@@ -60,6 +60,18 @@ MOD_ID_MAP = {
     'src/features/atmosphere.js': '__MOD_atmosphere',
     'src/navigation.js': '__MOD_navigation',
     'src/map_modal.js': '__MOD_map_modal',
+    # [kaiju] Kaiju Defense mode modules.
+    'src/features/kaiju/kaiju_config.js': '__MOD_kaiju_config',
+    'src/features/kaiju/kaiju_model.js': '__MOD_kaiju_model',
+    'src/features/kaiju/kaiju_spawn.js': '__MOD_kaiju_spawn',
+    'src/features/kaiju/kaiju_ai.js': '__MOD_kaiju_ai',
+    'src/features/kaiju/kaiju_fx.js': '__MOD_kaiju_fx',
+    'src/features/kaiju/kaiju_audio.js': '__MOD_kaiju_audio',
+    'src/features/kaiju/kaiju_destruction.js': '__MOD_kaiju_destruction',
+    'src/features/kaiju/kaiju_crowd.js': '__MOD_kaiju_crowd',
+    'src/features/kaiju/kaiju_weapons.js': '__MOD_kaiju_weapons',
+    'src/features/kaiju/kaiju_hud.js': '__MOD_kaiju_hud',
+    'src/features/kaiju/kaiju_mode.js': '__MOD_kaiju_mode',
     'src/main.js': '__MOD_main',
 }
 
@@ -363,9 +375,11 @@ await (async function bootstrapWorldExplorer() {
 
   wm_css = (ROOT / 'src/features/worldmap.css').read_text(encoding='utf-8')
   # map_modal.js injectStyles() skips its <link> when #wm-styles already exists.
+  kaiju_css = (ROOT / 'src/features/kaiju/kaiju.css').read_text(encoding='utf-8')  # [kaiju]
+  # map_modal.js injectStyles() skips its <link> when #wm-styles already exists (kaiju_mode.js: #kaiju-styles).
   html = html.replace(
       '<link rel="stylesheet" href="styles.css" />',
-      f'<style>\n{css}\n</style>\n<style id="wm-styles">\n{wm_css}\n</style>',
+      f'<style>\n{css}\n</style>\n<style id="wm-styles">\n{wm_css}\n</style>\n<style id="kaiju-styles">\n{kaiju_css}\n</style>',
   )
 
   embedded_payload = f"""
