@@ -1,10 +1,10 @@
 // GTA V-style helicopter: flight model, camera assist, rotor wash and procedural rotor audio.
 //
 // Controls (keyboard / gamepad standard mapping):
-//   W / S  (RT / LT)            collective up / down; released -> hover throttle
-//   A / D  (LB / RB)            yaw left / right (tail rotor)
-//   Up / Down, Numpad 8 / 5     pitch nose down / nose up   (left stick Y)
-//   Left / Right, Numpad 4 / 6  roll left / right           (left stick X)
+//   W / S, Up / Down, Numpad 8 / 5   forward / back (pitch nose down / up)   (left stick Y)
+//   A / D  (LB / RB)                 turn left / right (yaw)
+//   Q / E  (LT / RT)                 down / up (collective); released -> altitude hold
+//   Left / Right, Numpad 4 / 6       strafe left / right (roll)               (left stick X)
 //   Mouse drag / right stick    free-look; camera recenters behind the heli after ~1.5 s
 //   Shift                       mild boost
 //
@@ -27,7 +27,7 @@ export const CFG = {
   THRUST_MAX: 1.75,       // x g at throttle 1
   BOOST: 1.15,            // Shift: thrust and top speed multiplier (mild)
   HORIZ_GAIN: 1.45,       // arcade: horizontal share of rotor thrust
-  DRAG_L: 0.03, DRAG_Q: 0.00165,       // horizontal drag -> ~250 km/h at full pitch
+  DRAG_L: 0.03, DRAG_Q: 0.0024,        // horizontal drag -> ~250 km/h at full pitch (altitude held)
   VDRAG_L: 0.55, VDRAG_Q: 0.004,       // vertical drag
   IDLE_HDRAG: 0.16,       // extra horizontal bleed with no cyclic input
   MAX_VY_UP: 16, MAX_VY_DOWN: 20,
@@ -49,6 +49,7 @@ export const CFG = {
   CAM_LAG: 9.0,           // 1/s pivot follow rate
   FOV_ADD: 8.0,
   WIND: 0.35,             // m/s^2 buffeting
+  ALT_KP: 1.2, ALT_KD: 1.7, ALT_KI: 0.15, ALT_ACC_MAX: 6.0, // altitude hold (no Q/E input)
   MAX_ALT: 2600,
 };
 
@@ -126,6 +127,8 @@ export class HeliFlight {
     s.yaw = yaw; s.pitch = 0; s.roll = 0;
     s.throttle = CFG.HOVER_THR;
     s.rpm = 1;
+    this._holdY = y;
+    this._holdI = 0;
     this.app.yaw = yaw;
     this._lastPos.copy(this.app.pos);
     this._camPivot.copy(this.app.pos);
@@ -147,9 +150,10 @@ export class HeliFlight {
     const k = this.app.keys;
     const has = (c) => k.has(c);
     const inp = {
-      collective: (has('KeyW') ? 1 : 0) - (has('KeyS') ? 1 : 0),
+      collective: (has('KeyE') ? 1 : 0) - (has('KeyQ') ? 1 : 0),
       yaw: (has('KeyA') ? 1 : 0) - (has('KeyD') ? 1 : 0), // +1 = left (yaw grows toward screen-left)
-      pitch: (has('ArrowUp') || has('Numpad8') ? 1 : 0) - (has('ArrowDown') || has('Numpad5') || has('Numpad2') ? 1 : 0),
+      pitch: (has('KeyW') || has('ArrowUp') || has('Numpad8') ? 1 : 0) -
+        (has('KeyS') || has('ArrowDown') || has('Numpad5') || has('Numpad2') ? 1 : 0),
       roll: (has('ArrowRight') || has('Numpad6') ? 1 : 0) - (has('ArrowLeft') || has('Numpad4') ? 1 : 0),
       camX: 0, camY: 0,
     };
@@ -258,8 +262,6 @@ export class HeliFlight {
 
     // Rotor spin-up and throttle.
     s.rpm = Math.min(1, s.rpm + dt / CFG.SPINUP_S);
-    const thrTarget = clamp(CFG.HOVER_THR + inp.collective * 0.5, 0, 1);
-    s.throttle = approach(s.throttle, s.grounded && inp.collective <= 0 ? Math.min(thrTarget, 0.35) : thrTarget, CFG.THR_RESP, dt);
 
     // Horizontal velocity in the heading frame.
     const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw); // forward
@@ -271,7 +273,7 @@ export class HeliFlight {
     let tP, tR;
     if (s.grounded) { tP = 0; tR = 0; }
     else {
-      tP = cyclic ? inp.pitch * CFG.MAX_PITCH : -clamp(vF * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
+      tP = cyclic ? inp.pitch * CFG.MAX_PITCH * (inp.pitch < 0 ? 0.6 : 1) : -clamp(vF * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
       tR = cyclic ? inp.roll * CFG.MAX_ROLL : -clamp(vR * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
       if (cyclic && !inp.pitch) tP = -clamp(vF * CFG.BRAKE_K * 0.3, -0.1, 0.1);
       if (cyclic && !inp.roll) tR = -clamp(vR * CFG.BRAKE_K, -CFG.BRAKE_MAX, CFG.BRAKE_MAX);
@@ -297,7 +299,28 @@ export class HeliFlight {
     const sup0 = this._support(p.x, p.z, p.y + 0.3);
     s.agl = Math.max(0, p.y - sup0);
     const ge = s.agl < CFG.GROUND_EFFECT_H ? CFG.GROUND_EFFECT * (1 - s.agl / CFG.GROUND_EFFECT_H) : 0;
-    const T = CFG.G * thrustRatio(s.throttle) * s.rpm * s.rpm * (1 + ge) * (boost ? CFG.BOOST : 1);
+
+    // Throttle: Q/E drive the collective; with no input, hold the altitude where Q/E was released
+    // (PID on vertical acceleration, compensating for lift lost to pitch/roll).
+    const liftPerRatio = CFG.G * s.rpm * s.rpm * (1 + ge) * (boost ? CFG.BOOST : 1);
+    if (inp.collective !== 0 || s.grounded || this._holdY === undefined) {
+      const thrTarget = clamp(CFG.HOVER_THR + inp.collective * 0.5, 0, 1);
+      s.throttle = approach(s.throttle, s.grounded && inp.collective <= 0 ? Math.min(thrTarget, 0.35) : thrTarget, CFG.THR_RESP, dt);
+      this._holdY = p.y + v.y * 0.6; // capture with a little anticipation of the current climb/sink
+      this._holdI = 0;
+      s.altitudeHold = false;
+    } else {
+      const err = this._holdY - p.y;
+      this._holdI = clamp(this._holdI + err * dt, -20, 20);
+      const aDes = clamp(CFG.ALT_KP * err - CFG.ALT_KD * v.y + CFG.ALT_KI * this._holdI, -CFG.ALT_ACC_MAX, CFG.ALT_ACC_MAX);
+      const ratio = (CFG.G + aDes) / Math.max(0.35, up.y) / Math.max(0.05, liftPerRatio);
+      const thr = ratio <= 1
+        ? ((ratio - CFG.THRUST_MIN) / (1 - CFG.THRUST_MIN)) * CFG.HOVER_THR
+        : CFG.HOVER_THR + ((ratio - 1) / (CFG.THRUST_MAX - 1)) * (1 - CFG.HOVER_THR);
+      s.throttle = approach(s.throttle, clamp(thr, 0, 1), 8, dt);
+      s.altitudeHold = true;
+    }
+    const T = thrustRatio(s.throttle) * liftPerRatio;
     let ax = up.x * T * CFG.HORIZ_GAIN, az = up.z * T * CFG.HORIZ_GAIN, ay = up.y * T - CFG.G;
     const hd = CFG.DRAG_L + CFG.DRAG_Q * hs / (boost ? CFG.BOOST * CFG.BOOST : 1) + (cyclic ? 0 : CFG.IDLE_HDRAG);
     ax -= v.x * hd; az -= v.z * hd;

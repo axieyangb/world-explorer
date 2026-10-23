@@ -1876,8 +1876,8 @@ class WorldExplorerApp {
     const text =
       this.mode === "helicopter"
         ? zh
-          ? "W/S 升降 · A/D 转向 · ↑↓ 俯仰 · ←→ 侧倾 · 拖动看 · C 退出"
-          : "W/S Up/Down · A/D Yaw · ↑↓ Pitch · ←→ Roll · Drag Look · C Exit"
+          ? "W/S 前进/后退 · A/D 转向 · Q/E 下降/上升 · ←/→ 平移 · 拖动看"
+          : "W/S Forward/Back · A/D Turn · Q/E Down/Up · ←/→ Strafe · Drag Look"
         : zh
           ? "WASD 移动 · Shift 加速 · 空格 刹车 · F 步行/驾驶 · C 直升机 · G 换车 · / 搜索"
           : "WASD Move · Shift Boost · Space Brake · F Walk/Drive · C Helicopter · G Switch Car · / Search";
