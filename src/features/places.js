@@ -732,6 +732,9 @@ export class PlacesSystem {
   }
 
   // ------------------------------------------------------------------ animated airliners (runway takeoff/landing & ambient sky jets)
+  // [live-sky-weather] One runway operation per airport at a time: a single airliner alternates
+  // landing / takeoff with a randomized 60-120 s gap; nothing shows between operations. Live
+  // traffic (live_sky.js) sets `rp.liveBusy` to suppress the loop where real planes use the field.
   _refreshRunwayPlanes(playerPos) {
     const px = playerPos ? playerPos.x : 0;
     const pz = playerPos ? playerPos.z : 0;
@@ -748,113 +751,135 @@ export class PlacesSystem {
         const headingBucket = Math.round(((rw.yaw * 180) / Math.PI + 360) % 180 / 5);
         const key = rw.ref ? `${rw.ref}:${Math.round(mx / 600)},${Math.round(mz / 600)}` : `${headingBucket}:${Math.round(mx / 250)},${Math.round(mz / 250)}`;
         const prev = byKey.get(key);
-        if (!prev || rw.len > prev.rw.len) {
-          byKey.set(key, { key, rw, dist });
-        }
+        if (!prev || rw.len > prev.rw.len) byKey.set(key, { key, rw, dist, mx, mz });
       }
     }
 
-    const sorted = [...byKey.values()].sort((a, b) => a.dist - b.dist).slice(0, 4);
-    const wantedKeys = new Set();
-    for (const item of sorted) {
-      wantedKeys.add(`${item.key}#0`);
-      wantedKeys.add(`${item.key}#1`);
+    // Cluster runways into airports (midpoints within 3.5 km), nearest 2 airports only
+    const airports = [];
+    for (const item of [...byKey.values()].sort((a, b) => b.rw.len - a.rw.len)) {
+      let ap = airports.find((a) => Math.hypot(a.mx - item.mx, a.mz - item.mz) < 3500);
+      if (!ap) {
+        ap = { id: `ap:${Math.round(item.mx / 1000)},${Math.round(item.mz / 1000)}`, mx: item.mx, mz: item.mz, dist: item.dist, runways: [] };
+        airports.push(ap);
+      }
+      ap.runways.push(item.rw);
+      ap.dist = Math.min(ap.dist, item.dist);
     }
+    airports.sort((a, b) => a.dist - b.dist);
+    airports.length = Math.min(airports.length, 2);
 
     const kept = [];
     for (const rp of this._runwayPlanes) {
-      if (wantedKeys.has(rp.id)) {
+      const ap = airports.find((a) => a.id === rp.id || Math.hypot(a.mx - rp.mx, a.mz - rp.mz) < 3500);
+      if (ap && !kept.includes(rp)) {
+        rp.runways = ap.runways;
+        if (!rp.op) rp.rw = ap.runways[0];
+        ap.taken = true;
         kept.push(rp);
       } else {
         this.root.remove(rp.mesh);
       }
     }
-
-    const existingIds = new Set(kept.map((r) => r.id));
     const liveries = [0x003a70, 0xc8102e, 0x0b6e4f, 0x00a3e0, 0xf2a900, 0x5c2d91];
-    let liveryIdx = kept.length;
-    for (const item of sorted) {
-      for (const slot of [0, 1]) {
-        const id = `${item.key}#${slot}`;
-        if (existingIds.has(id)) continue;
-        const scale = slot === 0 ? 1.15 : 1.0;
-        const mesh = this.buildPlaneModel(liveries[liveryIdx++ % liveries.length], scale);
-        this.root.add(mesh);
-        kept.push({
-          id,
-          key: item.key,
-          slot,
-          rw: item.rw,
-          phaseOffset: slot * 11.0 + (liveryIdx % 3) * 1.7,
-          phase: slot === 0 ? 'landing' : 'takeoff',
-          pitch: 0,
-          roll: 0,
-          speed: 65,
-          mesh,
-        });
-      }
+    for (const ap of airports) {
+      if (ap.taken) continue;
+      const mesh = this.buildPlaneModel(liveries[(this._runwayOpCount || 0) % liveries.length], 1.1);
+      mesh.visible = false;
+      this.root.add(mesh);
+      kept.push({
+        id: ap.id, mx: ap.mx, mz: ap.mz, runways: ap.runways, rw: ap.runways[0],
+        op: null, opT: 0, dir: 1, next: this.time + 10 + Math.random() * 30,
+        phase: 'idle', nextKind: Math.random() < 0.5 ? 'landing' : 'takeoff',
+        pitch: 0, roll: 0, speed: 0, liveBusy: false, mesh,
+      });
     }
     this._runwayPlanes = kept;
     this._updateRunwayPlanes(0);
   }
 
   _updateRunwayPlanes(dt) {
-    const CYCLE = 22.0;
+    if (!this._runwayOpLog) this._runwayOpLog = [];
+    const TAN3 = Math.tan(3 * Math.PI / 180);
     for (const rp of this._runwayPlanes) {
+      if (!rp.op) {
+        rp.mesh.visible = false;
+        rp.phase = 'idle';
+        if (this.time < rp.next) continue;
+        if (rp.liveBusy || !rp.runways || !rp.runways.length) {
+          rp.next = this.time + 60 + Math.random() * 60;
+          continue;
+        }
+        // start one operation on one runway, random direction
+        rp.rw = rp.runways[Math.floor(Math.random() * rp.runways.length)];
+        rp.dir = Math.random() < 0.5 ? 1 : -1;
+        rp.op = rp.nextKind;
+        rp.nextKind = rp.op === 'landing' ? 'takeoff' : 'landing';
+        rp.opT = 0;
+        this._runwayOpCount = (this._runwayOpCount || 0) + 1;
+        this._runwayOpLog.push({ t: Number(this.time.toFixed(1)), airport: rp.id, op: rp.op });
+        if (this._runwayOpLog.length > 50) this._runwayOpLog.shift();
+      }
+      rp.opT += dt;
       const rw = rp.rw;
-      const ux = Math.sin(rw.yaw);
-      const uz = Math.cos(rw.yaw);
-      const rLen = Math.max(420, Math.min(1300, rw.len));
-      const t = ((this.time + rp.phaseOffset) % CYCLE + CYCLE) % CYCLE;
+      const rLen = Math.max(420, rw.len);
+      const yaw = rp.dir > 0 ? rw.yaw : rw.yaw + Math.PI;
+      const sx = rp.dir > 0 ? rw.x0 : rw.x1;
+      const sz = rp.dir > 0 ? rw.z0 : rw.z1;
+      const ux = Math.sin(yaw), uz = Math.cos(yaw);
+      const t = rp.opT;
+      let distAlong = 0, alt = 0.35, pitch = 0, speed = 0, done = false;
 
-      let distAlong = 0;
-      let alt = 0.35;
-      let pitch = 0;
-      let speed = 60;
-
-      if (t < 10.0) {
-        // Phase A (0..10s): Final Approach (900m before threshold at y+185m -> threshold y+1.5m) & Landing Rollout
-        rp.phase = 'landing';
-        if (t < 6.5) {
-          const uA = t / 6.5;
-          distAlong = -900 * (1 - uA);
-          alt = 185 * (1 - uA) + 1.5;
-          pitch = 0.05 + 0.03 * uA; // +0.08 rad nose-up flare at threshold
-          speed = 74 - 16 * uA;
+      if (rp.op === 'landing') {
+        // 3 deg final from 3 km at 72 m/s, flare, then roll out to taxi speed and clear the runway
+        const Ta = 3000 / 72;
+        const vEnd = 12, Tr = 30;
+        const rollLen = Math.min(rLen * 0.8, (72 + vEnd) * 0.5 * Tr);
+        if (t < Ta) {
+          distAlong = -3000 + 72 * t;
+          alt = Math.max(0.35, -distAlong * TAN3 + 0.35);
+          pitch = 0.05 + (t > Ta - 4 ? 0.04 * (t - (Ta - 4)) / 4 : 0);
+          speed = 72;
+        } else if (t < Ta + Tr) {
+          const u = (t - Ta) / Tr;
+          distAlong = rollLen * (1 - (1 - u) * (1 - u));
+          pitch = 0.09 * Math.max(0, 1 - u * 6);
+          speed = 72 + (vEnd - 72) * u;
         } else {
-          const uB = (t - 6.5) / 3.5;
-          distAlong = (rLen * 0.45) * (1 - Math.pow(1 - uB, 2));
-          alt = 0.35 + Math.max(0, 1 - uB * 3.0) * 1.15;
-          pitch = 0.08 * Math.max(0, 1 - uB * 2.2);
-          speed = 58 * (1 - uB) + 16 * uB;
+          done = true;
         }
       } else {
-        // Phase B (10..22s): Takeoff Roll (18 -> 82 m/s), Rotate (+0.24 rad nose-up) & Climb-Out to y+380m
-        rp.phase = 'takeoff';
-        const tB = t - 10.0;
-        if (tB < 4.5) {
-          const uR = tB / 4.5;
-          distAlong = (rLen * 0.52) * (uR * uR);
-          alt = 0.35 + (uR > 0.72 ? Math.pow((uR - 0.72) / 0.28, 2) * 5.0 : 0);
-          pitch = uR < 0.62 ? 0 : ((uR - 0.62) / 0.38) * 0.24;
-          speed = 18 + (82 - 18) * uR;
+        // takeoff roll to 80 m/s within ~70% of the runway, rotate, 7 deg climb to ~700 m
+        const vR = 80;
+        const acc = Math.max(1.8, (vR * vR) / (2 * rLen * 0.7));
+        const Tg = vR / acc;
+        const climbTan = Math.tan(7 * Math.PI / 180);
+        if (t < Tg) {
+          distAlong = 0.5 * acc * t * t;
+          pitch = t > Tg - 3 ? 0.16 * (t - (Tg - 3)) / 3 : 0;
+          speed = acc * t;
         } else {
-          const uC = (tB - 4.5) / 7.5;
-          distAlong = rLen * 0.52 + 640 * uC;
-          alt = 5.35 + 374.65 * Math.pow(uC, 1.06);
-          pitch = 0.24 - 0.03 * uC;
-          speed = 82;
+          const tc = t - Tg;
+          distAlong = 0.5 * acc * Tg * Tg + vR * tc;
+          alt = 0.35 + vR * tc * climbTan;
+          pitch = 0.16;
+          speed = vR;
+          if (alt > 700) done = true;
         }
       }
-
-      const wx = rw.x0 + ux * distAlong;
-      const wz = rw.z0 + uz * distAlong;
-      const wy = rw.y + alt;
+      if (done || rp.liveBusy) {
+        rp.op = null;
+        rp.mesh.visible = false;
+        rp.next = this.time + 60 + Math.random() * 60;
+        continue;
+      }
+      rp.phase = rp.op;
       rp.pitch = pitch;
       rp.roll = 0;
       rp.speed = speed;
-      rp.mesh.position.set(wx, wy, wz);
-      rp.mesh.rotation.set(-pitch, rw.yaw, 0, 'YXZ');
+      rp.mesh.visible = true;
+      rp.mesh.position.set(sx + ux * distAlong, rw.y + alt, sz + uz * distAlong);
+      rp.mesh.rotation.set(-pitch, yaw, 0, 'YXZ');
     }
   }
 
@@ -862,15 +887,11 @@ export class PlacesSystem {
     const cx = centerPos ? centerPos.x : 0;
     const cz = centerPos ? centerPos.z : 0;
     const baseGround = centerPos && Number.isFinite(centerPos.y) ? Math.max(0, centerPos.y) : 0;
+    // [live-sky-weather] 3 ambient jets, spread far apart (was 5)
     const specs = [
-      // 2 ascending / descending airport corridor jets
-      { role: 'corridor_climb', radius: 380, angle: 0.4, yaw: 1.15, alt: 215, speed: 74, pitch: 0.10, roll: 0.0, yawRate: 0.0, scale: 1.15, livery: 0x003a70 },
-      { role: 'corridor_descend', radius: 520, angle: 2.1, yaw: -1.85, alt: 330, speed: 68, pitch: -0.10, roll: 0.0, yawRate: 0.0, scale: 1.10, livery: 0xc8102e },
-      // 2 cruising jets
-      { role: 'cruise_1', radius: 680, angle: 3.5, yaw: 0.55, alt: 275, speed: 82, pitch: 0.02, roll: 0.0, yawRate: 0.0, scale: 1.20, livery: 0x00a3e0 },
-      { role: 'cruise_2', radius: 980, angle: 4.9, yaw: -0.75, alt: 385, speed: 90, pitch: 0.02, roll: 0.0, yawRate: 0.0, scale: 1.35, livery: 0x0b6e4f },
-      // 1 gently banking jet
-      { role: 'banking', radius: 460, angle: 5.6, yaw: 2.35, alt: 245, speed: 66, pitch: 0.03, roll: 0.22, yawRate: 0.045, scale: 1.12, livery: 0xf2a900 },
+      { role: 'corridor_climb', radius: 700, angle: 0.4, yaw: 1.15, alt: 260, speed: 74, pitch: 0.10, roll: 0.0, yawRate: 0.0, scale: 1.15, livery: 0x003a70 },
+      { role: 'cruise_1', radius: 1100, angle: 2.5, yaw: 0.55, alt: 330, speed: 82, pitch: 0.02, roll: 0.0, yawRate: 0.0, scale: 1.20, livery: 0x00a3e0 },
+      { role: 'cruise_2', radius: 1300, angle: 4.6, yaw: -0.75, alt: 400, speed: 90, pitch: 0.02, roll: 0.0, yawRate: 0.0, scale: 1.35, livery: 0x0b6e4f },
     ];
 
     for (let i = 0; i < specs.length; i++) {
@@ -900,8 +921,8 @@ export class PlacesSystem {
   }
 
   _respawnSkyPlane(sp, px, py, pz, idx) {
-    const bear = ((idx * 1.37 + this.time * 0.23) % (Math.PI * 2));
-    const radius = 340 + (idx * 195) % 860; // 340m..1200m (well inside 250..1350m band)
+    const bear = ((idx * 2.09 + this.time * 0.23) % (Math.PI * 2)); // [live-sky-weather] ~120 deg apart
+    const radius = 650 + (idx * 260) % 650; // 650m..1300m
     sp.x = px + Math.cos(bear) * radius;
     sp.z = pz + Math.sin(bear) * radius;
     // Point on an incoming chord across the sky near the player
@@ -952,6 +973,7 @@ export class PlacesSystem {
       }
       sp.mesh.position.set(sp.x, sp.y, sp.z);
       sp.mesh.rotation.set(-sp.pitch, sp.yaw, sp.roll, 'YXZ');
+      sp.mesh.visible = !this.liveSkyNear; // [live-sky-weather] real traffic replaces ambient jets
     }
   }
 

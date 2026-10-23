@@ -585,6 +585,7 @@ export class MapSystem {
     ctx.restore();
 
     this._drawTrafficOverlay(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), true);
+    if (this.app && this.app.liveSky) this.app.liveSky.drawMap(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), lonToMx, latToMy, true); // [live-sky-weather]
     this._drawRoute(ctx, (mx) => this._mxToSx(mx), (my) => this._myToSy(my), 6.5, 4, true);
     this._drawLabels(ctx, W, H, ws);
 
@@ -1239,6 +1240,7 @@ export class MapSystem {
     if (this._drawTiles(ctx, pmx, pmy, zoom, R, R, { n: 1, shared: true })) this._mmForce = true;
     this._drawTrafficOverlay(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, false);
     this._drawRoute(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, 5.5, 3.2, false);
+    if (this.app && this.app.liveSky) this.app.liveSky.drawMap(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, lonToMx, latToMy, false); // [live-sky-weather]
     ctx.restore();
 
     this._drawPlayer(ctx, S / 2, S / 2, 0, 0.85);
