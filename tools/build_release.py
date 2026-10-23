@@ -319,6 +319,8 @@ def build_world_explorer_html():
   b64_dem = gz_b64((ROOT / 'data/beijing_dem.json').read_bytes())
   b64_nav = gz_b64((ROOT / 'data/nav_graph.json').read_bytes())
   b64_lod = gz_b64(pack_lod_soa())
+  sd_path = ROOT / 'data/street_detail_sf.json'  # [street-detail] precomputed OSM street nodes for the SF start
+  b64_sd = gz_b64(sd_path.read_bytes()) if sd_path.exists() else ''
   b64_fstrip = base64.b64encode((ROOT / 'assets/facades/facade_strip.jpg').read_bytes()).decode('ascii')
   b64_fmask = base64.b64encode((ROOT / 'assets/facades/facade_mask_strip.jpg').read_bytes()).decode('ascii')
   b64_dstrip = base64.b64encode((ROOT / 'assets/doors/door_strip.jpg').read_bytes()).decode('ascii')
@@ -437,6 +439,12 @@ await (async function bootstrapWorldExplorer() {
     if (url.includes('nav_graph.json')) {
       return new Response(navText, { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
+    if (url.includes('street_detail_sf.json')) {
+      const el = document.getElementById('b64-street-detail');
+      if (!el || !el.textContent.trim()) return new Response('', { status: 404 });
+      const sdBytes = await gunzipBase64ToBytes('b64-street-detail');
+      return new Response(sdBytes, { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (url.includes('city_buildings_lod.bin')) {
       return new Response(lodBuf, { status: 200, headers: { 'Content-Type': 'application/octet-stream' } });
     }
@@ -463,6 +471,7 @@ await (async function bootstrapWorldExplorer() {
   <script type="application/octet-stream" id="b64-nav">{b64_nav}</script>
   <script type="application/octet-stream" id="b64-lod-soa">{b64_lod}</script>
   <script type="application/octet-stream" id="b64-worker">{b64_worker}</script>
+  <script type="application/octet-stream" id="b64-street-detail">{b64_sd}</script>
   <script>
   window.__EMBEDDED_FACADE_STRIP__ = "data:image/jpeg;base64,{b64_fstrip}";
   window.__EMBEDDED_FACADE_MASK_STRIP__ = "data:image/jpeg;base64,{b64_fmask}";
