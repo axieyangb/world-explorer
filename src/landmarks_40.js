@@ -18,6 +18,11 @@ import { BATCH_07 } from './landmarks/batch_07.js';
 import { BATCH_08 } from './landmarks/batch_08.js';
 import { BATCH_09 } from './landmarks/batch_09.js';
 import { BATCH_10 } from './landmarks/batch_10.js';
+import { LANDMARKS as NEW_LANDMARKS } from './features/landmarks/registry.js'; // feature/beijing-landmarks
+
+// feature/beijing-landmarks: old entries re-built in the new landmark system (src/features/landmarks) are
+// dropped here so every landmark renders / collides / suppresses OSM buildings in exactly one system.
+export const REPLACED_BY_NEW_SYSTEM = new Set(NEW_LANDMARKS.filter((l) => l.on).flatMap((l) => l.replaces || []));
 
 export const LANDMARKS_40 = [
   ...BATCH_01,
@@ -30,7 +35,7 @@ export const LANDMARKS_40 = [
   ...BATCH_08,
   ...BATCH_09,
   ...BATCH_10,
-];
+].filter((lm) => !REPLACED_BY_NEW_SYSTEM.has(lm.id));
 
 const OSM_ID_TO_LANDMARK = new Map();
 for (const lm of LANDMARKS_40) {

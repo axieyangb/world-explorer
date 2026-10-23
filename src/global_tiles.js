@@ -1343,6 +1343,17 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   }
 
   const venues = extractVenues(tiles, toLocalXZ, buildings); // [venues] also drops stadium shell buildings
+  // feature/beijing-landmarks: a hand-built landmark (e.g. the Bird's Nest) replaces the generic stadium venue
+  if (lmSuppress && venues && venues.stadiums) {
+    venues.stadiums = venues.stadiums.filter((st) => {
+      const fo = st.outer;
+      if (!fo || fo.length < 6) return true;
+      let sx = 0, sz = 0;
+      for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
+      const n = fo.length / 2;
+      return !lmSuppress(ox + sx / n, oz + sz / n);
+    });
+  }
   return {
     roads,
     road_context: roadContext, // fix/bridge-continuity: approach context for computeRoadLiftProfiles only

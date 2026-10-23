@@ -49,6 +49,24 @@ export const LANDMARKS = [
   { id: "khafre", name: "Pyramid of Khafre", nameZh: "哈夫拉金字塔", lat: 29.97611, lon: 31.13083, heading: 0, height: 136, supp: { hw: 110, hd: 110 }, groundR: 115, on: true },
   { id: "menkaure", name: "Pyramid of Menkaure", nameZh: "孟卡拉金字塔", lat: 29.9725, lon: 31.12833, heading: 0, height: 61, supp: { hw: 54, hd: 54 }, groundR: 58, on: true },
   { id: "sphinx", name: "Great Sphinx", nameZh: "狮身人面像", lat: 29.97527, lon: 31.13764, heading: 90, height: 20, supp: { hw: 12, hd: 40 }, on: true },
+  // --- Beijing (feature/beijing-landmarks). WGS84 / OSM-aligned positions (NOT GCJ-02 map coords). `replaces` lists
+  // the old src/landmarks_40.js ids that are disabled while this entry is on (each landmark renders in one system only).
+  { id: "tiananmen", name: "Tiananmen Gate", nameZh: "天安门", lat: 39.907338, lon: 116.391265, heading: 178.25, height: 34.7, supp: { hw: 62, hd: 24 }, replaces: ["tiananmen_rostrum"], on: true, chip: true },
+  { id: "forbiddencity", name: "Forbidden City", nameZh: "故宫（紫禁城）", lat: 39.916662, lon: 116.390813, heading: 180, height: 35, supp: { hw: 378, hd: 482 }, replaces: ["wumen", "taihedian", "zhonghedian", "baohedian", "shenwumen"], on: true },
+  { id: "heroesmonument", name: "Monument to the People's Heroes", nameZh: "人民英雄纪念碑", lat: 39.902936, lon: 116.391492, heading: 180, height: 37.94, supp: { hw: 26, hd: 26 }, replaces: [], on: true },
+  { id: "greathall", name: "Great Hall of the People", nameZh: "人民大会堂", lat: 39.90344, lon: 116.387089, heading: 90, height: 46.5, supp: { hw: 160, hd: 105 }, replaces: ["great_hall_of_the_people"], on: true },
+  { id: "natmuseum", name: "National Museum of China", nameZh: "中国国家博物馆", lat: 39.903729, lon: 116.39579, heading: 270, height: 42.5, supp: { hw: 160, hd: 100 }, replaces: ["national_museum_of_china"], on: true },
+  { id: "maomausoleum", name: "Chairman Mao Memorial Hall", nameZh: "毛主席纪念堂", lat: 39.900774, lon: 116.391492, heading: 0, height: 33.6, supp: { hw: 52, hd: 52 }, replaces: [], on: true },
+  { id: "taflagpole", name: "Tiananmen Square Flagpole", nameZh: "天安门广场国旗", lat: 39.90643, lon: 116.39141, heading: 180, height: 32.6, supp: { r: 6 }, replaces: [], on: true },
+  { id: "zhengyangmen", name: "Zhengyangmen Gate", nameZh: "正阳门", lat: 39.899171, lon: 116.391492, heading: 180, height: 43.7, supp: { hw: 52, hd: 26 }, replaces: ["qianmen_gate"], on: true },
+  { id: "qianmenarrow", name: "Zhengyangmen Archery Tower", nameZh: "正阳门箭楼", lat: 39.898, lon: 116.391668, heading: 180, height: 35.4, supp: { hw: 34, hd: 20 }, replaces: ["zhengyangmen_arrow_tower"], on: true },
+  { id: "qiniandian", name: "Hall of Prayer for Good Harvests", nameZh: "祈年殿", lat: 39.882257, lon: 116.406623, heading: 180, height: 38, supp: { r: 50 }, replaces: ["temple_of_heaven_qiniandian"], on: true },
+  { id: "jingshan", name: "Wanchun Pavilion, Jingshan", nameZh: "景山万春亭", lat: 39.923524, lon: 116.390497, heading: 180, height: 62, supp: { r: 14 }, replaces: ["jingshan_wanchunting"], on: true },
+  { id: "beihaidagoba", name: "White Dagoba, Beihai", nameZh: "北海白塔", lat: 39.924425, lon: 116.383025, heading: 180, height: 35.9, supp: { r: 18 }, replaces: ["beihai_white_dagoba"], on: true },
+  { id: "birdsnest", name: "Beijing National Stadium (Bird's Nest)", nameZh: "国家体育场（鸟巢）", lat: 39.991459, lon: 116.390227, heading: 0, height: 69.2, supp: { hw: 165, hd: 150 }, replaces: ["birds_nest"], on: true },
+  { id: "watercube", name: "National Aquatics Center (Water Cube)", nameZh: "国家游泳中心（水立方）", lat: 39.991576, lon: 116.384172, heading: 0, height: 31, supp: { hw: 89, hd: 89 }, replaces: ["water_cube"], on: true },
+  { id: "cctv", name: "CCTV Headquarters", nameZh: "中央电视台总部大楼", lat: 39.913816, lon: 116.457966, heading: 0, height: 234, supp: { hw: 85, hd: 85 }, replaces: ["cctv_headquarters"], on: true },
+  { id: "chinazun", name: "CITIC Tower (China Zun)", nameZh: "中信大厦（中国尊）", lat: 39.911501, lon: 116.460238, heading: 0, height: 528, supp: { hw: 40, hd: 40 }, replaces: ["china_zun"], on: true },
 ];
 
 const _byId = new Map(LANDMARKS.map((l) => [l.id, l]));
