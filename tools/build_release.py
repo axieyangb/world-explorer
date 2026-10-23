@@ -234,6 +234,8 @@ def build_world_explorer_html():
   b64_lod = gz_b64(pack_lod_soa())
   b64_fstrip = base64.b64encode((ROOT / 'assets/facades/facade_strip.jpg').read_bytes()).decode('ascii')
   b64_fmask = base64.b64encode((ROOT / 'assets/facades/facade_mask_strip.jpg').read_bytes()).decode('ascii')
+  b64_dstrip = base64.b64encode((ROOT / 'assets/doors/door_strip.jpg').read_bytes()).decode('ascii')
+  b64_dmask = base64.b64encode((ROOT / 'assets/doors/door_mask_strip.jpg').read_bytes()).decode('ascii')
 
   print('[2/2] Bundling Three.js & World Explorer ES modules...', flush=True)
   # The worker bundle is chunk_worker.js (its self.onmessage handler) plus everything it imports.
@@ -375,6 +377,8 @@ await (async function bootstrapWorldExplorer() {
   <script>
   window.__EMBEDDED_FACADE_STRIP__ = "data:image/jpeg;base64,{b64_fstrip}";
   window.__EMBEDDED_FACADE_MASK_STRIP__ = "data:image/jpeg;base64,{b64_fmask}";
+  window.__EMBEDDED_DOOR_STRIP__ = "data:image/jpeg;base64,{b64_dstrip}";
+  window.__EMBEDDED_DOOR_MASK_STRIP__ = "data:image/jpeg;base64,{b64_dmask}";
   </script>
   <script>
   (async () => {{

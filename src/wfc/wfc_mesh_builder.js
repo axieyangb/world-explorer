@@ -858,6 +858,205 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   };
 }
 
+export const DOOR_CATALOG = [
+  { id: 'door_office_lobby_glass', index: 0, width: 4.2, height: 4.0, hasCanopy: true, hasStoop: false, canopyDepth: 0.78, avgColor: [0.4212, 0.4189, 0.3874] },
+  { id: 'door_hotel_canopy', index: 1, width: 4.2, height: 4.0, hasCanopy: true, hasStoop: false, canopyDepth: 0.88, avgColor: [0.3030, 0.2525, 0.2028] },
+  { id: 'door_apartment_modern', index: 2, width: 3.1, height: 3.2, hasCanopy: true, hasStoop: false, canopyDepth: 0.48, avgColor: [0.5016, 0.5250, 0.5286] },
+  { id: 'door_nyc_brownstone_stoop', index: 3, width: 2.9, height: 3.1, hasCanopy: false, hasStoop: true, canopyDepth: 0.26, avgColor: [0.3580, 0.2630, 0.2203] },
+  { id: 'door_paris_porte_cochere', index: 4, width: 3.5, height: 4.0, hasCanopy: false, hasStoop: false, canopyDepth: 0.28, avgColor: [0.4722, 0.4574, 0.4088] },
+  { id: 'door_london_georgian', index: 5, width: 2.8, height: 3.5, hasCanopy: false, hasStoop: false, canopyDepth: 0.28, avgColor: [0.5699, 0.5462, 0.5147] },
+  { id: 'door_tokyo_apartment', index: 6, width: 3.4, height: 3.2, hasCanopy: true, hasStoop: false, canopyDepth: 0.58, avgColor: [0.4233, 0.4048, 0.3691] },
+  { id: 'door_beijing_hutong_gate', index: 7, width: 3.2, height: 3.4, hasCanopy: true, hasStoop: false, canopyDepth: 0.46, avgColor: [0.4770, 0.3618, 0.3252] },
+  { id: 'door_soviet_block', index: 8, width: 2.6, height: 2.9, hasCanopy: true, hasStoop: false, canopyDepth: 0.56, avgColor: [0.3767, 0.3257, 0.3006] },
+  { id: 'door_shop_glass', index: 9, width: 4.0, height: 3.8, hasCanopy: true, hasStoop: false, canopyDepth: 0.42, avgColor: [0.4969, 0.4968, 0.4906] },
+  { id: 'door_garage_roller', index: 10, width: 3.8, height: 3.3, hasCanopy: false, hasStoop: false, canopyDepth: 0.22, avgColor: [0.4814, 0.4937, 0.4883] },
+  { id: 'door_us_suburban', index: 11, width: 2.8, height: 3.0, hasCanopy: false, hasStoop: false, canopyDepth: 0.32, avgColor: [0.5257, 0.5462, 0.5627] },
+];
+
+export function selectDoorForBuilding(bldgInfo, upperSpec, seed, region = 'beijing') {
+  const btype = String(bldgInfo.btype || '').toLowerCase();
+  const h = Number(bldgInfo.height) || 18;
+  const fid = upperSpec ? upperSpec.id : '';
+
+  if (fid === 'parking_garage_concrete' || fid === 'industrial_metal_cladding' || btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse') {
+    return 10; // door_garage_roller
+  }
+  if (fid === 'retail_storefront_brick' || fid === 'retail_storefront_glass' || (btype === 'retail' && h <= 12.0)) {
+    return 9; // door_shop_glass
+  }
+  if (fid === 'nyc_brownstone' || ((region === 'nyc' || region === 'us') && fid === 'nyc_red_brick_warehouse' && h <= 24.0)) {
+    return 3; // door_nyc_brownstone_stoop
+  }
+  if (fid === 'paris_haussmann' || (region === 'paris' && h <= 42.0)) {
+    return 4; // door_paris_porte_cochere
+  }
+  if (fid === 'london_georgian_brick' || (region === 'london' && h <= 36.0 && !upperSpec.isCurtainWall)) {
+    return 5; // door_london_georgian
+  }
+  if (fid === 'china_hutong_greybrick' || btype === 'temple' || btype === 'historic') {
+    return 7; // door_beijing_hutong_gate
+  }
+  if (fid === 'china_soviet_redbrick') {
+    return 8; // door_soviet_block
+  }
+  if (fid === 'us_suburban_siding' || ((region === 'us' || region === 'global') && h <= 10.5 && (btype === 'house' || btype === 'detached' || btype === 'residential'))) {
+    return 11; // door_us_suburban
+  }
+  if (fid === 'tokyo_midrise_tile' || fid === 'asia_residential_tower' || ((region === 'tokyo' || region === 'asia') && !upperSpec.isCurtainWall && h <= 45.0)) {
+    return 6; // door_tokyo_apartment
+  }
+  if (fid === 'office_bronze_fins' || fid === 'nyc_artdeco_limestone' || btype === 'hotel') {
+    return (seed & 1) === 0 ? 1 : 0; // door_hotel_canopy or door_office_lobby_glass
+  }
+  if (upperSpec.isCurtainWall || fid === 'office_concrete_grid' || fid === 'office_limestone_modern' || fid === 'tokyo_office_white_panel' || h >= 38.0) {
+    return (seed % 3 === 0) ? 1 : 0; // door_office_lobby_glass or door_hotel_canopy
+  }
+  if (region === 'europe') {
+    return (seed & 1) === 0 ? 4 : 2;
+  }
+  return 2; // door_apartment_modern
+}
+
+function pointToSegmentDist2D(px, pz, x1, z1, x2, z2) {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const len2 = dx * dx + dz * dz;
+  let t = 0.0;
+  if (len2 > 1e-4) {
+    t = Math.max(0.0, Math.min(1.0, ((px - x1) * dx + (pz - z1) * dz) / len2));
+  }
+  const cx = x1 + t * dx;
+  const cz = z1 + t * dz;
+  const vx = cx - px;
+  const vz = cz - pz;
+  return { d: Math.hypot(vx, vz), vx, vz };
+}
+
+function planBuildingEntrances(ccwOuter, localRoads, bldgInfo, upperSpec, retailSpec, hasRetailPodium, primaryDoorIdx, seed) {
+  const nPts = ccwOuter.length / 2;
+  if (nPts < 3) return new Map();
+
+  const primarySpec = DOOR_CATALOG[primaryDoorIdx] || DOOR_CATALOG[0];
+  const minEdgeLen = Math.max(2.6, primarySpec.width + 0.35);
+  const edgeCandidates = [];
+
+  for (let i = 0; i < nPts; i++) {
+    const iNext = (i + 1) % nPts;
+    const rx1 = ccwOuter[i * 2], rz1 = ccwOuter[i * 2 + 1];
+    const rx2 = ccwOuter[iNext * 2], rz2 = ccwOuter[iNext * 2 + 1];
+    const dx = rx2 - rx1, dz = rz2 - rz1;
+    const len = Math.hypot(dx, dz);
+    if (len < minEdgeLen) continue;
+
+    const tx = dx / len, tz = dz / len;
+    const nx = tz, nz = -tx;
+    const emx = (rx1 + rx2) * 0.5;
+    const emz = (rz1 + rz2) * 0.5;
+
+    let bestRoadScore = Infinity;
+    let bestRoadDist = Infinity;
+    let bestDot = -1.0;
+
+    if (localRoads && localRoads.length > 0) {
+      for (let rIdx = 0; rIdx < localRoads.length; rIdx++) {
+        const r = localRoads[rIdx];
+        if (Math.abs(r.mx - emx) > 95.0 || Math.abs(r.mz - emz) > 95.0) continue;
+        const { d, vx, vz } = pointToSegmentDist2D(emx, emz, r.x1, r.z1, r.x2, r.z2);
+        if (d > 85.0) continue;
+        const dot = d > 0.2 ? (vx * nx + vz * nz) / d : 1.0;
+        // Edge must generally face toward the road segment
+        if (dot < 0.05) continue;
+        const align = Math.abs(tx * r.tx + tz * r.tz);
+        const footPenalty = r.isFootway ? 9.0 : 0.0;
+        const score = d - dot * 11.0 - align * 5.0 + footPenalty - Math.min(len, 22.0) * 0.18;
+        if (score < bestRoadScore) {
+          bestRoadScore = score;
+          bestRoadDist = d;
+          bestDot = dot;
+        }
+      }
+    }
+
+    // Fallback score when no road segment is nearby: prefer longer south/east facing facades
+    const fallbackScore = 200.0 - Math.min(len, 30.0) * 0.8 - (nx * 0.3 - nz * 0.5) * 4.0;
+    edgeCandidates.push({
+      edgeIdx: i,
+      len,
+      roadScore: bestRoadScore,
+      roadDist: bestRoadDist,
+      dot: bestDot,
+      finalScore: bestRoadScore < Infinity ? bestRoadScore : fallbackScore,
+    });
+  }
+
+  if (edgeCandidates.length === 0) return new Map();
+  edgeCandidates.sort((a, b) => a.finalScore - b.finalScore);
+
+  const selectedEdges = [edgeCandidates[0]];
+  // Allow corner / block-perimeter buildings to have entrances on secondary street-facing facades
+  for (let k = 1; k < edgeCandidates.length && selectedEdges.length < 3; k++) {
+    const cand = edgeCandidates[k];
+    if (cand.len >= 11.0 && cand.roadDist < 28.0 && cand.dot > 0.42) {
+      selectedEdges.push(cand);
+    }
+  }
+
+  const isRowhouseStyle =
+    primaryDoorIdx === 3 || // NYC brownstone stoop
+    primaryDoorIdx === 5 || // London Georgian
+    primaryDoorIdx === 7 || // Beijing hutong gate
+    primaryDoorIdx === 11;  // US suburban porch
+
+  const bayPitch = hasRetailPodium ? retailSpec.metersPerBay : upperSpec.metersPerBay;
+  const edgeMap = new Map();
+
+  for (let sIdx = 0; sIdx < selectedEdges.length; sIdx++) {
+    const { edgeIdx, len } = selectedEdges[sIdx];
+    const nBays = Math.max(1, Math.round(len / bayPitch));
+    const bayW = len / nBays;
+    const doors = [];
+
+    if (isRowhouseStyle && len >= 10.5 && nBays >= 3) {
+      // Brownstone / Georgian / Hutong row: place one entrance per narrow townhouse unit (~6.5-8.5m, every 2 bays)
+      const stepBays = bayW >= 5.2 ? 1 : 2;
+      const startBay = nBays >= 4 ? 1 : 0;
+      for (let b = startBay; b < nBays; b += stepBays) {
+        const uCenter = (b + 0.5) * bayW;
+        if (uCenter - primarySpec.width * 0.5 >= 0.35 && uCenter + primarySpec.width * 0.5 <= len - 0.35) {
+          doors.push({ uCenter, doorIdx: primaryDoorIdx });
+        }
+      }
+      if (doors.length === 0) {
+        doors.push({ uCenter: len * 0.5, doorIdx: primaryDoorIdx });
+      }
+    } else if (len >= 34.0 && nBays >= 7) {
+      // Long urban frontage (> 34m): main entrance near center, plus extra doors every ~22-26m (5-6 bays)
+      const midBay = Math.floor(nBays * 0.5);
+      const stepBays = Math.max(4, Math.round(23.0 / bayW));
+      for (let b = midBay % stepBays; b < nBays; b += stepBays) {
+        if (b === 0 || b === nBays - 1) continue;
+        const uCenter = (b + 0.5) * bayW;
+        if (uCenter < 2.4 || uCenter > len - 2.4) continue;
+        const isMain = b === midBay || Math.abs(b - midBay) < stepBays * 0.5;
+        const dIdx = (!isMain && hasRetailPodium) ? 9 : primaryDoorIdx;
+        doors.push({ uCenter, doorIdx: dIdx });
+      }
+      if (doors.length === 0) {
+        doors.push({ uCenter: (midBay + 0.5) * bayW, doorIdx: primaryDoorIdx });
+      }
+    } else {
+      // Standard frontage: single entrance snapped to middle bay (or slightly offset on 2-bay walls)
+      const midBay = Math.floor(nBays * 0.5);
+      const uCenter = nBays >= 2 ? (midBay + 0.5) * bayW : len * 0.5;
+      doors.push({ uCenter, doorIdx: primaryDoorIdx });
+    }
+
+    edgeMap.set(edgeIdx, doors);
+  }
+
+  return edgeMap;
+}
+
 export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntity, entityIdx, uv = null) {
   const {
     id,
@@ -874,6 +1073,9 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     wz,
     baseY,
     topY,
+    groundY,
+    getEdgeGroundY = null,
+    localRoads = null,
     wallOutOffset = 0.0,
     region = 'beijing',
   } = bldgInfo;
@@ -901,18 +1103,20 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   const arch = BEIJING_ARCHETYPES[styleInfo.archetypeId] || BEIJING_ARCHETYPES.modern_curtain_tower;
   const facadeSel = selectFacadeForBuilding(bldgInfo, seed, region);
   const upperSpec = facadeSel.spec;
-  // Choose modern glass retail storefront (22) for glass/modern/office towers, brick storefront (17) for masonry/classic
-  const useGlassStorefront =
-    upperSpec.isCurtainWall ||
-    upperSpec.index === 3 ||
-    upperSpec.index === 13 ||
-    upperSpec.index === 14 ||
-    upperSpec.index === 20 ||
-    (seed & 1) === 0;
-  const retailSpec = FACADE_CATALOG[useGlassStorefront ? 22 : 17];
+  // Choose brick storefront (17) only for brick/terracotta masonry; glass storefront (22) for limestone/concrete/curtain/modern
+  const isBrickMasonry =
+    upperSpec.id === 'nyc_red_brick_warehouse' ||
+    upperSpec.id === 'europe_terracotta_classic' ||
+    upperSpec.id === 'london_georgian_brick';
+  const retailSpec = FACADE_CATALOG[isBrickMasonry ? 17 : 22];
 
   const ccwOuter = ensureCCWFlatXZ(flatOuter);
-  const totalSpan = Math.max(3.2, topY - baseY);
+  // True sidewalk/surface ground elevation (distinct from buried foundation baseY)
+  const surfY =
+    Number.isFinite(groundY) && (rawMinH || 0) <= 0.5
+      ? Math.max(baseY, Math.min(topY - 2.6, groundY))
+      : baseY;
+  const totalSpan = Math.max(3.2, topY - surfY);
 
   // Use clean 1-3 tier architectural setbacks for tall full buildings; 1 tier for normal buildings
   let tiers;
@@ -921,15 +1125,15 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     const rawTiers = collapseVerticalMassingWFC(ccwOuter, flatHoles, totalSpan, arch, rng, false).slice(0, 3);
     tiers = rawTiers.map((t) => ({
       ...t,
-      y0: baseY + t.y0,
-      y1: baseY + t.y1,
+      y0: surfY + t.y0,
+      y1: surfY + t.y1,
     }));
   } else {
     tiers = [
       {
         tierIndex: 0,
         role: 'main_shaft',
-        y0: baseY,
+        y0: surfY,
         y1: topY,
         flatOuter: ccwOuter,
         flatHoles: flatHoles || [],
@@ -956,7 +1160,15 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   };
 
+  const pushBoxWithRoofUv = (x1, y0, z1, tx, tz, nx, nz, u0, u1, v0, v1, n0, n1, rgb, emissive = false) => {
+    const before = pos.length;
+    pushWallBox(pos, norm, col, x1, y0, z1, tx, tz, nx, nz, u0, u1, v0, v1, n0, n1, rgb, triEntity, entityIdx, emissive);
+    const addedVerts = (pos.length - before) / 3;
+    pushRoofUv(addedVerts);
+  };
+
   const uBayShift = ((seed >>> 7) % upperSpec.bays) / upperSpec.bays;
+  const primaryDoorIdx = selectDoorForBuilding(bldgInfo, upperSpec, seed, region);
 
   for (let tIdx = 0; tIdx < tiers.length; tIdx++) {
     const tier = tiers[tIdx];
@@ -968,24 +1180,28 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     const shaftY1 = Math.max(tier.y0 + 0.2, tier.y1 - parapetH);
     const shaftSpan = shaftY1 - tier.y0;
 
-    // Ground-floor retail storefront podium on tier 0 of mid/high-rise urban buildings
+    // Ground-floor retail storefront podium strictly on explicit retail / department-store / mall buildings
     const hasRetailPodium =
       tIdx === 0 &&
       !isPart &&
       (rawMinH || 0) <= 0.5 &&
-      shaftSpan >= 12.5 &&
-      upperSpec.id !== 'china_hutong_greybrick' &&
-      upperSpec.id !== 'parking_garage_concrete' &&
-      upperSpec.id !== 'industrial_metal_cladding' &&
-      upperSpec.id !== 'us_suburban_siding' &&
-      upperSpec.id !== 'nyc_brownstone' &&
-      (seed % 3 !== 0 || btype === 'commercial' || btype === 'retail');
+      shaftSpan >= 12.0 &&
+      (btype === 'retail' || btype === 'mall' || btype === 'supermarket' || btype === 'department_store');
 
-    const podiumH = hasRetailPodium ? Math.min(4.2, shaftSpan * 0.35) : 0.0;
-    const upperY0 = tier.y0 + podiumH;
-    const upperSpan = Math.max(0.2, shaftY1 - upperY0);
-    const upperFloors = Math.max(1, Math.round(upperSpan / upperSpec.metersPerFloor));
-    const upperV1 = upperFloors / upperSpec.floors;
+    // Plan ground-level road-facing entrances for tier 0
+    const entranceMap =
+      tIdx === 0 && !isPart && (rawMinH || 0) <= 0.5 && shaftSpan >= 2.9
+        ? planBuildingEntrances(tier.flatOuter, localRoads, bldgInfo, upperSpec, retailSpec, hasRetailPodium, primaryDoorIdx, seed)
+        : null;
+
+    // Ground floor plinth height for non-retail-podium buildings (~0.75m - 1.05m stone/concrete base)
+    const basePlinthH =
+      tIdx === 0 && !isPart && (rawMinH || 0) <= 0.5 && !hasRetailPodium
+        ? Math.min(
+            shaftSpan * 0.24,
+            primaryDoorIdx === 3 ? 0.96 : primaryDoorIdx === 7 || primaryDoorIdx === 11 ? 0.65 : 0.84
+          )
+        : 0.0;
 
     const emitRing = (ringPts, isHole) => {
       const nPts = ringPts.length / 2;
@@ -1007,6 +1223,17 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         const x2 = rx2 + nx * wallOutOffset;
         const z2 = rz2 + nz * wallOutOffset;
 
+        // Resolve local sidewalk/terrain elevation at this edge midpoint for tier 0
+        let edgeSurfY = tier.y0;
+        if (tIdx === 0 && !isHole && getEdgeGroundY && (rawMinH || 0) <= 0.5) {
+          const emx = (rx1 + rx2) * 0.5;
+          const emz = (rz1 + rz2) * 0.5;
+          const sampledY = getEdgeGroundY(emx, emz);
+          if (Number.isFinite(sampledY)) {
+            edgeSurfY = Math.max(baseY, Math.min(shaftY1 - 2.6, sampledY));
+          }
+        }
+
         // Subtle directional sun-warmth variation per wall normal + vertical AO gradient
         const dirShade = 0.96 + 0.04 * (nx * 0.65 + nz * 0.45);
         const botShade = (tIdx === 0 ? 0.85 : 0.93) * dirShade;
@@ -1024,6 +1251,39 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         const gT = Math.min(1, wCol[1] * topShade);
         const bT = Math.min(1, wCol[2] * topShade);
 
+        const pCol = facadeSel.wallSecondary;
+        const plinthRgb = [
+          Math.min(1, pCol[0] * dirShade * 0.84),
+          Math.min(1, pCol[1] * dirShade * 0.84),
+          Math.min(1, pCol[2] * dirShade * 0.85),
+        ];
+
+        // 0. Underground Foundation Skirt (from buried baseY up to sidewalk edgeSurfY on sloped terrain)
+        if (tIdx === 0 && edgeSurfY > baseY + 0.04) {
+          pos.push(
+            x1, baseY, z1,
+            x1, edgeSurfY, z1,
+            x2, edgeSurfY, z2,
+            x1, baseY, z1,
+            x2, edgeSurfY, z2,
+            x2, baseY, z2
+          );
+          for (let k = 0; k < 6; k++) {
+            norm.push(nx, 0, nz);
+            col.push(plinthRgb[0] * 0.88, plinthRgb[1] * 0.88, plinthRgb[2] * 0.88);
+          }
+          if (triEntity) triEntity.push(entityIdx, entityIdx);
+          pushRoofUv(6);
+        }
+
+        const edgeSpan = Math.max(0.4, shaftY1 - edgeSurfY);
+        const podiumH = hasRetailPodium && !isHole ? Math.min(4.45, Math.max(4.05, edgeSpan * 0.34)) : 0.0;
+        const plinthH = !hasRetailPodium && !isHole && tIdx === 0 ? Math.min(basePlinthH, edgeSpan * 0.24) : 0.0;
+        const upperY0 = edgeSurfY + podiumH + plinthH;
+        const upperSpan = Math.max(0.2, shaftY1 - upperY0);
+        const upperFloors = Math.max(1, Math.round(upperSpan / upperSpec.metersPerFloor));
+        const upperV1 = upperFloors / upperSpec.floors;
+
         // Snap straight walls (>= 2.8m) to whole bay counts so building corners align with piers/mullions
         let uStart, uEnd;
         if (len >= 2.8) {
@@ -1037,14 +1297,14 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         if (hasRetailPodium && !isHole) {
-          // 1a. Ground-Floor Retail Storefront Podium Quad
+          // 1a. Ground-Floor Retail Storefront Podium Quad (starts cleanly at sidewalk edgeSurfY)
           pos.push(
-            x1, tier.y0, z1,
+            x1, edgeSurfY, z1,
             x1, upperY0, z1,
             x2, upperY0, z2,
-            x1, tier.y0, z1,
+            x1, edgeSurfY, z1,
             x2, upperY0, z2,
-            x2, tier.y0, z2
+            x2, edgeSurfY, z2
           );
           for (let k = 0; k < 6; k++) norm.push(nx, 0, nz);
           col.push(
@@ -1061,13 +1321,32 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           const ru0 = retailSpec.index * 1000.0;
           const ru1 = retailSpec.index * 1000.0 + retailBays / retailSpec.bays;
           pushUvQuad(ru0, 1.0, ru1, 2.0);
+        } else if (plinthH > 0.05 && !isHole) {
+          // 1a-alt. Ground-Floor Stone / Concrete Plinth Base Band (0.65m - 0.96m proud masonry base)
+          const pOff = 0.045;
+          const bx1 = x1 + nx * pOff, bz1 = z1 + nz * pOff;
+          const bx2 = x2 + nx * pOff, bz2 = z2 + nz * pOff;
+          pos.push(
+            bx1, edgeSurfY, bz1,
+            bx1, upperY0, bz1,
+            bx2, upperY0, bz2,
+            bx1, edgeSurfY, bz1,
+            bx2, upperY0, bz2,
+            bx2, edgeSurfY, bz2
+          );
+          for (let k = 0; k < 6; k++) {
+            norm.push(nx, 0, nz);
+            col.push(plinthRgb[0], plinthRgb[1], plinthRgb[2]);
+          }
+          if (triEntity) triEntity.push(entityIdx, entityIdx);
+          pushRoofUv(6);
         }
 
         // 1b. Upper Facade Shaft Quad
-        const yBot = hasRetailPodium && !isHole ? upperY0 : tier.y0;
-        const cBotR = hasRetailPodium && !isHole ? rM : rB;
-        const cBotG = hasRetailPodium && !isHole ? gM : gB;
-        const cBotB = hasRetailPodium && !isHole ? bM : bB;
+        const yBot = !isHole ? upperY0 : edgeSurfY;
+        const cBotR = !isHole && (hasRetailPodium || plinthH > 0.05) ? rM : rB;
+        const cBotG = !isHole && (hasRetailPodium || plinthH > 0.05) ? gM : gB;
+        const cBotB = !isHole && (hasRetailPodium || plinthH > 0.05) ? bM : bB;
 
         pos.push(
           x1, yBot, z1,
@@ -1093,8 +1372,179 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         pushUvQuad(u0, 1.0, u1, 1.0 + upperV1);
         uAccumMeters += len;
 
+        // 1c. Street-Level Architectural Entrances (Door Quad + 3D Frame / Canopy / Stoop + Night Light)
+        if (!isHole && entranceMap && entranceMap.has(i)) {
+          const edgeDoors = entranceMap.get(i);
+          const hostSpec = hasRetailPodium ? retailSpec : upperSpec;
+          const hostAvg = hostSpec.avgColor || [0.52, 0.50, 0.48];
+          const hostWallRgb = [
+            Math.min(1, hostAvg[0] * rM * 1.06),
+            Math.min(1, hostAvg[1] * gM * 1.06),
+            Math.min(1, hostAvg[2] * bM * 1.06),
+          ];
+          const frameRgb = [
+            Math.min(1, pCol[0] * dirShade * 0.92),
+            Math.min(1, pCol[1] * dirShade * 0.92),
+            Math.min(1, pCol[2] * dirShade * 0.94),
+          ];
+          const warmLightRgb = [1.0, 0.84, 0.48];
+
+          const edgeBays = Math.max(1, Math.round(len / hostSpec.metersPerBay));
+          const edgeBayW = len / edgeBays;
+          for (let dIdx = 0; dIdx < edgeDoors.length; dIdx++) {
+            const { uCenter, doorIdx } = edgeDoors[dIdx];
+            const dSpec = DOOR_CATALOG[doorIdx] || DOOR_CATALOG[0];
+            const targetW = Math.max(dSpec.width, Math.min(edgeBayW * 0.88, dSpec.width * 1.18));
+            const dw = Math.min(targetW, len - 0.36);
+            const maxDoorH = hasRetailPodium ? Math.max(2.6, podiumH - 0.16) : edgeSpan - 0.25;
+            const dh = Math.min(dSpec.height, maxDoorH);
+            if (dw < 1.6 || dh < 2.1) continue;
+
+            const du0 = Math.max(0.18, uCenter - dw * 0.5);
+            const du1 = Math.min(len - 0.18, uCenter + dw * 0.5);
+
+            if (dSpec.hasStoop && edgeSpan >= 4.2) {
+              // NYC Brownstone 4-step 3D sandstone stoop + side cheek balustrades + elevated parlor door
+              const stoopH = Math.min(0.84, plinthH > 0.2 ? plinthH : 0.80);
+              const stoopW = Math.min(len - 0.2, (du1 - du0) * 0.82);
+              const su0 = uCenter - stoopW * 0.5;
+              const su1 = uCenter + stoopW * 0.5;
+              const stoopCol = [
+                Math.min(1, dSpec.avgColor[0] * dirShade * 1.08),
+                Math.min(1, dSpec.avgColor[1] * dirShade * 1.08),
+                Math.min(1, dSpec.avgColor[2] * dirShade * 1.08),
+              ];
+              const railCol = [0.16, 0.17, 0.19];
+
+              // 4 ascending steps from sidewalk edgeSurfY up to stoopH
+              const nSteps = 4;
+              for (let st = 0; st < nSteps; st++) {
+                const sv0 = (st / nSteps) * stoopH;
+                const sv1 = ((st + 1) / nSteps) * stoopH;
+                const sn1 = 1.32 - st * 0.24;
+                pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, su0, su1, sv0, sv1, 0.02, sn1, stoopCol, false);
+              }
+              // Left & right stoop cheek walls + wrought-iron top rail
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.16, su0, 0.0, stoopH + 0.32, 0.02, 1.34, stoopCol, false);
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, su1, su1 + 0.16, 0.0, stoopH + 0.32, 0.02, 1.34, stoopCol, false);
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.15, su0 - 0.02, stoopH + 0.32, stoopH + 0.58, 0.06, 1.28, railCol, false);
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, su1 + 0.02, su1 + 0.15, stoopH + 0.32, stoopH + 0.58, 0.06, 1.28, railCol, false);
+
+              // Door quad sits atop the stoop landing
+              const doorY0 = edgeSurfY + stoopH - 0.04;
+              const doorY1 = Math.min(shaftY1 - 0.15, doorY0 + dh);
+              const dOut = 0.068;
+              const dx1 = x1 + du0 * tx + nx * dOut, dz1 = z1 + du0 * tz + nz * dOut;
+              const dx2 = x1 + du1 * tx + nx * dOut, dz2 = z1 + du1 * tz + nz * dOut;
+              pos.push(
+                dx1, doorY0, dz1,
+                dx1, doorY1, dz1,
+                dx2, doorY1, dz2,
+                dx1, doorY0, dz1,
+                dx2, doorY1, dz2,
+                dx2, doorY0, dz2
+              );
+              for (let k = 0; k < 6; k++) {
+                norm.push(nx, 0, nz);
+                col.push(hostWallRgb[0], hostWallRgb[1], hostWallRgb[2]);
+              }
+              if (triEntity) triEntity.push(entityIdx, entityIdx);
+              const doorUvBase = 24000.0 + doorIdx * 1000.0;
+              pushUvQuad(doorUvBase + 0.0, 1.0, doorUvBase + 1.0, 2.0);
+
+              // Carved brownstone cornice hood + warm fanlight lantern
+              const hoodV0 = (doorY1 - edgeSurfY) - 0.22;
+              const hoodV1 = (doorY1 - edgeSurfY) + 0.06;
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.08, su1 + 0.08, hoodV0, hoodV1, 0.04, 0.32, stoopCol, false);
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, uCenter - 0.22, uCenter + 0.22, hoodV0 - 0.08, hoodV0, 0.08, 0.24, warmLightRgb, true);
+            } else {
+              // Standard Ground-Level Entrance (flush with sidewalk + low stone threshold step)
+              const doorY0 = edgeSurfY + 0.03;
+              const doorY1 = Math.min(shaftY1 - 0.15, doorY0 + dh);
+              const dOut = plinthH > 0.05 ? 0.068 : 0.052;
+              const dx1 = x1 + du0 * tx + nx * dOut, dz1 = z1 + du0 * tz + nz * dOut;
+              const dx2 = x1 + du1 * tx + nx * dOut, dz2 = z1 + du1 * tz + nz * dOut;
+
+              pos.push(
+                dx1, doorY0, dz1,
+                dx1, doorY1, dz1,
+                dx2, doorY1, dz2,
+                dx1, doorY0, dz1,
+                dx2, doorY1, dz2,
+                dx2, doorY0, dz2
+              );
+              for (let k = 0; k < 6; k++) {
+                norm.push(nx, 0, nz);
+                col.push(hostWallRgb[0], hostWallRgb[1], hostWallRgb[2]);
+              }
+              if (triEntity) triEntity.push(entityIdx, entityIdx);
+              const doorUvBase = 24000.0 + doorIdx * 1000.0;
+              pushUvQuad(doorUvBase + 0.0, 1.0, doorUvBase + 1.0, 2.0);
+
+              // Low 12cm stone threshold step at sidewalk level
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, du0 - 0.06, du1 + 0.06, 0.0, 0.12, 0.02, 0.30, plinthRgb, false);
+
+              // 3D Left & Right Portal Pilasters + Top Canopy/Cornice Cap + Warm Over-Door Light
+              const doorTopRel = doorY1 - edgeSurfY;
+              const pilasterCol = [
+                Math.min(1, dSpec.avgColor[0] * dirShade * 0.96),
+                Math.min(1, dSpec.avgColor[1] * dirShade * 0.96),
+                Math.min(1, dSpec.avgColor[2] * dirShade * 0.96),
+              ];
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, Math.max(0.02, du0 - 0.11), du0 + 0.03, 0.0, doorTopRel, 0.02, 0.11, pilasterCol, false);
+              pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, du1 - 0.03, Math.min(len - 0.02, du1 + 0.11), 0.0, doorTopRel, 0.02, 0.11, pilasterCol, false);
+
+              const canDepth = dSpec.canopyDepth || 0.36;
+              const canV0 = doorTopRel - 0.06;
+              const canV1 = doorTopRel + 0.11;
+              const canCol =
+                doorIdx === 1 || doorIdx === 6 || doorIdx === 9
+                  ? [0.22, 0.21, 0.20] // Dark bronze/metal canopy
+                  : doorIdx === 7
+                    ? [0.34, 0.35, 0.37] // Grey tile hutong gatehouse eaves
+                    : pilasterCol;
+              pushBoxWithRoofUv(
+                x1,
+                edgeSurfY,
+                z1,
+                tx,
+                tz,
+                nx,
+                nz,
+                Math.max(0.02, du0 - 0.14),
+                Math.min(len - 0.02, du1 + 0.14),
+                canV0,
+                canV1,
+                0.02,
+                canDepth,
+                canCol,
+                false
+              );
+
+              // Warm downlight / entrance sconce under canopy (glows at sunset & night via vEmissive)
+              const lightW = Math.min(0.75, (du1 - du0) * 0.28);
+              pushBoxWithRoofUv(
+                x1,
+                edgeSurfY,
+                z1,
+                tx,
+                tz,
+                nx,
+                nz,
+                uCenter - lightW * 0.5,
+                uCenter + lightW * 0.5,
+                canV0 - 0.07,
+                canV0,
+                0.07,
+                Math.min(canDepth - 0.04, 0.34),
+                warmLightRgb,
+                true
+              );
+            }
+          }
+        }
+
         // 2. Architectural Parapet / Cornice Band at top of tier (solid stone/metal, uv = -10)
-        const pCol = facadeSel.wallSecondary;
         const pr = Math.min(1, pCol[0] * dirShade * 1.03);
         const pg = Math.min(1, pCol[1] * dirShade * 1.03);
         const pb = Math.min(1, pCol[2] * dirShade * 1.03);
@@ -1191,7 +1641,14 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   }
 
-  return { styleId, arch, facadeId: upperSpec.id, facadeIndex: upperSpec.index };
+  return {
+    styleId,
+    arch,
+    facadeId: upperSpec.id,
+    facadeIndex: upperSpec.index,
+    doorId: DOOR_CATALOG[primaryDoorIdx]?.id || 'door_office_lobby_glass',
+    doorIndex: primaryDoorIdx,
+  };
 }
 
 /**

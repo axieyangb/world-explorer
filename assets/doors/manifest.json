@@ -1,0 +1,186 @@
+{
+  "tileSize": 512,
+  "count": 12,
+  "doors": [
+    {
+      "id": "door_office_lobby_glass",
+      "index": 0,
+      "width": 4.2,
+      "height": 4.0,
+      "glowIntensity": 1.0,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.4212,
+        0.4189,
+        0.3874
+      ],
+      "glassCoverage": 0.54
+    },
+    {
+      "id": "door_hotel_canopy",
+      "index": 1,
+      "width": 4.2,
+      "height": 4.0,
+      "glowIntensity": 1.15,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.303,
+        0.2525,
+        0.2028
+      ],
+      "glassCoverage": 0.462
+    },
+    {
+      "id": "door_apartment_modern",
+      "index": 2,
+      "width": 3.1,
+      "height": 3.2,
+      "glowIntensity": 0.75,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.5016,
+        0.525,
+        0.5286
+      ],
+      "glassCoverage": 0.488
+    },
+    {
+      "id": "door_nyc_brownstone_stoop",
+      "index": 3,
+      "width": 2.9,
+      "height": 3.2,
+      "glowIntensity": 0.65,
+      "hasCanopy": false,
+      "hasStoop": true,
+      "avgColor": [
+        0.358,
+        0.263,
+        0.2203
+      ],
+      "glassCoverage": 0.089
+    },
+    {
+      "id": "door_paris_porte_cochere",
+      "index": 4,
+      "width": 3.5,
+      "height": 4.0,
+      "glowIntensity": 0.7,
+      "hasCanopy": false,
+      "hasStoop": false,
+      "avgColor": [
+        0.4722,
+        0.4574,
+        0.4088
+      ],
+      "glassCoverage": 0.145
+    },
+    {
+      "id": "door_london_georgian",
+      "index": 5,
+      "width": 2.8,
+      "height": 3.5,
+      "glowIntensity": 0.65,
+      "hasCanopy": false,
+      "hasStoop": false,
+      "avgColor": [
+        0.5699,
+        0.5462,
+        0.5147
+      ],
+      "glassCoverage": 0.08
+    },
+    {
+      "id": "door_tokyo_apartment",
+      "index": 6,
+      "width": 3.4,
+      "height": 3.2,
+      "glowIntensity": 0.85,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.4233,
+        0.4048,
+        0.3691
+      ],
+      "glassCoverage": 0.535
+    },
+    {
+      "id": "door_beijing_hutong_gate",
+      "index": 7,
+      "width": 3.2,
+      "height": 3.4,
+      "glowIntensity": 0.55,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.477,
+        0.3618,
+        0.3252
+      ],
+      "glassCoverage": 0.044
+    },
+    {
+      "id": "door_soviet_block",
+      "index": 8,
+      "width": 2.6,
+      "height": 2.9,
+      "glowIntensity": 0.55,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.3767,
+        0.3257,
+        0.3006
+      ],
+      "glassCoverage": 0.051
+    },
+    {
+      "id": "door_shop_glass",
+      "index": 9,
+      "width": 4.0,
+      "height": 3.8,
+      "glowIntensity": 1.1,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.4969,
+        0.4968,
+        0.4906
+      ],
+      "glassCoverage": 0.52
+    },
+    {
+      "id": "door_garage_roller",
+      "index": 10,
+      "width": 3.8,
+      "height": 3.3,
+      "glowIntensity": 0.4,
+      "hasCanopy": false,
+      "hasStoop": false,
+      "avgColor": [
+        0.4814,
+        0.4937,
+        0.4883
+      ],
+      "glassCoverage": 0.031
+    },
+    {
+      "id": "door_us_suburban",
+      "index": 11,
+      "width": 2.8,
+      "height": 3.0,
+      "glowIntensity": 0.7,
+      "hasCanopy": true,
+      "hasStoop": false,
+      "avgColor": [
+        0.5257,
+        0.5462,
+        0.5627
+      ],
+      "glassCoverage": 0.17
+    }
+  ]
+}
