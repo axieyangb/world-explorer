@@ -39,6 +39,7 @@ import { StreetFeatures } from "./features/street_furniture.js"; // [feature/str
 import { PlacesSystem } from "./features/places.js"; // feature/places
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
+import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
 import {
   getLang,
   setLang,
@@ -268,6 +269,7 @@ class WorldExplorerApp {
     this.collision = new BuildingCollision(this); // fix/water
 
     this.traffic = new CityTraffic(this); // [feature/traffic] replaces TrafficManager (any city, pedestrians, signals)
+    this.fullscreen = new FullscreenToggle(); // feature/fullscreen: before KaijuMode so Shift+F wins its capture listener
     this.kaiju = new KaijuMode(this); // [kaiju]
     this.navigator = new RoadNavigator(this.scene);
 

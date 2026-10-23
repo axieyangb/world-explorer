@@ -290,6 +290,48 @@ kbd {
   letter-spacing: 0.3px;
 }
 
+.dock-pill-icon {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+}
+
+.dock-pill-icon .fs-icon-exit,
+.dock-pill-icon.is-fullscreen .fs-icon-enter {
+  display: none;
+}
+
+.dock-pill-icon.is-fullscreen .fs-icon-exit {
+  display: block;
+}
+
+/* One-line, quiet status toast (e.g. full screen not allowed here) */
+.hud-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 8px);
+  z-index: 40;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.hud-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .dock-pill-danger:hover {
   background: rgba(255, 107, 107, 0.22);
   border-color: rgba(255, 107, 107, 0.55);
@@ -838,3 +880,21 @@ kbd {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* ============================================================================
+ * Safe-area insets (notched / full-screen displays); no-ops on regular windows
+ * ============================================================================ */
+.location-bar { top: calc(16px + env(safe-area-inset-top, 0px)); }
+.hud-dock {
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+}
+.hud-radar {
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  left: calc(22px + env(safe-area-inset-left, 0px));
+}
+.hud-speedometer {
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  right: calc(26px + env(safe-area-inset-right, 0px));
+}
+.hud-controls-hint { bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }

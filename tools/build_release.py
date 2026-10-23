@@ -54,6 +54,7 @@ MOD_ID_MAP = {
     'src/features/person_model.js': '__MOD_person_model',
     'src/features/traffic_models.js': '__MOD_traffic_models',
     'src/features/heli_flight.js': '__MOD_heli_flight',
+    'src/features/fullscreen.js': '__MOD_fullscreen',
     'src/features/city_traffic.js': '__MOD_city_traffic',
     'src/features/map_tiles.js': '__MOD_map_tiles',
     'src/features/route_graph.js': '__MOD_route_graph',
