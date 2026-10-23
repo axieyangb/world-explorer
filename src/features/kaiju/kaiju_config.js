@@ -82,6 +82,13 @@ export const CFG = {
   BURN_TO_COLLAPSE_MIN: 1.0,
   BURN_TO_COLLAPSE_MAX: 2.0,
   RUBBLE_SMOKE_SECONDS: 45,
+  // Destruction (world)
+  DESTRUCTION_TOUGHNESS_HEIGHT: 150, // m; building damage is divided by (1 + height / this)
+  FIRE_IGNITE_DAMAGE: 0.3,       // fire damage past this ignites a building
+  BURN_DAMAGE_PER_SEC: 0.25,     // scorch growth while burning
+  CITY_TRACK_GROW_SECONDS: 10,   // chunks registering within this window after beginTracking join the denominator
+  DESTRUCTION_MAX_EMITTERS: 36,  // fire/smoke emitters owned by destruction
+  DENSEST_CELL: 200,             // m, getDensestTarget cell size
 
   // Perf caps
   MAX_PARTICLES: 6000,

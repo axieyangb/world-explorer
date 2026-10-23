@@ -92,6 +92,33 @@ export const I18N = {
       leg_chunk: '已加载 3D 区块',
     },
     runtime: {
+      // [kaiju]
+      mode_kaiju: '怪兽',
+      kaiju_title: '怪兽防卫',
+      kaiju_badge: '怪兽防卫',
+      kaiju_alert: '怪兽警报',
+      kaiju_name: '怪兽',
+      kaiju_city: '城市损毁',
+      kaiju_hull: '机体',
+      kaiju_heat: '机炮',
+      kaiju_missile: '导弹',
+      kaiju_overheat: '过热',
+      kaiju_ready: '就绪',
+      kaiju_saved: '城市得救',
+      kaiju_fallen: '城市沦陷',
+      kaiju_time: '用时',
+      kaiju_accuracy: '命中率',
+      kaiju_missile_hits: '导弹命中',
+      kaiju_cannon_hits: '机炮命中',
+      kaiju_again: '再来一局',
+      kaiju_exit: '退出',
+      kaiju_paused: '暂停',
+      kaiju_resume: '继续',
+      kaiju_restart: '重新开始',
+      kaiju_mute: '静音',
+      kaiju_unmute: '取消静音',
+      kaiju_down: '直升机坠毁',
+      kaiju_hint: '空格 / 左键 机炮 · F / 右键 导弹 · E / Q 升降 · Esc 暂停',
       default_road: '长安街 · 天安门广场',
       urban_road_fallback: '北京市区道路',
       chunks_unit: '区块',
@@ -364,6 +391,33 @@ export const I18N = {
       leg_chunk: 'Loaded 3D Chunks',
     },
     runtime: {
+      // [kaiju]
+      mode_kaiju: 'Kaiju',
+      kaiju_title: 'Kaiju Defense',
+      kaiju_badge: 'KAIJU DEFENSE',
+      kaiju_alert: 'KAIJU ALERT',
+      kaiju_name: 'KAIJU',
+      kaiju_city: 'City Damage',
+      kaiju_hull: 'Hull',
+      kaiju_heat: 'Cannon',
+      kaiju_missile: 'Missiles',
+      kaiju_overheat: 'Overheat',
+      kaiju_ready: 'Ready',
+      kaiju_saved: 'City Saved',
+      kaiju_fallen: 'City Fallen',
+      kaiju_time: 'Time',
+      kaiju_accuracy: 'Accuracy',
+      kaiju_missile_hits: 'Missile hits',
+      kaiju_cannon_hits: 'Cannon hits',
+      kaiju_again: 'Play Again',
+      kaiju_exit: 'Exit',
+      kaiju_paused: 'Paused',
+      kaiju_resume: 'Resume',
+      kaiju_restart: 'Restart',
+      kaiju_mute: 'Mute',
+      kaiju_unmute: 'Unmute',
+      kaiju_down: 'Helicopter down',
+      kaiju_hint: 'Space / LMB Cannon · F / RMB Missiles · E / Q Up / Down · Esc Pause',
       default_road: "Chang'an Ave · Tiananmen Sq",
       urban_road_fallback: 'Beijing Urban Road',
       chunks_unit: 'chunks',
@@ -842,6 +896,17 @@ export function applyDomTranslations() {
   updateLegendItem('.leg-line.subway', dom.leg_subway);
   updateLegendItem('.leg-box.water', dom.leg_water);
   updateLegendItem('.leg-box.chunk', dom.leg_chunk);
+
+  // [kaiju] generic data-i18n pass (only keys that exist)
+  const rt = (I18N[currentLang] || I18N.zh).runtime || {};
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const v = rt[el.dataset.i18n] ?? dom[el.dataset.i18n];
+    if (typeof v === 'string') el.textContent = v;
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+    const v = rt[el.dataset.i18nTitle] ?? dom[el.dataset.i18nTitle];
+    if (typeof v === 'string') el.title = v;
+  });
 }
 
 /**
