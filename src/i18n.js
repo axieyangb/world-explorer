@@ -1082,7 +1082,7 @@ const PINYIN_ROAD_CLASS = {
 function englishRoadClass(s) {
   const m = s.match(/^(.+\S)\s+([A-Za-z]+)$/);
   const key = m ? m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase() : "";
-  if (!m || !PINYIN_ROAD_CLASS[key] || (m[2] !== key && m[2] !== m[2].toUpperCase())) return s;
+  if (!m || !PINYIN_ROAD_CLASS[key] || (m[2] !== key && m[2] !== m[2].toUpperCase() && m[2] !== m[2].toLowerCase())) return s;
   const en = PINYIN_ROAD_CLASS[key];
   return `${m[1]} ${m[2] === key ? en : en.toUpperCase()}`;
 }
