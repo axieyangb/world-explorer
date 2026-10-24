@@ -69,7 +69,8 @@ export class KaijuMode {
     this.supply = null;
     this.super = null;
     this.kaiju = null;
-      this.monster = null;
+    this.kaijus = [];
+    this.monster = null;
     this._systemsReady = false;
 
     this._introT = 0;
@@ -195,6 +196,12 @@ export class KaijuMode {
   }
 
   getAimRay() {
+    if (this.app.walkerWeapons && (this.activeUnit === 'soldier' || this.activeUnit === 'tank')) {
+      const r = this.app.walkerWeapons.getAimRay();
+      this._aimRay.origin.copy(r.origin);
+      this._aimRay.dir.copy(r.direction || r.dir);
+      return this._aimRay;
+    }
     // Dynamic yaw-lead aim ray through the projected #kaiju-crosshair (aimWorldPoint).
     if (this._aimValid) {
       this._aimRay.origin.copy(this._aimPos);
@@ -214,6 +221,42 @@ export class KaijuMode {
 
   get creature() {
     return this.kaiju;
+  }
+
+  getLivingKaijus() {
+    return (this.kaijus && this.kaijus.length > 0 ? this.kaijus : (this.kaiju ? [this.kaiju] : [])).filter((k) => k && k.alive);
+  }
+
+  getPrimaryKaiju() {
+    const living = this.getLivingKaijus();
+    if (living.length === 0) return (this.kaijus && this.kaijus[0]) || this.kaiju;
+    let ray = null;
+    if (this.app.walkerWeapons && (this.activeUnit === "soldier" || this.activeUnit === "tank")) {
+      ray = this.app.walkerWeapons.getAimRay();
+    } else if (this._aimValid) {
+      ray = this._aimRay;
+    }
+    const origin = ray ? ray.origin : this.app.pos;
+    const dir = ray ? (ray.dir || ray.direction) : null;
+    let best = living[0];
+    let bestScore = Infinity;
+    for (let i = 0; i < living.length; i++) {
+      const k = living[i];
+      if (!k || !k.position) continue;
+      const d = origin.distanceTo(k.position);
+      let score = d;
+      if (dir) {
+        this._tmpV.subVectors(k.position, origin).normalize();
+        const dot = Math.max(-1, Math.min(1, dir.dot(this._tmpV)));
+        const ang = Math.acos(dot);
+        score = d * (1.0 + ang * 2.0);
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        best = k;
+      }
+    }
+    return best;
   }
 
   get canFire() {
@@ -503,8 +546,14 @@ export class KaijuMode {
     if (want) this._alarm = this._call(this.audio, "play", "lowHpAlarm", { gain: 0.55 }) || null;
   }
 
-  onKaijuDeath() {
+  onKaijuDeath(monster) {
     if (!this.active || this.state === "dying" || this.state === "results") return;
+    const living = this.getLivingKaijus();
+    if (living.length > 0) {
+      this.kaiju = this.getPrimaryKaiju();
+      this.monster = this.kaiju;
+      return;
+    }
     this.state = "dying";
     this._dyingT = 0;
     this._call(this.audio, "stopSiren");
@@ -626,9 +675,33 @@ export class KaijuMode {
       const a = Math.random() * Math.PI * 2;
       spawn = { x: app.pos.x + Math.sin(a) * CFG.SPAWN_DIST, z: app.pos.z + Math.cos(a) * CFG.SPAWN_DIST, fromWater: false, targetX: app.pos.x, targetZ: app.pos.z };
     }
-    this.kaiju = safeNew(Kaiju, this, "Kaiju");
+    this.kaijus = [];
+    const count = CFG.KAIJU_SWARM_COUNT || 3;
+    const baseAngle = Math.atan2(spawn.x - app.pos.x, spawn.z - app.pos.z);
+    const offsets = [
+      { bearing: 0, scale: 1.0, maxHp: CFG.KAIJU_MAX_HP },
+      { bearing: 2.1, scale: 0.88, maxHp: CFG.KAIJU_MAX_HP },
+      { bearing: -2.1, scale: 0.85, maxHp: CFG.KAIJU_MAX_HP },
+    ];
+    for (let i = 0; i < count; i++) {
+      const k = safeNew(Kaiju, this, `Kaiju_${i}`);
+      const off = offsets[i] || { bearing: (i - 1) * 2.1, scale: 0.85, maxHp: CFG.KAIJU_MAX_HP };
+      const curAngle = baseAngle + off.bearing;
+      const dist = CFG.SPAWN_DIST;
+      const kSpawn = {
+        x: app.pos.x + Math.sin(curAngle) * dist,
+        z: app.pos.z + Math.cos(curAngle) * dist,
+        fromWater: i === 0 ? spawn.fromWater : false,
+        targetX: app.pos.x,
+        targetZ: app.pos.z,
+        scale: off.scale,
+        maxHp: off.maxHp,
+      };
+      this._call(k, "spawn", kSpawn);
+      this.kaijus.push(k);
+    }
+    this.kaiju = this.kaijus[0];
     this.monster = this.kaiju;
-    this._call(this.kaiju, "spawn", spawn);
     this._call(this.destruction, "beginTracking", spawn.x, spawn.z, CFG.CITY_TRACK_RADIUS);
     this._call(this.crowd, "activate");
 
@@ -662,10 +735,17 @@ export class KaijuMode {
 
   _cleanupRound() {
     this._releaseWeapons();
+    if (this.kaijus) {
+      for (const k of this.kaijus) {
+        this._call(k, "dispose");
+      }
+      this.kaijus = null;
+    }
     if (this.kaiju) {
       this._call(this.kaiju, "dispose");
       this.kaiju = null;
     }
+    this.monster = null;
     this._call(this.destruction, "restoreAll");
     this._call(this.weapons, "reset");
     this._call(this.supply, "reset");
@@ -706,7 +786,9 @@ export class KaijuMode {
       app.pos.set(tx, ty, tz);
       app.yaw = yaw;
       app.camYaw = yaw;
-      app.camPitch = 0.24;
+      const dy = (k && k.position ? k.position.y + 35 : 45) - ty;
+      const targetPitch = -Math.atan2(dy, dist) * 0.40;
+      app.camPitch = THREE.MathUtils.clamp(targetPitch, -0.65, 0.25);
       app.speed = 0;
       if (app.vehicleMesh) {
         app.vehicleMesh.visible = true;
@@ -725,7 +807,9 @@ export class KaijuMode {
       app.pos.set(sx, sy, sz);
       app.yaw = yaw;
       app.camYaw = yaw;
-      app.camPitch = 0.18;
+      const dy = (k && k.position ? k.position.y + 35 : 45) - sy;
+      const targetPitch = -Math.atan2(dy, dist) * 0.40;
+      app.camPitch = THREE.MathUtils.clamp(targetPitch, -0.75, 0.25);
       app.speed = 0;
       if (app.avatarMesh) {
         app.avatarMesh.visible = true;
@@ -991,6 +1075,9 @@ export class KaijuMode {
     this.app.pos.set(sx, sy, sz);
     this.app.yaw = yaw;
     this.app.camYaw = yaw;
+    const dy = (k && k.position ? k.position.y + 35 : 45) - sy;
+    const targetPitch = -Math.atan2(dy, dist) * 0.40;
+    this.app.camPitch = THREE.MathUtils.clamp(targetPitch, this.activeUnit === "tank" ? -0.65 : -0.75, 0.25);
     this.app.speed = 0;
     if (this.activeUnit === "tank") {
       if (this.app.vehicleMesh) {
@@ -1087,17 +1174,25 @@ export class KaijuMode {
 
       if (st === "intro") {
         this._introT += dt;
-        const k = this.kaiju;
+        const anyRising = (this.kaijus && this.kaijus.length > 0 ? this.kaijus : [this.kaiju]).some((k) => k && k.rising);
         const minT = CFG.ALERT_SECONDS;
-        if ((this._introT >= minT && !(k && k.rising)) || this._introT >= CFG.ALERT_SECONDS + CFG.RISE_SECONDS + 3) {
+        if ((this._introT >= minT && !anyRising) || this._introT >= CFG.ALERT_SECONDS + CFG.RISE_SECONDS + 3) {
           this._beginFight();
-        } else if (k && k.rising) {
+        } else if (anyRising) {
           // Low rumble while it rises.
           this._trauma = Math.max(this._trauma, 0.12);
         }
       }
 
-      this._call(this.kaiju, "update", dt);
+      this.kaiju = this.getPrimaryKaiju();
+      this.monster = this.kaiju;
+      const allK = this.kaijus && this.kaijus.length > 0 ? this.kaijus : (this.kaiju ? [this.kaiju] : []);
+      for (let i = 0; i < allK.length; i++) {
+        const k = allK[i];
+        if (k && (k.alive || k.state === "dying" || this.state === "intro" || this.state === "dying")) {
+          this._call(k, "update", dt);
+        }
+      }
       this._call(this.destruction, "update", dt);
       this._call(this.crowd, "update", dt);
       this._call(this.weapons, "update", dt);
@@ -1106,7 +1201,8 @@ export class KaijuMode {
       this._call(this.fx, "update", dt);
 
       if (this.state === "fight" || this.state === "intro") {
-        if (this.kaiju && this.kaiju.hp <= 0) this.onKaijuDeath();
+        const living = this.getLivingKaijus();
+        if (allK.length > 0 ? living.length === 0 : (this.kaiju && this.kaiju.hp <= 0)) this.onKaijuDeath();
         else if (this.getCityDamage() >= 1) this._finish(false);
       }
       if (this.state === "dying") {
@@ -1324,8 +1420,14 @@ export class KaijuMode {
       else cam.getWorldDirection(this._aimDir);
       this._aimValid = true;
     } else {
-      cam.getWorldDirection(this._aimDir);
-      this._aimPos.copy(cam.position);
+      if (this.app.walkerWeapons) {
+        const ray = this.app.walkerWeapons.getAimRay();
+        this._aimDir.copy(ray.direction);
+        this._aimPos.copy(ray.origin);
+      } else {
+        cam.getWorldDirection(this._aimDir);
+        this._aimPos.copy(cam.position);
+      }
       this._aimValid = true;
     }
     }
@@ -1498,7 +1600,8 @@ export class KaijuMode {
         return;
       }
     }
-    if (!down) this.app.keys?.delete?.(code);
+    if (down) this.app.keys?.add?.(code);
+    else this.app.keys?.delete?.(code);
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "ArrowUp" || code === "ArrowDown") e.preventDefault(); // no page scroll; still reaches the heli
     if (down && !e.repeat && DASH_KEYS[code]) this._dashKey(code, e.shiftKey);
     if (down && !e.repeat && (code === "ShiftLeft" || code === "ShiftRight") && this.canFire) {

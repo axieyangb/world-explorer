@@ -94,6 +94,9 @@ export class KaijuWeapons {
 
   // ---------- helpers ----------
   _kaijuAlive() {
+    if (this.K?.getLivingKaijus) {
+      return this.K.getLivingKaijus().length > 0;
+    }
     const k = this.K?.kaiju;
     return !!k && k.alive !== false && typeof k.raycast === "function";
   }
@@ -145,9 +148,16 @@ export class KaijuWeapons {
     _ro.copy(ray.origin).addScaledVector(ray.dir, t0);
     let best = maxD;
     let kh = null;
-    if (this._kaijuAlive()) {
-      kh = K.kaiju.raycast(_ro, ray.dir, maxD) || null;
-      if (kh && kh.dist < best) best = kh.dist; else kh = null;
+    const living = this.K?.getLivingKaijus ? this.K.getLivingKaijus() : (this._kaijuAlive() ? [this.K?.kaiju] : []);
+    for (let i = 0; i < living.length; i++) {
+      const mon = living[i];
+      if (typeof mon.raycast === "function") {
+        const h = mon.raycast(_ro, ray.dir, best);
+        if (h && h.dist < best) {
+          best = h.dist;
+          kh = { ...h, monster: mon };
+        }
+      }
     }
     if (K.supply?.drops) {
       for (const d of K.supply.drops) {
@@ -243,9 +253,17 @@ export class KaijuWeapons {
     _seg.multiplyScalar(1 / len);
     let best = len, kind = null;
     this._hitInfo = null;
-    if (this._kaijuAlive()) {
-      const h = K.kaiju.raycast(from, _seg, len);
-      if (h && h.dist <= best) { best = h.dist; kind = "kaiju"; this._hitInfo = h; }
+    const livingSeg = this.K?.getLivingKaijus ? this.K.getLivingKaijus() : (this._kaijuAlive() ? [this.K?.kaiju] : []);
+    for (let i = 0; i < livingSeg.length; i++) {
+      const mon = livingSeg[i];
+      if (typeof mon.raycast === "function") {
+        const h = mon.raycast(from, _seg, len);
+        if (h && h.dist <= best) {
+          best = h.dist;
+          kind = "kaiju";
+          this._hitInfo = { ...h, monster: mon };
+        }
+      }
     }
     const bh = K.destruction?.raycast?.(from, _seg, best);
     if (bh && bh.dist < best) { best = bh.dist; kind = "building"; this._hitInfo = bh; }
@@ -343,7 +361,8 @@ export class KaijuWeapons {
     if (kind === "kaiju") {
       const weak = !!info?.weak;
       const dmg = CFG.CANNON_DAMAGE * (weak ? CFG.WEAK_POINT_MULT : 1);
-      K.kaiju.takeDamage?.(dmg, p, weak);
+      const targetMonster = info?.monster || K.kaiju;
+      targetMonster?.takeDamage?.(dmg, p, weak);
       if (K.stats) {
         K.stats.cannonHits = (K.stats.cannonHits || 0) + 1;
         if (weak) K.stats.weakHits = (K.stats.weakHits || 0) + 1;
@@ -383,7 +402,8 @@ export class KaijuWeapons {
     K.shake?.(0.6, p.x, p.y, p.z);
     if (kind === "kaiju") {
       const weak = !!info?.weak;
-      K.kaiju.takeDamage?.(CFG.MISSILE_DAMAGE * (weak ? CFG.WEAK_POINT_MULT : 1), p, weak);
+      const targetMonster = info?.monster || K.kaiju;
+      targetMonster?.takeDamage?.(CFG.MISSILE_DAMAGE * (weak ? CFG.WEAK_POINT_MULT : 1), p, weak);
       if (K.stats) {
         K.stats.missileHits = (K.stats.missileHits || 0) + 1;
         if (weak) K.stats.weakHits = (K.stats.weakHits || 0) + 1;

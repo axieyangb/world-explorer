@@ -1613,24 +1613,35 @@ export class CityTraffic {
       if (Math.abs(c.y - app.pos.y) > 2.8) continue;
       const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, pl, pw, cxEff, czEff, c.ux, c.uz, c.len * 0.5, c.wid * 0.5);
       if (!r) continue;
+      const isTank = spec && (spec.id === 'tank' || spec.isTank);
       const mAi = CAR_MASS_KG[c.type] || 1500;
-      const wPlayer = drive ? mAi / (mPlayer + mAi) : 1.0;
-      const wAi = drive ? mPlayer / (mPlayer + mAi) : 0.0;
+      const wPlayer = drive ? (isTank ? 0.0 : mAi / (mPlayer + mAi)) : 1.0;
+      const wAi = drive ? (isTank ? 1.0 : mPlayer / (mPlayer + mAi)) : 0.0;
       const px0 = app.pos.x, pz0 = app.pos.z;
-      app.pos.x += r.nx * r.depth * wPlayer;
-      app.pos.z += r.nz * r.depth * wPlayer;
-      if (wAi > 0) {
-        c.kxOff = (c.kxOff || 0) - r.nx * r.depth * wAi;
-        c.kzOff = (c.kzOff || 0) - r.nz * r.depth * wAi;
+      if (!isTank) {
+        app.pos.x += r.nx * r.depth * wPlayer;
+        app.pos.z += r.nz * r.depth * wPlayer;
       }
-      if (app.collision) { // fix/water: an AI car must never shove the player into a building
+      if (wAi > 0) {
+        const pushMult = isTank ? 2.5 : 1.0;
+        c.kxOff = (c.kxOff || 0) - r.nx * r.depth * wAi * pushMult;
+        c.kzOff = (c.kzOff || 0) - r.nz * r.depth * wAi * pushMult;
+        if (isTank) {
+          c.kvx = (c.kvx || 0) - r.nx * 22.0;
+          c.kvz = (c.kvz || 0) - r.nz * 22.0;
+          if (this.damage) {
+            this.damage.hit(c, 5.0, cxEff, c.y, czEff, 'ram', 0);
+          }
+        }
+      }
+      if (app.collision && !isTank) { // fix/water: an AI car must never shove the player into a building
         const rc = drive
           ? app.collision.resolveCar(app.pos.x, app.pos.y, app.pos.z, app.yaw, spec, px0, pz0)
           : app.collision.resolve(app.pos.x, app.pos.y, app.pos.z, app.yaw, 0.45, [0], null, px0, pz0);
         app.pos.x = rc.x;
         app.pos.z = rc.z;
       }
-      if (drive) {
+      if (drive && !isTank) {
         const v1x = hx * (app.speed || 0), v1z = hz * (app.speed || 0);
         const v2x = c.ux * (c.v || 0) + (c.kvx || 0), v2z = c.uz * (c.v || 0) + (c.kvz || 0);
         const relVn = (v1x - v2x) * r.nx + (v1z - v2z) * r.nz;

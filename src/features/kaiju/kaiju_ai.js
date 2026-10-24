@@ -98,7 +98,7 @@ export class Kaiju {
     const pal = PALETTES[Math.floor(Math.random() * PALETTES.length)];
     this.palette = pal;
     this.height = rand(CFG.KAIJU_HEIGHT_MIN, CFG.KAIJU_HEIGHT_MAX);
-    this.scale = this.height / NOMINAL_HEIGHT;
+    this.scale = (this.height / NOMINAL_HEIGHT) * (o.scale || 1.0);
     this.model = new KaijuModel(pal);
     this.model.group.scale.setScalar(this.scale);
     this.beam = new BreathBeam(pal);
@@ -114,6 +114,7 @@ export class Kaiju {
     this.target.set(o.targetX ?? p?.x ?? o.x, 0, o.targetZ ?? p?.z ?? o.z);
     this.yaw = Math.atan2(this.target.x - o.x, this.target.z - o.z);
     this.fromWater = !!o.fromWater;
+    this.maxHp = o.maxHp || CFG.KAIJU_MAX_HP;
     this.hp = this.maxHp;
     this.alive = true;
     this.enraged = false;
@@ -270,7 +271,7 @@ export class Kaiju {
     this._enter("dying");
     if (!this.deathCalled) {
       this.deathCalled = true;
-      this.K.onKaijuDeath?.();
+      this.K.onKaijuDeath?.(this);
     }
     this.K.audio?.play?.("roar", { pos: this.position, gain: 1.0 });
   }

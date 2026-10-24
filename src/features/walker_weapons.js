@@ -329,6 +329,24 @@ export function createArmySoldierModel(weaponType = 'RIFLE') {
   return root;
 }
 
+// Shared geometries for projectiles and particles to prevent per-frame allocation / memory leak
+const SHARED_SMOKE_GEOM = new THREE.SphereGeometry(0.4, 6, 6);
+const SHARED_FLASH_GEOM = new THREE.SphereGeometry(1.0, 8, 6);
+const SHARED_EXPLOSION_GEOM = new THREE.SphereGeometry(1.0, 10, 8);
+const SHARED_TRACER_GEOM = new THREE.CylinderGeometry(0.025, 0.025, 1.2, 6);
+SHARED_TRACER_GEOM.rotateX(HALF_PI);
+const SHARED_SHELL_GEOM = new THREE.CylinderGeometry(0.06, 0.06, 0.9, 8);
+SHARED_SHELL_GEOM.rotateX(HALF_PI);
+
+const SHARED_RAGDOLL_GEOMS = [
+  new THREE.SphereGeometry(0.14, 8, 6),
+  new THREE.BoxGeometry(0.38, 0.45, 0.22),
+  new THREE.BoxGeometry(0.12, 0.44, 0.12),
+  new THREE.BoxGeometry(0.12, 0.44, 0.12),
+  new THREE.BoxGeometry(0.14, 0.48, 0.14),
+  new THREE.BoxGeometry(0.14, 0.48, 0.14),
+];
+
 export class WalkerWeaponsSystem {
   constructor(app) {
     this.app = app;
@@ -340,6 +358,10 @@ export class WalkerWeaponsSystem {
     this.isFiring = false;
     this.reticleEl = null;
     this.weaponBadgeEl = null;
+
+    this.reticleX = 50;
+    this.reticleY = 44;
+    this._pointerMoveBound = false;
 
     this.projectiles = [];
     this.beams = [];
@@ -367,14 +389,14 @@ export class WalkerWeaponsSystem {
       ret.style.cssText = [
         'position:fixed',
         'left:50%',
-        'top:46%',
+        'top:44%',
         'width:44px',
         'height:44px',
         'transform:translate(-50%,-50%)',
         'pointer-events:none',
         'z-index:22',
         'display:none',
-        'transition:transform 0.05s ease-out',
+        'transition:none',
       ].join(';');
       ret.innerHTML = `
         <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
@@ -386,6 +408,20 @@ export class WalkerWeaponsSystem {
       document.body.appendChild(ret);
     }
     this.reticleEl = ret;
+    this.reticleEl.style.left = `${this.reticleX}%`;
+    this.reticleEl.style.top = `${this.reticleY}%`;
+
+    if (typeof window !== 'undefined' && !this._pointerMoveBound) {
+      this._pointerMoveBound = true;
+      window.addEventListener('pointermove', (e) => {
+        if (!this.isAimingMode()) return;
+        const w = window.innerWidth || 1;
+        const h = window.innerHeight || 1;
+        const xPct = (e.clientX / w) * 100;
+        const yPct = (e.clientY / h) * 100;
+        this.setReticle(xPct, yPct);
+      }, { passive: true });
+    }
 
     let badge = document.getElementById('walker-weapon-badge');
     if (!badge) {
@@ -468,27 +504,145 @@ export class WalkerWeaponsSystem {
     getWeaponSfx(this.app).play('spark', { gain: 0.3 });
   }
 
+  setReticle(xPct, yPct) {
+    this.reticleX = THREE.MathUtils.clamp(xPct, 8, 92);
+    this.reticleY = THREE.MathUtils.clamp(yPct, 8, 88);
+    if (this.reticleEl) {
+      this.reticleEl.style.left = `${this.reticleX}%`;
+      this.reticleEl.style.top = `${this.reticleY}%`;
+    }
+  }
+
+  moveReticle(deltaXPct, deltaYPct) {
+    this.setReticle(this.reticleX + deltaXPct, this.reticleY + deltaYPct);
+  }
+
+  _reticleNdc() {
+    const ndcX = (this.reticleX / 100) * 2 - 1;
+    const ndcY = -((this.reticleY / 100) * 2 - 1);
+    return { x: ndcX, y: ndcY };
+  }
+
   getAimRay() {
     const cam = this.app.camera;
-    const ndcX = 0;
-    const ndcY = 0.08;
-    this._raycaster.setFromCamera({ x: ndcX, y: ndcY }, cam);
+    const ndc = this._reticleNdc();
+    this._raycaster.setFromCamera(ndc, cam);
     return this._raycaster.ray;
+  }
+
+  _computeAimPoint(maxDist = 1400) {
+    const ray = this.getAimRay();
+    const hit = this.raycastAim(ray, maxDist);
+    return hit.point;
+  }
+
+  computeAimPoint(maxDist = 1400) {
+    return this._computeAimPoint(maxDist);
+  }
+
+  isAimingMode() {
+    const isWalk = this.app.mode === 'walk';
+    const isTank = typeof this.app.isDrivingTank === 'function'
+      ? this.app.isDrivingTank()
+      : Boolean(this.app.mode === 'drive' && this.app.vehicleMesh && this.app.vehicleMesh.userData && this.app.vehicleMesh.userData.isTank);
+    const isKaijuSoldierOrTank = Boolean(
+      this.app.kaiju &&
+      this.app.kaiju.active &&
+      (this.app.kaiju.activeUnit === 'soldier' || this.app.kaiju.activeUnit === 'tank')
+    );
+    return isWalk || isTank || isKaijuSoldierOrTank;
+  }
+
+  _isTyping() {
+    const ae = typeof document !== 'undefined' ? document.activeElement : null;
+    return Boolean(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT'));
+  }
+
+  _canInteractVehicle() {
+    if (this.app.mode === 'walk' && this.app.parkedHeli) {
+      if (Math.hypot(this.app.pos.x - this.app.parkedHeli.x, this.app.pos.z - this.app.parkedHeli.z) < 12) return true;
+    }
+    return false;
+  }
+
+  _updateAimControls(dt) {
+    if (!this.isAimingMode()) return;
+
+    const keys = this.app.keys;
+    const isTank = (typeof this.app.isDrivingTank === 'function' && this.app.isDrivingTank()) || (this.app.kaiju && this.app.kaiju.active && this.app.kaiju.activeUnit === 'tank');
+    const minPitch = isTank ? -0.65 : -0.85;
+    const maxPitch = 0.85;
+
+    // 1. Keyboard target movement: Arrow keys & Q / E
+    let reticleDx = 0;
+    let reticleDy = 0;
+
+    if (keys) {
+      if (keys.has('ArrowLeft')) {
+        reticleDx -= 55.0 * dt;
+        this.app.camYaw += 1.4 * dt;
+      }
+      if (keys.has('ArrowRight')) {
+        reticleDx += 55.0 * dt;
+        this.app.camYaw -= 1.4 * dt;
+      }
+      if (keys.has('ArrowUp') || (keys.has('KeyQ') && !this._isTyping())) {
+        reticleDy -= 48.0 * dt;
+        this.app.camPitch = THREE.MathUtils.clamp(this.app.camPitch - 0.75 * dt, minPitch, maxPitch);
+      }
+      if (keys.has('ArrowDown') || (keys.has('KeyE') && !this._isTyping() && !this._canInteractVehicle())) {
+        reticleDy += 48.0 * dt;
+        this.app.camPitch = THREE.MathUtils.clamp(this.app.camPitch + 0.75 * dt, minPitch, maxPitch);
+      }
+    }
+
+    if (reticleDx !== 0 || reticleDy !== 0) {
+      this.moveReticle(reticleDx, reticleDy);
+    }
+
+    // 2. Edge camera steering & pitch when mouse reticle is near screen edges
+    const leftMargin = 22.0;
+    const rightMargin = 78.0;
+    const topMargin = 22.0;
+    const bottomMargin = 78.0;
+
+    if (this.reticleX < leftMargin) {
+      const factor = (leftMargin - this.reticleX) / (leftMargin - 8.0);
+      this.app.camYaw += factor * 1.6 * dt;
+    } else if (this.reticleX > rightMargin) {
+      const factor = (this.reticleX - rightMargin) / (92.0 - rightMargin);
+      this.app.camYaw -= factor * 1.6 * dt;
+    }
+
+    if (this.reticleY < topMargin) {
+      const factor = (topMargin - this.reticleY) / (topMargin - 8.0);
+      this.app.camPitch = THREE.MathUtils.clamp(this.app.camPitch - factor * 1.1 * dt, minPitch, maxPitch);
+    } else if (this.reticleY > bottomMargin) {
+      const factor = (this.reticleY - bottomMargin) / (88.0 - bottomMargin);
+      this.app.camPitch = THREE.MathUtils.clamp(this.app.camPitch + factor * 1.1 * dt, minPitch, maxPitch);
+    }
   }
 
   raycastAim(ray, maxDist = 1400) {
     const o = ray.origin;
     const d = ray.direction;
+    const AIM_FALLBACK = Math.min(600, maxDist);
     let bestDist = maxDist;
-    let hitResult = { dist: maxDist, point: o.clone().addScaledVector(d, maxDist), kind: 'air', ref: null };
+    let hitResult = { dist: AIM_FALLBACK, point: o.clone().addScaledVector(d, AIM_FALLBACK), kind: 'air', ref: null };
 
     // 1. Kaiju
     const K = this.app.kaiju;
-    if (K && K.active && K.kaiju && K.kaiju.alive) {
-      const kh = K.kaiju.raycast(o, d, bestDist);
-      if (kh && kh.dist < bestDist) {
-        bestDist = kh.dist;
-        hitResult = { dist: bestDist, point: kh.point, kind: 'kaiju', ref: kh, weak: kh.weak };
+    if (K && K.active) {
+      const living = K.getLivingKaijus ? K.getLivingKaijus() : (K.kaiju && K.kaiju.alive ? [K.kaiju] : []);
+      for (let kIdx = 0; kIdx < living.length; kIdx++) {
+        const mon = living[kIdx];
+        if (typeof mon.raycast === "function") {
+          const kh = mon.raycast(o, d, bestDist);
+          if (kh && kh.dist < bestDist) {
+            bestDist = kh.dist;
+            hitResult = { dist: bestDist, point: kh.point, kind: "kaiju", ref: kh, weak: kh.weak, monster: mon };
+          }
+        }
       }
     }
 
@@ -611,10 +765,8 @@ export class WalkerWeaponsSystem {
     this._spawnMuzzleFlash(origin, 0.08, 0xffbb33);
 
     const dir = new THREE.Vector3().subVectors(hit.point, origin).normalize();
-    const tracerGeom = new THREE.CylinderGeometry(0.025, 0.025, 1.2, 6);
-    tracerGeom.rotateX(HALF_PI);
     const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
-    const tracerMesh = new THREE.Mesh(tracerGeom, tracerMat);
+    const tracerMesh = new THREE.Mesh(SHARED_TRACER_GEOM, tracerMat);
     tracerMesh.position.copy(origin);
     tracerMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
     this.app.scene.add(tracerMesh);
@@ -630,6 +782,7 @@ export class WalkerWeaponsSystem {
       kaijuDamage: WALKER_WEAPONS.RIFLE.kaijuDamage,
       hitTarget: hit,
       isRocket: false,
+      isSharedGeom: true,
     });
   }
 
@@ -708,10 +861,8 @@ export class WalkerWeaponsSystem {
     this._spawnMuzzleFlash(muzzleWorld, 0.45, 0xffaa22);
 
     const dir = new THREE.Vector3().subVectors(hit.point, muzzleWorld).normalize();
-    const shellGeom = new THREE.CylinderGeometry(0.06, 0.06, 0.9, 8);
-    shellGeom.rotateX(HALF_PI);
     const shellMat = new THREE.MeshStandardMaterial({ color: 0xffcc44, roughness: 0.3, metalness: 0.8 });
-    const shellMesh = new THREE.Mesh(shellGeom, shellMat);
+    const shellMesh = new THREE.Mesh(SHARED_SHELL_GEOM, shellMat);
     shellMesh.position.copy(muzzleWorld);
     shellMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
     this.app.scene.add(shellMesh);
@@ -729,6 +880,7 @@ export class WalkerWeaponsSystem {
       hitTarget: hit,
       isTankShell: true,
       smokeTimer: 0,
+      isSharedGeom: true,
     });
   }
 
@@ -784,8 +936,9 @@ export class WalkerWeaponsSystem {
     const K = this.app.kaiju;
     const D = K && K.destruction;
 
-    if (hit && hit.kind === 'kaiju' && K && K.kaiju) {
-      K.kaiju.takeDamage?.(kaijuDmg, hitPos, hit.weak);
+    if (hit && hit.kind === 'kaiju' && K) {
+      const targetMonster = hit.monster || K.kaiju;
+      targetMonster?.takeDamage?.(kaijuDmg, hitPos, hit.weak);
       this._spawnExplosion(hitPos, 4.2, 0xffaa33);
       getWeaponSfx(this.app).play('spark', { gain: 0.8 });
     }
@@ -835,10 +988,10 @@ export class WalkerWeaponsSystem {
   _spawnExplosion(pos, radius = 5.0, colorHex = 0xff6600) {
     getWeaponSfx(this.app).play('explosion', { gain: 0.85 });
 
-    const geom = new THREE.SphereGeometry(radius * 0.35, 12, 10);
     const mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.95 });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(SHARED_EXPLOSION_GEOM, mat);
     mesh.position.copy(pos);
+    mesh.scale.setScalar(radius * 0.35);
     this.app.scene.add(mesh);
 
     this.explosions.push({
@@ -847,19 +1000,19 @@ export class WalkerWeaponsSystem {
       maxRadius: radius,
       age: 0,
       duration: 0.45,
+      isSharedGeom: true,
     });
   }
 
   _spawnMuzzleFlash(pos, scale = 0.15, colorHex = 0xffbb22) {
-    const flashGeom = new THREE.SphereGeometry(scale, 8, 6);
     const flashMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.95 });
-    const mesh = new THREE.Mesh(flashGeom, flashMat);
+    const mesh = new THREE.Mesh(SHARED_FLASH_GEOM, flashMat);
     mesh.position.copy(pos);
+    mesh.scale.setScalar(scale);
     this.app.scene.add(mesh);
 
     setTimeout(() => {
       this.app.scene.remove(mesh);
-      flashGeom.dispose();
       flashMat.dispose();
     }, 45);
   }
@@ -1223,19 +1376,27 @@ export class WalkerWeaponsSystem {
   _detonateSoldierRagdoll(s) {
     s.alive = false;
     this.soldierGroup.remove(s.mesh);
+    s.mesh.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+        else obj.material.dispose();
+      }
+    });
 
     const parts = [
-      { geom: new THREE.SphereGeometry(0.14, 8, 6), col: 0x3d4a36, pos: new THREE.Vector3(0, 1.6, 0) },
-      { geom: new THREE.BoxGeometry(0.38, 0.45, 0.22), col: 0x48583c, pos: new THREE.Vector3(0, 1.2, 0) },
-      { geom: new THREE.BoxGeometry(0.12, 0.44, 0.12), col: 0x36442e, pos: new THREE.Vector3(-0.25, 1.2, 0) },
-      { geom: new THREE.BoxGeometry(0.12, 0.44, 0.12), col: 0x36442e, pos: new THREE.Vector3(0.25, 1.2, 0) },
-      { geom: new THREE.BoxGeometry(0.14, 0.48, 0.14), col: 0x2e3826, pos: new THREE.Vector3(-0.12, 0.5, 0) },
-      { geom: new THREE.BoxGeometry(0.14, 0.48, 0.14), col: 0x2e3826, pos: new THREE.Vector3(0.12, 0.5, 0) },
+      { col: 0x3d4a36, pos: new THREE.Vector3(0, 1.6, 0) },
+      { col: 0x48583c, pos: new THREE.Vector3(0, 1.2, 0) },
+      { col: 0x36442e, pos: new THREE.Vector3(-0.25, 1.2, 0) },
+      { col: 0x36442e, pos: new THREE.Vector3(0.25, 1.2, 0) },
+      { col: 0x2e3826, pos: new THREE.Vector3(-0.12, 0.5, 0) },
+      { col: 0x2e3826, pos: new THREE.Vector3(0.12, 0.5, 0) },
     ];
 
-    for (const p of parts) {
+    for (let k = 0; k < parts.length; k++) {
+      const p = parts[k];
       const mat = new THREE.MeshStandardMaterial({ color: p.col, roughness: 0.7 });
-      const mesh = new THREE.Mesh(p.geom, mat);
+      const mesh = new THREE.Mesh(SHARED_RAGDOLL_GEOMS[k], mat);
       mesh.position.copy(s.pos).add(p.pos);
       this.app.scene.add(mesh);
 
@@ -1246,7 +1407,6 @@ export class WalkerWeaponsSystem {
       );
       this.aiRagdolls.push({
         mesh,
-        geom: p.geom,
         mat,
         pos: mesh.position,
         vel,
@@ -1268,16 +1428,18 @@ export class WalkerWeaponsSystem {
     if (this.tankCannonTimer > 0) this.tankCannonTimer -= dt;
     if (this.tankRocketTimer > 0) this.tankRocketTimer -= dt;
 
-    const isWalk = this.app.mode === 'walk';
-    const isDrive = this.app.mode === 'drive';
-    const isTank = isDrive && this.app.vehicleMesh && this.app.vehicleMesh.userData && this.app.vehicleMesh.userData.isTank;
+    const isAiming = this.isAimingMode();
+    const isTank = (typeof this.app.isDrivingTank === 'function' && this.app.isDrivingTank()) || (this.app.kaiju && this.app.kaiju.active && this.app.kaiju.activeUnit === 'tank');
+    const isWalk = (this.app.mode === 'walk') || (this.app.kaiju && this.app.kaiju.active && this.app.kaiju.activeUnit === 'soldier');
 
     if (this.reticleEl) {
-      this.reticleEl.style.display = (isWalk || isTank) ? 'block' : 'none';
+      this.reticleEl.style.display = isAiming ? 'block' : 'none';
     }
     if (this.weaponBadgeEl) {
       this.weaponBadgeEl.style.display = isWalk ? 'block' : 'none';
     }
+
+    this._updateAimControls(dt);
 
     if (isWalk && this.isFiring) {
       this.fireCurrentWeapon();
@@ -1288,7 +1450,7 @@ export class WalkerWeaponsSystem {
     }
 
     if (isTank) {
-      this._updateTankTurretAim(dt);
+      this._updateTankPose(dt);
     }
 
     this._updateProjectiles(dt);
@@ -1298,49 +1460,60 @@ export class WalkerWeaponsSystem {
     this._updateRagdolls(dt);
   }
 
+  _updateAimPose() {
+    this._updateWalkerAimPose();
+  }
+
   _updateWalkerAimPose() {
     const avatar = this.app.avatarMesh || this.app.walker;
     if (!avatar || !avatar.userData) return;
     const { rightArm, leftArm } = avatar.userData;
     if (!rightArm) return;
 
-    const pitch = this.app.camPitch || 0.2;
-    const armPitch = -HALF_PI + (pitch - 0.2) * 0.95;
+    if (this.app._punchTimer && this.app._punchTimer > 0) return;
 
-    if (!this.app._punchTimer || this.app._punchTimer <= 0) {
-      rightArm.rotation.x = armPitch;
-      rightArm.rotation.y = 0;
-      rightArm.rotation.z = -0.08;
+    const hitPoint = this._computeAimPoint(800);
+    const localAim = avatar.worldToLocal(hitPoint.clone());
+    const distXZ = Math.hypot(localAim.x, localAim.z);
+    const aimPitch = -Math.atan2(localAim.y - 1.42, Math.max(1.0, distXZ));
+    const armPitch = -HALF_PI + THREE.MathUtils.clamp(aimPitch, -1.0, 1.0);
+    const armYaw = THREE.MathUtils.clamp(Math.atan2(localAim.x, localAim.z), -0.45, 0.45);
 
-      if (leftArm) {
-        leftArm.rotation.x = armPitch + 0.12;
-        leftArm.rotation.y = -0.38;
-        leftArm.rotation.z = 0.15;
-      }
+    rightArm.rotation.x = armPitch;
+    rightArm.rotation.y = armYaw;
+    rightArm.rotation.z = -0.08;
+
+    if (leftArm) {
+      leftArm.rotation.x = armPitch + 0.12;
+      leftArm.rotation.y = -0.38 + armYaw * 0.5;
+      leftArm.rotation.z = 0.15;
     }
   }
 
-  _updateTankTurretAim(dt) {
+  _updateTankPose(dt) {
     const mesh = this.app.vehicleMesh;
     if (!mesh || !mesh.userData) return;
     const { turret, barrel } = mesh.userData;
     if (!turret) return;
 
-    const ray = this.getAimRay();
-    const hit = this.raycastAim(ray, 1000);
-    const localAim = mesh.worldToLocal(hit.point.clone());
+    const hitPoint = this._computeAimPoint(1000);
+    const localAim = mesh.worldToLocal(hitPoint.clone());
 
     const targetTurretYaw = Math.atan2(localAim.x, localAim.z);
-    turret.rotation.y = THREE.MathUtils.lerp(turret.rotation.y, targetTurretYaw, Math.min(1, 8.0 * dt));
+    turret.rotation.y = THREE.MathUtils.lerp(turret.rotation.y, targetTurretYaw, Math.min(1, 10.0 * dt));
 
     if (barrel) {
       const targetPitch = -Math.atan2(localAim.y - 0.35, Math.hypot(localAim.x, localAim.z));
       barrel.rotation.x = THREE.MathUtils.clamp(
-        THREE.MathUtils.lerp(barrel.rotation.x, targetPitch, Math.min(1, 8.0 * dt)),
-        -0.38,
-        0.14
+        THREE.MathUtils.lerp(barrel.rotation.x, targetPitch, Math.min(1, 10.0 * dt)),
+        -0.85,
+        0.25
       );
     }
+  }
+
+  _updateTankTurretAim(dt) {
+    this._updateTankPose(dt);
   }
 
   _updateProjectiles(dt) {
@@ -1361,7 +1534,7 @@ export class WalkerWeaponsSystem {
 
       if (p.distTraveled >= p.maxDist) {
         this.app.scene.remove(p.mesh);
-        if (p.mesh.geometry) p.mesh.geometry.dispose();
+        if (!p.isSharedGeom && p.mesh.geometry) p.mesh.geometry.dispose();
         if (p.mesh.material) p.mesh.material.dispose();
 
         this._applyImpact(p.pos, p.hitTarget, p.damage, p.splashRadius || 0, p.kaijuDamage || 0);
@@ -1374,10 +1547,10 @@ export class WalkerWeaponsSystem {
   }
 
   _spawnSmokePuff(pos) {
-    const geom = new THREE.SphereGeometry(0.35 + Math.random() * 0.25, 6, 6);
     const mat = new THREE.MeshBasicMaterial({ color: 0x999999, transparent: true, opacity: 0.65 });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(SHARED_SMOKE_GEOM, mat);
     mesh.position.copy(pos);
+    mesh.scale.setScalar(0.85 + Math.random() * 0.5);
     this.app.scene.add(mesh);
 
     this.explosions.push({
@@ -1386,6 +1559,7 @@ export class WalkerWeaponsSystem {
       maxRadius: 1.8,
       age: 0,
       duration: 0.45,
+      isSharedGeom: true,
     });
   }
 
@@ -1411,8 +1585,8 @@ export class WalkerWeaponsSystem {
       const p = e.age / e.duration;
       if (p >= 1.0) {
         this.app.scene.remove(e.mesh);
-        e.mesh.geometry.dispose();
-        e.mat.dispose();
+        if (!e.isSharedGeom && e.mesh.geometry) e.mesh.geometry.dispose();
+        if (e.mat) e.mat.dispose();
         this.explosions.splice(i, 1);
       } else {
         const scale = 1.0 + p * (e.maxRadius || 3.0);
@@ -1428,8 +1602,7 @@ export class WalkerWeaponsSystem {
       r.life += dt;
       if (r.life > 4.5) {
         this.app.scene.remove(r.mesh);
-        r.geom.dispose();
-        r.mat.dispose();
+        if (r.mat) r.mat.dispose();
         this.aiRagdolls.splice(i, 1);
         continue;
       }

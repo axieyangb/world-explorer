@@ -133,20 +133,31 @@ export class KaijuSuper {
     let hitWeak = false;
     let hitKaiju = false;
 
-    if (k && k.alive !== false && ray) {
-      const kh = k.raycast(ray.origin, ray.dir, CFG.RAIL_RANGE);
-      if (kh) {
-        hitPt = kh.point.clone();
-        hitWeak = !!kh.weak;
-        hitKaiju = true;
+    const livingRail = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive !== false ? [k] : []);
+    let targetKaiju = null;
+    if (ray) {
+      let bestDist = CFG.RAIL_RANGE;
+      for (const mon of livingRail) {
+        const kh = mon.raycast(ray.origin, ray.dir, bestDist);
+        if (kh && kh.dist < bestDist) {
+          bestDist = kh.dist;
+          hitPt = kh.point.clone();
+          hitWeak = !!kh.weak;
+          hitKaiju = true;
+          targetKaiju = mon;
+        }
       }
     }
-    if (!hitKaiju && k && k.alive !== false) {
-      const lp = k.getLockPoint?.() || k.position;
-      if (lp && lp.distanceTo(muzzle) <= CFG.RAIL_RANGE) {
-        hitPt = lp.clone();
-        hitWeak = true;
-        hitKaiju = true;
+    if (!hitKaiju && livingRail.length > 0) {
+      for (const mon of livingRail) {
+        const lp = mon.getLockPoint?.() || mon.position;
+        if (lp && lp.distanceTo(muzzle) <= CFG.RAIL_RANGE) {
+          hitPt = lp.clone();
+          hitWeak = true;
+          hitKaiju = true;
+          targetKaiju = mon;
+          break;
+        }
       }
     }
     if (!hitPt) {
@@ -154,12 +165,12 @@ export class KaijuSuper {
       else hitPt = muzzle.clone().add(new THREE.Vector3(0, 0, 400));
     }
 
-    if (hitKaiju && k) {
+    if (hitKaiju && targetKaiju) {
       const dmg = CFG.RAIL_DAMAGE || 2400;
-      k.takeDamage(dmg, hitPt, hitWeak, { source: "railgun" });
-      if (k.laser && k.laser.phase === "lock") {
-        k._endLaser?.(false);
-        k.nextLaser = 2.5;
+      targetKaiju.takeDamage(dmg, hitPt, hitWeak, { source: "railgun" });
+      if (targetKaiju.laser && targetKaiju.laser.phase === "lock") {
+        targetKaiju._endLaser?.(false);
+        targetKaiju.nextLaser = 2.5;
       }
       if (K.stats) {
         K.stats.cannonShots = (K.stats.cannonShots || 0) + 1;
@@ -270,9 +281,11 @@ export class KaijuSuper {
     K.scene?.add(mesh);
     this._empWaves.push({ mesh, mat, t: 0, dur: 0.75, maxR: CFG.EMP_RADIUS || 140 });
 
-    if (k && k.alive !== false) {
-      k.stun?.(CFG.EMP_STUN_SECONDS || 4.5);
-      k.takeDamage?.(CFG.EMP_DAMAGE || 1600, center, true, { source: "emp" });
+    const livingEmp = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive !== false ? [k] : []);
+    for (const mon of livingEmp) {
+      const center = mon.hitSpheres && mon.hitSpheres[0] ? mon.hitSpheres[0].center : mon.position;
+      mon.stun?.(CFG.EMP_STUN_SECONDS || 4.5);
+      mon.takeDamage?.(CFG.EMP_DAMAGE || 1600, center, true, { source: "emp" });
       K.fx?.spawn?.("spark", center, { color: CYAN_COLOR, count: 32, speed: 65, scale: 3.0 });
     }
     K.audio?.play?.("emp", { pos: hp, gain: 1.0 });
@@ -316,9 +329,12 @@ export class KaijuSuper {
     K.scene?.add(group);
 
     // Immediate initial orbital strike damage + stun
-    if (k && k.alive !== false) {
-      k.stun?.(1.4);
-      k.takeDamage?.(CFG.ORBITAL_DAMAGE || 3200, target, true, { source: "orbital" });
+    const livingOrb = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive !== false ? [k] : []);
+    for (const mon of livingOrb) {
+      if (mon.position && mon.position.distanceTo(target) <= (CFG.ORBITAL_RADIUS || 75) + 35) {
+        mon.stun?.(1.4);
+        mon.takeDamage?.(CFG.ORBITAL_DAMAGE || 3200, target, true, { source: "orbital" });
+      }
     }
     K.fx?.spawn?.("bigExplosion", target, { scale: 2.8 });
     K.audio?.play?.("orbital", { pos: target, gain: 1.1 });
@@ -406,8 +422,11 @@ export class KaijuSuper {
       o.tick -= dt;
       if (o.tick <= 0) {
         o.tick = 0.2;
-        if (k && k.alive !== false) {
-          k.takeDamage?.(180, o.pos, true, { source: "orbital" });
+        const livingOrbTick = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive !== false ? [k] : []);
+        for (const mon of livingOrbTick) {
+          if (mon.position && mon.position.distanceTo(o.pos) <= (CFG.ORBITAL_RADIUS || 75) + 35) {
+            mon.takeDamage?.(180, o.pos, true, { source: "orbital" });
+          }
         }
         K.fx?.spawn?.("explosion", o.pos, { scale: 1.8 });
         K.fx?.spawn?.("spark", o.pos, { color: CYAN_COLOR, count: 10, scale: 2.0, speed: 45 });
@@ -433,17 +452,19 @@ export class KaijuSuper {
       const m = this._swarm[i];
       if (!m.active) continue;
       m.age += dt;
+      const livingSwarm = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive !== false ? [k] : []);
+      const targetKaiju = (livingSwarm.length > 0 ? livingSwarm[i % livingSwarm.length] : null) || k;
       let target = null;
-      if (k && k.alive !== false) {
-        const sp = k.hitSpheres && k.hitSpheres[m.sphereIdx];
-        target = sp ? sp.center : (k.getLockPoint?.() || k.position);
+      if (targetKaiju && targetKaiju.alive !== false) {
+        const sp = targetKaiju.hitSpheres && targetKaiju.hitSpheres[m.sphereIdx];
+        target = sp ? sp.center : (targetKaiju.getLockPoint?.() || targetKaiju.position);
       }
       if (target) {
         _a.subVectors(target, m.pos);
         const dist = _a.length();
         if (dist < 8) {
           const dmg = CFG.SWARM_DAMAGE || 320;
-          k.takeDamage?.(dmg, target, m.weak, { source: "swarm" });
+          targetKaiju?.takeDamage?.(dmg, target, m.weak, { source: "swarm" });
           if (K.stats) {
             K.stats.missileHits = (K.stats.missileHits || 0) + 1;
             if (m.weak) K.stats.weakHits = (K.stats.weakHits || 0) + 1;

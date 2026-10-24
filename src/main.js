@@ -1479,11 +1479,11 @@ class WorldExplorerApp {
 
     if (this.mode === "walk") {
       const fwd =
-        (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) -
-        (this.keys.has("KeyS") || this.keys.has("ArrowDown") ? 1 : 0);
+        (this.keys.has("KeyW") ? 1 : 0) -
+        (this.keys.has("KeyS") ? 1 : 0);
       const strafe =
-        (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) -
-        (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0);
+        (this.keys.has("KeyD") ? 1 : 0) -
+        (this.keys.has("KeyA") ? 1 : 0);
       const isNitro = shiftPressed;
       this.nitroActive = isNitro;
 
@@ -1600,13 +1600,14 @@ class WorldExplorerApp {
       return;
     }
     const spec = VEHICLE_SPECS[this.vehicleIdx];
+    const isTank = this.isDrivingTank();
     const throttle =
-      (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) -
-      (this.keys.has("KeyS") || this.keys.has("ArrowDown") ? 1 : 0);
+      (this.keys.has("KeyW") || (!isTank && this.keys.has("ArrowUp")) ? 1 : 0) -
+      (this.keys.has("KeyS") || (!isTank && this.keys.has("ArrowDown")) ? 1 : 0);
     const steerInput =
-      (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0) -
-      (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0);
-    const handbrake = this.keys.has("Space");
+      (this.keys.has("KeyA") || (!isTank && this.keys.has("ArrowLeft")) ? 1 : 0) -
+      (this.keys.has("KeyD") || (!isTank && this.keys.has("ArrowRight")) ? 1 : 0);
+    const handbrake = !isTank && this.keys.has("Space");
     const isNitro = shiftPressed && throttle > 0;
     this.nitroActive = isNitro;
 
@@ -1791,7 +1792,9 @@ class WorldExplorerApp {
             : isUtility
               ? this.camMode === "street" ? 2.05 : 2.35
               : this.camMode === "street" ? 1.65 : 1.95;
-      const pitch = THREE.MathUtils.clamp(this.camPitch, isWalk ? -0.55 : 0.05, 1.18);
+      const isTank = this.isDrivingTank();
+      const minPitch = isWalk ? -0.85 : isTank ? -0.65 : 0.05;
+      const pitch = THREE.MathUtils.clamp(this.camPitch, minPitch, 1.18);
       const viewYaw = this.camYaw + this.camYawOffset;
 
       let armScale = 1.0;
@@ -1955,8 +1958,10 @@ class WorldExplorerApp {
         } else if (this.isDrivingTank() && this.walkerWeapons) {
           this.walkerWeapons.fireTankCannon();
         }
-      } else if (e.code === "KeyQ" && this.mode === "walk") {
-        this.camPitch = THREE.MathUtils.clamp(this.camPitch - 0.08, -0.55, 1.18);
+      } else if (e.code === "KeyQ" && (this.mode === "walk" || this.isDrivingTank())) {
+        const isTank = this.isDrivingTank();
+        const minPitch = this.mode === "walk" ? -0.85 : -0.65;
+        this.camPitch = THREE.MathUtils.clamp(this.camPitch - 0.08, minPitch, 1.18);
       } else if (e.code === "KeyF" && !e.repeat) {
         if (this.mode === "helicopter") {
           if (this.heliLanded || (this.heli && this.heli.state.grounded)) {
@@ -2060,6 +2065,8 @@ class WorldExplorerApp {
         this.walkerWeapons.quickFireRpg();
       } else if (e.button === 0 && this.isDrivingTank() && this.walkerWeapons) {
         this.walkerWeapons.fireTankCannon();
+      } else if (e.button === 2 && this.isDrivingTank() && this.walkerWeapons) {
+        this.walkerWeapons.fireTankRocket();
       }
       const pop = document.getElementById("mode-vehicle-menu");
       if (pop) pop.classList.add("hidden");
@@ -2076,7 +2083,9 @@ class WorldExplorerApp {
       pointerDownY = e.clientY;
 
       this.camYaw -= dx * 0.005;
-      this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0042, this.mode === "walk" ? -0.55 : 0.05, 1.18);
+      const isTank = this.isDrivingTank();
+      const minPitch = this.mode === "walk" ? -0.85 : isTank ? -0.65 : 0.05;
+      this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0042, minPitch, 1.18);
       this.lastMouseOrbitTime = performance.now();
     });
 
@@ -2413,6 +2422,7 @@ class WorldExplorerApp {
   }
 
   isDrivingTank() {
+    if (this.kaiju && this.kaiju.active && this.kaiju.activeUnit === "tank") return true;
     return Boolean(this.mode === "drive" && this.vehicleMesh && this.vehicleMesh.userData && this.vehicleMesh.userData.isTank);
   }
 

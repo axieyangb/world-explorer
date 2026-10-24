@@ -56,7 +56,7 @@ export class KaijuHud {
     // Top center: kaiju HP + city damage.
     const top = el("div", "kj-top", root);
     const nameRow = el("div", "kj-row", top);
-    this._txt(el("span", "kj-label", nameRow), "kaiju_name");
+    this.nameLabel = this._txt(el("span", "kj-label", nameRow), "kaiju_name");
     this.hpBar = el("div", "kj-bar kj-bar-hp", top);
     this.hpFill = el("i", "", this.hpBar);
     const cityRow = el("div", "kj-row kj-row-city", top);
@@ -358,12 +358,33 @@ export class KaijuHud {
     // Keep bottom controls instruction permanently visible while in Kaiju mode
     if (!this.hint.classList.contains("on")) this.hint.classList.add("on");
 
-    // Kaiju HP.
-    const hp = k && k.maxHp > 0 ? Math.max(0, Math.min(1, k.hp / k.maxHp)) : 0;
+    // Kaiju HP: calculate total HP and maxHP across all monsters in the swarm
+    const allKaijus = K.kaijus && K.kaijus.length > 0 ? K.kaijus : (k ? [k] : []);
+    let totHp = 0, totMaxHp = 0;
+    for (let i = 0; i < allKaijus.length; i++) {
+      const m = allKaijus[i];
+      totHp += Math.max(0, m.hp || 0);
+      totMaxHp += (m.maxHp || CFG.KAIJU_MAX_HP || 18000);
+    }
+    const hp = totMaxHp > 0 ? Math.max(0, Math.min(1, totHp / totMaxHp)) : 0;
     const hpQ = Math.round(hp * 1000);
     if (this._chg("hp", hpQ)) this.hpFill.style.transform = `scaleX(${hpQ / 1000})`;
-    const enr = !!(k && k.enraged);
+    const enr = allKaijus.some((m) => m && m.enraged);
     if (this._chg("enr", enr)) this.hpBar.classList.toggle("kj-enraged", enr);
+
+    // Swarm count label
+    const living = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive ? [k] : []);
+    const livingCount = living.length;
+    const isZh = typeof document !== "undefined" && (document.documentElement.lang === "zh" || (navigator.language && navigator.language.startsWith("zh")));
+    let swarmText = "";
+    if (livingCount > 0) {
+      swarmText = isZh ? `怪兽群 · 剩余 ${livingCount} 只` : `KAIJU SWARM · ${livingCount} ALIVE`;
+    } else {
+      swarmText = isZh ? `怪兽群 · 已击溃` : `KAIJU SWARM · DEFEATED`;
+    }
+    if (this.nameLabel && this._chg("swarmLabel", swarmText)) {
+      this.nameLabel.textContent = swarmText;
+    }
 
     // City damage + edge glow.
     const cd = K.getCityDamage ? K.getCityDamage() : 0;
@@ -596,43 +617,48 @@ export class KaijuHud {
       ctx.stroke();
     }
 
-    // Kaiju marker (clamped to the radar edge when out of range).
-    this._proj(k.position.x, k.position.z, tmp);
-    let mx = tmp[0], my = tmp[1];
-    const lim = S * 0.46;
-    const d = Math.hypot(mx, my);
-    const edge = d > lim;
-    if (edge) {
-      mx = (mx / d) * lim;
-      my = (my / d) * lim;
-    }
-    const pulse = 0.5 + 0.5 * Math.sin(this._pulse * 5);
-    ctx.fillStyle = "rgba(255, 70, 60, 0.95)";
-    if (edge) {
-      // Small arrow pointing outwards.
-      const a = Math.atan2(my, mx);
-      ctx.save();
-      ctx.translate(mx, my);
-      ctx.rotate(a);
-      ctx.beginPath();
-      ctx.moveTo(5, 0);
-      ctx.lineTo(-4, -4);
-      ctx.lineTo(-4, 4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    } else {
-      ctx.beginPath();
-      ctx.arc(mx, my, 7 + pulse * 5, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255, 70, 60, ${(0.35 - pulse * 0.3).toFixed(3)})`;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(mx, my, 4.5, 0, Math.PI * 2);
+    // Kaiju markers for all living kaijus (clamped to the radar edge when out of range).
+    const livingRadar = K.getLivingKaijus ? K.getLivingKaijus() : (k && k.alive ? [k] : []);
+    for (let rIdx = 0; rIdx < livingRadar.length; rIdx++) {
+      const mon = livingRadar[rIdx];
+      if (!mon || !mon.position) continue;
+      this._proj(mon.position.x, mon.position.z, tmp);
+      let mx = tmp[0], my = tmp[1];
+      const lim = S * 0.46;
+      const d = Math.hypot(mx, my);
+      const edge = d > lim;
+      if (edge) {
+        mx = (mx / d) * lim;
+        my = (my / d) * lim;
+      }
+      const pulse = 0.5 + 0.5 * Math.sin(this._pulse * 5);
       ctx.fillStyle = "rgba(255, 70, 60, 0.95)";
-      ctx.fill();
-      ctx.lineWidth = 1.2;
-      ctx.strokeStyle = "rgba(20, 0, 0, 0.8)";
-      ctx.stroke();
+      if (edge) {
+        // Small arrow pointing outwards.
+        const a = Math.atan2(my, mx);
+        ctx.save();
+        ctx.translate(mx, my);
+        ctx.rotate(a);
+        ctx.beginPath();
+        ctx.moveTo(5, 0);
+        ctx.lineTo(-4, -4);
+        ctx.lineTo(-4, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(mx, my, 7 + pulse * 5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 70, 60, ${(0.35 - pulse * 0.3).toFixed(3)})`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(mx, my, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 70, 60, 0.95)";
+        ctx.fill();
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = "rgba(20, 0, 0, 0.8)";
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }

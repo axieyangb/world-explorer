@@ -213,11 +213,12 @@ export class BuildingCollision {
 
   /** Car: three circles along the body plus the four body corners. */
   resolveCar(x, wy, z, yaw, spec, prevX = null, prevZ = null) {
-    const len = (spec && spec.length) || 4.6;
-    const hw = ((spec && spec.width) || 2.0) * 0.5;
+    const isTank = spec && (spec.id === 'tank' || spec.isTank);
+    const len = isTank ? 6.4 : (spec && spec.length) || 4.6;
+    const hw = isTank ? 1.45 : ((spec && spec.width) || 2.0) * 0.5;
+    const hl = isTank ? 3.2 : len * 0.5;
     const off = Math.max(0, len * 0.5 - hw);
-    const hl = len * 0.5;
-    return this.resolve(x, wy, z, yaw, hw + 0.08, off > 0.2 ? [off, 0, -off] : [0], [hl, hw, hl, -hw, -hl, hw, -hl, -hw], prevX, prevZ);
+    return this.resolve(x, wy, z, yaw, hw + (isTank ? 0.04 : 0.08), off > 0.2 ? [off, 0, -off] : [0], [hl, hw, hl, -hw, -hl, hw, -hl, -hw], prevX, prevZ);
   }
 
   /**
