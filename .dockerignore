@@ -1,0 +1,12 @@
+.git
+.venv
+node_modules
+__pycache__
+*.pyc
+.DS_Store
+*.log
+tools
+assets/facades_src
+assets/doors_src
+Dockerfile
+.dockerignore
