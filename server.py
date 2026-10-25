@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""High-performance multithreaded HTTP server for Beijing 40km x 40km Open-World MVP."""
+"""Multithreaded HTTP server for World Explorer: static files + the /api/sky live-aircraft proxy."""
 
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -143,7 +143,7 @@ class GameRequestHandler(SimpleHTTPRequestHandler):
 def main():
   port = int(os.environ.get('PORT', '8098'))
   server = ThreadingHTTPServer(('0.0.0.0', port), GameRequestHandler)
-  print(f'Beijing Open-World MVP server listening on http://0.0.0.0:{port}')
+  print(f'World Explorer server listening on http://0.0.0.0:{port}')
   sys.stdout.flush()
   server.serve_forever()
 

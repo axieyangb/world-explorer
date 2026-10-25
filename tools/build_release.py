@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Builds a self-contained single-file HTML release of World Explorer for static-host."""
+"""Builds a self-contained single-file HTML release of World Explorer (world_explorer.html).
+
+Usage: python3 tools/build_release.py [out_file]   (default: <repo>/world_explorer.html)
+"""
 
 import base64
 import gzip
 from pathlib import Path
 import re
 import struct
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent  # repo (or worktree) containing this script
-OUT_FILE = Path('/tmp/world_explorer.html')
+OUT_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'world_explorer.html'
 
 MOD_ID_MAP = {
     'vendor/three.module.js': '__MOD_three',
@@ -511,10 +515,8 @@ await (async function bootstrapWorldExplorer() {
   html = html.replace('<script type="module" src="src/main.js"></script>', embedded_payload)
 
   OUT_FILE.write_text(html, encoding='utf-8')
-  root_out = ROOT / 'world_explorer.html'
-  root_out.write_text(html, encoding='utf-8')
   print(
-      f'  -> Wrote {OUT_FILE} and {root_out} ({root_out.stat().st_size / (1024*1024):.2f} MB) in {round(time.time() - t0, 2)}s',
+      f'  -> Wrote {OUT_FILE} ({OUT_FILE.stat().st_size / (1024*1024):.2f} MB) in {round(time.time() - t0, 2)}s',
       flush=True,
   )
 

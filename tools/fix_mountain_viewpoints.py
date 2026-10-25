@@ -11,7 +11,7 @@ from pathlib import Path
 import struct
 import time
 
-DATA_DIR = Path('./data')
+DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
 CHUNKS_DIR = DATA_DIR / 'chunks'
 OVERTURE_ID_BASE = 2_000_000_000
 

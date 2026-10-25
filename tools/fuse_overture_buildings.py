@@ -367,7 +367,7 @@ def compute_oriented_bbox(flat):
 
 def main():
   t0 = time.time()
-  data_dir = Path('./data')
+  data_dir = Path(__file__).resolve().parent.parent / 'data'
   chunks_dir = data_dir / 'chunks'
 
   print('[1/4] Reading Overture Maps Parquet footers for Beijing bounding box...', flush=True)

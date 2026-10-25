@@ -17,9 +17,7 @@ import subprocess
 import tempfile
 import time
 
-OUT_DIR = Path(
-    '/tmp/3view'
-)
+OUT_DIR = Path(__file__).resolve().parent.parent / 'out' / '3view'
 
 
 def recv_cdp_until(r_fd, target_id, buf_holder, timeout=30.0):

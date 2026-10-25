@@ -4,7 +4,7 @@
 Fetches real OSM street nodes (trees, lamps, signals, crossings, hydrants, benches, bins) for a block of
 Z15 tiles around the default San Francisco start with ONE Overpass CSV query, and writes them in the same
 compact per-tile format StreetDetail caches (see compactOsm() in src/features/street_detail.js), so the
-default view is fully detailed even offline / in the single-file bundle.
+default view is fully detailed even offline / in the single-file build (world_explorer.html).
 
   python3 tools/build_street_detail_seed.py            # default: SF Embarcadero, x 5239..5245, y 12660..12666
 """

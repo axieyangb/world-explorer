@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import re
 import struct
+import sys
 import time
 import zlib
 from google.protobuf import descriptor_pb2, message_factory
@@ -416,8 +417,9 @@ def estimate_building_height_and_style(tags, area, cx, cz, osm_id):
 
 def main():
   t_start = time.time()
-  pbf_path = Path('/tmp/beijing.osm.pbf')
-  out_dir = Path('./data')
+  root = Path(__file__).resolve().parent.parent
+  pbf_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('/tmp/beijing.osm.pbf')
+  out_dir = root / 'data'
   chunks_dir = out_dir / 'chunks'
   chunks_dir.mkdir(parents=True, exist_ok=True)
 

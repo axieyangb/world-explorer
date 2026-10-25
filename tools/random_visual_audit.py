@@ -21,9 +21,9 @@ import time
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont
 
-PROJECT_ROOT = '.'
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OVERVIEW_PATH = os.path.join(PROJECT_ROOT, 'data', 'global_overview.json')
-DEFAULT_OUT_DIR = '/tmp'
+DEFAULT_OUT_DIR = os.path.join(PROJECT_ROOT, 'out', 'visual_audit')
 
 
 class CDPClient:
