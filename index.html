@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <!-- Added to a phone's home screen, it opens full screen (iPhone Safari has no Fullscreen API for pages). -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="World Explorer" />
+  <meta name="theme-color" content="#0a1220" />
   <title>World Explorer</title>
   <meta name="description" content="World Explorer — Real-Time 3D Open-World Earth Exploration, Driving & Flight Simulator." />
   <link rel="stylesheet" href="styles.css" />
@@ -86,6 +92,17 @@
         'Add <kbd>?lat=…&amp;lon=…</kbd> to the URL to start anywhere',
         'Press <kbd>L</kbd> in the helicopter to land automatically',
       ];
+      var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (/[?&]touch=1/.test(location.search) || (coarse && !/[?&]touch=0/.test(location.search))) {
+        tips = [
+          'Left thumb steers, right thumb fires and boosts',
+          'Drag the view to look around · pinch to zoom',
+          'Tap the mode button at the top to fly, drive or walk',
+          'Tap MAP, then anywhere on Earth, to go there',
+          'Turn your phone sideways for the best view',
+          'Add to Home Screen to play full screen',
+        ];
+      }
       var tipIdx = Math.floor(Math.random() * tips.length);
       function nextTip() { tip.innerHTML = 'Tip: ' + tips[tipIdx++ % tips.length]; }
       nextTip();

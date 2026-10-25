@@ -57,6 +57,7 @@ Try it:
 | 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at. |
 | 🦖 **Kaiju Defense** | A giant creature rises from the nearest water. Defend the city as a gunship, tank or soldier. |
 | 🌐 **English / 中文** | Full bilingual interface with local road names. |
+| 📱 **Phones and tablets** | On-screen joystick and action buttons, drag to look, pinch to zoom. Add it to your home screen to play full screen. |
 
 ## Controls
 
@@ -77,6 +78,11 @@ Try it:
 | `M` | World map (click anywhere to teleport) |
 | `/` | Search for a place |
 | `Shift` + `F` | Full screen |
+
+**On a phone or tablet:** left thumb on the joystick to move or steer; right-thumb buttons change with the mode
+(fire, rockets, climb/descend and land in the helicopter; boost, brake, horn and exit in a car; fire, run and punch on foot).
+Drag the view to look around, pinch to zoom, tap the mode button at the top to switch, and tap **MAP** then anywhere to go there.
+Touch controls appear automatically on touch devices; `?touch=1` or `?touch=0` forces them on or off.
 
 **URL options:** `?lat=…&lon=…&name=…` start location · `?time=0-24` time of day · `?weather=clear|cloudy|rain|fog`
 

@@ -84,11 +84,14 @@ import { BuildingCollision } from "./features/building_collision.js"; // fix/wat
 import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
+import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
-const LOAD_RADIUS = 2;   // 5x5 chunks = 25 km^2 active streaming zone
-const UNLOAD_RADIUS = 3; // Hysteresis gap
+// Phones get a 3x3 streaming zone: a 5x5 one needs well over a gigabyte, more than mobile browsers allow a tab.
+const TOUCH_UI = isTouchDevice();
+const LOAD_RADIUS = TOUCH_UI ? 1 : 2;   // 5x5 chunks = 25 km^2 active streaming zone (3x3 on touch devices)
+const UNLOAD_RADIUS = TOUCH_UI ? 2 : 3; // Hysteresis gap
 const TIME_PRESET_ORDER = ["noon", "sunset", "night", "overcast"];
 
 // [integration perf] Beijing skyline LOD as one InstancedMesh per ~5 km tile (frustum culling), behind the
@@ -145,7 +148,7 @@ class WorldExplorerApp {
       logarithmicDepthBuffer: false,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // [integration perf] cap 1.5
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, TOUCH_UI ? 1.25 : 1.5)); // [integration perf] cap 1.5 (1.25 on phones)
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -307,6 +310,7 @@ class WorldExplorerApp {
     this.walkAnimTime = 0;
 
     this._bindInputs();
+    this.touchControls = new TouchControls(this); // mobile: joystick + action buttons (no-op on desktop)
     this._bindHudControls();
 
     applyDomTranslations();
@@ -2084,14 +2088,22 @@ class WorldExplorerApp {
     let pointerDownX = 0, pointerDownY = 0;
     let pointerStartX = 0, pointerStartY = 0;
     let isDragging = false;
+    let dragPointerId = null;
+    let lastPointerType = "mouse";
 
     this.canvas.addEventListener("pointerdown", (e) => {
+      lastPointerType = e.pointerType;
+      if (isDragging && e.pointerId !== dragPointerId) return; // extra finger: pinch zoom (touch_controls.js), not a new drag
+      dragPointerId = e.pointerId;
       pointerDownX = e.clientX;
       pointerDownY = e.clientY;
       pointerStartX = e.clientX;
       pointerStartY = e.clientY;
       isDragging = e.button === 0 || e.button === 2;
-      if (e.button === 0 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
+      // On touch the view only looks around; firing goes through the on-screen buttons.
+      if (e.pointerType === "touch") {
+        // fall through to the popover/panel cleanup below
+      } else if (e.button === 0 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
         this._ensureHeli().pressTrigger(e.clientX, e.clientY); // hold to fire the cannon
       } else if (e.button === 0 && this.mode === "walk" && this.walkerWeapons) {
         this.walkerWeapons.isFiring = true;
@@ -2111,7 +2123,7 @@ class WorldExplorerApp {
 
     this.canvas.addEventListener("pointermove", (e) => {
       if (this.heli) this.heli.moveTrigger(e.clientX, e.clientY); // a drag orbits the camera instead of firing
-      if (!isDragging || (e.buttons & 3) === 0) return;
+      if (!isDragging || (e.buttons & 3) === 0 || e.pointerId !== dragPointerId) return;
       const dx = e.clientX - pointerDownX;
       const dy = e.clientY - pointerDownY;
       pointerDownX = e.clientX;
@@ -2125,6 +2137,7 @@ class WorldExplorerApp {
     });
 
     this.canvas.addEventListener("pointerup", (e) => {
+      if (e.pointerType === "touch") return;
       const moveDist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
       if (e.button === 0 && this.mode === "walk") {
         if (moveDist < 6) {
@@ -2138,6 +2151,7 @@ class WorldExplorerApp {
     });
 
     this.canvas.addEventListener("click", (e) => {
+      if (lastPointerType === "touch") return;
       if (e.button === 0 && this.mode === "walk") {
         const moveDist = Math.hypot((e.clientX || 0) - pointerStartX, (e.clientY || 0) - pointerStartY);
         if (moveDist < 6 && this.walkerWeapons) {
@@ -2146,11 +2160,15 @@ class WorldExplorerApp {
       }
     });
 
-    window.addEventListener("pointerup", () => {
+    const endDrag = (e) => {
+      if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
       isDragging = false;
+      dragPointerId = null;
       if (this.heli) this.heli.cancelTrigger();
-      if (this.walkerWeapons) this.walkerWeapons.isFiring = false;
-    });
+      if (this.walkerWeapons && !this.keys.has("Space")) this.walkerWeapons.isFiring = false; // Fire may still be held
+    };
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag); // e.g. a touch taken over by the browser
 
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 

@@ -331,8 +331,44 @@ export class MapSystem {
       },
       { passive: false }
     );
+    // Two-finger pinch zoom (phones/tablets): finger spread maps onto the same log2 zoom scale as the wheel,
+    // anchored between the fingers. A pinch cancels the one-finger drag so it never counts as a tap.
+    const touches = new Map();
+    let pinch = null;
+    const spread = () => {
+      const [a, b] = [...touches.values()];
+      return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    };
     cv.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
+      if (e.pointerType !== 'touch') return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2) {
+        const s0 = spread();
+        pinch = { d: Math.max(10, s0.d), zoom: this.zoom };
+        this.drag = null;
+        this.anchor = { sx: s0.mx, sy: s0.my, mx: this._sxToMx(s0.mx), my: this._syToMy(s0.my) };
+      }
+    }, true);
+    cv.addEventListener('pointermove', (e) => {
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!pinch || touches.size < 2) return;
+      const s1 = spread();
+      this.targetZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinch.zoom + Math.log2(Math.max(10, s1.d) / pinch.d)));
+      this._requestRender();
+      e.stopImmediatePropagation();
+    }, true);
+    const liftTouch = (e) => {
+      touches.delete(e.pointerId);
+      if (touches.size < 2 && pinch) {
+        pinch = null;
+        this.drag = null; // the remaining finger starts fresh, not as a tap
+      }
+    };
+    cv.addEventListener('pointerup', liftTouch, true);
+    cv.addEventListener('pointercancel', liftTouch, true);
+    cv.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || pinch) return;
       this.drag = { x: e.clientX, y: e.clientY, cx: this.cx, cy: this.cy, moved: false };
       this.anchor = null;
       this.targetZoom = this.zoom;

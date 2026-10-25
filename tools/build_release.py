@@ -62,6 +62,7 @@ MOD_ID_MAP = {
     'src/features/traffic_models.js': '__MOD_traffic_models',
     'src/features/heli_flight.js': '__MOD_heli_flight',
     'src/features/fullscreen.js': '__MOD_fullscreen',
+    'src/features/touch_controls.js': '__MOD_touch_controls',
     'src/features/city_traffic.js': '__MOD_city_traffic',
     'src/features/vehicle_damage.js': '__MOD_vehicle_damage',  # [car-explosions]
     'src/features/walker_weapons.js': '__MOD_walker_weapons',  # [walker-weapons]

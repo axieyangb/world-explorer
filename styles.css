@@ -898,3 +898,82 @@ kbd {
   right: calc(26px + env(safe-area-inset-right, 0px));
 }
 .hud-controls-hint { bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+
+/* ── Touch devices (body.touch-ui, set by src/features/touch_controls.js) ──────────────────────
+   Thumbs own the bottom corners (joystick left, action buttons right), so the minimap moves to the
+   top-left and the speedometer to the bottom middle. Keyboard hints are hidden. */
+body.touch-ui .hud-controls-hint,
+body.touch-ui .loc-key-badge,
+body.touch-ui .radar-readout,
+body.touch-ui .kj-hint { display: none !important; }
+
+body.touch-ui .location-bar {
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  transform: none;
+  align-items: flex-start;
+}
+body.touch-ui .location-pill { height: 32px; padding: 0 12px; font-size: 12px; }
+body.touch-ui .loc-pill-text { max-width: 30vw; }
+
+body.touch-ui .hud-dock {
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  gap: 6px;
+}
+body.touch-ui .dock-pill { height: 32px; padding: 0 10px; font-size: 11.5px; }
+body.touch-ui #time-btn { display: none; }
+
+body.touch-ui .hud-radar {
+  top: calc(52px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+}
+body.touch-ui .radar-squircle,
+body.touch-ui #minimap-canvas { width: 92px; height: 92px; }
+body.touch-ui .radar-squircle { border-radius: 16px; }
+body.touch-ui .kj-radar { width: 92px; height: 92px; }
+
+body.touch-ui .pi-card { display: none; }
+
+body.touch-ui .hud-speedometer {
+  right: auto;
+  left: 50%;
+  bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  min-width: 0;
+  padding: 4px 10px;
+  align-items: center;
+  background: none;
+}
+body.touch-ui .speed-value { font-size: 34px; letter-spacing: -1px; }
+body.touch-ui .kj-status { bottom: auto; top: calc(52px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
+
+/* Portrait: the top row can't hold both, so the location pill drops below the dock. */
+@media (orientation: portrait) {
+  body.touch-ui .location-bar { top: calc(50px + env(safe-area-inset-top, 0px)); }
+  body.touch-ui .loc-pill-text { max-width: 62vw; }
+  body.touch-ui .hud-radar { top: calc(92px + env(safe-area-inset-top, 0px)); }
+  body.touch-ui .kj-status { top: calc(92px + env(safe-area-inset-top, 0px)); }
+  body.touch-ui .hud-speedometer {
+    left: auto; transform: none; bottom: auto;
+    top: calc(92px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+}
+/* The mode/vehicle menu is taller than a landscape phone: let it scroll. */
+body.touch-ui .dock-popover {
+  max-height: calc(100vh - 64px - env(safe-area-inset-top, 0px));
+  max-height: calc(100dvh - 64px - env(safe-area-inset-top, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+/* Kaiju on touch: the unit picker sits between the joystick and the climb/descend pair, toasts go up top. */
+body.touch-ui .kj-unit-picker {
+  left: calc(168px + env(safe-area-inset-left, 0px)); transform: none;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+body.touch-ui .kj-toast { bottom: auto; top: calc(118px + env(safe-area-inset-top, 0px)); }
+@media (orientation: portrait) {
+  body.touch-ui .kj-unit-picker { left: 50%; transform: translateX(-50%); bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
+}
