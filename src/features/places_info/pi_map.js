@@ -22,7 +22,7 @@ function tileIcons(x, y, onReady) {
   cache.set(key, null);
   if (cache.size > 120) cache.delete(cache.keys().next().value);
   const n = 1 << Z;
-  fetchDecodedMvtTile(Z, x, y).then((layers) => {
+  fetchDecodedMvtTile(Z, x, y, { cache: false }).then((layers) => { // only the extracted icons are kept
     const out = [];
     for (const f of (layers && layers.poi) || []) {
       if (f.type !== 1 || !f.geom || !f.geom.length) continue;

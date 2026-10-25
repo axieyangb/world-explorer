@@ -64,6 +64,7 @@ import {
   BEIJING_DEFAULT_ORIGIN,
   QUICK_WORLD_DESTINATIONS,
   fetchGlobalChunkData,
+  setTileCacheLimit,
   buildGlobalOverviewFromTiles,
   searchAddress,
 } from "./global_tiles.js";
@@ -92,6 +93,8 @@ const GRID_DIM = 40;
 const TOUCH_UI = isTouchDevice();
 const LOAD_RADIUS = TOUCH_UI ? 1 : 2;   // 5x5 chunks = 25 km^2 active streaming zone (3x3 on touch devices)
 const UNLOAD_RADIUS = TOUCH_UI ? 2 : 3; // Hysteresis gap
+const TILE_CACHE_LIMIT = TOUCH_UI ? 12 : 24; // decoded vector tiles kept per thread (global_tiles.js)
+setTileCacheLimit(TILE_CACHE_LIMIT);
 const TIME_PRESET_ORDER = ["noon", "sunset", "night", "overcast"];
 
 // [integration perf] Beijing skyline LOD as one InstancedMesh per ~5 km tile (frustum culling), behind the
@@ -384,7 +387,7 @@ class WorldExplorerApp {
         clearTimeout(timer);
         resolve();
       };
-      this.chunkWorker.postMessage({ type: "initDem", demState });
+      this.chunkWorker.postMessage({ type: "initDem", demState, tileCacheLimit: TILE_CACHE_LIMIT });
     });
   }
 
@@ -544,6 +547,7 @@ class WorldExplorerApp {
     this.teleportGeneration = (this.teleportGeneration || 0) + 1;
     this.isTeleporting = true;
     this.water.reset(); // fix/water
+    if (this.walkerWeapons) this.walkerWeapons.clearAiSquad(); // AI squad positions belong to the old region
     const isBj =
       Math.abs(numLat - BEIJING_DEFAULT_ORIGIN.centerLat) < 0.06 &&
       Math.abs(numLon - BEIJING_DEFAULT_ORIGIN.centerLon) < 0.06;

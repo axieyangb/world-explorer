@@ -129,8 +129,10 @@ function evict(map, max, onEvict) {
 
 async function fetchAndPrepare(z, x, y, shared) {
   if (shared) {
-    // Minimap tiles are the same Z14 tiles the 3D streamer already decoded: reuse them.
-    return prepareTile((await fetchDecodedMvtTile(z, x, y)) || {}, z, x, y);
+    // Same Z14 tiles the 3D streamer uses, but that decodes in the chunk worker with its own cache, so
+    // caching the raw decode here only duplicated it (~3.6 MB per tile, ~170 MB per session).
+    // The compact prepared tile is what the minimap keeps (dataStore).
+    return prepareTile((await fetchDecodedMvtTile(z, x, y, { cache: false })) || {}, z, x, y);
   }
   const tpl = await discoverTileTemplate();
   const url = tpl.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y));

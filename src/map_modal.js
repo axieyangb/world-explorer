@@ -13,7 +13,7 @@ function getExtraTileGeo(z, x, y, onReady) {
   }
   extraGeoStore.set(key, { pending: true });
   const n = 1 << z;
-  fetchDecodedMvtTile(z, x, y)
+  fetchDecodedMvtTile(z, x, y, { cache: false }) // only the extracted labels are kept (extraGeoStore)
     .then((layers) => {
       const out = { peaks: [], waterNames: [], airports: [], helipads: [] };
       if (layers) {

@@ -609,6 +609,9 @@ function buildTrafficSignAtlasTexture() {
 /**
  * Generates a 512x256 CanvasTexture for an Overhead Highway Gantry Guide Sign Panel.
  */
+// Sign textures cached per text (LRU). 64 is ~4x the most seen on screen at once (dense Tokyo/Paris).
+const SIGN_MAT_CACHE_MAX = 64;
+
 function buildGantryPanelTexture(region, isMotorway, refStr, mainText, subText, exitStr, isExitPanel = false) {
   const W = 512, H = 256;
   const canvas = document.createElement('canvas');
@@ -1184,8 +1187,13 @@ export class StreetFeatures {
   _getGantryMat(region, isMotorway, refStr, mainText, subText, exitStr, isExitPanel) {
     const key = `${region}|${isMotorway}|${refStr}|${mainText}|${subText}|${exitStr}|${isExitPanel ? 1 : 0}`;
     let mat = this._gantryMatCache.get(key);
-    if (!mat) {
-      if (this._gantryMatCache.size > 160) {
+    if (mat) {
+      // LRU: move to the newest end, so eviction only hits signs nobody has asked for in a while.
+      this._gantryMatCache.delete(key);
+      this._gantryMatCache.set(key, mat);
+    } else {
+      // Each panel is a 512x256 canvas texture (~0.7 MB on the GPU); at most a few are on screen at once.
+      if (this._gantryMatCache.size > SIGN_MAT_CACHE_MAX) {
         const firstKey = this._gantryMatCache.keys().next().value;
         const old = this._gantryMatCache.get(firstKey);
         if (old && old.map) old.map.dispose();
@@ -1202,8 +1210,12 @@ export class StreetFeatures {
   _getBladeMat(streetName) {
     const key = String(streetName || 'MAIN ST').toUpperCase();
     let mat = this._bladeMatCache.get(key);
-    if (!mat) {
-      if (this._bladeMatCache.size > 160) {
+    if (mat) {
+      this._bladeMatCache.delete(key); // LRU, as above
+      this._bladeMatCache.set(key, mat);
+    } else {
+      // 512x128 canvas texture each; ~16 street-name blades are in view at most in dense cities.
+      if (this._bladeMatCache.size > SIGN_MAT_CACHE_MAX) {
         const firstKey = this._bladeMatCache.keys().next().value;
         const old = this._bladeMatCache.get(firstKey);
         if (old && old.map) old.map.dispose();

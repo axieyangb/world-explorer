@@ -54,7 +54,7 @@ export class BorderWatch {
     if (this.tiles.has(key)) return this.tiles.get(key);
     this.tiles.set(key, null);
     if (this.tiles.size > 64) this.tiles.delete(this.tiles.keys().next().value);
-    fetchDecodedMvtTile(Z, x, y).then((layers) => {
+    fetchDecodedMvtTile(Z, x, y, { cache: false }).then((layers) => { // only the extracted lines are kept
       const lines = [];
       for (const f of (layers && layers.boundary) || []) {
         if (f.type !== 2) continue;

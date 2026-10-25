@@ -1024,9 +1024,42 @@ export class WalkerWeaponsSystem {
     this.app.scene.add(this.tankGroup);
   }
 
+  /**
+   * Removes every AI soldier, tank and support helicopter and frees their GPU resources. Called when a
+   * Kaiju battle ends (its 20 soldiers + 3 tanks were otherwise kept and drawn forever, ~700 objects and
+   * doubled draw calls per session) and on teleport (their positions belong to the old region).
+   */
+  clearAiSquad() {
+    const free = (root) => root.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+        else obj.material.dispose();
+      }
+    });
+    for (const sd of this.aiSoldiers) {
+      this.soldierGroup.remove(sd.mesh);
+      free(sd.mesh);
+    }
+    for (const t of this.aiTanks) {
+      if (!t.mesh) continue;
+      this.tankGroup.remove(t.mesh);
+      free(t.mesh);
+    }
+    if (this.aiHeli && this.aiHeli.mesh) {
+      this.app.scene.remove(this.aiHeli.mesh);
+      free(this.aiHeli.mesh);
+    }
+    this.aiSoldiers.length = 0;
+    this.aiTanks.length = 0;
+    this.aiHeli = null;
+  }
+
   _updateAiMilitary(dt) {
     const K = this.app.kaiju;
     const kaijuActive = Boolean(K && K.active && K.kaiju && K.kaiju.alive);
+    if (this._aiInBattle && !kaijuActive) this.clearAiSquad(); // battle over: back to a small patrol
+    this._aiInBattle = kaijuActive;
 
     if (kaijuActive) {
       this._updateAiKaijuBattle(dt, K.kaiju);
@@ -1534,8 +1567,18 @@ export class WalkerWeaponsSystem {
 
       if (p.distTraveled >= p.maxDist) {
         this.app.scene.remove(p.mesh);
-        if (!p.isSharedGeom && p.mesh.geometry) p.mesh.geometry.dispose();
-        if (p.mesh.material) p.mesh.material.dispose();
+        if (p.isSharedGeom) {
+          if (p.mesh.material) p.mesh.material.dispose();
+        } else {
+          // Rockets are groups (createRpgModel): free every part, not just the root, or each shot leaks 8 geometries.
+          p.mesh.traverse((obj) => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+              if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+              else obj.material.dispose();
+            }
+          });
+        }
 
         this._applyImpact(p.pos, p.hitTarget, p.damage, p.splashRadius || 0, p.kaijuDamage || 0);
         const radius = p.isTankShell ? 12.0 : p.isRocket ? 8.5 : 1.2;

@@ -12,7 +12,15 @@ let templatePromise = null;
 
 const tileCache = new Map();     // "z/x/y" -> decoded layers
 const tileInFlight = new Map();  // "z/x/y" -> Promise
-const MAX_CACHED_TILES = 160;
+// Decoded Z14 tiles are large object trees (~3-4 MB each). The 5x5 chunk streaming area touches at most ~16
+// of them, so 24 leaves slack for moving around; 160 let a long session hold over half a gigabyte.
+// Phones stream 3x3 chunks and get 12 (setTileCacheLimit, applied in both the main thread and the chunk worker).
+let MAX_CACHED_TILES = 24;
+
+export function setTileCacheLimit(n) {
+  MAX_CACHED_TILES = Math.max(4, n | 0);
+  while (tileCache.size > MAX_CACHED_TILES) tileCache.delete(tileCache.keys().next().value);
+}
 
 export const QUICK_WORLD_DESTINATIONS = [
   { id: "nyc_times_sq", name: "New York · Times Square", nameZh: "纽约 · 时代广场", street: "Broadway & 7th Ave", city: "New York, US", cityZh: "美国 纽约", lat: 40.7580, lon: -73.9855 },
@@ -360,7 +368,11 @@ export function decodeMvtTile(arrayBuffer, z, tx, ty) {
   return layers;
 }
 
-export async function fetchDecodedMvtTile(z, tx, ty) {
+/**
+ * Fetches and decodes one vector tile. `cache: false` is for one-off reads (the per-teleport Z12 overview):
+ * those tiles cover a whole city each and are used once, so keeping them only fills the cache.
+ */
+export async function fetchDecodedMvtTile(z, tx, ty, { cache = true } = {}) {
   const key = `${z}/${tx}/${ty}`;
   if (tileCache.has(key)) return tileCache.get(key);
   if (tileInFlight.has(key)) return tileInFlight.get(key);
@@ -378,10 +390,8 @@ export async function fetchDecodedMvtTile(z, tx, ty) {
         buf = new Uint8Array(await new Response(stream).arrayBuffer());
       }
       const decoded = decodeMvtTile(buf, z, tx, ty);
-      if (tileCache.size >= MAX_CACHED_TILES) {
-        const oldestKey = tileCache.keys().next().value;
-        tileCache.delete(oldestKey);
-      }
+      if (!cache) return decoded;
+      while (tileCache.size >= MAX_CACHED_TILES) tileCache.delete(tileCache.keys().next().value);
       tileCache.set(key, decoded);
       return decoded;
     } catch {
@@ -1546,7 +1556,7 @@ export async function buildGlobalOverviewFromTiles(worldOrigin) {
   const proms = [];
   for (let tx = Math.min(tx0, tx1); tx <= Math.max(tx0, tx1); tx++) {
     for (let ty = Math.min(ty0, ty1); ty <= Math.max(ty0, ty1); ty++) {
-      proms.push(fetchDecodedMvtTile(z, tx, ty));
+      proms.push(fetchDecodedMvtTile(z, tx, ty, { cache: false }));
     }
   }
   const tiles = await Promise.all(proms);

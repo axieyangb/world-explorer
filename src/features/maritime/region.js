@@ -35,7 +35,7 @@ export class SeaRegion {
     const jobs = [];
     for (let tx = Math.min(tx0, tx1); tx <= Math.max(tx0, tx1); tx++) {
       for (let ty = Math.min(ty0, ty1); ty <= Math.max(ty0, ty1); ty++) {
-        jobs.push(fetchDecodedMvtTile(Z, tx, ty).then((t) => ({ t, box: tileBoxWorld(o, Z, tx, ty) })));
+        jobs.push(fetchDecodedMvtTile(Z, tx, ty, { cache: false }).then((t) => ({ t, box: tileBoxWorld(o, Z, tx, ty) }))); // read once per region
       }
     }
     const tiles = await Promise.all(jobs);
