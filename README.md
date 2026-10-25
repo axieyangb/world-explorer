@@ -13,6 +13,7 @@ real aircraft overhead, rebuilt in 3D around you at 1:1 scale as you move.
 ![No install](https://img.shields.io/badge/install-none-brightgreen)
 ![No API keys](https://img.shields.io/badge/API%20keys-none-blue)
 ![Data](https://img.shields.io/badge/data-OpenStreetMap-7ebc6f?logo=openstreetmap)
+![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
 
 <a href="https://worldexplorer.jerxie.com"><img src="docs/screenshots/hero.jpg" alt="Helicopter over the San Francisco Embarcadero" width="100%"></a>
 
@@ -118,3 +119,11 @@ search by Photon, Nominatim and BigDataCloud · weather by [Open-Meteo](https://
 aircraft from OpenSky, adsb.fi and adsb.lol · ships from Fintraffic Digitraffic (CC BY 4.0) ·
 trains from the BART API · climate zones from Köppen–Geiger (Kottek et al. 2006) ·
 buildings enriched with [Overture Maps](https://overturemaps.org) · rendering by [Three.js](https://threejs.org).
+
+## License
+
+The code is released under the [MIT License](LICENSE).
+
+Map-derived files in `data/` contain OpenStreetMap data, © OpenStreetMap contributors, available under the
+[Open Database License](https://opendatacommons.org/licenses/odbl/). `vendor/three.module.js` is Three.js,
+© Three.js authors, MIT.
