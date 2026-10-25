@@ -439,6 +439,7 @@ class WorldExplorerApp {
     window.__BEIJING_WORLD__ = api;
     window.__WORLD_EXPLORER__ = api;
 
+    window.__loading?.set(20, "Loading map data…");
     const [resp, , lodResp] = await Promise.all([
       fetch("/data/global_overview.json?v=overture4").catch(() => null),
       initBeijingDem(),
@@ -449,6 +450,7 @@ class WorldExplorerApp {
     this.overview = this.beijingOverview;
     this.beijingLodBuffer = lodResp && lodResp.ok ? await lodResp.arrayBuffer() : null;
 
+    window.__loading?.set(35, "Preparing the world…");
     await this._syncWorkerDem();
 
     this.horizonTerrainMesh = buildGlobalHorizonTerrain(this.mats.terrainMat);
@@ -473,6 +475,11 @@ class WorldExplorerApp {
     const qLat = parseFloat(q.get("lat"));
     const qLon = parseFloat(q.get("lon"));
     this.setMode("helicopter");
+    window.__loading?.set(45, "Finding your starting point…");
+    // Loading screen: the first chunks stream in during the teleport, before the render loop runs,
+    // so progress is polled on a timer rather than from _animate.
+    this._loadingSince = performance.now();
+    this._loadingTimer = setInterval(() => this._updateLoadingScreen(), 250);
     if (Number.isFinite(qLat) && Number.isFinite(qLon)) {
       await this.teleportToLocation(qLat, qLon, q.get("name") || "", "");
     } else {
@@ -492,6 +499,33 @@ class WorldExplorerApp {
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
     this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
+  }
+
+  /**
+   * Loading screen progress while the chunks around the start point build. Hides it once the
+   * 3x3 chunks nearest the player are in, or nothing is left to build, or after 30 s regardless,
+   * so a slow tile server can never leave the screen covered.
+   */
+  _updateLoadingScreen() {
+    const ls = window.__loading;
+    if (!ls || this._loadingSince == null) {
+      clearInterval(this._loadingTimer);
+      return;
+    }
+    const target = 9;
+    const loaded = this.loadedChunks.size;
+    const pending = this.pendingChunks.size + this.buildQueue.size;
+    const city = (this.currentCityName || "").split(",")[0];
+    if (!this.isTeleporting && loaded + pending > 0) {
+      ls.set(60 + 38 * Math.min(loaded / target, 1), `Building ${city || "the world"}… ${Math.min(loaded, target)}/${target}`);
+    }
+    const built = loaded >= target || (loaded > 0 && pending === 0);
+    // Never uncover a black canvas: wait for the render loop, except as the 30 s escape hatch.
+    if ((built && this._rendering) || performance.now() - this._loadingSince > 30000) {
+      ls.done();
+      this._loadingSince = null;
+      clearInterval(this._loadingTimer);
+    }
   }
 
   /**
@@ -555,6 +589,7 @@ class WorldExplorerApp {
     this.hiddenSkylineChunks = new Set();
     this.landmarksMesh = null;
 
+    window.__loading?.set(50, `Fetching terrain for ${this.currentCityName.split(",")[0]}…`);
     // Initialize DEM for target location and sync to Worker BEFORE allowing any new chunk builds
     if (isBj) {
       await initBeijingDem();
@@ -2778,6 +2813,7 @@ class WorldExplorerApp {
 
   _animate() {
     requestAnimationFrame(() => this._animate());
+    this._rendering = true;
 
     const rawDt = Math.min(0.05, this.clock.getDelta());
     const dt = this.kaiju ? this.kaiju.scaleDt(rawDt) : rawDt; // [kaiju] pause / death slow-mo
@@ -2860,4 +2896,7 @@ class WorldExplorerApp {
 
 const app = new WorldExplorerApp();
 if (typeof window !== "undefined") window.app = app;
-app.start();
+app.start().catch((err) => {
+  console.error(err);
+  window.__loading?.fail(`Couldn't start: ${err?.message || err}`);
+});

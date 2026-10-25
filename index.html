@@ -6,8 +6,141 @@
   <title>World Explorer</title>
   <meta name="description" content="World Explorer — Real-Time 3D Open-World Earth Exploration, Driving & Flight Simulator." />
   <link rel="stylesheet" href="styles.css" />
+  <style id="loading-styles">
+    /* Loading screen: inline so it paints before styles.css and the app modules arrive. */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at 50% 35%, #16263d 0%, #0a1220 55%, #05080f 100%);
+      color: #eef2f7; font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "PingFang SC", sans-serif;
+      transition: opacity 0.7s ease, visibility 0.7s ease;
+    }
+    #loading-screen.ls-done { opacity: 0; visibility: hidden; pointer-events: none; }
+    .ls-inner { width: min(420px, calc(100vw - 32px)); text-align: center; }
+    .ls-globe {
+      width: 96px; height: 96px; margin: 0 auto 22px; border-radius: 50%; position: relative; overflow: hidden;
+      background: radial-gradient(circle at 34% 30%, #5fb4ff 0%, #2366b8 45%, #0f2c57 100%);
+      box-shadow: 0 0 40px rgba(80, 160, 255, 0.35), inset -10px -12px 24px rgba(0, 0, 0, 0.45);
+    }
+    .ls-globe::before {
+      content: ""; position: absolute; inset: 0; width: 200%;
+      background: repeating-linear-gradient(90deg, rgba(255,255,255,0.16) 0 1px, transparent 1px 24px),
+                  radial-gradient(ellipse 22px 14px at 30px 40px, rgba(120,200,120,0.75) 60%, transparent 62%),
+                  radial-gradient(ellipse 16px 22px at 70px 62px, rgba(120,200,120,0.7) 60%, transparent 62%),
+                  radial-gradient(ellipse 26px 12px at 126px 34px, rgba(120,200,120,0.75) 60%, transparent 62%),
+                  radial-gradient(ellipse 14px 18px at 166px 66px, rgba(120,200,120,0.7) 60%, transparent 62%);
+      animation: ls-spin 9s linear infinite;
+    }
+    .ls-globe::after {
+      content: ""; position: absolute; inset: 0; border-radius: 50%;
+      background: repeating-linear-gradient(0deg, rgba(255,255,255,0.10) 0 1px, transparent 1px 24px);
+    }
+    @keyframes ls-spin { to { transform: translateX(-50%); } }
+    .ls-title { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: 0.5px; }
+    .ls-sub { margin: 2px 0 26px; color: #9fb3cc; font-size: 14px; letter-spacing: 3px; }
+    .ls-bar { height: 4px; border-radius: 4px; background: rgba(255,255,255,0.10); overflow: hidden; }
+    #loading-bar-fill {
+      width: 3%; height: 100%; border-radius: 4px; transition: width 0.45s ease;
+      background: linear-gradient(90deg, #3a8dff, #6fd3ff);
+    }
+    #loading-status { margin-top: 12px; min-height: 20px; color: #c9d6e6; font-size: 14px; }
+    .ls-tip { margin-top: 26px; color: #7f93ad; font-size: 13px; min-height: 36px; }
+    .ls-tip kbd {
+      display: inline-block; padding: 0 5px; border: 1px solid rgba(255,255,255,0.25); border-radius: 4px;
+      font: 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace; color: #dfe8f3;
+    }
+    #loading-problem { margin-top: 18px; color: #ffcf8a; font-size: 13px; }
+    #loading-problem button {
+      margin-left: 8px; padding: 4px 12px; border: 0; border-radius: 6px; cursor: pointer;
+      background: #3a8dff; color: #fff; font: inherit;
+    }
+    @media (prefers-reduced-motion: reduce) { .ls-globe::before { animation: none; } }
+  </style>
 </head>
 <body>
+  <!-- Loading screen: shown until the first view of the world is built -->
+  <div id="loading-screen" role="status" aria-live="polite">
+    <div class="ls-inner">
+      <div class="ls-globe" aria-hidden="true"></div>
+      <h1 class="ls-title">World Explorer</h1>
+      <p class="ls-sub">世界探索</p>
+      <div class="ls-bar"><div id="loading-bar-fill"></div></div>
+      <div id="loading-status">Loading the engine…</div>
+      <div id="loading-tip" class="ls-tip"></div>
+      <div id="loading-problem" hidden></div>
+    </div>
+  </div>
+  <script>
+    // window.__loading: progress API for main.js. Plain script (not a module) so it runs at once,
+    // and catches the case where the app itself never starts (module load / WebGL failure).
+    (function () {
+      var root = document.getElementById('loading-screen');
+      var fill = document.getElementById('loading-bar-fill');
+      var status = document.getElementById('loading-status');
+      var tip = document.getElementById('loading-tip');
+      var problem = document.getElementById('loading-problem');
+      var tips = [
+        'Press <kbd>/</kbd> to search any place on Earth',
+        'Press <kbd>M</kbd> for the world map — click anywhere to fly there',
+        '<kbd>1</kbd> drive · <kbd>2</kbd> walk · <kbd>3</kbd> fly',
+        'Press <kbd>4</kbd> for Kaiju Defense',
+        'Add <kbd>?lat=…&amp;lon=…</kbd> to the URL to start anywhere',
+        'Press <kbd>L</kbd> in the helicopter to land automatically',
+      ];
+      var tipIdx = Math.floor(Math.random() * tips.length);
+      function nextTip() { tip.innerHTML = 'Tip: ' + tips[tipIdx++ % tips.length]; }
+      nextTip();
+      var tipTimer = setInterval(nextTip, 5000);
+      var pct = 3, done = false, lastChange = Date.now();
+      function render() { fill.style.width = pct.toFixed(1) + '%'; }
+      // Creep slowly while the module bundle downloads, so the bar never looks frozen.
+      var creep = setInterval(function () { if (!done && pct < 18) { pct += 0.6; render(); } }, 400);
+      function showProblem(msg) {
+        problem.hidden = false;
+        problem.textContent = msg + ' ';
+        var b = document.createElement('button');
+        b.type = 'button'; b.textContent = 'Reload';
+        b.onclick = function () { location.reload(); };
+        problem.appendChild(b);
+      }
+      // No progress for 45 s: say so instead of spinning forever.
+      var watchdog = setInterval(function () {
+        if (!done && problem.hidden && Date.now() - lastChange > 45000) {
+          showProblem('This is taking longer than usual. Check your connection, or');
+        }
+      }, 5000);
+      window.__loading = {
+        set: function (p, msg) {
+          if (done) return;
+          if (p > pct) pct = Math.min(p, 99);
+          if (msg) status.textContent = msg;
+          lastChange = Date.now();
+          render();
+        },
+        fail: function (msg) {
+          if (done) return;
+          status.textContent = msg;
+          showProblem('Something went wrong.');
+        },
+        done: function () {
+          if (done) return;
+          done = true; pct = 100; render();
+          status.textContent = 'Ready';
+          clearInterval(creep); clearInterval(watchdog); clearInterval(tipTimer);
+          setTimeout(function () {
+            root.classList.add('ls-done');
+            setTimeout(function () { root.remove(); }, 800);
+          }, 250);
+        },
+      };
+      window.addEventListener('error', function (e) {
+        if (!done && e && e.message && /WebGL|import|module|Failed to fetch/i.test(e.message)) {
+          window.__loading.fail(e.message);
+        }
+      });
+      var gl = document.createElement('canvas').getContext('webgl2');
+      if (!gl) window.__loading.fail('Your browser or device does not support WebGL2, which World Explorer needs.');
+    })();
+  </script>
   <!-- Primary 3D WebGL2 Viewport -->
   <canvas id="webgl-canvas"></canvas>
 
