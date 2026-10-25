@@ -4,7 +4,8 @@ A real-time 3D open world of the whole Earth in the browser. Fly a helicopter, d
 planet: terrain, roads, buildings, rail, water and street detail are streamed from open map data around
 wherever you are, at 1:1 metric scale. Built on WebGL2 with Three.js r161, no build step, no API keys.
 
-Live: **https://worldexplorer.jerxie.com**
+**Demo: [worldexplorer.jerxie.com](https://worldexplorer.jerxie.com)**. Open it in a desktop browser with WebGL2;
+add `?lat=48.8584&lon=2.2945` (or any coordinates) to start somewhere else.
 
 ## Features
 
