@@ -1,154 +1,120 @@
-# World Explorer
+<div align="center">
 
-A real-time 3D open world of the whole Earth in the browser. Fly a helicopter, drive or walk anywhere on the
-planet: terrain, roads, buildings, rail, water and street detail are streamed from open map data around
-wherever you are, at 1:1 metric scale. Built on WebGL2 with Three.js r161, no build step, no API keys.
+# 🌍 World Explorer
 
-**Demo: [worldexplorer.jerxie.com](https://worldexplorer.jerxie.com)**. Open it in a desktop browser with WebGL2;
-add `?lat=48.8584&lon=2.2945` (or any coordinates) to start somewhere else.
+### The whole planet as an open world, live in your browser.
 
-## Features
+Fly, drive or walk anywhere on Earth. Real streets, real buildings, real terrain, real weather,
+real aircraft overhead, rebuilt in 3D around you at 1:1 scale as you move.
 
-- **Anywhere on Earth.** Search a place (`/` or the location pill), pick a quick destination, click the world
-  map (`M`), or open with `?lat=..&lon=..[&name=..]`. Each jump builds a 40 km × 40 km region around the point
-  from OpenFreeMap Z14 vector tiles and AWS Terrarium elevation tiles, streamed in 1 km chunks by a Web Worker.
-  The default start is the San Francisco Embarcadero, in the helicopter.
-- **Ways to move.** Helicopter with arcade flight model, auto-land and rooftop landing; a garage of cars
-  (supercar, Mach-1 hypercar, Formula car, Cybertruck, Tesla, taxi, bus, police, ambulance, tow truck, tank);
-  and on foot. Chase, top-down and street cameras.
-- **A living city.** AI traffic and pedestrians on the real lane graph, driving on the correct side per region,
-  with shared traffic-signal timing; street furniture, signs, highway shields and gantries; real OSM trees,
-  lamps and signals for the streets around you (Overpass); rail lines with animated trains (live BART
-  positions in the Bay Area); ferries and ships (live AIS in Finnish waters); airports, stadiums and animated
-  theme-park rides.
-- **Live sky and weather.** Real aircraft overhead from OpenSky / adsb.fi / adsb.lol (through the server's
-  `/api/sky` proxy), current local weather from Open-Meteo, a sun/moon day-night cycle at local solar time,
-  rain, fog and clouds, and climate-aware vegetation from a Köppen–Geiger grid.
-- **Landmarks.** 51 hand-built 1:1 landmark models placed at their real coordinates (Eiffel Tower, Burj Khalifa,
-  Empire State, Tower Bridge, Statue of Liberty, Giza pyramids, Taj Mahal, Sydney Opera House, Tokyo Skytree,
-  Transamerica Pyramid, Forbidden City…), plus a separate 40-model Beijing set (Temple of Heaven, Olympic
-  venues, CBD towers, city gates).
-- **Places info.** Storefront and civic signs, a "Welcome to …" toast when you cross a border, and a quiet
-  Wikipedia card for the landmark you're looking at.
-- **Combat.** Helicopter cannon and rockets, on-foot weapons, a drivable tank, vehicle damage and explosions,
-  and **Kaiju Defense** (`4`): a giant creature rises from the nearest water and you defend the city as a
-  gunship, tank or soldier.
-- **Bilingual UI** (English / 简体中文), with native road names and English labels.
+**[▶ Play the demo: worldexplorer.jerxie.com](https://worldexplorer.jerxie.com)**
+
+![WebGL2](https://img.shields.io/badge/WebGL2-Three.js%20r161-black?logo=three.js)
+![No install](https://img.shields.io/badge/install-none-brightgreen)
+![No API keys](https://img.shields.io/badge/API%20keys-none-blue)
+![Data](https://img.shields.io/badge/data-OpenStreetMap-7ebc6f?logo=openstreetmap)
+
+<a href="https://worldexplorer.jerxie.com"><img src="docs/screenshots/hero.jpg" alt="Helicopter over the San Francisco Embarcadero" width="100%"></a>
+
+</div>
+
+## Go anywhere
+
+Type a place, click the world map, or put coordinates in the URL. The world builds itself in seconds:
+40 km × 40 km of terrain, roads, buildings, water and street life streamed from open map data.
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/newyork.jpg" alt="Lower Manhattan"><br><sub><b>New York</b>, between the towers of Lower Manhattan</sub></td>
+    <td width="33%"><img src="docs/screenshots/tokyo.jpg" alt="Shibuya at night"><br><sub><b>Tokyo</b>, Shibuya before dawn</sub></td>
+    <td width="33%"><img src="docs/screenshots/sydney.jpg" alt="Sydney Harbour at sunrise"><br><sub><b>Sydney</b>, sunrise over the Opera House and harbour ferries</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/london.jpg" alt="London at night"><br><sub><b>London</b>, Waterloo under a full moon</sub></td>
+    <td><img src="docs/screenshots/drive.jpg" alt="Driving through Union Square"><br><sub><b>Street level</b>, driving through Union Square with pedestrians and traffic</sub></td>
+    <td><img src="docs/screenshots/kaiju.jpg" alt="Kaiju Defense"><br><sub><b>Kaiju Defense</b>, holding off a swarm over downtown</sub></td>
+  </tr>
+</table>
+
+Try it:
+[Paris](https://worldexplorer.jerxie.com/?lat=48.8584&lon=2.2945&name=Paris) ·
+[New York](https://worldexplorer.jerxie.com/?lat=40.7060&lon=-74.0130&name=New%20York) ·
+[Tokyo](https://worldexplorer.jerxie.com/?lat=35.6595&lon=139.7005&name=Tokyo) ·
+[Sydney](https://worldexplorer.jerxie.com/?lat=-33.8570&lon=151.2100&name=Sydney) ·
+[London](https://worldexplorer.jerxie.com/?lat=51.5010&lon=-0.1200&name=London) ·
+[San Francisco by night](https://worldexplorer.jerxie.com/?time=21)
+
+## What's in the world
+
+| | |
+| :-- | :-- |
+| 🚁 **Fly, drive, walk** | An arcade helicopter with auto-land and rooftop landings, a garage of 11 vehicles from taxis and buses to a Mach-1 hypercar and a tank, and on foot. |
+| 🏙️ **Living cities** | AI traffic and pedestrians on the real road network, driving on the correct side for each country. Traffic lights, signs, street lamps, trees, trains and ferries. |
+| ✈️ **Live data** | Real aircraft overhead from public ADS-B feeds, current local weather, live trains and ships where open feeds exist. |
+| 🌅 **Sky and climate** | Sun and moon at true local time, rain, fog and cloud, and vegetation chosen for each region's climate zone. |
+| 🗼 **Landmarks** | 51 hand-modelled icons at their real coordinates: Eiffel Tower, Burj Khalifa, Empire State, Tower Bridge, the Pyramids, Taj Mahal, Sydney Opera House, Tokyo Skytree and more. |
+| 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at. |
+| 🦖 **Kaiju Defense** | A giant creature rises from the nearest water. Defend the city as a gunship, tank or soldier. |
+| 🌐 **English / 中文** | Full bilingual interface with local road names. |
 
 ## Controls
 
 | Key | Action |
 | :-- | :-- |
-| `1` / `2` / `3` / `4` | Drive / Walk / Helicopter / Kaiju Defense (in Kaiju: choose gunship / tank / soldier) |
-| `C` | Toggle helicopter |
-| `F` | Drive ⇄ walk; in the air: rockets; landed: get out |
-| `E` | Enter / leave a vehicle, board a parked helicopter |
-| `G` | Cycle vehicle (switches to driving) |
-| `V` | Cycle camera; while driving it cycles the vehicle and `Shift+V` cycles the camera |
-| `W A S D`, arrows | Move / steer; helicopter: `Q`/`E` altitude, `←`/`→` strafe, `L` auto-land |
-| `Space` / `X` / `R` | Fire / heavy weapon (RPG, tank cannon, rockets) / cycle weapon on foot |
+| `W` `A` `S` `D` / arrows | Move and steer |
+| `1` `2` `3` | Drive / walk / helicopter |
+| `4` | Kaiju Defense (then `1` `2` `3` picks gunship / tank / soldier) |
+| `Q` / `E` | Helicopter altitude |
+| `L` | Helicopter auto-land |
+| `F` | Rockets in the air; switch between driving and walking on the ground |
+| `E` | Enter or leave a vehicle |
+| `G` | Next vehicle |
+| `V` | Next camera (`Shift` + `V` while driving) |
+| `Space` / `X` | Fire / heavy weapon |
 | `Shift` | Boost |
-| `H` | Horn / siren |
+| `H` | Horn or siren |
 | `M` | World map (click anywhere to teleport) |
 | `/` | Search for a place |
-| `Shift+F` | Full screen |
+| `Shift` + `F` | Full screen |
 
-URL options: `?lat=&lon=&name=` start location, `?time=<hour 0-24>` fixed time of day,
-`?weather=clear|cloudy|rain|fog` fixed weather.
+**URL options:** `?lat=…&lon=…&name=…` start location · `?time=0-24` time of day · `?weather=clear|cloudy|rain|fog`
 
-## Run locally
-
-```bash
-python3 server.py            # http://localhost:8098  (PORT env var to change)
-```
-
-`server.py` serves the files and the `/api/sky` live-aircraft proxy (ADS-B feeds don't allow cross-origin
-browser calls). Any static server also works; the live-aircraft layer then simply stays empty.
-
-Or with Docker:
+## Run it yourself
 
 ```bash
-docker build -t world-explorer .
-docker run -p 8098:8098 world-explorer
+python3 server.py                      # → http://localhost:8098
 ```
 
-### Single-file build
-
-`world_explorer.html` is the whole app in one file: every ES module and the bundled datasets are inlined
-(gzipped, decoded with `DecompressionStream`), so it runs from any static host or sandboxed page. Rebuild it
-after changing the source:
+or with Docker:
 
 ```bash
-python3 tools/build_release.py [out_file]     # default: ./world_explorer.html
+docker build -t world-explorer . && docker run -p 8098:8098 world-explorer
 ```
 
-New modules must be registered in `MOD_ID_MAP` in that script.
+No build step and no keys. `server.py` serves the files plus a small `/api/sky` proxy for live aircraft
+(ADS-B feeds don't allow direct browser calls). The page works from any static host too, just without
+live aircraft.
 
-## Project layout
+**Single-file build.** `world_explorer.html` is the entire app in one self-contained file. Regenerate it after
+changing the source with `python3 tools/build_release.py`, and register any new module in its `MOD_ID_MAP`.
 
-```text
-index.html, styles.css     App shell and HUD
-server.py                  Static server + /api/sky aircraft proxy
-Dockerfile                 Container image (python:3.12-slim, port 8098)
-world_explorer.html        Single-file build (generated)
-wfc_demo.html              Wave Function Collapse building lab (24 Beijing architectural styles)
-landmark_workbench.html    Front / side / top / isometric review of the Beijing landmark models
-vendor/three.module.js     Three.js r161 (local, no CDN)
-src/
-  main.js                  Engine loop, modes, camera, input, chunk streaming, HUD
-  global_tiles.js          World origin, OpenFreeMap vector-tile + Terrarium DEM fetch/decode, geocoding
-  chunk_builder.js         Chunk geometry: roads, bridges, buildings, water, terrain
-  chunk_worker.js          Web Worker running the chunk build off the main thread
-  environment.js           Terrain/heightfield, sky dome, Beijing DEM
-  entities.js              Player vehicles, pedestrian, helicopter models
-  navigation.js            Road-graph A* routing and route ribbon
-  map_modal.js             Interactive world map and teleport
-  i18n.js                  English / Chinese UI and road-name translation
-  landmarks_core.js, landmarks_40.js, landmarks/   Beijing landmark ensemble (10 batches)
-  wfc/                     Footprint-constrained WFC building generator
-  features/                One module per feature: traffic, vehicles, heli_flight, rail_*, maritime/,
-                           places*, places_info/, street_*, vegetation*, flora_climate, atmosphere, sky,
-                           live_sky, live_weather, water_*, venues, bridge_*, walker_weapons,
-                           vehicle_damage, landmarks/ (world landmarks), kaiju/ (see kaiju/DESIGN.md) …
-data/
-  beijing_dem.json         Beijing elevation grid (SRTM / Terrarium) + peaks
-  global_overview.json     Beijing macro roads, water, parks, stations
-  nav_graph.json           Beijing drivable road graph for A*
-  city_buildings_lod.bin   Beijing distant-skyline buildings, 28 bytes each
-  street_detail_sf.json    Pre-fetched street detail for the San Francisco start
-assets/                    Facade and door texture atlases (+ *_src photos they're built from)
-tools/                     Offline builders (Python)
-```
+## How it works
 
-## Data sources and services
+- **Streaming world.** A teleport sets a local metric origin, then a Web Worker fetches OpenFreeMap vector
+  tiles and Terrarium elevation tiles and builds 1 km chunks (terrain, roads with bridges and lane graphs,
+  extruded buildings, water, vegetation, rail, street furniture) off the main thread.
+- **Rendering.** Three.js on WebGL2 with instanced meshes for traffic, trees and props, procedural facade
+  textures, and shader-driven night lighting, water and weather.
+- **Code layout.** `src/main.js` runs the engine loop, modes and HUD. `src/global_tiles.js` and
+  `src/chunk_builder.js` build the world. Each feature lives in its own module under `src/features/`
+  (traffic, vehicles, helicopter, rail, maritime, places, weather, landmarks, kaiju…).
 
-Everything is open data, fetched directly from the browser without keys unless noted.
+## Data and credits
 
-| What | Source |
-| :-- | :-- |
-| Roads, buildings, water, land use, POIs (worldwide) | [OpenFreeMap](https://openfreemap.org) vector tiles (OpenMapTiles schema, © OpenStreetMap contributors) |
-| Elevation | AWS Open Data Terrarium tiles (Mapzen) |
-| Street-level trees / lamps / signals | OpenStreetMap via Overpass API mirrors |
-| Search / reverse geocoding | Photon (Komoot), Nominatim, BigDataCloud |
-| Weather | Open-Meteo |
-| Aircraft | OpenSky Network, adsb.fi, adsb.lol (via `server.py`) |
-| Ships | Fintraffic Digitraffic AIS (CC BY 4.0) |
-| Bay Area trains | BART API (public key) |
-| Climate zones | Köppen–Geiger 0.5° grid (Kottek et al. 2006) |
-| Beijing detail data | OSM Geofabrik extract, Overture Maps buildings, SRTM |
-
-## Rebuilding the Beijing data
-
-The files in `data/` (except `street_detail_sf.json`) are only used for the detailed Beijing region and are
-checked in. To regenerate them:
-
-```bash
-curl -L https://download.geofabrik.de/asia/china/beijing-latest.osm.pbf -o /tmp/beijing.osm.pbf
-python3 tools/build_beijing_world.py /tmp/beijing.osm.pbf   # chunks, overview, nav graph -> data/
-python3 tools/fuse_overture_buildings.py                    # merge Overture Maps buildings
-python3 tools/fix_mountain_viewpoints.py                    # hill viewpoint calibration
-```
-
-Other tools: `build_facade_atlas.py` / `build_door_atlas.py` (texture atlases from `assets/*_src`),
-`build_koppen_grid.py` (climate grid module), `build_street_detail_seed.py` (SF street seed),
-`render_landmark_3view.py` and `random_visual_audit.py` (headless-Chrome screenshot checks, output in `out/`).
+All open data, fetched straight from the browser:
+map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors via
+[OpenFreeMap](https://openfreemap.org) and Overpass · elevation from AWS Terrarium tiles (Mapzen) ·
+search by Photon, Nominatim and BigDataCloud · weather by [Open-Meteo](https://open-meteo.com) ·
+aircraft from OpenSky, adsb.fi and adsb.lol · ships from Fintraffic Digitraffic (CC BY 4.0) ·
+trains from the BART API · climate zones from Köppen–Geiger (Kottek et al. 2006) ·
+buildings enriched with [Overture Maps](https://overturemaps.org) · rendering by [Three.js](https://threejs.org).
