@@ -7,7 +7,7 @@
 Fly, drive or walk anywhere on Earth. Real streets, real buildings, real terrain, real weather,
 real aircraft overhead, rebuilt in 3D around you at 1:1 scale as you move.
 
-**[▶ Play the demo: worldexplorer.jerxie.com](https://worldexplorer.jerxie.com)**
+**[▶ Play it now](https://axieyangb.github.io/world-explorer/)** · [🎬 Watch the 30 s trailer](https://github.com/axieyangb/world-explorer/releases/latest)
 
 ![WebGL2](https://img.shields.io/badge/WebGL2-Three.js%20r161-black?logo=three.js)
 ![No install](https://img.shields.io/badge/install-none-brightgreen)
@@ -15,7 +15,7 @@ real aircraft overhead, rebuilt in 3D around you at 1:1 scale as you move.
 ![Data](https://img.shields.io/badge/data-OpenStreetMap-7ebc6f?logo=openstreetmap)
 ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
 
-<a href="https://worldexplorer.jerxie.com"><img src="docs/screenshots/hero.jpg" alt="Helicopter over the San Francisco Embarcadero" width="100%"></a>
+<a href="https://axieyangb.github.io/world-explorer/"><img src="docs/demo.gif" alt="Flying over San Francisco, then a Kaiju battle downtown" width="100%"></a>
 
 </div>
 
@@ -38,12 +38,12 @@ Type a place, click the world map, or put coordinates in the URL. The world buil
 </table>
 
 Try it:
-[Paris](https://worldexplorer.jerxie.com/?lat=48.8584&lon=2.2945&name=Paris) ·
-[New York](https://worldexplorer.jerxie.com/?lat=40.7060&lon=-74.0130&name=New%20York) ·
-[Tokyo](https://worldexplorer.jerxie.com/?lat=35.6595&lon=139.7005&name=Tokyo) ·
-[Sydney](https://worldexplorer.jerxie.com/?lat=-33.8570&lon=151.2100&name=Sydney) ·
-[London](https://worldexplorer.jerxie.com/?lat=51.5010&lon=-0.1200&name=London) ·
-[San Francisco by night](https://worldexplorer.jerxie.com/?time=21)
+[Paris](https://axieyangb.github.io/world-explorer/?lat=48.8584&lon=2.2945&name=Paris) ·
+[New York](https://axieyangb.github.io/world-explorer/?lat=40.7060&lon=-74.0130&name=New%20York) ·
+[Tokyo](https://axieyangb.github.io/world-explorer/?lat=35.6595&lon=139.7005&name=Tokyo) ·
+[Sydney](https://axieyangb.github.io/world-explorer/?lat=-33.8570&lon=151.2100&name=Sydney) ·
+[London](https://axieyangb.github.io/world-explorer/?lat=51.5010&lon=-0.1200&name=London) ·
+[San Francisco by night](https://axieyangb.github.io/world-explorer/?time=21)
 
 ## What's in the world
 
@@ -99,8 +99,9 @@ docker build -t world-explorer . && docker run -p 8098:8098 world-explorer
 ```
 
 No build step and no keys. `server.py` serves the files plus a small `/api/sky` proxy for live aircraft
-(ADS-B feeds don't allow direct browser calls). The page works from any static host too, just without
-live aircraft.
+(ADS-B feeds don't allow direct browser calls). The page works from any static host and any sub-path too
+(the GitHub Pages demo is exactly that), with simulated air traffic instead of live aircraft.
+A copy with live aircraft runs at [worldexplorer.jerxie.com](https://worldexplorer.jerxie.com).
 
 **Single-file build.** `world_explorer.html` is the entire app in one self-contained file. Regenerate it after
 changing the source with `python3 tools/build_release.py`, and register any new module in its `MOD_ID_MAP`.
