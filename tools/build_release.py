@@ -513,7 +513,8 @@ await (async function bootstrapWorldExplorer() {
   }})();
   </script>
 """
-  html = html.replace('<script type="module" src="src/main.js"></script>', embedded_payload)
+  html, n_main = re.subn(r'<script type="module" src="src/main\.js"[^>]*></script>', lambda _m: embedded_payload, html)
+  assert n_main == 1, 'main.js script tag not found in index.html'
 
   OUT_FILE.write_text(html, encoding='utf-8')
   print(

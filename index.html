@@ -119,19 +119,45 @@
         b.onclick = function () { location.reload(); };
         problem.appendChild(b);
       }
-      // No progress for 45 s: say so instead of spinning forever.
+      // The single-file build (world_explorer.html) has no separate module files, so it still
+      // loads when an ad blocker or a flaky network drops one of the ~150 modules.
+      var isBundle = /world_explorer\.html$/.test(location.pathname);
+      var engineStarted = false;
+      function openBundle() { location.replace('world_explorer.html' + location.search + location.hash); }
+      function offerBundle(msg) {
+        showProblem(msg);
+        var b = document.createElement('button');
+        b.type = 'button'; b.textContent = 'Open the single-file version';
+        b.onclick = openBundle;
+        problem.appendChild(b);
+      }
+      // No progress for 45 s (20 s before the engine starts): say so instead of spinning forever.
       var watchdog = setInterval(function () {
-        if (!done && problem.hidden && Date.now() - lastChange > 45000) {
+        if (done || !problem.hidden) return;
+        var idle = Date.now() - lastChange;
+        if (!engineStarted && !isBundle && idle > 20000) {
+          offerBundle('The engine is taking a long time to load. An ad blocker may be blocking some of its files.');
+        } else if (idle > 45000) {
           showProblem('This is taking longer than usual. Check your connection, or');
         }
       }, 5000);
       window.__loading = {
         set: function (p, msg) {
           if (done) return;
+          engineStarted = true;
           if (p > pct) pct = Math.min(p, 99);
           if (msg) status.textContent = msg;
           lastChange = Date.now();
           render();
+        },
+        // main.js or one of its imports failed to download: switch to the single-file build once.
+        moduleFailed: function () {
+          if (done || isBundle) return;
+          var tried = false;
+          try { tried = sessionStorage.getItem('we-bundle-fallback') === '1'; sessionStorage.setItem('we-bundle-fallback', '1'); } catch (e) {}
+          if (tried) { offerBundle('Some of the engine files could not be loaded.'); return; }
+          status.textContent = 'Switching to the single-file version…';
+          openBundle();
         },
         fail: function (msg) {
           if (done) return;
@@ -141,6 +167,7 @@
         done: function () {
           if (done) return;
           done = true; pct = 100; render();
+          if (!isBundle) { try { sessionStorage.removeItem('we-bundle-fallback'); } catch (e) {} }
           status.textContent = 'Ready';
           clearInterval(creep); clearInterval(watchdog); clearInterval(tipTimer);
           setTimeout(function () {
@@ -301,6 +328,6 @@
     </div>
   </div>
 
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="src/main.js" onerror="window.__loading.moduleFailed()"></script>
 </body>
 </html>
