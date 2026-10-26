@@ -314,10 +314,10 @@ export async function loadFacadeArrayTexture(mats) {
   try {
     const stripSrc =
       (typeof window !== 'undefined' && window.__EMBEDDED_FACADE_STRIP__) ||
-      '/assets/facades/facade_strip.jpg';
+      'assets/facades/facade_strip.jpg';
     const maskSrc =
       (typeof window !== 'undefined' && window.__EMBEDDED_FACADE_MASK_STRIP__) ||
-      '/assets/facades/facade_mask_strip.jpg';
+      'assets/facades/facade_mask_strip.jpg';
 
     const [rgbImg, maskImg] = await Promise.all([
       loadImageElement(stripSrc),
@@ -383,10 +383,10 @@ export async function loadFacadeArrayTexture(mats) {
     try {
       const doorStripSrc =
         (typeof window !== 'undefined' && window.__EMBEDDED_DOOR_STRIP__) ||
-        '/assets/doors/door_strip.jpg';
+        'assets/doors/door_strip.jpg';
       const doorMaskSrc =
         (typeof window !== 'undefined' && window.__EMBEDDED_DOOR_MASK_STRIP__) ||
-        '/assets/doors/door_mask_strip.jpg';
+        'assets/doors/door_mask_strip.jpg';
       const [dRgbImg, dMaskImg] = await Promise.all([
         loadImageElement(doorStripSrc),
         loadImageElement(doorMaskSrc),

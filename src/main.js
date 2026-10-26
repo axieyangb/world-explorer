@@ -327,7 +327,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "/src/chunk_worker.js" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;
@@ -448,9 +448,9 @@ class WorldExplorerApp {
 
     window.__loading?.set(20, "Loading map data…");
     const [resp, , lodResp] = await Promise.all([
-      fetch("/data/global_overview.json?v=overture4").catch(() => null),
+      fetch("data/global_overview.json?v=overture4").catch(() => null),
       initBeijingDem(),
-      fetch("/data/city_buildings_lod.bin?v=overture4").catch(() => null),
+      fetch("data/city_buildings_lod.bin?v=overture4").catch(() => null),
       loadFacadeArrayTexture(this.mats),
     ]);
     this.beijingOverview = resp && resp.ok ? await resp.json() : await buildGlobalOverviewFromTiles(this.worldOrigin);

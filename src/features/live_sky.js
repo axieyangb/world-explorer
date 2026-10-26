@@ -230,7 +230,7 @@ export class LiveSky {
     this.inFlight = true;
     const gen = this._gen;
     try {
-      const r = await fetch(`/api/sky?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`, { cache: 'no-store' });
+      const r = await fetch(`api/sky?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`, { cache: 'no-store' });
       const data = r.ok ? await r.json() : null;
       if (data && gen === this._gen) this._ingest(data);
     } catch {

@@ -10,7 +10,7 @@ import { fetchGlobalDem } from './global_tiles.js';
 
 export async function initBeijingDem() {
   try {
-    const resp = await fetch('/data/beijing_dem.json');
+    const resp = await fetch('data/beijing_dem.json');
     if (resp.ok) {
       demState = await resp.json();
       demState.isBeijing = true;

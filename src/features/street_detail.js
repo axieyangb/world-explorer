@@ -31,7 +31,7 @@ const CH_MIRROR = 'https://overpass.osm.ch/api/interpreter'; // Switzerland-only
 const inSwitzerland = (lat, lon) => lat > 45.8 && lat < 47.85 && lon > 5.9 && lon < 10.5;
 const REQ_TIMEOUT_MS = 90000; // busy public instances often queue a request 60-110 s before answering
 const HEDGE_MS = 12000; // no answer yet -> also ask the next healthy mirror; first answer wins, the other is aborted
-const SEED_URL = '/data/street_detail_sf.json';
+const SEED_URL = 'data/street_detail_sf.json'; // relative: the app may be served from a sub-path (GitHub Pages)
 const SEED_NEAR = (lat, lon) => Math.abs(lat - 37.78) < 0.25 && Math.abs(lon + 122.42) < 0.3;
 const TZ = 15; // ~1 km tiles at mid latitudes
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
