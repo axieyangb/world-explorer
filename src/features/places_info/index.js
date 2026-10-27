@@ -38,6 +38,10 @@ const CSS = `
 .pi-card.expanded .pi-card-desc { white-space: normal; }
 .pi-card.expanded .pi-card-extract { display: block; margin-top: 6px; opacity: 0.85; max-height: 9.8em; overflow: hidden; }
 .pi-card.expanded .pi-card-link { display: inline-block; margin-top: 6px; font-size: 11px; color: #8cc4ff; text-decoration: none; opacity: 0.8; }
+.pi-card-links { display: flex; gap: 12px; align-items: baseline; }
+.pi-card-osm { margin-top: 4px; font-size: 11px; color: #8cc4ff; text-decoration: none; opacity: 0.7; }
+.pi-card-osm:hover, .pi-card.expanded .pi-card-link:hover { opacity: 1; text-decoration: underline; }
+.pi-card.expanded .pi-card-osm { margin-top: 6px; }
 `;
 
 export class PlacesInfo {

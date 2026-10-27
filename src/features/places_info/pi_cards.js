@@ -4,7 +4,9 @@
 // rate-limited (one request in flight, >= 1.2 s apart). Wikipedia articles whose title matches a
 // named POI in the loaded chunks are preferred; if Wikipedia is unreachable, notable named POIs
 // (museums, stadiums, campuses, ...) still get a plain card. One card at a time; it auto-hides
-// when you move away (or after a while if left collapsed).
+// when you move away (or after a while if left collapsed). Every card carries an "Edit map" link that opens
+// the OpenStreetMap editor at that spot: the world is built from OSM, so that is where a wrong or missing
+// building gets fixed.
 import { getLang } from '../../i18n.js';
 import { getBeijingTerrainElevation } from '../../environment.js';
 
@@ -205,12 +207,14 @@ export class InfoCards {
     const el = document.createElement('div');
     el.className = 'pi-card';
     el.innerHTML = '<img class="pi-card-img" alt=""><div class="pi-card-body"><div class="pi-card-title"></div>' +
-      '<div class="pi-card-desc"></div><div class="pi-card-extract"></div><a class="pi-card-link" target="_blank" rel="noopener">Wikipedia</a></div>';
+      '<div class="pi-card-desc"></div><div class="pi-card-extract"></div><div class="pi-card-links">' +
+      '<a class="pi-card-link" target="_blank" rel="noopener">Wikipedia</a>' +
+      '<a class="pi-card-osm" target="_blank" rel="noopener"></a></div></div>';
     const stop = (e) => e.stopPropagation();
     for (const ev of ['pointerdown', 'mousedown', 'mouseup', 'wheel', 'touchstart']) el.addEventListener(ev, stop);
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (e.target && e.target.classList.contains('pi-card-link')) return;
+      if (e.target && e.target.closest && e.target.closest('a')) return;
       if (!el.classList.contains('expandable')) return;
       el.classList.toggle('expanded');
     });
@@ -236,6 +240,16 @@ export class InfoCards {
     const link = el.querySelector('.pi-card-link');
     link.style.display = s.url ? '' : 'none';
     if (s.url) link.href = s.url;
+    const osm = el.querySelector('.pi-card-osm');
+    const o = this.app.worldOrigin;
+    osm.style.display = o && o.mPerDegLat ? '' : 'none';
+    if (o && o.mPerDegLat) {
+      const lat = o.centerLat - pick.z / o.mPerDegLat;
+      const lon = o.centerLon + pick.x / o.mPerDegLon;
+      osm.href = `https://www.openstreetmap.org/edit#map=19/${lat.toFixed(5)}/${lon.toFixed(5)}`;
+      osm.textContent = getLang() === 'zh' ? '✎ 修正地图' : '✎ Edit map';
+      osm.title = getLang() === 'zh' ? '这里有错？在 OpenStreetMap 上修正' : 'Something wrong here? Fix it on OpenStreetMap';
+    }
     el.classList.toggle('expandable', Boolean(ex || s.thumb));
     el.classList.add('show');
     this.stats.shown++;
