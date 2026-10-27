@@ -17,6 +17,24 @@ const GLAZED_GOLD = 0xf8c630;
 const EMBLEM_RED = 0xd72620;
 const WARM_UPLIGHT = 0xffe091;
 const BRONZE_DOORS = 0x443628;
+const WINDOW = 0x3b4148;
+const ROOF = 0xb3b0a6;
+const CREAM_DK = 0xd9d1c1;
+
+/** Window rhythm on a wall facing -Z at depth z (local), centred x, width w: n bays, two storeys of dark windows between pilaster strips. */
+function facade(k, x, z, w, rotY, n) {
+  k.push().translate(x, 0, z).rotateY(rotY);
+  const bay = w / n;
+  for (let i = 0; i < n; i++) {
+    const bx = -w / 2 + (i + 0.5) * bay;
+    k.color(WINDOW);
+    k.box(bx, 9.5, -0.12, bay * 0.42, 5.2, 0.12);
+    k.box(bx, 18.0, -0.12, bay * 0.42, 6.4, 0.12);
+    k.color(CREAM_DK);
+    k.box(bx - bay / 2, 4.8, -0.2, 0.7, 25.6, 0.2);
+  }
+  k.pop();
+}
 
 export function build(k) {
   const hi = k.hi;
@@ -92,22 +110,40 @@ export function build(k) {
     k.color(CREAM_STONE);
     k.box(wingX, 4.8, 5.0, 92, 26.0, 150);
 
-    // Front colonnade pilasters along East facade
+    // Front colonnade along the East facade (stands proud of the wall at z = -70)
     k.color(MARBLE_COL);
-    for (let c = -4; c <= 4; c++) {
-      k.box(wingX + c * 9.2, 4.8, -68.0, 2.0, 24.0, 2.0);
+    for (let c = -9; c <= 9; c++) {
+      k.box(wingX + c * 4.75, 4.8, -71.0, 1.7, 24.4, 1.7);
     }
+    if (hi) facade(k, wingX, -70, 92, 0, 19);
 
-    // Wing green glazed eaves
+    // Wing green glazed eaves: a tiled band round the parapet with a gold lip; the flat roof itself is grey
+    k.color(ROOF);
+    k.box(wingX, 30.8, 5.0, 94, 1.4, 152);
     k.color(GLAZED_GREEN);
-    k.box(wingX, 30.8, 5.0, 96, 1.6, 154);
+    for (const [ex, ez, ew, ed] of [[0, -76, 96, 2], [0, 86, 96, 2], [-47, 5, 2, 154], [47, 5, 2, 154]]) k.box(wingX + ex, 30.8, ez, ew, 1.6, ed);
     k.glow(true).color(GLAZED_GOLD);
-    k.box(wingX, 32.4, 5.0, 97, 0.5, 155);
+    for (const [ex, ez, ew, ed] of [[0, -77, 97, 0.6], [0, 87, 97, 0.6], [-48, 5, 0.6, 155], [48, 5, 0.6, 155]]) k.box(wingX + ex, 32.4, ez, ew, 0.5, ed);
     k.glow(false);
   }
 
+  if (hi) {
+    for (const xs of [-1, 1]) {
+      facade(k, xs * 108, 80, 92, Math.PI, 19);                         // west (back) faces
+      k.push().translate(xs * 154, 0, 5).rotateY(-xs * Math.PI / 2);
+      facade(k, 0, 0, 150, 0, 30);                                       // north / south end faces
+      k.pop();
+    }
+    // balustrade along the podium edge and the stair cheeks
+    k.color(CREAM_STONE);
+    k.box(0, 4.8, -96.4, 340, 1.1, 0.6).box(0, 4.8, 96.4, 340, 1.1, 0.6);
+    k.box(-170.2, 4.8, 0, 0.6, 1.1, 192).box(170.2, 4.8, 0, 0.6, 1.1, 192);
+    k.color(GRANITE_PODIUM);
+    for (let i = 1; i <= 4; i++) k.box(0, 0, -96 - i * 2.5, 140, 4.8 - i * 0.96, 2.5); // grand stair treads
+  }
+
   // 4. Central Grand Auditorium High Roof Dome / Deck
-  k.color(0x9fa4aa);
+  k.color(0xb9b7ad);
   k.box(0, 36.8, 15.0, 100, 9.7, 90);
   k.box(0, 44.5, 15.0, 72, 2.0, 68);
 }
