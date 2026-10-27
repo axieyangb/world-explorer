@@ -57,6 +57,7 @@ import * as m_chinazun from "./chinazun.js"; // feature/beijing-landmarks
 import * as m_taipei101 from "./taipei101.js"; // feature/lm-east
 import * as m_lotustemple from "./lotustemple.js"; // feature/lm-east
 import * as m_burjalarab from "./burjalarab.js"; // feature/lm-east
+import * as m_hagiasophia from "./hagiasophia.js"; // feature/lm-east
 
 export const MODELS = {
   liberty: m_liberty,
@@ -113,4 +114,5 @@ export const MODELS = {
   taipei101: m_taipei101,
   lotustemple: m_lotustemple,
   burjalarab: m_burjalarab,
+  hagiasophia: m_hagiasophia,
 };
