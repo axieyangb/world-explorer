@@ -49,6 +49,16 @@ export const LANDMARKS = [
   { id: "khafre", name: "Pyramid of Khafre", nameZh: "哈夫拉金字塔", lat: 29.97611, lon: 31.13083, heading: 0, height: 136, supp: { hw: 110, hd: 110 }, groundR: 115, on: true },
   { id: "menkaure", name: "Pyramid of Menkaure", nameZh: "孟卡拉金字塔", lat: 29.9725, lon: 31.12833, heading: 0, height: 61, supp: { hw: 54, hd: 54 }, groundR: 58, on: true },
   { id: "sphinx", name: "Great Sphinx", nameZh: "狮身人面像", lat: 29.97527, lon: 31.13764, heading: 90, height: 20, supp: { hw: 12, hd: 40 }, on: true },
+  { id: "taipei101", name: "Taipei 101", nameZh: "台北101", lat: 25.033668, lon: 121.56481, heading: 0, height: 508, supp: { hw: 31, hd: 31 }, on: true },
+  { id: "lotustemple", name: "Lotus Temple", nameZh: "莲花寺", lat: 28.553362, lon: 77.258613, heading: 349, height: 34.3, supp: { r: 42 }, on: true },
+  { id: "burjalarab", name: "Burj Al Arab", nameZh: "阿拉伯塔酒店（帆船酒店）", lat: 25.141374, lon: 55.185216, heading: 125, height: 321, supp: { hw: 46, hd: 60 }, on: true },
+  { id: "hagiasophia", name: "Hagia Sophia", nameZh: "圣索菲亚大教堂", lat: 41.008529, lon: 28.980052, heading: 303, height: 55.6, supp: { hw: 44, hd: 58 }, on: true },
+  { id: "sheikhzayed", name: "Sheikh Zayed Grand Mosque", nameZh: "谢赫扎耶德大清真寺", lat: 24.412416, lon: 54.474909, heading: 77.5, height: 107, supp: { hw: 96, hd: 126 }, on: true },
+  { id: "angkorwat", name: "Angkor Wat", nameZh: "吴哥窟", lat: 13.412466, lon: 103.86691, heading: 270, height: 65, supp: { hw: 104, hd: 128 }, on: true },
+  { id: "shwedagon", name: "Shwedagon Pagoda", nameZh: "仰光大金塔", lat: 16.798337, lon: 96.149626, heading: 0, height: 99, supp: { r: 58 }, on: true },
+  { id: "watarun", name: "Wat Arun", nameZh: "郑王庙（黎明寺）", lat: 13.743697, lon: 100.488905, heading: 73, height: 79, supp: { hw: 29, hd: 29 }, on: true },
+  { id: "gatewayofindia", name: "Gateway of India", nameZh: "印度门（孟买）", lat: 18.921966, lon: 72.834566, heading: 141.5, height: 28, supp: { hw: 26, hd: 13 }, on: true },
+  { id: "skytower", name: "Sky Tower", nameZh: "天空塔（奥克兰）", lat: -36.848473, lon: 174.762186, heading: 0, height: 328, supp: { r: 16 }, on: true },
   // --- Beijing (feature/beijing-landmarks). WGS84 / OSM-aligned positions (NOT GCJ-02 map coords). `replaces` lists
   // the old src/landmarks_40.js ids that are disabled while this entry is on (each landmark renders in one system only).
   { id: "tiananmen", name: "Tiananmen Gate", nameZh: "天安门", lat: 39.907338, lon: 116.391265, heading: 178.25, height: 34.7, supp: { hw: 62, hd: 24 }, replaces: ["tiananmen_rostrum"], on: true, chip: true },

@@ -54,6 +54,16 @@ import * as m_birdsnest from "./birdsnest.js"; // feature/beijing-landmarks
 import * as m_watercube from "./watercube.js"; // feature/beijing-landmarks
 import * as m_cctv from "./cctv.js"; // feature/beijing-landmarks
 import * as m_chinazun from "./chinazun.js"; // feature/beijing-landmarks
+import * as m_taipei101 from "./taipei101.js"; // feature/lm-east
+import * as m_lotustemple from "./lotustemple.js"; // feature/lm-east
+import * as m_burjalarab from "./burjalarab.js"; // feature/lm-east
+import * as m_hagiasophia from "./hagiasophia.js"; // feature/lm-east
+import * as m_sheikhzayed from "./sheikhzayed.js"; // feature/lm-east
+import * as m_angkorwat from "./angkorwat.js"; // feature/lm-east
+import * as m_shwedagon from "./shwedagon.js"; // feature/lm-east
+import * as m_watarun from "./watarun.js"; // feature/lm-east
+import * as m_gatewayofindia from "./gatewayofindia.js"; // feature/lm-east
+import * as m_skytower from "./skytower.js"; // feature/lm-east
 
 export const MODELS = {
   liberty: m_liberty,
@@ -107,4 +117,14 @@ export const MODELS = {
   watercube: m_watercube,
   cctv: m_cctv,
   chinazun: m_chinazun,
+  taipei101: m_taipei101,
+  lotustemple: m_lotustemple,
+  burjalarab: m_burjalarab,
+  hagiasophia: m_hagiasophia,
+  sheikhzayed: m_sheikhzayed,
+  angkorwat: m_angkorwat,
+  shwedagon: m_shwedagon,
+  watarun: m_watarun,
+  gatewayofindia: m_gatewayofindia,
+  skytower: m_skytower,
 };
