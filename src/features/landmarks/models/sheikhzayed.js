@@ -68,7 +68,8 @@ function arcade(k, ax, az, bx, bz, nx, nz, domes) {
     } else if (i % 3 === 0) k.color(MARBLE).box(px, 0, pz, 1.4, AH - 1.6, 1.4);
     if (domes && i < bays && (hi || i % 2 === 0)) {
       const dx = px + (bx - ax) / bays / 2 - nx * W / 2, dz = pz + (bz - az) / bays / 2 - nz * W / 2;
-      dome(k, dx, dz, AH + 0.5, 3.0, 1.0, hi ? 10 : 6, hi);
+      dome(k, dx, dz, AH + 0.5, 3.0, 1.0, hi ? 8 : 5, false);
+      if (hi) k.color(GOLD).cyl(dx, AH + 6.6, dz, 0.18, 0, 1.4, 3);
     }
   }
   if (hi) {

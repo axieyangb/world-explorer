@@ -53,6 +53,7 @@ export const LANDMARKS = [
   { id: "lotustemple", name: "Lotus Temple", nameZh: "莲花寺", lat: 28.553362, lon: 77.258613, heading: 349, height: 34.3, supp: { r: 42 }, on: true },
   { id: "burjalarab", name: "Burj Al Arab", nameZh: "阿拉伯塔酒店（帆船酒店）", lat: 25.141374, lon: 55.185216, heading: 125, height: 321, supp: { hw: 46, hd: 60 }, on: true },
   { id: "hagiasophia", name: "Hagia Sophia", nameZh: "圣索菲亚大教堂", lat: 41.008529, lon: 28.980052, heading: 303, height: 55.6, supp: { hw: 44, hd: 58 }, on: true },
+  { id: "sheikhzayed", name: "Sheikh Zayed Grand Mosque", nameZh: "谢赫扎耶德大清真寺", lat: 24.412416, lon: 54.474909, heading: 77.5, height: 107, supp: { hw: 96, hd: 126 }, on: true },
   // --- Beijing (feature/beijing-landmarks). WGS84 / OSM-aligned positions (NOT GCJ-02 map coords). `replaces` lists
   // the old src/landmarks_40.js ids that are disabled while this entry is on (each landmark renders in one system only).
   { id: "tiananmen", name: "Tiananmen Gate", nameZh: "天安门", lat: 39.907338, lon: 116.391265, heading: 178.25, height: 34.7, supp: { hw: 62, hd: 24 }, replaces: ["tiananmen_rostrum"], on: true, chip: true },
