@@ -421,7 +421,7 @@ export class Maritime {
       // Water surface + gentle motion.
       const wy = water ? water.getWaterSurfaceY(v.x, v.z) : getBeijingTerrainElevation(v.x, v.z) + 0.28;
       const small = v.type === 'sailboat' || v.type === 'tug' || v.type === 'ferry';
-      const amp = small ? 1 : 0.15;
+      const amp = (small ? 1 : 0.15) * (this.app.seaState ? this.app.seaState.motion : 1); // [sea-state]
       v.y = wy + Math.sin(v.phase * 1.3) * 0.08 * amp - (v.sinkDepth || 0);
       if (v.state !== 'sink') {
         v.roll = Math.sin(v.phase * 0.9) * 0.025 * amp + (v.type === 'sailboat' ? 0.16 : 0);
