@@ -4,8 +4,8 @@
 
 ### The whole planet as an open world, live in your browser.
 
-Fly, drive or walk anywhere on Earth. Real streets, real buildings, real terrain, real weather,
-real aircraft overhead, rebuilt in 3D around you at 1:1 scale as you move.
+Fly, drive or walk anywhere on Earth. Real streets, real buildings, real terrain and real weather,
+rebuilt in 3D around you at 1:1 scale as you move.
 
 **[▶ Play it now](https://axieyangb.github.io/world-explorer/)** · [🎬 Watch the 30 s trailer](https://github.com/axieyangb/world-explorer/releases/latest)
 
@@ -51,7 +51,7 @@ Try it:
 | :-- | :-- |
 | 🚁 **Fly, drive, walk** | An arcade helicopter with auto-land and rooftop landings, a garage of 11 vehicles from taxis and buses to a Mach-1 hypercar and a tank, and on foot. |
 | 🏙️ **Living cities** | AI traffic and pedestrians on the real road network, driving on the correct side for each country. Traffic lights, signs, street lamps, trees, trains and ferries. |
-| ✈️ **Live data** | Real aircraft overhead from public ADS-B feeds, current local weather, live trains and ships where open feeds exist. |
+| ✈️ **Live data** | Current local weather everywhere, live trains and ships where open feeds exist, and real aircraft overhead when served by `server.py`. |
 | 🌅 **Sky and climate** | Sun and moon at true local time, rain, fog and cloud, and vegetation chosen for each region's climate zone. |
 | 🗼 **Landmarks** | 51 hand-modelled icons at their real coordinates: Eiffel Tower, Burj Khalifa, Empire State, Tower Bridge, the Pyramids, Taj Mahal, Sydney Opera House, Tokyo Skytree and more. |
 | 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at. |
@@ -101,7 +101,6 @@ docker build -t world-explorer . && docker run -p 8098:8098 world-explorer
 No build step and no keys. `server.py` serves the files plus a small `/api/sky` proxy for live aircraft
 (ADS-B feeds don't allow direct browser calls). The page works from any static host and any sub-path too
 (the GitHub Pages demo is exactly that), with simulated air traffic instead of live aircraft.
-A copy with live aircraft runs at [worldexplorer.jerxie.com](https://worldexplorer.jerxie.com).
 
 **Single-file build.** `world_explorer.html` is the entire app in one self-contained file. Regenerate it after
 changing the source with `python3 tools/build_release.py`, and register any new module in its `MOD_ID_MAP`.
