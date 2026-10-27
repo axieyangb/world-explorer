@@ -58,6 +58,7 @@ import * as m_washmonument from "./washmonument.js"; // feature/lm-west
 import * as m_lincoln from "./lincoln.js"; // feature/lm-west
 import * as m_goldengate from "./goldengate.js"; // feature/lm-west
 import * as m_capitol from "./capitol.js"; // feature/lm-west
+import * as m_sagrada from "./sagrada.js"; // feature/lm-west
 
 export const MODELS = {
   liberty: m_liberty,
@@ -115,4 +116,5 @@ export const MODELS = {
   lincoln: m_lincoln,
   goldengate: m_goldengate,
   capitol: m_capitol,
+  sagrada: m_sagrada,
 };

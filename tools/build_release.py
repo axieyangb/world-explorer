@@ -179,6 +179,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/lincoln.js': '__MOD_landmarks_models_lincoln',
     'src/features/landmarks/models/goldengate.js': '__MOD_landmarks_models_goldengate',
     'src/features/landmarks/models/capitol.js': '__MOD_landmarks_models_capitol',
+    'src/features/landmarks/models/sagrada.js': '__MOD_landmarks_models_sagrada',
     'src/main.js': '__MOD_main',
 }
 
