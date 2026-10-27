@@ -49,6 +49,7 @@ export const LANDMARKS = [
   { id: "parthenon", name: "Parthenon", nameZh: "帕特农神庙", lat: 37.971503, lon: 23.726618, heading: 77.1, height: 19, supp: { hw: 19, hd: 38 }, on: true },
   { id: "atomium", name: "Atomium", nameZh: "原子球塔", lat: 50.894918, lon: 4.341516, heading: 270, height: 102, supp: { r: 48 }, on: true }, // heading: lower spheres toward the larger lobes of the OSM outline
   { id: "shard", name: "The Shard", nameZh: "碎片大厦", lat: 51.504408, lon: -0.086438, heading: 128.1, height: 309.6, supp: { hw: 30, hd: 28 }, on: true },
+  { id: "cologne", name: "Cologne Cathedral", nameZh: "科隆大教堂", lat: 50.941311, lon: 6.958088, heading: 268.2, height: 157.4, supp: { hw: 45, hd: 74 }, on: true },
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },

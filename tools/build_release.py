@@ -185,6 +185,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/parthenon.js': '__MOD_landmarks_models_parthenon',
     'src/features/landmarks/models/atomium.js': '__MOD_landmarks_models_atomium',
     'src/features/landmarks/models/shard.js': '__MOD_landmarks_models_shard',
+    'src/features/landmarks/models/cologne.js': '__MOD_landmarks_models_cologne',
     'src/main.js': '__MOD_main',
 }
 
