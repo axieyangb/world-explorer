@@ -60,6 +60,7 @@ import * as m_goldengate from "./goldengate.js"; // feature/lm-west
 import * as m_capitol from "./capitol.js"; // feature/lm-west
 import * as m_sagrada from "./sagrada.js"; // feature/lm-west
 import * as m_notredame from "./notredame.js"; // feature/lm-west
+import * as m_stpeters from "./stpeters.js"; // feature/lm-west
 
 export const MODELS = {
   liberty: m_liberty,
@@ -119,4 +120,5 @@ export const MODELS = {
   capitol: m_capitol,
   sagrada: m_sagrada,
   notredame: m_notredame,
+  stpeters: m_stpeters,
 };
