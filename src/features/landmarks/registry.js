@@ -49,6 +49,8 @@ export const LANDMARKS = [
   { id: "khafre", name: "Pyramid of Khafre", nameZh: "哈夫拉金字塔", lat: 29.97611, lon: 31.13083, heading: 0, height: 136, supp: { hw: 110, hd: 110 }, groundR: 115, on: true },
   { id: "menkaure", name: "Pyramid of Menkaure", nameZh: "孟卡拉金字塔", lat: 29.9725, lon: 31.12833, heading: 0, height: 61, supp: { hw: 54, hd: 54 }, groundR: 58, on: true },
   { id: "sphinx", name: "Great Sphinx", nameZh: "狮身人面像", lat: 29.97527, lon: 31.13764, heading: 90, height: 20, supp: { hw: 12, hd: 40 }, on: true },
+  { id: "taipei101", name: "Taipei 101", nameZh: "台北101", lat: 25.033668, lon: 121.56481, heading: 0, height: 508, supp: { hw: 31, hd: 31 }, on: true },
+  { id: "lotustemple", name: "Lotus Temple", nameZh: "莲花寺", lat: 28.553362, lon: 77.258613, heading: 349, height: 34.3, supp: { r: 42 }, on: true },
   // --- Beijing (feature/beijing-landmarks). WGS84 / OSM-aligned positions (NOT GCJ-02 map coords). `replaces` lists
   // the old src/landmarks_40.js ids that are disabled while this entry is on (each landmark renders in one system only).
   { id: "tiananmen", name: "Tiananmen Gate", nameZh: "天安门", lat: 39.907338, lon: 116.391265, heading: 178.25, height: 34.7, supp: { hw: 62, hd: 24 }, replaces: ["tiananmen_rostrum"], on: true, chip: true },
