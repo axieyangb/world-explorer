@@ -40,6 +40,7 @@ export const LANDMARKS = [
   { id: "christ", name: "Christ the Redeemer", nameZh: "基督救世主像", lat: -22.9519, lon: -43.2105, heading: 100, height: 38, supp: { r: 30 }, ele: 710, on: true }, // ele: real ground ASL; Terrarium puts Corcovado ~150 m west and ~60 m low, so fetchGlobalDem lifts terrain here
   // --- Europe & Americas (feature/lm-west). Centres = OSM building centroids; headings from the OSM footprint axes.
   { id: "washmonument", name: "Washington Monument", nameZh: "华盛顿纪念碑", lat: 38.889475, lon: -77.035243, heading: 0, height: 169.3, supp: { r: 14 }, on: true },
+  { id: "lincoln", name: "Lincoln Memorial", nameZh: "林肯纪念堂", lat: 38.889272, lon: -77.050172, heading: 90, height: 30, supp: { hw: 36, hd: 82 }, on: true },
   { id: "goldengate", name: "Golden Gate Bridge", nameZh: "金门大桥", lat: 37.81976, lon: -122.478555, heading: 354.7, height: 227, supp: { hw: 30, hd: 700 }, deck: { y: 67, hw: 16, hd: 1095, crown: 5 }, on: true }, // centre = mid-span between the OSM tower piers; deck: crowned road deck (= models/goldengate.js DECK) the OSM bridge ways are pinned to
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
