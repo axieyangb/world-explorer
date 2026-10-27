@@ -8,7 +8,7 @@ const W = 45, D = 22, HB = 37.6; // width, depth, top of main body (cornice base
 const MA_W = 14.62, MA_H = 29.19, SA_W = 8.44, SA_H = 18.68;
 
 export const lodDist = 1400;
-export const glowStrength = 1.0;
+export const glowStrength = 0.42; // floodlit; at 1.0 the pale stone washed out to flat white and hid the reliefs
 
 export const colliders = [
   { x: -15, z: -7.4, hw: 7.5, hd: 3.6, h: 50 },
