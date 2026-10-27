@@ -13,6 +13,8 @@ import { _setDaylightState } from './daylight.js';
  * Wiring (main.js): `this.atmosphere = initAtmosphere(this)` after the sky dome + shared materials
  * exist, and `this.atmosphere.update(dt)` once per frame. Everything else is driven from here.
  *
+ * The clock follows real local time by default (re-synced on every teleport); picking a time in the
+ * menu or ?time= switches to a fast day cycle until "Now" is picked again.
  * URL overrides for testing/sharing: ?time=18.5  (local solar hour)  &weather=rain
  * Debug handle: window.__ATMOSPHERE__ = { setTime(h), jumpTo(h), setWeather(w), getState() }.
  */
@@ -61,9 +63,9 @@ const WEATHER = {
 const WEATHER_ORDER = ['clear', 'cloudy', 'rain', 'fog'];
 
 const LABELS = {
-  en: { time: 'Time', weather: 'Weather', dawn: 'Dawn', noon: 'Noon', dusk: 'Dusk', night: 'Night',
+  en: { time: 'Time', weather: 'Weather', now: 'Now', dawn: 'Dawn', noon: 'Noon', dusk: 'Dusk', night: 'Night',
     clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' },
-  zh: { time: '时间', weather: '天气', dawn: '清晨', noon: '正午', dusk: '黄昏', night: '夜晚',
+  zh: { time: '时间', weather: '天气', now: '现在', dawn: '清晨', noon: '正午', dusk: '黄昏', night: '夜晚',
     clear: '晴', cloudy: '多云', rain: '雨', fog: '雾' },
 };
 
@@ -100,12 +102,10 @@ class AtmosphereSystem {
     this.app = app;
     const params = new URLSearchParams(window.location.search);
     const now = new Date();
-    const lon = app.worldOrigin?.centerLon ?? 116.4;
-    const utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
-    let h = utcH + lon / 15;
     const qt = parseFloat(params.get('time'));
-    if (Number.isFinite(qt)) h = qt;
-    this.hour = ((h % 24) + 24) % 24;
+    this.realtime = !Number.isFinite(qt);
+    this.utcOffsetH = null; // civil UTC offset here, from live weather; null = show solar time
+    this.hour = this.realtime ? this._realSolarHour(now) : ((qt % 24) + 24) % 24;
     this.dayN = dayOfYear(now);
     this.moonPhase0 = moonPhaseAt(now);
     this.elapsedDays = 0;
@@ -166,6 +166,8 @@ class AtmosphereSystem {
   getState() {
     return {
       hour: Number(this.hour.toFixed(3)),
+      realtime: this.realtime,
+      utcOffsetH: this.utcOffsetH,
       weather: this.weather,
       sunElevationDeg: Number((Math.asin(this.sunDir.y) / DEG).toFixed(2)),
       daylight: Number(this.daylight.toFixed(3)),
@@ -182,16 +184,39 @@ class AtmosphereSystem {
   setTime(h) {
     this.hour = ((Number(h) % 24) + 24) % 24;
     this.targetHour = null;
+    this.realtime = false;
   }
 
   /** Smoothly fast-forward the clock to the given local solar hour. */
   jumpTo(h) {
     this.targetHour = ((Number(h) % 24) + 24) % 24;
+    this.realtime = false;
+  }
+
+  /** Back to real local time: fast-forward to now, then follow the real clock. */
+  goLive() {
+    this.jumpTo(this._realSolarHour(new Date()));
+    this.realtime = true;
+    this._refreshUi();
+  }
+
+  _lon() {
+    const o = this.app.worldOrigin;
+    const p = this.app.pos;
+    if (!o || !o.mPerDegLon || !p) return o?.centerLon ?? 0;
+    return o.centerLon + p.x / o.mPerDegLon;
+  }
+
+  /** Local solar hour (what the sun does here) for a real moment. */
+  _realSolarHour(d) {
+    const utcH = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+    return (((utcH + this._lon() / 15) % 24) + 24) % 24;
   }
 
   /** [live-weather] Continuous targets {weather, cloud, rain, fog, label} from real weather. */
   setLive(live) {
     this.live = live;
+    if (live && Number.isFinite(live.utcOffsetH)) this.utcOffsetH = live.utcOffsetH;
     if (!this.manual && live && WEATHER[live.weather]) this.weather = live.weather;
     this._refreshUi();
   }
@@ -228,6 +253,13 @@ class AtmosphereSystem {
   }
 
   _advanceClock(dt) {
+    if (this.realtime && this.targetHour === null) {
+      const now = new Date();
+      const h = this._realSolarHour(now);
+      if (h < this.hour - 12) this.elapsedDays += 1; // passed midnight
+      this.hour = h;
+      return;
+    }
     let dh = dt * GAME_HOURS_PER_SEC;
     if (this.targetHour !== null) {
       let remaining = this.targetHour - this.hour;
@@ -246,6 +278,10 @@ class AtmosphereSystem {
   update(dt) {
     const app = this.app;
     this.time += dt;
+    if ((app.teleportGeneration || 0) !== this._gen) {
+      this._gen = app.teleportGeneration || 0;
+      this.utcOffsetH = null; // new place: solar time until its live weather reports the offset
+    }
     this._advanceClock(dt);
 
     // Weather easing (~6 s for sky/fog, wetness builds in ~15 s and dries in ~60 s)
@@ -451,11 +487,11 @@ class AtmosphereSystem {
     pop.id = 'atmo-menu';
     pop.style.width = '264px';
     const row = (items, kind) =>
-      `<div class="popover-mode-row" style="grid-template-columns:repeat(4,1fr)">${items
+      `<div class="popover-mode-row" style="grid-template-columns:repeat(${items.length},1fr)">${items
         .map((it) => `<button type="button" class="popover-mode-btn" data-${kind}="${it}"></button>`)
         .join('')}</div>`;
     pop.innerHTML =
-      `<div class="popover-label" data-atmo="time"></div>${row(['dawn', 'noon', 'dusk', 'night'], 'atmo-time')}` +
+      `<div class="popover-label" data-atmo="time"></div>${row(['now', 'dawn', 'noon', 'dusk', 'night'], 'atmo-time')}` +
       `<div class="popover-label" data-atmo="weather"></div>${row(WEATHER_ORDER, 'atmo-weather')}`;
     wrap.appendChild(pop);
     this.popEl = pop;
@@ -468,7 +504,8 @@ class AtmosphereSystem {
       e.stopPropagation();
       const b = e.target.closest('button');
       if (!b) return;
-      if (b.dataset.atmoTime) this.jumpTo(this.presetHour(b.dataset.atmoTime));
+      if (b.dataset.atmoTime === 'now') this.goLive();
+      else if (b.dataset.atmoTime) { this.jumpTo(this.presetHour(b.dataset.atmoTime)); this._refreshUi(); }
       if (b.dataset.atmoWeather) this.setWeather(b.dataset.atmoWeather);
     });
     document.addEventListener('click', () => pop.classList.add('hidden'));
@@ -495,12 +532,19 @@ class AtmosphereSystem {
         if (b.classList.contains('active') !== on) b.classList.toggle('active', on);
       }
       for (const b of this.popEl.querySelectorAll('[data-atmo-time]')) {
-        if (b.classList.contains('active')) b.classList.remove('active');
+        const on = b.dataset.atmoTime === 'now' && this.realtime;
+        if (b.classList.contains('active') !== on) b.classList.toggle('active', on);
       }
     }
     if (!this.labelEl) return;
-    const hh = Math.floor(this.hour);
-    const mm = Math.floor((this.hour - hh) * 60);
+    // Live: the real wall-clock time here (once the UTC offset is known); otherwise the solar hour.
+    let shown = this.hour;
+    if (this.realtime && this.targetHour === null && this.utcOffsetH !== null) {
+      const d = new Date();
+      shown = ((((d.getUTCHours() + d.getUTCMinutes() / 60 + this.utcOffsetH) % 24) + 24) % 24);
+    }
+    const hh = Math.floor(shown);
+    const mm = Math.floor((shown - hh) * 60);
     let txt = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     if (!this.manual && this.live && this.live.label) txt += ` · ${this.live.label}`; // [live-weather]
     else if (this.weather !== 'clear') txt += ` · ${this._t(this.weather)}`;

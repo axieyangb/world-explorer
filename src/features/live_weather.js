@@ -132,13 +132,13 @@ export class LiveWeather {
     this.inFlight = true;
     const gen = this._gen;
     const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + ll[0].toFixed(3) + '&longitude=' + ll[1].toFixed(3) +
-      '&current=temperature_2m,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,visibility,is_day';
+      '&current=temperature_2m,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,visibility,is_day&timezone=auto';
     try {
       const r = await fetch(url, { cache: 'no-store' });
       const j = r.ok ? await r.json() : null;
       if (j && j.current && gen === this._gen) {
-        this._syncClock(ll[1], gen);
         this.data = weatherFromOpenMeteo(j.current);
+        if (Number.isFinite(j.utc_offset_seconds)) this.data.utcOffsetH = j.utc_offset_seconds / 3600;
         this.data.at = new Date().toISOString();
         this._apply();
       }
@@ -149,26 +149,12 @@ export class LiveWeather {
     }
   }
 
-  /**
-   * Live sky = live clock too: once per arrival, set the day/night cycle to the real local solar time
-   * here (the atmosphere is created before the start teleport, so it would otherwise keep the
-   * previous region's clock). ?time= still wins.
-   */
-  _syncClock(lon, gen) {
-    const atmo = this.app.atmosphere;
-    if (!atmo || this._clockGen === gen || new URLSearchParams(location.search).has('time')) return;
-    this._clockGen = gen;
-    const d = new Date();
-    const utcH = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
-    atmo.setTime((((utcH + lon / 15) % 24) + 24) % 24);
-  }
-
   _apply() {
     const atmo = this.app.atmosphere;
     const d = this.data;
     if (!atmo || !d || typeof atmo.setLive !== 'function') return;
     const label = d.tempC == null ? d.icon : `${d.icon} ${d.tempC}°C`;
-    atmo.setLive({ weather: d.weather, cloud: d.cloud, rain: d.rain, fog: d.fog, label });
+    atmo.setLive({ weather: d.weather, cloud: d.cloud, rain: d.rain, fog: d.fog, label, utcOffsetH: d.utcOffsetH });
   }
 
   update(dt) {
