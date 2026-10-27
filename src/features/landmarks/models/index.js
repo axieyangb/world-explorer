@@ -62,6 +62,7 @@ import * as m_sagrada from "./sagrada.js"; // feature/lm-west
 import * as m_notredame from "./notredame.js"; // feature/lm-west
 import * as m_stpeters from "./stpeters.js"; // feature/lm-west
 import * as m_parthenon from "./parthenon.js"; // feature/lm-west
+import * as m_atomium from "./atomium.js"; // feature/lm-west
 
 export const MODELS = {
   liberty: m_liberty,
@@ -123,4 +124,5 @@ export const MODELS = {
   notredame: m_notredame,
   stpeters: m_stpeters,
   parthenon: m_parthenon,
+  atomium: m_atomium,
 };

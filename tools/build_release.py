@@ -183,6 +183,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/notredame.js': '__MOD_landmarks_models_notredame',
     'src/features/landmarks/models/stpeters.js': '__MOD_landmarks_models_stpeters',
     'src/features/landmarks/models/parthenon.js': '__MOD_landmarks_models_parthenon',
+    'src/features/landmarks/models/atomium.js': '__MOD_landmarks_models_atomium',
     'src/main.js': '__MOD_main',
 }
 

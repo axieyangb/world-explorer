@@ -47,6 +47,7 @@ export const LANDMARKS = [
   { id: "notredame", name: "Notre-Dame de Paris", nameZh: "巴黎圣母院", lat: 48.852973, lon: 2.34991, heading: 296.4, height: 96, supp: { hw: 34, hd: 70 }, on: true },
   { id: "stpeters", name: "St Peter's Basilica", nameZh: "圣彼得大教堂", lat: 41.902156, lon: 12.453729, heading: 89.4, height: 136.6, supp: { hw: 78, hd: 112 }, on: true },
   { id: "parthenon", name: "Parthenon", nameZh: "帕特农神庙", lat: 37.971503, lon: 23.726618, heading: 77.1, height: 19, supp: { hw: 19, hd: 38 }, on: true },
+  { id: "atomium", name: "Atomium", nameZh: "原子球塔", lat: 50.894918, lon: 4.341516, heading: 270, height: 102, supp: { r: 48 }, on: true }, // heading: lower spheres toward the larger lobes of the OSM outline
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },
