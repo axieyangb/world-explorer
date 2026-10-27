@@ -19,7 +19,7 @@
  * Worker-safe: no THREE / DOM.
  */
 import { worldXZToLatLon } from './bridge_deck.js';
-import { LANDMARKS, landmarkWorldXZ } from './landmarks/registry.js'; // [release-6-integ] landmark deck pins
+import { LANDMARKS, landmarkWorldXZ, landmarkDeckY } from './landmarks/registry.js'; // [release-6-integ] landmark deck pins
 
 const FOOT = new Set(['footway', 'pedestrian', 'cycleway', 'path', 'steps', 'bridleway', 'corridor']);
 const HIGHWAY = new Set(['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link']);
@@ -242,13 +242,14 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
       let base = meshY(terrainAt, p[0], p[1]);
       for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; base = Math.min(base, meshY(terrainAt, p[0] + Math.cos(a) * gr, p[1] + Math.sin(a) * gr)); }
       // chunk_builder draws roads at lift + ROAD_Y_BIAS (trunk 0.86 + 0..0.14 micro bias): pin so the drawn deck lands on the model's
-      const y = (Number.isFinite(base) ? base : 0) + l.deck.y - 0.93;
+      const y = (Number.isFinite(base) ? base : 0) - 0.93;
       const h = (l.heading || 0) * Math.PI / 180, c = Math.cos(h), sn = Math.sin(h);
       for (let r = 0; r < roads.length; r++) {
         const ids = wayNodes[r]; if (!ids || !roads[r][7]) continue;
         for (const v of ids) {
           const dx = ox + nodeX[v] - p[0], dz = oz + nodeZ[v] - p[1];
-          if (Math.abs(dx * c + dz * sn) <= l.deck.hw && Math.abs(-dx * sn + dz * c) <= l.deck.hd) { pinY[v] = y; anyPin = true; }
+          const lz = -dx * sn + dz * c;
+          if (Math.abs(dx * c + dz * sn) <= l.deck.hw && Math.abs(lz) <= l.deck.hd) { pinY[v] = y + landmarkDeckY(l.deck, lz); anyPin = true; }
         }
       }
     }

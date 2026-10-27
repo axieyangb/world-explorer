@@ -7,6 +7,9 @@
  * falls inside the footprint are dropped so the hand-built model replaces them. `on: false` = not built yet.
  * Optional `ele` = real ground elevation (m ASL) at the centre: the DEM is lifted there with a smooth summit bump
  * when the coarse/misregistered DEM is too low (e.g. Corcovado).
+ * Optional `deck` = { y, hw, hd, crown? }: road deck of a bridge model (box in model-local metres, y = deck top above
+ * the model base at the centre). OSM bridge ways inside it are pinned onto the model's deck and get no generic piers;
+ * `crown` = how much lower the deck is at the box ends (parabolic vertical curve, e.g. a suspension bridge).
  */
 export const LANDMARKS = [
   // --- New York
@@ -35,6 +38,19 @@ export const LANDMARKS = [
   { id: "gatewayarch", name: "Gateway Arch", nameZh: "圣路易斯拱门", lat: 38.62468, lon: -90.1849, heading: 108, height: 192, supp: { hw: 104, hd: 26 }, on: true },
   { id: "cntower", name: "CN Tower", nameZh: "加拿大国家电视塔", lat: 43.64257, lon: -79.38706, heading: 0, height: 553, supp: { r: 34 }, on: true },
   { id: "christ", name: "Christ the Redeemer", nameZh: "基督救世主像", lat: -22.9519, lon: -43.2105, heading: 100, height: 38, supp: { r: 30 }, ele: 710, on: true }, // ele: real ground ASL; Terrarium puts Corcovado ~150 m west and ~60 m low, so fetchGlobalDem lifts terrain here
+  // --- Europe & Americas (feature/lm-west). Centres = OSM building centroids; headings from the OSM footprint axes.
+  { id: "washmonument", name: "Washington Monument", nameZh: "华盛顿纪念碑", lat: 38.889475, lon: -77.035243, heading: 0, height: 169.3, supp: { r: 14 }, on: true },
+  { id: "lincoln", name: "Lincoln Memorial", nameZh: "林肯纪念堂", lat: 38.889272, lon: -77.050172, heading: 90, height: 30, supp: { hw: 36, hd: 82 }, on: true },
+  { id: "goldengate", name: "Golden Gate Bridge", nameZh: "金门大桥", lat: 37.81976, lon: -122.478555, heading: 354.7, height: 227, supp: { hw: 30, hd: 700 }, deck: { y: 67, hw: 16, hd: 1095, crown: 5 }, on: true }, // centre = mid-span between the OSM tower piers; deck: crowned road deck (= models/goldengate.js DECK) the OSM bridge ways are pinned to
+  { id: "capitol", name: "United States Capitol", nameZh: "美国国会大厦", lat: 38.889813, lon: -77.009001, heading: 270, height: 88, supp: { hw: 120, hd: 62 }, groundR: 14, on: true }, // groundR: sample the hilltop under the rotunda, not the lower west terraces
+  { id: "sagrada", name: "Sagrada Família", nameZh: "圣家堂", lat: 41.403537, lon: 2.174339, heading: 135.2, height: 172.5, supp: { hw: 50, hd: 60 }, on: true },
+  { id: "notredame", name: "Notre-Dame de Paris", nameZh: "巴黎圣母院", lat: 48.852973, lon: 2.34991, heading: 296.4, height: 96, supp: { hw: 34, hd: 70 }, on: true },
+  { id: "stpeters", name: "St Peter's Basilica", nameZh: "圣彼得大教堂", lat: 41.902156, lon: 12.453729, heading: 89.4, height: 136.6, supp: { hw: 78, hd: 112 }, on: true },
+  { id: "parthenon", name: "Parthenon", nameZh: "帕特农神庙", lat: 37.971503, lon: 23.726618, heading: 77.1, height: 19, supp: { hw: 19, hd: 38 }, on: true },
+  { id: "atomium", name: "Atomium", nameZh: "原子球塔", lat: 50.894918, lon: 4.341516, heading: 270, height: 102, supp: { r: 48 }, on: true }, // heading: lower spheres toward the larger lobes of the OSM outline
+  { id: "shard", name: "The Shard", nameZh: "碎片大厦", lat: 51.504408, lon: -0.086438, heading: 128.1, height: 309.6, supp: { hw: 30, hd: 28 }, on: true },
+  { id: "cologne", name: "Cologne Cathedral", nameZh: "科隆大教堂", lat: 50.941311, lon: 6.958088, heading: 268.2, height: 157.4, supp: { hw: 45, hd: 74 }, on: true },
+  { id: "elcastillo", name: "El Castillo, Chichén Itzá", nameZh: "奇琴伊察库库尔坎金字塔", lat: 20.682989, lon: -88.568641, heading: 23.5, height: 30, supp: { r: 40 }, on: true },
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },
@@ -102,6 +118,31 @@ export function inLandmarkFootprint(l, lx, lz, wx, wz) {
   const ux = dx * c + dz * sn;
   const uz = -dx * sn + dz * c;
   return Math.abs(ux) <= s.hw && Math.abs(uz) <= s.hd;
+}
+
+/** Deck top (m above the landmark base) at local along-axis offset lz: deck.y lowered parabolically by deck.crown. */
+export function landmarkDeckY(d, lz) {
+  const u = d.hd > 0 ? lz / d.hd : 0;
+  return d.y - (d.crown || 0) * u * u;
+}
+
+/** Returns fn(wx, wz) -> true when inside any enabled landmark's bridge `deck` box near this origin, or null if none. */
+export function makeLandmarkDeckTest(origin) {
+  const near = [];
+  for (const l of LANDMARKS) {
+    if (!l.on || !l.deck) continue;
+    const p = landmarkWorldXZ(l, origin);
+    if (p) { const a = (l.heading || 0) * Math.PI / 180; near.push([l.deck, p[0], p[1], Math.cos(a), Math.sin(a)]); }
+  }
+  if (!near.length) return null;
+  return (wx, wz) => {
+    for (let i = 0; i < near.length; i++) {
+      const [d, x, z, c, sn] = near[i];
+      const dx = wx - x, dz = wz - z;
+      if (Math.abs(dx * c + dz * sn) <= d.hw && Math.abs(-dx * sn + dz * c) <= d.hd) return true;
+    }
+    return false;
+  };
 }
 
 /** Returns fn(wx, wz) -> true when inside any enabled landmark footprint near this origin, or null if none. */

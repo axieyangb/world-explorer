@@ -188,6 +188,19 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/burjalarab.js': '__MOD_landmarks_models_burjalarab',  # [lm-east]
     'src/features/landmarks/models/lotustemple.js': '__MOD_landmarks_models_lotustemple',  # [lm-east]
     'src/features/landmarks/models/taipei101.js': '__MOD_landmarks_models_taipei101',  # [lm-east]
+    # [lm-west] Europe & Americas landmark models
+    'src/features/landmarks/models/washmonument.js': '__MOD_landmarks_models_washmonument',
+    'src/features/landmarks/models/lincoln.js': '__MOD_landmarks_models_lincoln',
+    'src/features/landmarks/models/goldengate.js': '__MOD_landmarks_models_goldengate',
+    'src/features/landmarks/models/capitol.js': '__MOD_landmarks_models_capitol',
+    'src/features/landmarks/models/sagrada.js': '__MOD_landmarks_models_sagrada',
+    'src/features/landmarks/models/notredame.js': '__MOD_landmarks_models_notredame',
+    'src/features/landmarks/models/stpeters.js': '__MOD_landmarks_models_stpeters',
+    'src/features/landmarks/models/parthenon.js': '__MOD_landmarks_models_parthenon',
+    'src/features/landmarks/models/atomium.js': '__MOD_landmarks_models_atomium',
+    'src/features/landmarks/models/shard.js': '__MOD_landmarks_models_shard',
+    'src/features/landmarks/models/cologne.js': '__MOD_landmarks_models_cologne',
+    'src/features/landmarks/models/elcastillo.js': '__MOD_landmarks_models_elcastillo',
     'src/main.js': '__MOD_main',
 }
 

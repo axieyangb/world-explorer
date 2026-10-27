@@ -64,6 +64,18 @@ import * as m_shwedagon from "./shwedagon.js"; // feature/lm-east
 import * as m_watarun from "./watarun.js"; // feature/lm-east
 import * as m_gatewayofindia from "./gatewayofindia.js"; // feature/lm-east
 import * as m_skytower from "./skytower.js"; // feature/lm-east
+import * as m_washmonument from "./washmonument.js"; // feature/lm-west
+import * as m_lincoln from "./lincoln.js"; // feature/lm-west
+import * as m_goldengate from "./goldengate.js"; // feature/lm-west
+import * as m_capitol from "./capitol.js"; // feature/lm-west
+import * as m_sagrada from "./sagrada.js"; // feature/lm-west
+import * as m_notredame from "./notredame.js"; // feature/lm-west
+import * as m_stpeters from "./stpeters.js"; // feature/lm-west
+import * as m_parthenon from "./parthenon.js"; // feature/lm-west
+import * as m_atomium from "./atomium.js"; // feature/lm-west
+import * as m_shard from "./shard.js"; // feature/lm-west
+import * as m_cologne from "./cologne.js"; // feature/lm-west
+import * as m_elcastillo from "./elcastillo.js"; // feature/lm-west
 
 export const MODELS = {
   liberty: m_liberty,
@@ -127,4 +139,16 @@ export const MODELS = {
   watarun: m_watarun,
   gatewayofindia: m_gatewayofindia,
   skytower: m_skytower,
+  washmonument: m_washmonument,
+  lincoln: m_lincoln,
+  goldengate: m_goldengate,
+  capitol: m_capitol,
+  sagrada: m_sagrada,
+  notredame: m_notredame,
+  stpeters: m_stpeters,
+  parthenon: m_parthenon,
+  atomium: m_atomium,
+  shard: m_shard,
+  cologne: m_cologne,
+  elcastillo: m_elcastillo,
 };
