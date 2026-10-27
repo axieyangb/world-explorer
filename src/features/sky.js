@@ -2,7 +2,7 @@ import * as THREE from '../../vendor/three.module.js';
 
 /**
  * Day/night sky dome material: gradient + golden-hour horizon glow + sun disc + phased moon + stars
- * + procedural drifting cloud layer + fog blend. Uniform names stay compatible with the original
+ * + aurora curtains (aurora.js) + procedural drifting cloud layer + fog blend. Uniform names stay compatible with the original
  * createAtmosphericSkyDome() (uSunDir, uZenithColor, uHorizonColor, uGroundColor, uSunColor, uSunIntensity).
  */
 export function createSkyMaterial() {
@@ -24,6 +24,10 @@ export function createSkyMaterial() {
     uFogMix: { value: 0.0 },
     uFogColor: { value: new THREE.Color(0xbfd8ec) },
     uTime: { value: 0.0 },
+    // [aurora] intensity (already x night darkness), xz unit vector toward the arc, arc ground distance (km)
+    uAurora: { value: 0.0 },
+    uAuroraDir: { value: new THREE.Vector2(0, -1) },
+    uAuroraDist: { value: 400.0 },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -56,6 +60,9 @@ export function createSkyMaterial() {
       uniform float uFogMix;
       uniform vec3 uFogColor;
       uniform float uTime;
+      uniform float uAurora;
+      uniform vec2 uAuroraDir;
+      uniform float uAuroraDist;
       varying vec3 vWorldDir;
 
       float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -124,6 +131,51 @@ export function createSkyMaterial() {
         float mieGlow = pow(sunDot, 10.0) * 0.32 * uSunIntensity;
         float sunDisc = smoothstep(0.9982, 0.9996, sunDot) * 1.35 * uSunIntensity * above;
         col += uSunColor * (mieGlow + sunDisc);
+
+        // Aurora: curtains on an arc uAuroraDist km away (and a fainter one further out), 100 km up to
+        // 210-350 km. Each view ray is intersected with the arc in true geometry (incl. Earth curvature)
+        // so a near arc stands high and a far one sinks to the horizon and bends down at its ends.
+        if (uAurora > 0.002 && y > 0.0) {
+          float hl = max(length(dir.xz), 1e-4);
+          vec2 hv = dir.xz / hl;
+          float cphi = dot(hv, uAuroraDir);
+          float tanY = y / hl;
+          vec3 aur = vec3(0.0);
+          if (cphi > 0.03) {
+            float sphi = hv.x * uAuroraDir.y - hv.y * uAuroraDir.x;
+            float ext = 110.0 + 140.0 * uAurora;
+            for (int k = 0; k < 2; k++) {
+              float fk = float(k);
+              float D = uAuroraDist * (1.0 + 0.6 * fk) + 60.0 * fk;
+              float sk = D * sphi / cphi; // km along the arc
+              float t = uTime + fk * 37.0;
+              // the curtain folds and ripples: its ground distance wanders along the arc
+              float wob = (vnoise(vec2(sk * 0.004 + t * 0.012, fk * 3.1)) - 0.5) * 160.0
+                        + (vnoise(vec2(sk * 0.013 - t * 0.03, 5.0 + fk)) - 0.5) * 50.0;
+              float dist = max(D + wob, 12.0) / cphi;
+              float alt = tanY * dist + dist * dist / 12742.0;
+              float v = (alt - 100.0) / ext;
+              if (v > -0.15 && v < 1.3) {
+                // vertical rays shimmering along the curtain, patchy brightness drifting along the arc
+                float r = vnoise(vec2(sk * 0.05 + t * 0.18, fk * 11.0)) * 0.6
+                        + vnoise(vec2(sk * 0.17 - t * 0.41, 2.0 + fk * 7.0)) * 0.4;
+                float rays = 0.25 + 1.5 * r * r;
+                float patchy = smoothstep(0.15, 0.8, vnoise(vec2(sk * 0.0022 - t * 0.02, 9.0 + fk * 4.0)) * 0.7 + vnoise(vec2(sk * 0.009 + t * 0.05, 3.0)) * 0.3);
+                float lower = smoothstep(-0.07, 0.01, v + 0.025 * sin(sk * 0.02 + t * 0.7));
+                float green = lower * exp(-max(v, 0.0) * 3.6);
+                float red = smoothstep(0.2, 0.6, v) * (1.0 - smoothstep(0.75, 1.25, v)) * (0.25 + 0.75 * smoothstep(0.35, 0.9, uAurora));
+                float fringe = smoothstep(0.02, -0.05, v) * lower * smoothstep(0.5, 1.0, uAurora);
+                vec3 c = vec3(0.16, 1.0, 0.5) * green + vec3(0.7, 0.12, 0.42) * red * 0.55 + vec3(0.85, 0.2, 0.65) * fringe * 0.8;
+                // dimmer far away and through the thick air near the horizon
+                float fade = exp(-dist / 1600.0) * (0.35 + 0.65 * smoothstep(0.0, 0.2, y));
+                aur += c * rays * patchy * fade * (1.0 - 0.45 * fk);
+              }
+            }
+            // soft airglow under the arc
+            aur += vec3(0.08, 0.5, 0.25) * 0.12 * exp(-y * 6.0) * smoothstep(0.03, 0.6, cphi) * smoothstep(1800.0, 300.0, uAuroraDist);
+          }
+          col += aur * uAurora * 0.75 * above;
+        }
 
         // Procedural cloud layer (planar projection, drifting)
         if (uCloudCover > 0.01 && y > -0.02) {

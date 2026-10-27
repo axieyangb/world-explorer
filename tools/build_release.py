@@ -77,6 +77,7 @@ MOD_ID_MAP = {
     'src/features/atmosphere.js': '__MOD_atmosphere',
     'src/features/live_sky.js': '__MOD_live_sky',  # [live-sky-weather]
     'src/features/live_weather.js': '__MOD_live_weather',  # [live-sky-weather]
+    'src/features/aurora.js': '__MOD_aurora',  # [aurora]
     'src/navigation.js': '__MOD_navigation',
     'src/map_modal.js': '__MOD_map_modal',
     # [kaiju] Kaiju Defense mode modules.
