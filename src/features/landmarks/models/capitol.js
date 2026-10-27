@@ -10,7 +10,7 @@ const H = 23;            // main cornice / balustrade height
 const SINK = -10;        // blocks reach below the base so the hillside never shows a gap
 
 export const lodDist = 1800;
-export const glowStrength = 1.15;
+export const glowStrength = 0.55;
 export const colliders = [
   { x: 0, z: 0, hw: 53, hd: 24, h: H + 2 },
   { x: 0, z: -27, hw: 26, hd: 6, h: H },

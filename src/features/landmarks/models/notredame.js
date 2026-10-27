@@ -12,7 +12,7 @@ const NW = 6.2, AW = 20;               // nave half-width (clerestory), aisle ha
 const CLER = 33, RIDGE = 43, AISLE = 20;
 
 export const lodDist = 1500;
-export const glowStrength = 1.1;
+export const glowStrength = 0.6;
 export const colliders = [
   { x: 0, z: -58, hw: 20.5, hd: 6, h: 43 },
   { x: -12.75, z: -58, hw: 7.8, hd: 6, h: 69 }, { x: 12.75, z: -58, hw: 7.8, hd: 6, h: 69 },

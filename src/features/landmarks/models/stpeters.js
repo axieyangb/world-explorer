@@ -11,7 +11,7 @@ const ZF = -108, CZ = 12;        // facade plane, crossing (dome) centre
 const H = 45;                    // main cornice / attic top of the body
 
 export const lodDist = 1800;
-export const glowStrength = 1.1;
+export const glowStrength = 0.55;
 export const colliders = [
   { x: 0, z: ZF + 6, hw: 57, hd: 6, h: 50 },
   { x: 0, z: -50, hw: 32, hd: 50, h: H },

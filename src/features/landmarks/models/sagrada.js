@@ -12,7 +12,7 @@ const TAU = Math.PI * 2;
 const CZ = 8;                 // crossing centre z
 
 export const lodDist = 1800;
-export const glowStrength = 1.15;
+export const glowStrength = 0.6;
 export const colliders = [
   { x: 0, z: -22, hw: 23, hd: 31, h: 60 },             // nave
   { x: 0, z: CZ, hw: 42, hd: 15, h: 60 },              // transept

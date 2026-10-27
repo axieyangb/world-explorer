@@ -8,7 +8,7 @@ const B0 = 55.3, BT = 19.5, N = 9, TOP = 24, TH = 2.67;   // base, top platform,
 const SW = 8.8, BW = 1.3;                                // stair width, balustrade width
 
 export const lodDist = 1200;
-export const glowStrength = 1.0;
+export const glowStrength = 0.7;
 export const colliders = [
   { x: 0, z: 0, hw: 27.6, hd: 27.6, h: 7 },
   { x: 0, z: 0, hw: 20, hd: 20, h: 16 },

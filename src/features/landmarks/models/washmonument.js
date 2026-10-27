@@ -10,7 +10,7 @@ const TAU = Math.PI * 2;
 const B0 = 16.8, B1 = 10.51, SHAFT = 152.4, TOP = 169.3, SPLIT = 46;
 
 export const lodDist = 2200;
-export const glowStrength = 1.1;
+export const glowStrength = 0.5;
 export const colliders = [
   { x: 0, z: 0, hw: 8.4, hd: 8.4, h: 80 },
   { x: 0, z: 0, hw: 6.6, hd: 6.6, h: 150 },

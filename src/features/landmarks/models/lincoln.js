@@ -14,7 +14,7 @@ const Y_ENT = P + 1.0 + COLH;       // entablature base
 const Y_ATT = Y_ENT + 4.2;          // attic base
 
 export const lodDist = 1400;
-export const glowStrength = 1.0;
+export const glowStrength = 0.5;
 export const colliders = [
   { x: 0, z: 0, hw: W / 2 + 1, hd: D / 2 + 1, h: Y_ATT },
   { x: 0, z: 0, hw: W / 2 - 4, hd: D / 2 - 4, h: 30 },

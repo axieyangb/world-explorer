@@ -12,7 +12,7 @@ const CH = 10.43, CR = 0.95;              // column height / lower radius
 const Y_ENT = ST + CH;                    // entablature base
 
 export const lodDist = 1300;
-export const glowStrength = 1.2;
+export const glowStrength = 0.65;
 export const colliders = [
   { x: 0, z: 0, hw: SW / 2 + 1.2, hd: SL / 2 + 1.2, h: ST },
   { x: -SW / 2 + 1.2, z: 0, hw: 1.3, hd: SL / 2, h: Y_ENT + 3.3 },
