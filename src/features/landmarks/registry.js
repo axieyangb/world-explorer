@@ -42,6 +42,7 @@ export const LANDMARKS = [
   { id: "washmonument", name: "Washington Monument", nameZh: "华盛顿纪念碑", lat: 38.889475, lon: -77.035243, heading: 0, height: 169.3, supp: { r: 14 }, on: true },
   { id: "lincoln", name: "Lincoln Memorial", nameZh: "林肯纪念堂", lat: 38.889272, lon: -77.050172, heading: 90, height: 30, supp: { hw: 36, hd: 82 }, on: true },
   { id: "goldengate", name: "Golden Gate Bridge", nameZh: "金门大桥", lat: 37.81976, lon: -122.478555, heading: 354.7, height: 227, supp: { hw: 30, hd: 700 }, deck: { y: 67, hw: 16, hd: 1095, crown: 5 }, on: true }, // centre = mid-span between the OSM tower piers; deck: crowned road deck (= models/goldengate.js DECK) the OSM bridge ways are pinned to
+  { id: "capitol", name: "United States Capitol", nameZh: "美国国会大厦", lat: 38.889813, lon: -77.009001, heading: 270, height: 88, supp: { hw: 120, hd: 62 }, groundR: 14, on: true }, // groundR: sample the hilltop under the rotunda, not the lower west terraces
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },
