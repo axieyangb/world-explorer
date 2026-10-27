@@ -5,6 +5,7 @@ import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js';
 import { buildBridgeDecks, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js'; // fix/water
 import { computeRoadLiftProfiles } from './features/bridge_profile.js'; // fix/bridge-continuity
 import { clearBridgeDeckBuildings } from './features/bridge_deck_buildings.js'; // [release-6-integ] Tower Bridge deck blockers
+import { makeLandmarkDeckTest } from './features/landmarks/registry.js'; // [lm-west] hand-built bridge decks replace generic piers
 import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js'; // fix/water
 import {
   getBeijingTerrainElevation,
@@ -1716,6 +1717,8 @@ function buildRoadsAndBridges(
   const bColClr = [];
   const ggbDoneBins = new Set();
   const ggbDoneTowers = new Set();
+  // [lm-west] bridge ways on a hand-built landmark deck (e.g. the Golden Gate model) get no generic piers / towers / cables
+  const lmDeckTest = makeLandmarkDeckTest(worldOrigin);
   const pushColQuad = (x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, rgb) => {
     pushQuad(bColPos, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4);
     for (let k = 0; k < 6; k++) bColClr.push(rgb[0], rgb[1], rgb[2]);
@@ -1941,6 +1944,10 @@ function buildRoadsAndBridges(
     const isGoldenGateBridge = Boolean(
       isBridge && isGoldenGateBridgeWay(name || resolvedRoadName, ox + flat[midIdx], oz + flat[midIdx + 2], worldOrigin)
     );
+    let onLandmarkDeck = false; // [lm-west] any vertex of this bridge way on a landmark model's deck
+    if (isBridge && lmDeckTest) {
+      for (let i = 0; i < nPts && !onLandmarkDeck; i++) onLandmarkDeck = lmDeckTest(ox + flat[i * 3], oz + flat[i * 3 + 2]);
+    }
     // fix/bridge-continuity: deck heights (water crossings, Golden Gate / Bay Bridge profiles, overpass clearance,
     // approach ramps) all come from computeRoadLiftProfiles, shared by every way that touches the bridge.
     const wayLift = liftProfiles[rIdx] || null;
@@ -2340,7 +2347,7 @@ function buildRoadsAndBridges(
           }
 
           // Golden Gate Bridge 3D H-Frame Suspension Towers, Parabolic Catenary Main Cables & Vertical Suspender Cables
-          if (isGoldenGateBridge && (cls === 'trunk' || cls === 'motorway' || cls === 'primary')) {
+          if (isGoldenGateBridge && !onLandmarkDeck && (cls === 'trunk' || cls === 'motorway' || cls === 'primary')) {
             const ll1 = worldXZToLatLon(ox + cx1, oz + cz1, worldOrigin);
             const ll2 = worldXZToLatLon(ox + cx2, oz + cz2, worldOrigin);
             if (ll1 && ll2) {
@@ -2412,7 +2419,11 @@ function buildRoadsAndBridges(
 
           if (isHighPedOverpass) {
             // fix/bridge-continuity: footbridge on slim columns every 18 m wherever the deck clears the ground
-            if ((rawY1 + rawY2) * 0.5 > 2.2 && Math.floor((subAccumDist + segLen) / 18) > Math.floor(subAccumDist / 18)) {
+            if (
+              (rawY1 + rawY2) * 0.5 > 2.2 &&
+              Math.floor((subAccumDist + segLen) / 18) > Math.floor(subAccumDist / 18) &&
+              !(onLandmarkDeck && lmDeckTest(ox + (cx1 + cx2) * 0.5, oz + (cz1 + cz2) * 0.5))
+            ) {
               const px = (cx1 + cx2) * 0.5;
               const pz = (cz1 + cz2) * 0.5;
               const baseTerr = Math.min(terrY1, terrY2);
@@ -2426,6 +2437,7 @@ function buildRoadsAndBridges(
             !isHighPedOverpass &&
             !isScenicArchBridge &&
             !(isGoldenGateBridge && onWater) &&
+            !(onLandmarkDeck && lmDeckTest(ox + (cx1 + cx2) * 0.5, oz + (cz1 + cz2) * 0.5)) &&
             (rawY1 + rawY2) * 0.5 > 2.8 &&
             Math.floor((subAccumDist + segLen) / 36) > Math.floor(subAccumDist / 36)
           ) {

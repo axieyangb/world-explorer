@@ -54,6 +54,8 @@ import * as m_birdsnest from "./birdsnest.js"; // feature/beijing-landmarks
 import * as m_watercube from "./watercube.js"; // feature/beijing-landmarks
 import * as m_cctv from "./cctv.js"; // feature/beijing-landmarks
 import * as m_chinazun from "./chinazun.js"; // feature/beijing-landmarks
+import * as m_washmonument from "./washmonument.js"; // feature/lm-west
+import * as m_goldengate from "./goldengate.js"; // feature/lm-west
 
 export const MODELS = {
   liberty: m_liberty,
@@ -107,4 +109,6 @@ export const MODELS = {
   watercube: m_watercube,
   cctv: m_cctv,
   chinazun: m_chinazun,
+  washmonument: m_washmonument,
+  goldengate: m_goldengate,
 };

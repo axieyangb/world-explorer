@@ -174,6 +174,9 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/watercube.js': '__MOD_landmarks_models_watercube',
     'src/features/landmarks/models/chinazun.js': '__MOD_landmarks_models_chinazun',
     'src/features/landmarks/models/cctv.js': '__MOD_landmarks_models_cctv',
+    # [lm-west] Europe & Americas landmark models
+    'src/features/landmarks/models/washmonument.js': '__MOD_landmarks_models_washmonument',
+    'src/features/landmarks/models/goldengate.js': '__MOD_landmarks_models_goldengate',
     'src/main.js': '__MOD_main',
 }
 
