@@ -17,6 +17,7 @@ OUT_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'world_explorer.ht
 
 MOD_ID_MAP = {
     'vendor/three.module.js': '__MOD_three',
+    'vendor/satellite.module.js': '__MOD_satellite',  # [satellites] satellite.js (MIT)
     'src/i18n.js': '__MOD_i18n',
     'src/wfc/wfc_archetypes.js': '__MOD_wfc_archetypes',
     'src/global_tiles.js': '__MOD_global_tiles',
@@ -79,6 +80,7 @@ MOD_ID_MAP = {
     'src/features/live_weather.js': '__MOD_live_weather',  # [live-sky-weather]
     'src/features/aurora.js': '__MOD_aurora',  # [aurora]
     'src/features/sea_state.js': '__MOD_sea_state',  # [sea-state]
+    'src/features/satellites.js': '__MOD_satellites',  # [satellites]
     'src/navigation.js': '__MOD_navigation',
     'src/map_modal.js': '__MOD_map_modal',
     # [kaiju] Kaiju Defense mode modules.
