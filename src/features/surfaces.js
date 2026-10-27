@@ -1,4 +1,5 @@
 import * as THREE from '../../vendor/three.module.js';
+import { isTouchDevice } from './touch_controls.js';
 
 /**
  * Weather/sky-aware surface shaders, patched in-place onto the shared materials via onBeforeCompile
@@ -6,7 +7,8 @@ import * as THREE from '../../vendor/three.module.js';
  *   - waterMat:   animated normal waves, fresnel sky reflection, sun glint, shoreline foam
  *   - roadMat:    wet look in rain (darker albedo, low roughness, puddles, streaky sky reflections)
  *   - terrainMat / parkMat: slight wet darkening
- * All materials share one uniform set (SURFACE_UNIFORMS) driven by src/features/atmosphere.js.
+ * All materials share one uniform set (SURFACE_UNIFORMS) driven by src/features/atmosphere.js;
+ * the uSea* / uSwell / uWhitecap terms come from src/features/sea_state.js (live sea state).
  */
 export const SURFACE_UNIFORMS = {
   uAtmoTime: { value: 0 },
@@ -16,6 +18,11 @@ export const SURFACE_UNIFORMS = {
   uSkyHorizon: { value: new THREE.Color(0xbfd8ec) },
   uLightLevel: { value: 1 },
   uNightGlow: { value: 0 },
+  // [sea-state] chop amplitude scale; wind (toward dirX, dirZ, alignment 0..1); swell (dirX, dirZ, k, slope)
+  uSeaChop: { value: 0.8 },
+  uSeaWind: { value: new THREE.Vector3(0.94, 0.34, 0.3) },
+  uSwell: { value: new THREE.Vector4(0.94, 0.34, 0.06, 0.03) },
+  uWhitecap: { value: 0 },
 };
 
 const NOISE_GLSL = `
@@ -83,7 +90,14 @@ function patchWater(mat) {
         .replace(
           '#include <common>',
           `#include <common>\n${COMMON_PARS}\nvarying vec2 vShoreUv;
-          vec2 waterWaveGrad(vec2 p, float t, float fade) {
+          ${isTouchDevice() ? '#define WATER_LITE' : ''}
+          uniform float uSeaChop;
+          uniform vec3 uSeaWind;
+          uniform vec4 uSwell;
+          uniform float uWhitecap;
+          float wSwellCrest;
+          // chopS / swellS: local sea-state scale (rivers + near-shore water stay calmer than open sea)
+          vec2 waterWaveGrad(vec2 p, float t, float fade, float chopS, float swellS) {
             vec2 g = vec2(0.0);
             // (dirX, dirZ, wavenumber, amplitude*k) summed directional waves
             vec4 w[6];
@@ -97,8 +111,24 @@ function patchWater(mat) {
               float k = w[i].z;
               float ph = dot(w[i].xy, p) * k + t * sqrt(9.8 * k);
               float hf = (i >= 4) ? fade * fade : fade;
-              g += w[i].xy * cos(ph) * w[i].w * hf;
+              // waves travel along -dir: those running with the wind grow, those against it shrink
+              float al = max(0.25, 1.0 + uSeaWind.z * 0.7 * (dot(-w[i].xy, uSeaWind.xy) - 0.25));
+              g += w[i].xy * cos(ph) * w[i].w * hf * al;
             }
+            // gusty patches (cat's paws) so strong chop never reads as one regular stripe pattern
+            float gust = 0.45 + 1.1 * atmoNoise(p * 0.021 + uSeaWind.xy * (t * 0.35));
+            g *= uSeaChop * chopS * mix(1.0, gust, clamp(uSeaChop - 0.5, 0.0, 1.0));
+            // long swell from the real direction (two close components so crests are not ruler-straight)
+            vec2 sd = uSwell.xy;
+            vec2 sd2 = vec2(sd.x * 0.978 - sd.y * 0.208, sd.x * 0.208 + sd.y * 0.978);
+            float k1 = uSwell.z, k2 = uSwell.z * 1.37;
+            float p1 = dot(sd, p) * k1 - t * sqrt(9.8 * k1);
+            float p2 = dot(sd2, p) * k2 - t * sqrt(9.8 * k2) + 1.7;
+            // wave groups: a slow large-scale envelope so the swell comes in sets, not endless stripes
+            float env = 0.3 + 1.4 * atmoNoise(p * 0.0045 + sd * (t * 0.012));
+            float sa = uSwell.w * swellS * env * mix(0.55, 1.0, fade);
+            g += (sd * cos(p1) + sd2 * (cos(p2) * 0.45)) * sa;
+            wSwellCrest = (sin(p1) * 0.7 + sin(p2) * 0.3) * min(env, 1.0);
             return g;
           }`
         )
@@ -107,7 +137,11 @@ function patchWater(mat) {
           `#include <normal_fragment_maps>
           float wDist = length(vAtmoWorld - cameraPosition);
           float wFade = 1.0 / (1.0 + wDist * 0.006);
-          vec2 wg = waterWaveGrad(vAtmoWorld.xz, uAtmoTime, wFade) * (1.0 + uRain * 0.6);
+          float wShore = vShoreUv.y > 0.5 ? (vShoreUv.y - 1.0 - abs(vShoreUv.x)) : 1000.0;
+          float wRiver = step(0.01, abs(vShoreUv.x));
+          float wOpen = smoothstep(2.0, 30.0, wShore) * (1.0 - wRiver);
+          vec2 wg = waterWaveGrad(vAtmoWorld.xz, uAtmoTime, wFade, mix(0.35, 1.0, wOpen), wOpen * 0.85 + 0.15 * (1.0 - wRiver))
+            * (1.0 + uRain * 0.6);
           // rain ripples
           float rp = atmoNoise(vAtmoWorld.xz * 1.7 + vec2(uAtmoTime * 1.3, -uAtmoTime));
           float rq = atmoNoise(vAtmoWorld.xz * 1.7 + vec2(-uAtmoTime, uAtmoTime * 1.1) + 7.3);
@@ -132,11 +166,29 @@ function patchWater(mat) {
             float shallow = 1.0 - smoothstep(0.0, 12.0, shoreDist);
             outgoingLight *= 1.0 - 0.25 * shallow;
             outgoingLight = mix(outgoingLight, vec3(0.86, 0.9, 0.92) * uLightLevel, clamp(foam, 0.0, 1.0) * 0.75);
+            // [sea-state] whitecaps: wind-streaked patches riding the swell crests, open water only
+            if (uWhitecap > 0.001 && wOpen > 0.01) {
+              vec2 wd = uSeaWind.xy;
+              vec2 q = vec2(dot(vAtmoWorld.xz, wd) - uAtmoTime * 2.2, dot(vAtmoWorld.xz, vec2(-wd.y, wd.x)));
+              float n = atmoNoise(q * vec2(0.05, 0.085) + vec2(0.0, uAtmoTime * 0.05)) * 0.65
+                      + atmoNoise(q * vec2(0.16, 0.26) + 4.7) * 0.35;
+              float th = 1.07 - uWhitecap * 0.3;
+              float cap = smoothstep(th, th + 0.12, n * 0.78 + (wSwellCrest * 0.5 + 0.5) * 0.4);
+              // lacy breakup so a cap is broken foam, not a cotton-wool blob
+              cap *= smoothstep(0.25, 0.65, atmoNoise(q * vec2(0.42, 0.7) + 9.1));
+              #ifndef WATER_LITE
+              cap *= 0.72 + 0.28 * atmoNoise(q * vec2(1.6, 2.4) + 2.3);
+              #endif
+              // far away: average coverage instead of sub-pixel speckle
+              cap = mix(cap, uWhitecap * 0.12, smoothstep(220.0, 900.0, wDist));
+              outgoingLight *= 1.0 - 0.14 * uWhitecap * wOpen; // heavy sea reads darker, greyer
+              outgoingLight = mix(outgoingLight, vec3(0.9, 0.93, 0.95) * uLightLevel, clamp(cap * wOpen, 0.0, 1.0) * 0.85);
+            }
           }
           #include <opaque_fragment>`
         );
     },
-    'atmo-water-1'
+    isTouchDevice() ? 'atmo-water-2-lite' : 'atmo-water-2'
   );
 }
 

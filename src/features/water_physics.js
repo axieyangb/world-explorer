@@ -304,9 +304,10 @@ export class WaterPhysics {
     if (mesh) {
       mesh.position.copy(p);
       const sp = s.tSplash < 0 ? 0 : smooth01((s.t - s.tSplash) / 1.2);
-      mesh.rotation.x = THREE.MathUtils.lerp(mesh.rotation.x, 0.16 * sp + Math.sin(s.t * 3.1) * 0.03 * sp, Math.min(1, 6 * dt));
+      const sea = app.seaState ? app.seaState.motion : 1; // [sea-state] rougher sea, more wallowing
+      mesh.rotation.x = THREE.MathUtils.lerp(mesh.rotation.x, 0.16 * sp + Math.sin(s.t * 3.1) * 0.03 * sp * sea, Math.min(1, 6 * dt));
       const ch = mesh.userData && mesh.userData.chassis;
-      if (ch) ch.rotation.z = THREE.MathUtils.lerp(ch.rotation.z, Math.sin(s.t * 2.3) * 0.06 * sp, Math.min(1, 6 * dt));
+      if (ch) ch.rotation.z = THREE.MathUtils.lerp(ch.rotation.z, Math.sin(s.t * 2.3) * 0.06 * sp * sea, Math.min(1, 6 * dt));
     }
     const since = s.tSplash < 0 ? 0 : s.t - s.tSplash;
     if (!s.faded && since > 2.0) { s.faded = true; s.fadeT = s.t; this._fade(1); }
@@ -406,7 +407,9 @@ export class WaterPhysics {
 
   /** Helicopter: minimum altitude over water (2 m above the surface), -Infinity elsewhere. */
   heliMinY(wx, wz) {
-    return this.isPointInWater(wx, wz) ? this.getWaterSurfaceY(wx, wz) + 2.0 : -Infinity;
+    if (!this.isPointInWater(wx, wz)) return -Infinity;
+    const sea = this.app.seaState; // [sea-state] keep clear of the swell crests in a heavy sea
+    return this.getWaterSurfaceY(wx, wz) + 2.0 + (sea ? Math.min(3, sea.waveHeight * 0.5) : 0);
   }
 
   // ---------------------------------------------------------------- effects

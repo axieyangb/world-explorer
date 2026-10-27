@@ -81,6 +81,7 @@ import { initAtmosphere } from "./features/atmosphere.js"; // feature/atmosphere
 import { initLiveSky } from "./features/live_sky.js"; // [live-sky-weather]
 import { initLiveWeather } from "./features/live_weather.js"; // [live-sky-weather]
 import { initAurora } from "./features/aurora.js"; // [aurora]
+import { initSeaState } from "./features/sea_state.js"; // [sea-state]
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
 import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
@@ -505,6 +506,7 @@ class WorldExplorerApp {
     this.liveSky = initLiveSky(this); // [live-sky-weather] real aircraft (needs places' airliner geometry)
     this.liveWeather = initLiveWeather(this); // [live-sky-weather] real weather -> atmosphere
     this.aurora = initAurora(this); // [aurora] live NOAA aurora nowcast -> night sky
+    this.seaState = initSeaState(this); // [sea-state] live waves/swell -> water shader + ship motion
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
     this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
@@ -2861,6 +2863,7 @@ class WorldExplorerApp {
     if (this.liveSky) this.liveSky.update(dt); // [live-sky-weather] after places: may hide simulated jets
     if (this.liveWeather) this.liveWeather.update(dt); // [live-sky-weather]
     if (this.aurora) this.aurora.update(dt); // [aurora]
+    if (this.seaState) this.seaState.update(dt); // [sea-state] after live weather (reads its wind)
     if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
     if (this.placesInfo) this.placesInfo.update(dt); // places-info
     if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
