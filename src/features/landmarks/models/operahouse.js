@@ -6,6 +6,7 @@
 const TILE = 0xffffff, TILE2 = 0xefece4, RIB = 0xe2dccd, GLASS = 0x5e4c3a, GLASS_DK = 0x4a3c2e;
 const POD = 0xc6a385, POD_DK = 0xa9876b, STEP = 0xd3bc9c, PAVE = 0xbfae96;
 const PT = 7; // podium top
+const SKIRT = -22; // podium / steps base below the model origin
 
 export const lodDist = 1500;
 export const glowStrength = 0.8;
@@ -86,7 +87,9 @@ export function build(k) {
   const hi = k.hi;
   // podium: rectangle with chamfered harbour corners
   const pod = [[-60, 64], [60, 64], [60, -78], [44, -96], [-44, -96], [-60, -78]];
-  k.color(POD).extrude(pod, 0, PT - 0.6);
+  // podium walls run down to SKIRT so the coarse DEM (often a hump under big buildings) never leaves it
+  // or the steps standing on air above the forecourt and the harbour
+  k.color(POD).extrude(pod, SKIRT, PT - 0.6 - SKIRT);
   k.color(PAVE).extrude(pod.map(([x, z]) => [x * 1.005, z * 1.005]), PT - 0.6, 0.6);
   if (hi) {
     // dark band (broadwalk colonnade) around the podium base
@@ -97,7 +100,7 @@ export function build(k) {
   const stepD = 30 / nSt, stepH = PT / nSt;
   for (let s = 0; s < nSt; s++) {
     const y = PT - (s + 1) * stepH;
-    k.color(s % 2 && hi ? STEP : POD).box(0, 0, 64 + s * stepD + stepD / 2, 97, y + stepH, stepD);
+    k.color(s % 2 && hi ? STEP : POD).box(0, SKIRT, 64 + s * stepD + stepD / 2, 97, y + stepH - SKIRT, stepD);
   }
   // shell groups
   // Concert Hall (west, larger)
