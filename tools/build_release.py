@@ -174,6 +174,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/watercube.js': '__MOD_landmarks_models_watercube',
     'src/features/landmarks/models/chinazun.js': '__MOD_landmarks_models_chinazun',
     'src/features/landmarks/models/cctv.js': '__MOD_landmarks_models_cctv',
+    'src/features/landmarks/models/burjalarab.js': '__MOD_landmarks_models_burjalarab',  # [lm-east]
     'src/features/landmarks/models/lotustemple.js': '__MOD_landmarks_models_lotustemple',  # [lm-east]
     'src/features/landmarks/models/taipei101.js': '__MOD_landmarks_models_taipei101',  # [lm-east]
     'src/main.js': '__MOD_main',
