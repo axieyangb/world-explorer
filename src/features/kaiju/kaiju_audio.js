@@ -186,6 +186,24 @@ export class KaijuAudio {
     if (src._off !== undefined) src.start(t, src._off); else src.start(t);
     src.stop(t + dur + 0.1);
     v.srcs.push(src);
+    // Unplug the voice once its last source ends: finished voices left connected to the shared reverb pile up
+    // and starve the audio thread in long fights (sound drops out until it catches up).
+    v.pending = (v.pending || 0) + 1;
+    src.onended = () => { if (--v.pending <= 0) this._release(v); };
+  }
+
+  _release(v) {
+    if (v.released) return;
+    v.released = true;
+    v.stopped = true;
+    for (const n of [v.in, v.lp, v.out, v.pan, v.send]) {
+      if (!n) continue;
+      try { n.disconnect(); } catch (e) { /* already disconnected */ }
+    }
+    for (const s of v.srcs) { try { s.disconnect(); } catch (e) { /* ended */ } }
+    v.srcs.length = 0;
+    const i = this.loops.indexOf(v);
+    if (i >= 0) this.loops.splice(i, 1);
   }
 
   _stopVoice(v, fade = 0.15) {
