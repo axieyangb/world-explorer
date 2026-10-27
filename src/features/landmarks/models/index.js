@@ -61,6 +61,7 @@ import * as m_hagiasophia from "./hagiasophia.js"; // feature/lm-east
 import * as m_sheikhzayed from "./sheikhzayed.js"; // feature/lm-east
 import * as m_angkorwat from "./angkorwat.js"; // feature/lm-east
 import * as m_shwedagon from "./shwedagon.js"; // feature/lm-east
+import * as m_watarun from "./watarun.js"; // feature/lm-east
 
 export const MODELS = {
   liberty: m_liberty,
@@ -121,4 +122,5 @@ export const MODELS = {
   sheikhzayed: m_sheikhzayed,
   angkorwat: m_angkorwat,
   shwedagon: m_shwedagon,
+  watarun: m_watarun,
 };
