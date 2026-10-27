@@ -174,6 +174,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/watercube.js': '__MOD_landmarks_models_watercube',
     'src/features/landmarks/models/chinazun.js': '__MOD_landmarks_models_chinazun',
     'src/features/landmarks/models/cctv.js': '__MOD_landmarks_models_cctv',
+    'src/features/landmarks/models/skytower.js': '__MOD_landmarks_models_skytower',  # [lm-east]
     'src/features/landmarks/models/gatewayofindia.js': '__MOD_landmarks_models_gatewayofindia',  # [lm-east]
     'src/features/landmarks/models/watarun.js': '__MOD_landmarks_models_watarun',  # [lm-east]
     'src/features/landmarks/models/shwedagon.js': '__MOD_landmarks_models_shwedagon',  # [lm-east]

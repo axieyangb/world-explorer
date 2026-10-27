@@ -58,6 +58,7 @@ export const LANDMARKS = [
   { id: "shwedagon", name: "Shwedagon Pagoda", nameZh: "仰光大金塔", lat: 16.798337, lon: 96.149626, heading: 0, height: 99, supp: { r: 58 }, on: true },
   { id: "watarun", name: "Wat Arun", nameZh: "郑王庙（黎明寺）", lat: 13.743697, lon: 100.488905, heading: 73, height: 79, supp: { hw: 29, hd: 29 }, on: true },
   { id: "gatewayofindia", name: "Gateway of India", nameZh: "印度门（孟买）", lat: 18.921966, lon: 72.834566, heading: 141.5, height: 28, supp: { hw: 26, hd: 13 }, on: true },
+  { id: "skytower", name: "Sky Tower", nameZh: "天空塔（奥克兰）", lat: -36.848473, lon: 174.762186, heading: 0, height: 328, supp: { r: 16 }, on: true },
   // --- Beijing (feature/beijing-landmarks). WGS84 / OSM-aligned positions (NOT GCJ-02 map coords). `replaces` lists
   // the old src/landmarks_40.js ids that are disabled while this entry is on (each landmark renders in one system only).
   { id: "tiananmen", name: "Tiananmen Gate", nameZh: "天安门", lat: 39.907338, lon: 116.391265, heading: 178.25, height: 34.7, supp: { hw: 62, hd: 24 }, replaces: ["tiananmen_rostrum"], on: true, chip: true },
