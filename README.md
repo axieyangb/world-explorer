@@ -51,10 +51,10 @@ Try it:
 | :-- | :-- |
 | 🚁 **Fly, drive, walk** | An arcade helicopter with auto-land and rooftop landings, a garage of 11 vehicles from taxis and buses to a Mach-1 hypercar and a tank, and on foot. |
 | 🏙️ **Living cities** | AI traffic and pedestrians on the real road network, driving on the correct side for each country. Traffic lights, signs, street lamps, trees, trains and ferries. |
-| ✈️ **Live data** | Current local weather everywhere, live trains and ships where open feeds exist, and real aircraft overhead when served by `server.py`. |
-| 🌅 **Sky and climate** | Sun and moon at true local time, rain, fog and cloud, and vegetation chosen for each region's climate zone. |
+| ✈️ **Live data** | The real local time and weather wherever you are, the real sea state on the water, the northern lights when they're out, real satellites and the ISS crossing the night sky, live trains and ships where open feeds exist, and real aircraft overhead when served by `server.py`. |
+| 🌅 **Sky and climate** | Sun, moon and stars in the right place for the real time, rain, fog, snow and cloud, and vegetation chosen for each region's climate zone. Pick dawn, noon, dusk or night any time; *Now* goes back to live. |
 | 🗼 **Landmarks** | 51 hand-modelled icons at their real coordinates: Eiffel Tower, Burj Khalifa, Empire State, Tower Bridge, the Pyramids, Taj Mahal, Sydney Opera House, Tokyo Skytree and more. |
-| 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at. |
+| 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at, with a one-tap *Edit map* link to fix that spot on OpenStreetMap. |
 | 🦖 **Kaiju Defense** | A giant creature rises from the nearest water. Defend the city as a gunship, tank or soldier. |
 | 🌐 **English / 中文** | Full bilingual interface with local road names. |
 | 📱 **Phones and tablets** | On-screen joystick and action buttons, drag to look, pinch to zoom. Add it to your home screen to play full screen. |
@@ -84,7 +84,8 @@ Try it:
 Drag the view to look around, pinch to zoom, tap the mode button at the top to switch, and tap **MAP** then anywhere to go there.
 Touch controls appear automatically on touch devices; `?touch=1` or `?touch=0` forces them on or off.
 
-**URL options:** `?lat=…&lon=…&name=…` start location · `?time=0-24` time of day · `?weather=clear|cloudy|rain|fog`
+**URL options:** `?lat=…&lon=…&name=…` start location · `?time=0-24` time of day · `?weather=clear|cloudy|rain|fog` ·
+`?sea=calm|moderate|rough|storm` · `?aurora=0-1|off` · `?sats=off|starlink` (adds the full Starlink fleet)
 
 ## Run it yourself
 
@@ -121,7 +122,8 @@ changing the source with `python3 tools/build_release.py`, and register any new 
 All open data, fetched straight from the browser:
 map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors via
 [OpenFreeMap](https://openfreemap.org) and Overpass · elevation from AWS Terrarium tiles (Mapzen) ·
-search by Photon, Nominatim and BigDataCloud · weather by [Open-Meteo](https://open-meteo.com) ·
+search by Photon, Nominatim and BigDataCloud · weather and sea state by [Open-Meteo](https://open-meteo.com) ·
+aurora nowcast from [NOAA SWPC](https://www.swpc.noaa.gov) · satellite orbits from [CelesTrak](https://celestrak.org) via satellite.js (MIT) ·
 aircraft from OpenSky, adsb.fi and adsb.lol · ships from Fintraffic Digitraffic (CC BY 4.0) ·
 trains from the BART API · climate zones from Köppen–Geiger (Kottek et al. 2006) ·
 buildings enriched with [Overture Maps](https://overturemaps.org) · rendering by [Three.js](https://threejs.org).
