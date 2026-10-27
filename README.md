@@ -53,7 +53,7 @@ Try it:
 | 🏙️ **Living cities** | AI traffic and pedestrians on the real road network, driving on the correct side for each country. Traffic lights, signs, street lamps, trees, trains and ferries. |
 | ✈️ **Live data** | The real local time and weather wherever you are, the real sea state on the water, the northern lights when they're out, real satellites and the ISS crossing the night sky, live trains and ships where open feeds exist, and real aircraft overhead when served by `server.py`. |
 | 🌅 **Sky and climate** | Sun, moon and stars in the right place for the real time, rain, fog, snow and cloud, and vegetation chosen for each region's climate zone. Pick dawn, noon, dusk or night any time; *Now* goes back to live. |
-| 🗼 **Landmarks** | 51 hand-modelled icons at their real coordinates: Eiffel Tower, Burj Khalifa, Empire State, Tower Bridge, the Pyramids, Taj Mahal, Sydney Opera House, Tokyo Skytree and more. |
+| 🗼 **Landmarks** | 73 hand-modelled icons at their real coordinates: the Golden Gate Bridge, Eiffel Tower, Sagrada Família, Hagia Sophia, Burj Khalifa, Taipei 101, Angkor Wat, the Pyramids, Taj Mahal, Sydney Opera House, the US Capitol and more. |
 | 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at, with a one-tap *Edit map* link to fix that spot on OpenStreetMap. |
 | 🦖 **Kaiju Defense** | A giant creature rises from the nearest water. Defend the city as a gunship, tank or soldier. |
 | 🌐 **English / 中文** | Full bilingual interface with local road names. |
