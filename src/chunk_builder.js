@@ -1014,7 +1014,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         // [feature/vegetation] Landcover ground mesh + instanced street/park/forest trees (replaces legacy buildVegetation)
         root.userData.vegInstances = buildVegetationLayer({
           cx, cz, ox, oz, data, roadSegments, isPointInWater, isPointInSunkenTrench,
-          terrainGroup: subGroups.terrain,
+          terrainGroup: subGroups.terrain, worldOrigin, // [lm-west] worldOrigin: no trees inside landmark footprints
         });
 
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)

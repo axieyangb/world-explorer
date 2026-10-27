@@ -46,6 +46,7 @@ export const LANDMARKS = [
   { id: "sagrada", name: "Sagrada Família", nameZh: "圣家堂", lat: 41.403537, lon: 2.174339, heading: 135.2, height: 172.5, supp: { hw: 50, hd: 60 }, on: true },
   { id: "notredame", name: "Notre-Dame de Paris", nameZh: "巴黎圣母院", lat: 48.852973, lon: 2.34991, heading: 296.4, height: 96, supp: { hw: 34, hd: 70 }, on: true },
   { id: "stpeters", name: "St Peter's Basilica", nameZh: "圣彼得大教堂", lat: 41.902156, lon: 12.453729, heading: 89.4, height: 136.6, supp: { hw: 78, hd: 112 }, on: true },
+  { id: "parthenon", name: "Parthenon", nameZh: "帕特农神庙", lat: 37.971503, lon: 23.726618, heading: 77.1, height: 19, supp: { hw: 19, hd: 38 }, on: true },
   // --- Asia / Oceania / Middle East / Africa
   { id: "operahouse", name: "Sydney Opera House", nameZh: "悉尼歌剧院", lat: -33.85678, lon: 151.2153, heading: 337, height: 65, supp: { hw: 70, hd: 100 }, on: true },
   { id: "harbourbridge", name: "Sydney Harbour Bridge", nameZh: "悉尼海港大桥", lat: -33.85234, lon: 151.21071, heading: 10, height: 134, supp: { hw: 30, hd: 290 }, on: true },

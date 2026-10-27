@@ -11,6 +11,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { getBeijingTerrainElevation, getBeijingDemState, snowCover } from '../environment.js';
 import { floraContext, pickFlora, floraLook, floraBush, orchardEntry } from './flora_climate.js'; // [feature/climate-flora]
+import { makeLandmarkSuppressor } from './landmarks/registry.js'; // [lm-west] keep trees out of hand-built landmarks
 import {
   LC_RESIDENTIAL,
   LC_COMMERCIAL,
@@ -973,7 +974,7 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
  * Chunk hook: builds the landcover & rich athletic/pool/plaza/step meshes into `terrainGroup`
  * and returns the vegetation instance table.
  */
-export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPointInWater, isPointInSunkenTrench, terrainGroup }) {
+export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPointInWater, isPointInSunkenTrench, terrainGroup, worldOrigin = null }) {
   const src = data.vegetation || {};
   const landPolys = src.landcover || [];
 
@@ -1095,8 +1096,10 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (propsMesh) terrainGroup.add(propsMesh);
   }
 
+  const lmSuppress = worldOrigin ? makeLandmarkSuppressor(worldOrigin) : null; // [lm-west] world-space footprint test
   const groundOk = (x, z, roadClear, bldgClear, waterClear) => {
     if (x < -500 || x >= 500 || z < -500 || z >= 500) return false;
+    if (lmSuppress && lmSuppress(ox + x, oz + z)) return false;
     if (isPointInWater && isPointInWater(x, z, waterClear)) return false;
     if (isPointInSunkenTrench && isPointInSunkenTrench(x, z)) return false;
     if (roadClearance(x, z) < roadClear) return false;
