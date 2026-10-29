@@ -423,6 +423,7 @@ export class MapSystem {
     if (open) {
       this._resize();
       this._applyLabels();
+      const credit = this.app?.maritime?.creditText?.(); this.modalEl.querySelector('.wm-attrib').textContent = `© OpenStreetMap · OpenFreeMap${credit ? ` · ${credit}` : ''}`; // [live-ships]
       if (!this._opened || !this.pin) this._centerOnPlayer(!this._opened ? OPEN_ZOOM : null);
       this._opened = true;
       this._updateNavLine(performance.now(), true);
