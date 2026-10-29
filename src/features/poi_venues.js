@@ -700,7 +700,7 @@ export function buildPoiVenues(ctx) {
       const E = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
       sign(E, 0, Hc + Th * 0.52, hl + 0.03, Math.min(2 * hw - 1.5, txtW), Th * 0.36 - 0.04, 2, nm || '加油站', nameEn || nm || 'GAS', toHex(scheme[0]), 0xffffff);
     }
-    poolRect(F, hl, hw, 3.5, C.lightCool, 0.75);
+    poolRect(F, hl, hw, 3.5, C.lightCool, 0.38);
     zones.fuel.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, hl, hw]);
     for (const p of pumpIds) zones.pumps.push(p);
     // --- price sign pylon by the road
@@ -1162,7 +1162,7 @@ export function buildPoiVenues(ctx) {
       for (let lx = bx0 + 3 * BW; lx < bx0 + nB * BW - 1; lx += 8 * BW) {
         const [wx, , wz] = F.p(lx, 0, zz);
         push('lotLamp', wx, groundTop(wx, wz), wz, F.rotY(), 1, 1, 1, 0xffffff);
-        pool(wx, wz, 9, C.lightWarm, 0.32, 0.105);
+        pool(wx, wz, 9, C.lightWarm, 0.2, 0.105);
       }
     }
     // cart returns in a couple of bays, parked cars in the rest (busier near the door)
