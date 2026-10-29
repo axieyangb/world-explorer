@@ -90,7 +90,7 @@ export function appendInfillBuilding(b, ox, oz, getY, region, out) {
     const r = emitRoof(out, ring, [], plan, yTop, { wallRgb: [Math.min(1, av[0] * wall[0] * 1.15), Math.min(1, av[1] * wall[1] * 1.15), Math.min(1, av[2] * wall[2] * 1.15)], lod: 'cheap', seed });
     if (r) {
       out.colliders.push({ minX: minX + ox, maxX: maxX + ox, minZ: minZ + oz, maxZ: maxZ + oz, h: r.ridgeY, flatOuter, ox, oz, id: osmId, pitched: true });
-      addHouse(rc, ring, cx, cz, osmId, plan.shape);
+      addHouse(rc, ring, cx, cz, osmId, plan.shape, btype);
       return;
     }
   }

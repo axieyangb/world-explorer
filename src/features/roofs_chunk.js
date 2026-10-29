@@ -71,19 +71,26 @@ export function roofFlav(ctx, cx, cz) {
   return g ? g[4] : 0.5;
 }
 
-/** Registers a pitched-roof building (entity + collider flags; small ones become yard candidates). */
+const HOUSE_YARD_TYPES = new Set([
+  'house', 'detached', 'semidetached_house', 'terrace', 'bungalow', 'villa', 'residential', 'yes',
+]);
+
+/** Registers a pitched-roof building (entity + collider flags; small residential ones become yard candidates). */
 export function noteRoofHouse(ctx, entityRecord, meta, ring, cx, cz, id, colliders) {
   entityRecord.roofShape = meta.roofShape;
   for (let i = colliders.length - 1; i >= 0 && i >= colliders.length - 4; i--) {
     if (colliders[i].id === id) { colliders[i].pitched = true; break; }
   }
-  if (ctx) addHouse(ctx, ring, cx, cz, id, meta.roofShape);
+  if (ctx) addHouse(ctx, ring, cx, cz, id, meta.roofShape, entityRecord.btype);
 }
 
-export function addHouse(ctx, ring, cx, cz, id, shape) {
-  if (shape === 'mansard') return;
+export function addHouse(ctx, ring, cx, cz, id, shape, btype = 'yes') {
+  if (!ctx || shape === 'mansard') return;
+  const bt = String(btype || 'yes').toLowerCase();
+  if (!HOUSE_YARD_TYPES.has(bt)) return;
+  if (roofFlav(ctx, cx, cz) < 0.28) return; // never fence commercial, office, institutional or industrial parcels
   const obb = footprintObb(ring);
-  if (!obb || obb.area > 420 || obb.area < 40) return;
+  if (!obb || obb.area > 360 || obb.area < 45) return;
   const seed = ((Math.round((ctx.ox + cx) * 7.1) * 73856093) ^ (Math.round((ctx.oz + cz) * 7.1) * 19349663)) >>> 0;
   ctx.houses.push({ ring, cx, cz, obb, region: ctx.arch, seed, id, warm: ctx.warm });
 }

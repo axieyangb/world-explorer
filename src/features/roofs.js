@@ -80,7 +80,9 @@ const PITCHED_TYPES = new Set(['house', 'detached', 'semidetached_house', 'terra
   'garage', 'farm', 'barn', 'farm_auxiliary', 'stable', 'church', 'chapel', 'static_caravan', 'villa', 'dormitory']);
 const FLAT_TYPES = new Set(['commercial', 'retail', 'industrial', 'warehouse', 'office', 'supermarket', 'mall', 'hospital',
   'parking', 'garages', 'hotel', 'government', 'public', 'civic', 'stadium', 'train_station', 'transportation',
-  'university', 'department_store', 'manufacture', 'data_center', 'hangar', 'bunker', 'grandstand', 'roof']);
+  'university', 'school', 'college', 'kindergarten', 'campus', 'tech_campus', 'kiosk', 'pavilion', 'service',
+  'toilets', 'carport', 'canopy', 'guardhouse', 'security', 'laboratory', 'research',
+  'department_store', 'manufacture', 'data_center', 'hangar', 'bunker', 'grandstand', 'roof']);
 
 // POI-derived types (a shop or hotel on the ground floor) say nothing about the roof of a European old-town block
 const SOFT_FLAT = new Set(['commercial', 'retail', 'hotel', 'office', 'civic', 'public', 'government']);
@@ -277,9 +279,10 @@ export function planRoof(info) {
       if (rawH > R.hMax || area > R.aMax || area < 14) return null;
       if (holes && region !== 'med' && region !== 'eu') return null;
       if ((info.flav ?? 0.5) < -0.35) return null; // industrial / works yards
-      if (region === 'us' || region === 'la') {
-        // a big low box in a dense commercial strip is a store, not a house
-        if (area > 260 && (info.flav ?? 0.5) < 0.15) return null;
+      if (btype === 'yes' && (info.flav ?? 0.5) < 0.25) return null; // commercial / office / institutional campus (flav <= 0.2)
+      if (region === 'us' || region === 'la' || region === 'sf') {
+        // a big low box in a dense commercial strip is a store/office, not a house
+        if (area > 240 && (info.flav ?? 0.5) < 0.3) return null;
       }
       if (rnd(seed, 11) > R.p) return null;
       shape = 'pitch';

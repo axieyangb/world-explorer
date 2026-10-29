@@ -142,11 +142,11 @@ function dragonscalePavilion(k, cx, cz, w, d, hPeak) {
 export function build(k) {
   const hi = k.hi;
 
-  // 1. Landscaped Charleston Park & central Googleplex courtyard plaza
-  k.glow(false).color(LAWN).box(0, -2.2, 0, 236, 2.4, 156);
-  k.color(PAVE).box(0, 0.2, 0, 138, 0.22, 46);
-  k.color(PAVE).box(0, 0.2, 0, 38, 0.22, 128);
-  k.color(WOOD).cyl(0, 0.25, 0, 18, 18, 0.25, hi ? 24 : 12);
+  // 1. Open central Googleplex courtyard lawn & plaza walkways (flush with ground, no perimeter wall/slab)
+  k.glow(false).color(LAWN).box(0, -0.3, 0, 152, 0.36, 40);
+  k.color(PAVE).box(0, -0.2, 0, 132, 0.30, 32);
+  k.color(PAVE).box(0, -0.2, 0, 32, 0.30, 112);
+  k.color(WOOD).cyl(0, 0.08, 0, 16, 16, 0.14, hi ? 24 : 12);
 
   // 2. Four main Googleplex courtyard buildings (B40, B41, B42, B43) with Google-palette accents
   campusWing(k, -58, -38, 86, 42, 15.6, G_BLUE, 1);

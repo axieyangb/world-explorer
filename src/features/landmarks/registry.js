@@ -96,7 +96,7 @@ export const LANDMARKS = [
   // --- Tech HQ Campuses, Civic & Hollywood Landmarks (feature/cluster4-landmarks)
   { id: "sfcityhall", name: "San Francisco City Hall", nameZh: "旧金山市政厅", lat: 37.7793, lon: -122.4193, heading: 90, height: 94, supp: { hw: 68, hd: 54 }, on: true, chip: true },
   { id: "applepark", name: "Apple Park", nameZh: "苹果园区（Apple Park）", lat: 37.3349, lon: -122.0090, heading: 0, height: 22, supp: { r: 270 }, on: true, chip: true },
-  { id: "googleplex", name: "Googleplex", nameZh: "谷歌总部（Googleplex）", lat: 37.4220, lon: -122.0841, heading: 0, height: 18, supp: { hw: 130, hd: 90 }, on: true, chip: true },
+  { id: "googleplex", name: "Googleplex", nameZh: "谷歌总部（Googleplex）", lat: 37.4220, lon: -122.0841, heading: 0, height: 18, supp: { hw: 145, hd: 96 }, on: true, chip: true },
   { id: "googlebayview", name: "Google Bay View Campus", nameZh: "谷歌湾景园区（Bay View）", lat: 37.4184, lon: -122.0575, heading: 0, height: 25, supp: { hw: 175, hd: 115 }, on: true },
   { id: "nvidiahq", name: "NVIDIA HQ (Endeavor & Voyager)", nameZh: "英伟达总部（NVIDIA HQ）", lat: 37.3707, lon: -121.9642, heading: 0, height: 28, supp: { hw: 160, hd: 125 }, on: true, chip: true },
   { id: "metahq", name: "Meta HQ (1 Hacker Way)", nameZh: "Meta 总部（1 Hacker Way）", lat: 37.4845, lon: -122.1477, heading: 0, height: 24, supp: { hw: 145, hd: 80 }, on: true, chip: true },

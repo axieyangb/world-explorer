@@ -1302,16 +1302,21 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
   }
 
-  // feature/famous-landmarks: drop generic OSM buildings inside hand-built landmark footprints
+  // feature/famous-landmarks: drop generic OSM buildings inside or overlapping hand-built landmark footprints
   const lmSuppress = makeLandmarkSuppressor(origin);
   if (lmSuppress) {
     for (let i = buildings.length - 1; i >= 0; i--) {
       const fo = buildings[i][11];
       if (!fo || fo.length < 6) continue;
-      let sx = 0, sz = 0;
-      for (let k = 0; k < fo.length; k += 2) { sx += fo[k]; sz += fo[k + 1]; }
+      let sx = 0, sz = 0, hit = false;
+      for (let k = 0; k < fo.length; k += 2) {
+        const vx = fo[k], vz = fo[k + 1];
+        sx += vx;
+        sz += vz;
+        if (!hit && lmSuppress(ox + vx, oz + vz)) hit = true;
+      }
       const n = fo.length / 2;
-      if (lmSuppress(ox + sx / n, oz + sz / n)) buildings.splice(i, 1);
+      if (hit || lmSuppress(ox + sx / n, oz + sz / n)) buildings.splice(i, 1);
     }
   }
 
@@ -1543,6 +1548,51 @@ export async function fetchGlobalDem(centerLat, centerLon) {
         }
       }
       elevations[i] = Math.round(m * 10) / 10;
+    }
+  }
+
+  // Smooth out SRTM radar rooftop/canopy bumps across wide flat-ground campus/plaza landmarks so the entire
+  // campus, courtyard, and surrounding perimeter streets sit on a single level ground grade without cliff walls.
+  for (const l of LANDMARKS) {
+    if (!l.on || Number.isFinite(l.ele) || l.deck || l.id === "hollywoodsign" || l.id === "christ") continue;
+    const p = landmarkWorldXZ(l, origin);
+    if (!p) continue;
+    const s = typeof l.supp === "number" ? { r: l.supp } : (l.supp || { r: 20 });
+    const footR = s.r || Math.hypot(s.hw || 20, s.hd || 20);
+    if (footR < 45) continue;
+    const [lx, lz] = p;
+    const flatR = footR + 90;
+    const blendR = flatR + 280;
+    const samples = [];
+    for (let iz = 0; iz < gridSize; iz++) {
+      const wz = minWorld + iz * stepM;
+      if (Math.abs(wz - lz) > flatR) continue;
+      for (let ix = 0; ix < gridSize; ix++) {
+        const wx = minWorld + ix * stepM;
+        if (Math.hypot(wx - lx, wz - lz) <= flatR) {
+          samples.push(elevations[iz * gridSize + ix]);
+        }
+      }
+    }
+    if (!samples.length) continue;
+    samples.sort((a, b) => a - b);
+    const padEle = Math.round(samples[Math.floor((samples.length - 1) * 0.25)] * 10) / 10;
+    for (let iz = 0; iz < gridSize; iz++) {
+      const wz = minWorld + iz * stepM;
+      if (Math.abs(wz - lz) > blendR) continue;
+      for (let ix = 0; ix < gridSize; ix++) {
+        const wx = minWorld + ix * stepM;
+        const d = Math.hypot(wx - lx, wz - lz);
+        if (d >= blendR) continue;
+        const idx = iz * gridSize + ix;
+        if (d <= flatR) {
+          elevations[idx] = padEle;
+        } else {
+          const u = (d - flatR) / (blendR - flatR);
+          const t = u * u * (3 - 2 * u);
+          elevations[idx] = Math.round((padEle + (elevations[idx] - padEle) * t) * 10) / 10;
+        }
+      }
     }
   }
 

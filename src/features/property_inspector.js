@@ -994,6 +994,10 @@ export class PropertyInspector {
     if (this.worldModel) {
       this.worldModel.restoreSavedParcelsForOrigin();
     }
+    if (!forceInspect) {
+      this.dismiss();
+      return null;
+    }
     const app = this.app;
     if (!app || !app.worldOrigin) return null;
 
@@ -1704,7 +1708,7 @@ export class PropertyInspector {
     const wasOrbiting = this.orbitActive;
     this.selected = profile;
     this.realData = synthesizeAssessorRecord(profile.lat, profile.lon, profile);
-    this._updateHighlightRing(profile.ringPts, profile.baseY);
+    this._updateHighlightRing(profile.kind === "landmark" ? null : profile.ringPts, profile.baseY);
     if (wasOrbiting) {
       this._initOrbitTrajectory();
     }

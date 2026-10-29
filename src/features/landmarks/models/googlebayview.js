@@ -86,9 +86,9 @@ function dragonscaleCanopyBuilding(k, cx, cz, w, d, hPeak, baysX, baysZ) {
 }
 
 export function build(k) {
-  // Campus landscape base & courtyard promenade
-  k.glow(false).color(LAWN).box(20, -2.5, 0, 320, 2.7, 210);
-  k.color(PAVE).box(25, 0.2, 0, 260, 0.25, 48);
+  // Open central courtyard promenade between the canopies (flush with surrounding terrain)
+  k.glow(false).color(LAWN).box(28, -0.3, 0, 190, 0.36, 76);
+  k.color(PAVE).box(25, -0.2, 0, 220, 0.30, 42);
 
   // Main West Dragonscale Canopy (3x3 catenary dome matrix, 180m x 140m, 25m tall)
   dragonscaleCanopyBuilding(k, -45, 0, 180, 140, 25.0, 3, 3);
