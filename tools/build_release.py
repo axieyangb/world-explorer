@@ -240,8 +240,9 @@ MOD_ID_MAP = {
 
 
 def resolve_rel_import(from_rel: str, spec: str) -> str:
+  clean_spec = spec.split('?', 1)[0]
   base = (ROOT / from_rel).parent
-  target = (base / spec).resolve()
+  target = (base / clean_spec).resolve()
   return str(target.relative_to(ROOT))
 
 
@@ -549,9 +550,10 @@ await (async function bootstrapWorldExplorer() {
   # map_modal.js injectStyles() skips its <link> when #wm-styles already exists.
   kaiju_css = (ROOT / 'src/features/kaiju/kaiju.css').read_text(encoding='utf-8')  # [kaiju]
   # map_modal.js injectStyles() skips its <link> when #wm-styles already exists (kaiju_mode.js: #kaiju-styles).
-  html = html.replace(
-      '<link rel="stylesheet" href="styles.css" />',
-      f'<style>\n{css}\n</style>\n<style id="wm-styles">\n{wm_css}\n</style>\n<style id="kaiju-styles">\n{kaiju_css}\n</style>',
+  html = re.sub(
+      r'<link rel="stylesheet" href="styles\.css(?:\?[^"]*)?"\s*/>',
+      lambda _m: f'<style>\n{css}\n</style>\n<style id="wm-styles">\n{wm_css}\n</style>\n<style id="kaiju-styles">\n{kaiju_css}\n</style>',
+      html,
   )
 
   embedded_payload = f"""
@@ -574,7 +576,7 @@ await (async function bootstrapWorldExplorer() {
   }})();
   </script>
 """
-  html, n_main = re.subn(r'<script type="module" src="src/main\.js"[^>]*></script>', lambda _m: embedded_payload, html)
+  html, n_main = re.subn(r'<script type="module" src="src/main\.js(?:\?[^"]*)?"[^>]*></script>', lambda _m: embedded_payload, html)
   assert n_main == 1, 'main.js script tag not found in index.html'
 
   OUT_FILE.write_text(html, encoding='utf-8')

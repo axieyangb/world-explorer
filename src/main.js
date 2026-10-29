@@ -96,7 +96,7 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r2"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 const CHUNK_SIZE = 1000;

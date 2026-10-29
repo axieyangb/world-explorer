@@ -11,7 +11,7 @@
   <meta name="theme-color" content="#0a1220" />
   <title>World Explorer</title>
   <meta name="description" content="World Explorer — Real-Time 3D Open-World Earth Exploration, Driving & Flight Simulator." />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20261029_r2" />
   <style id="loading-styles">
     /* Loading screen: inline so it paints before styles.css and the app modules arrive. */
     #loading-screen {
@@ -308,17 +308,17 @@
                   }
                 }
 
-                // Dynamic swirling clouds
+                // Dynamic swirling clouds (semi-transparent wisps)
                 var cu = (lon + cRot) / 6.283185307 + 1.0;
-                var c1 = Math.sin(cu * 24 + Math.cos(v * 16)) * Math.cos(v * 14);
-                var c2 = Math.sin(cu * 48 - v * 28) * Math.sin(cu * 14 + v * 20);
-                var cloudRaw = c1 * 0.55 + c2 * 0.45;
-                var latCloud = Math.cos(lat) * 0.25 + Math.sin(Math.abs(lat) * 2.8) * 0.15;
-                var cDensity = Math.max(0, Math.min(1, (cloudRaw + 0.2 + latCloud) * 1.5));
-                if (cDensity > 0.38) {
-                  var cAlpha = Math.min(0.88, (cDensity - 0.38) * 1.8);
-                  var cLight = Math.max(0.04, day * 1.25);
-                  var cCol = 255 * cLight;
+                var c1 = Math.sin(cu * 28 + Math.cos(v * 20) * 1.5) * Math.cos(v * 16);
+                var c2 = Math.sin(cu * 56 - v * 32) * Math.sin(cu * 18 + v * 24);
+                var cloudRaw = c1 * 0.6 + c2 * 0.4;
+                var latCloud = Math.cos(lat) * 0.2 + Math.sin(Math.abs(lat) * 3.0) * 0.1;
+                var cDensity = Math.max(0, Math.min(1, (cloudRaw + 0.1 + latCloud) * 1.4));
+                if (cDensity > 0.55) {
+                  var cAlpha = Math.min(0.55, (cDensity - 0.55) * 1.2);
+                  var cLight = Math.max(0.04, day * 1.15);
+                  var cCol = 245 * cLight;
                   r = r * (1 - cAlpha) + cCol * cAlpha;
                   g = g * (1 - cAlpha) + cCol * cAlpha;
                   b = b * (1 - cAlpha) + cCol * cAlpha;
@@ -515,6 +515,6 @@
     </div>
   </div>
 
-  <script type="module" src="src/main.js" onerror="window.__loading.moduleFailed()"></script>
+  <script type="module" src="src/main.js?v=20261029_r2" onerror="window.__loading.moduleFailed()"></script>
 </body>
 </html>
