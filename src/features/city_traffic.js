@@ -637,6 +637,7 @@ export class CityTraffic {
       this.playerObs = -1;
     }
     if (app.railTransit) app.railTransit.addTrafficObstacles(this); // [feature/rail-transit] cars brake for trams/trains
+    if (app.parkedCars) app.parkedCars.addTrafficObstacles(this); // [parked-cars] the player's parked cars: brake / route around
   }
 
   _updateCar(c, dt, now) {
@@ -1163,6 +1164,7 @@ export class CityTraffic {
       }
     }
     if (dmg > 0 && this.damage && !opts.noPlayer) this.damage.hitPlayerSphere(x, y, z, carR, dmg); // [car-explosions]
+    if (dmg > 0 && this.app.parkedCars) this.app.parkedCars.impactSphere(x, y, z, carR, dmg, opts); // [parked-cars]
     return count;
   }
 
@@ -1789,11 +1791,7 @@ export class CityTraffic {
           c.kvz = (c.kvz || 0) - r.nz * dvAi;
           const torqueArm = (cxEff - app.pos.x) * r.nz - (czEff - app.pos.z) * r.nx;
           c.kyawVel = clamp((c.kyawVel || 0) + torqueArm * dvAi * 0.085, -4.8, 4.8);
-          if (this.damage && -relVn > 25) { // [car-explosions] very high-speed ram (> 90 km/h closing)
-            const ex = (-relVn - 20) * 0.3;
-            this.damage.hit(c, ex * 2 * mPlayer / (mPlayer + mAi), cxEff, c.y, czEff, 'ram', 0);
-            this.damage.hitPlayer(ex * mAi / (mPlayer + mAi));
-          }
+          if (this.damage) this.damage.ram(c, -relVn, mPlayer, mAi, cxEff, czEff); // [crash-damage] by impact speed
         }
       }
       c.v *= 0.25;

@@ -246,6 +246,7 @@ export class BuildingCollision {
       app.yaw += diff * 0.6;
     }
     if (impact > 6) this.shake = Math.min(1, Math.max(this.shake, impact / 45));
+    return impact;
   }
 
   /** Adds a decaying camera shake offset; call after the camera is placed and before rendering. */
@@ -256,6 +257,38 @@ export class BuildingCollision {
     camera.position.y += (Math.random() - 0.5) * a;
     camera.position.z += (Math.random() - 0.5) * a;
     this.shake *= Math.exp(-6 * dt);
+  }
+
+  /**
+   * [cam-collision] First building wall along the segment o -> o + d * len (d unit, 3D), as a fraction of
+   * len (1 = clear). Footprints are prisms from the ground to their roof (b.h); a crossing above the roof
+   * is free, and a footprint the origin already stands in is ignored (rooftops, overlapping colliders).
+   */
+  segmentHit(ox, oy, oz, dx, dy, dz, len) {
+    const ex = ox + dx * len, ez = oz + dz * len;
+    const sx = ex - ox, sz = ez - oz;
+    const mx = (ox + ex) * 0.5, mz = (oz + ez) * 0.5;
+    let best = 1;
+    this._forNear(mx, mz, Math.hypot(sx, sz) * 0.5 + 0.5, (ring, b) => {
+      const top = b.h;
+      if (oy > top && oy + dy * len > top) return; // whole segment above the roof
+      if (pointInRing(ox, oz, ring)) return;
+      const n = ring.length;
+      for (let i = 0, j = n - 2; i < n; j = i, i += 2) {
+        const ax = ring[j], az = ring[j + 1];
+        const qx = ring[i] - ax, qz = ring[i + 1] - az;
+        const den = sx * qz - sz * qx;
+        if (Math.abs(den) < 1e-9) continue;
+        const wx = ax - ox, wz = az - oz;
+        const t = (wx * qz - wz * qx) / den;
+        if (t < 0 || t >= best) continue;
+        const u = (wx * sz - wz * sx) / den;
+        if (u < 0 || u > 1) continue;
+        if (oy + dy * len * t > top + 0.3) continue;
+        best = t;
+      }
+    });
+    return best;
   }
 
   /** True if (x, z) lies inside any base footprint (test probe). */

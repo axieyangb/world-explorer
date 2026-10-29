@@ -666,17 +666,16 @@ export class WalkerWeaponsSystem {
   // ---- [weapon-pickups] deliberate mouse attacks (walk mode, outside Kaiju Defense) ----
   // A press only attacks if the pointer stays still: a quick click fires one shot (or punches when unarmed),
   // holding still for HOLD_FIRE_MS starts automatic fire, and any drag is camera look and never attacks.
+  // The first press after the window gains focus (`ignore`) never fires a quick click, but a deliberate still
+  // hold does start auto fire. Once auto fire runs, moving the mouse aims (orbits) and keeps firing (GTA).
   beginPress(button, x, y, ignore = false) {
     this._press = { button, x, y, t: performance.now(), ignore, moved: false, holding: false };
   }
 
   movePress(x, y) {
     const P = this._press;
-    if (!P || P.moved) return;
-    if (Math.abs(x - P.x) + Math.abs(y - P.y) > DRAG_PX) {
-      P.moved = true;
-      if (P.holding) this.isFiring = false;
-    }
+    if (!P || P.moved || P.holding) return;
+    if (Math.abs(x - P.x) + Math.abs(y - P.y) > DRAG_PX) P.moved = true;
   }
 
   endPress(button) {
@@ -700,9 +699,9 @@ export class WalkerWeaponsSystem {
 
   _updatePress() {
     const P = this._press;
-    if (!P || P.ignore || P.moved || P.holding || P.button !== 0) return;
+    if (!P || P.moved || P.holding || P.button !== 0) return;
     if (!this.isArmed() || this.app.mode !== 'walk') return;
-    if (performance.now() - P.t >= HOLD_FIRE_MS) {
+    if (performance.now() - P.t >= (P.ignore ? HOLD_FIRE_MS * 2 : HOLD_FIRE_MS)) {
       P.holding = true;
       this.isFiring = true;
     }
@@ -947,6 +946,9 @@ export class WalkerWeaponsSystem {
         }
       }
     }
+
+    const pk = this.app.parkedCars && this.app.parkedCars.raycast(o, d, bestDist); // [parked-cars] the player's parked cars
+    if (pk) { bestDist = pk.dist; hitResult = { dist: bestDist, point: o.clone().addScaledVector(d, bestDist), kind: 'parked', ref: null }; }
 
     // 5. Maritime Ships
     const sea = this.app.maritime;

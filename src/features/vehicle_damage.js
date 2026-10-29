@@ -21,6 +21,14 @@ const WRECK_LIFE = 30, SINK_TIME = 3, WRECK_FIRE = 18;
 const MAX_BURNING_WRECKS = 6, MAX_DEBRIS_SETS = 12, MAX_SCORCH = 16;
 const MAX_BOOMS_PER_FRAME = 3, MAX_CHAIN_DEPTH = 3, MAX_THREATS = 8;
 const PLAYER_HP = 8, PLAYER_DEAD_T = 3.2;
+// [crash-damage] Player car: collisions hurt by impact speed (m/s along the contact normal). Below CRASH_MIN
+// (~18 km/h) nothing happens; 30 km/h is a scratch, 80 km/h takes ~30 %, 120 km/h ~80 %. Smoke shows below
+// P_SMOKE of full health, fire below P_BURN (then it drains and blows up unless you get out, as in GTA).
+// Light damage heals slowly once you stop crashing; a fresh car starts at full health.
+const CRASH_MIN = 5, CRASH_K = 0.0085;
+const P_SMOKE = 0.55, P_BURN = 0.22, P_BURN_DRAIN = 0.028, P_HEAL = 0.01, P_HEAL_DELAY = 6; // drain / heal: fraction of full HP per second
+/** Damage (player HP units) for a crash at impact speed v (m/s). */
+export function crashDamage(v) { return v > CRASH_MIN ? CRASH_K * (v - CRASH_MIN) * (v - CRASH_MIN) : 0; }
 const GRAV = 18.5;
 const CHUNKS = 5, WHEELS = 2;
 const rr = (a, b) => a + Math.random() * (b - a);
@@ -58,7 +66,7 @@ export class VehicleDamage {
     this._e = new THREE.Euler();
     this._s = new THREE.Vector3();
     this._dirty = false;
-    this.player = { hp: PLAYER_HP, dead: false, t: 0, wreck: null, smokeAcc: 0 };
+    this.player = { hp: PLAYER_HP, dead: false, t: 0, wreck: null, smokeAcc: 0, sinceHit: 99 };
 
     // Debris pools: charred chunks (incl. a door panel) + wheels, MAX_DEBRIS_SETS sets.
     const group = new THREE.Group();
@@ -180,12 +188,43 @@ export class VehicleDamage {
     this.hitPlayer(dmg * Math.max(0.25, 1 - d / r));
   }
 
-  hitPlayer(dmg) {
+  hitPlayer(dmg, src = '') {
     const P = this.player;
     if (this.app.mode !== 'drive' || P.dead || !(dmg > 0)) return;
     P.hp -= dmg;
-    this._event('player_hit', null, { hp: +P.hp.toFixed(2) });
+    P.sinceHit = 0;
+    this._event('player_hit', null, { hp: +P.hp.toFixed(2), dmg: +dmg.toFixed(3), src });
     if (P.hp <= 0) this._playerBoom();
+  }
+
+  /** [crash-damage] Player car hit something at impact speed v (m/s); share = this car's part of the impulse. */
+  crashPlayer(v, share = 1, src = 'crash') {
+    const d = crashDamage(v) * share;
+    if (d > 0.01) this.hitPlayer(d, src);
+    return d;
+  }
+
+  /**
+   * [crash-damage] Player car <-> AI car contact at closing speed v (m/s): both take crash damage by their share
+   * of the impulse (the lighter car takes more). AI cars have half the player's HP, so a hard T-bone wrecks them.
+   */
+  ram(c, v, mPlayer, mAi, x, z) {
+    const d = crashDamage(v);
+    if (!(d > 0)) return;
+    const m = mPlayer + mAi;
+    this.crashPlayer(v, 2 * mAi / m, 'ram');
+    this.hit(c, d * mPlayer / m, x, c.y, z, 'ram', 0);
+  }
+
+  /** [crash-damage] 0..1 health of the player's car (parked-car bookkeeping). */
+  get playerHealth() { return this.player.dead ? 0 : Math.max(0, this.player.hp / PLAYER_HP); }
+
+  /** [crash-damage] New car (frac = 1) or re-entering a parked one (its saved health). */
+  resetPlayer(frac = 1) {
+    const P = this.player;
+    if (P.dead) this._playerRespawn();
+    P.hp = PLAYER_HP * Math.max(0.05, Math.min(1, frac));
+    P.sinceHit = 99;
   }
 
   _playerBoom() {
@@ -479,14 +518,19 @@ export class VehicleDamage {
     if (this.player.dead && this.app.mode !== 'drive') this._playerRespawn();
     // player car damage smoke
     const P = this.player;
-    if (!P.dead && P.hp < PLAYER_HP * SMOKE_FRAC && this.app.mode === 'drive' && fx) {
-      P.smokeAcc += dt * (P.hp < PLAYER_HP * BURN_FRAC ? 8 : 4);
+    if (!P.dead && this.app.mode === 'drive') { // [crash-damage] heal light damage, a burning car cooks off
+      P.sinceHit += dt;
+      if (P.hp < PLAYER_HP * P_BURN) { P.hp -= PLAYER_HP * P_BURN_DRAIN * dt; if (P.hp <= 0) this._playerBoom(); }
+      else if (P.sinceHit > P_HEAL_DELAY && P.hp < PLAYER_HP) P.hp = Math.min(PLAYER_HP, P.hp + PLAYER_HP * P_HEAL * dt);
+    }
+    if (!P.dead && P.hp < PLAYER_HP * P_SMOKE && this.app.mode === 'drive' && fx) {
+      P.smokeAcc += dt * (P.hp < PLAYER_HP * P_BURN ? 8 : P.hp < PLAYER_HP * (P_SMOKE + P_BURN) * 0.5 ? 4 : 2);
       const a = this.app;
       while (P.smokeAcc >= 1) {
         P.smokeAcc -= 1;
         const hx = a.pos.x + Math.sin(a.yaw) * 1.6, hz = a.pos.z + Math.cos(a.yaw) * 1.6;
-        fx.spawn('smoke', this._v.set(hx, a.pos.y + 1.3, hz), { scale: 0.25, speed: 3, life: 4 });
-        if (P.hp < PLAYER_HP * BURN_FRAC) fx.spawn('fire', this._v.set(hx, a.pos.y + 1.1, hz), { scale: 0.3 });
+        fx.spawn('smoke', this._v.set(hx, a.pos.y + 1.3, hz), { scale: 0.25, speed: 3, life: 4, light: P.hp > PLAYER_HP * (P_SMOKE + P_BURN) * 0.5 });
+        if (P.hp < PLAYER_HP * P_BURN) fx.spawn('fire', this._v.set(hx, a.pos.y + 1.1, hz), { scale: 0.3 });
       }
     }
 

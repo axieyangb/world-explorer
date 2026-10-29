@@ -51,6 +51,7 @@ import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscre
 import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
 import { initWalkerWeapons } from "./features/walker_weapons.js";
 import { initWeaponPickups } from "./features/weapon_pickups.js"; // [weapon-pickups]
+import { ParkedCars, findDriveSpawn, findHeliSpawn } from "./features/parked_cars.js"; // [parked-cars]
 import {
   getLang,
   setLang,
@@ -285,6 +286,7 @@ class WorldExplorerApp {
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
     this.scene.add(this.vehicleMesh);
+    this.parkedCars = new ParkedCars(this); // [parked-cars] cars you got out of stay where you left them
 
     this.avatarMesh = createPlayerAvatarModel();
     this.avatarMesh.visible = false;
@@ -552,6 +554,7 @@ class WorldExplorerApp {
    * and OpenFreeMap Zoom-14 vector tiles for the new 40km x 40km region.
    */
   async teleportToLocation(lat, lon, displayName = "", streetName = "") {
+    if (this.parkedCars) this.parkedCars.dropFar(0, 0, -1); // [parked-cars] new city origin: none survive
     const numLat = Number(lat);
     const numLon = Number(lon);
     if (!Number.isFinite(numLat) || !Number.isFinite(numLon)) return null;
@@ -702,7 +705,7 @@ class WorldExplorerApp {
         this.yaw = Math.atan2(bestS.x2 - bestS.x1, bestS.z2 - bestS.z1);
         this.camYaw = this.yaw;
         this.camPivot.copy(this.pos);
-        this.vehicleMesh.position.copy(this.pos);
+        if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.position.copy(this.pos); // [parked-cars]
         this.avatarMesh.position.copy(this.pos);
       }
     }
@@ -1412,6 +1415,9 @@ class WorldExplorerApp {
     this.water.reset(); // fix/water
     const clampedX = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wx));
     const clampedZ = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wz));
+    this.parkedCars.dropFar(clampedX, clampedZ); // [parked-cars]
+    const keepParked = this.parkedCars.isParked(this.vehicleMesh); // [parked-cars] a parked car stays put
+    this._camArm = 0; // [cam-collision]
     const initTerrY = getBeijingTerrainElevation(clampedX, clampedZ);
     this.pos.set(clampedX, initTerrY + 0.22, clampedZ);
     this.freeCamPos.set(clampedX, initTerrY + 95, clampedZ + 120);
@@ -1486,8 +1492,10 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     }
 
-    this.vehicleMesh.position.copy(this.pos);
-    this.vehicleMesh.rotation.set(0, this.yaw, 0);
+    if (!keepParked) {
+      this.vehicleMesh.position.copy(this.pos);
+      this.vehicleMesh.rotation.set(0, this.yaw, 0);
+    }
     this.avatarMesh.position.copy(this.pos);
     this.avatarMesh.rotation.set(0, this.yaw, 0);
     if (this.mode === "helicopter") {
@@ -1742,7 +1750,10 @@ class WorldExplorerApp {
       const col = this.collision.resolveCar(nx, this.pos.y, nz, this.yaw, spec, this.pos.x, this.pos.z);
       this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.x));
       this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
-      if (col.hit) this.collision.applyImpact(col.nx, col.nz);
+      if (col.hit) {
+        const impact = this.collision.applyImpact(col.nx, col.nz);
+        if (impact > 0 && !isTank && this.vehicleDamage) this.vehicleDamage.crashPlayer(impact, 1, "wall"); // [crash-damage]
+      }
       if ((s + 1) % supportEvery !== 0 && s !== steps - 1) continue;
       const stepCenter = evalSupportAt(this.pos.x, this.pos.z, this.pos.y);
       if (this.water.tryEnterWater(stepCenter.surf)) return;
@@ -1857,22 +1868,20 @@ class WorldExplorerApp {
       const pitch = THREE.MathUtils.clamp(this.camPitch, minPitch, 1.18);
       const viewYaw = this.camYaw + this.camYawOffset;
 
-      let armScale = 1.0;
-      for (const s of [1.0, 0.78, 0.58, 0.42, 0.28]) {
-        const hd = baseDist * s * Math.cos(pitch);
-        const tx = this.camPivot.x - Math.sin(viewYaw) * hd;
-        const tz = this.camPivot.z - Math.cos(viewYaw) * hd;
-        const ty = Math.max(
-          getBeijingTerrainElevation(tx, tz) + 0.85,
-          this.camPivot.y + pivotH + baseDist * s * Math.sin(pitch)
-        );
-        if (this.getBuildingCeilingAt(tx, ty, tz, 0.6) === null) {
-          armScale = s;
-          break;
-        }
-      }
-
-      activeOrbitDist = baseDist * armScale;
+      // [cam-collision] Spring arm: cast from the pivot (roof / head height) towards the wanted camera spot and
+      // stop short of the first building or landmark wall (their colliders are prisms up to the roof). The arm
+      // snaps in at once (never a frame behind a wall) and eases back out, so grazing an edge does not jitter.
+      // Tree foliage is not an obstacle: the camera passes through leaves like GTA's.
+      const CAM_PAD = 0.45;
+      const armOx = this.camPivot.x, armOy = this.camPivot.y + pivotH, armOz = this.camPivot.z;
+      const armHx = -Math.sin(viewYaw) * Math.cos(pitch), armHz = -Math.cos(viewYaw) * Math.cos(pitch);
+      const frac = this.collision.segmentHit(armOx, armOy, armOz, armHx, Math.sin(pitch), armHz, baseDist + CAM_PAD);
+      const freeDist = Math.max(0.6, frac * (baseDist + CAM_PAD) - CAM_PAD);
+      const armKey = this.mode + this.camMode;
+      if (this._camArmKey !== armKey || !(this._camArm > 0)) { this._camArmKey = armKey; this._camArm = freeDist; }
+      if (freeDist < this._camArm) this._camArm = freeDist;
+      else this._camArm += (freeDist - this._camArm) * Math.min(1, dt * 2.5);
+      activeOrbitDist = Math.min(baseDist, this._camArm);
       const horizDist = activeOrbitDist * Math.cos(pitch);
       const camX = this.camPivot.x - Math.sin(viewYaw) * horizDist;
       const camZ = this.camPivot.z - Math.cos(viewYaw) * horizDist;
@@ -1903,7 +1912,8 @@ class WorldExplorerApp {
       this.camMode === "topdown"
         ? 42.0
         : Math.max(1.2, Math.min(4.0, activeOrbitDist * 0.22));
-    const targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
+    let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
+    if (this.camMode !== "topdown" && activeOrbitDist < 5.0) targetNear = Math.max(0.25, Math.min(targetNear, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
     if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15) {
       this.camera.near = targetNear;
       this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, Math.min(1, 8.0 * dt));
@@ -2039,6 +2049,8 @@ class WorldExplorerApp {
           const hits = this.triggerPlayerPunch();
           if (hits === 0 && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 8) {
             this.setMode("helicopter");
+          } else if (hits === 0 && this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 2.5)) {
+            this.setMode("drive"); // [parked-cars]
           }
         } else {
           this.setMode(this.mode === "drive" ? "walk" : "drive");
@@ -2314,6 +2326,7 @@ class WorldExplorerApp {
     if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
     if (this.kaiju && this.kaiju.active && !keepKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;
+    if (this.mode === "drive" && newMode !== "drive") this._parkCurrentCar(newMode); // [parked-cars] before water.reset()
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
     this.mode = newMode;
@@ -2329,6 +2342,7 @@ class WorldExplorerApp {
       this.avatarMesh.visible = false;
       this.heliMesh.visible = false;
       this.parkedHeli = null;
+      if (prevMode !== "drive") this._placeCarForDrive(prevMode); // [parked-cars] get in / spawn on a road lane
       this.vehicleMesh.visible = true;
       const surf = this.sampleRoadSurface(this.pos.x, this.pos.y, this.pos.z);
       if (surf) this.pos.y = surf.y;
@@ -2338,7 +2352,7 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     } else if (newMode === "walk") {
       this.avatarMesh.visible = true;
-      this.vehicleMesh.visible = false;
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.visible = false; // [parked-cars]
       const exitedLandedHeli = prevMode === "helicopter" && (this.heliLanded || (this.heli && this.heli.state.grounded));
       if (exitedLandedHeli) {
         this.parkedHeli = { x: this.pos.x, y: this.pos.y, z: this.pos.z, yaw: this.yaw };
@@ -2369,7 +2383,7 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     } else {
       this.avatarMesh.visible = false;
-      this.vehicleMesh.visible = false;
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.visible = false; // [parked-cars]
       this.heliMesh.visible = true;
       if (prevMode !== "helicopter") {
         if (this.parkedHeli && prevMode === "walk" && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 15) {
@@ -2381,8 +2395,9 @@ class WorldExplorerApp {
           this._ensureHeli().onEnter();
         } else {
           this.parkedHeli = null;
-          const minHeliY = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 150.0;
-          this.pos.y = Math.max(this.pos.y + 150.0, minHeliY);
+          // [heli-spawn] launch clear of buildings / landmarks: lifted above them, or the nearest open column
+          const hs = findHeliSpawn(this, this.pos.x, this.pos.z, 150.0);
+          this.pos.set(hs.x, Math.max(this.pos.y + 150.0, hs.y), hs.z);
           this.heliVelY = 0;
           this._ensureHeli().onEnter(); // feature/heli-gta
         }
@@ -2393,6 +2408,77 @@ class WorldExplorerApp {
     }
     if (prevMode === "helicopter" && newMode !== "helicopter" && this.heli) this.heli.onExit();
     this._showControlsHint();
+  }
+
+  // [parked-cars] Getting out of the car leaves it parked where it stands (not when it is a wreck or sinking);
+  // on foot you step out beside the driver's door.
+  _parkCurrentCar(newMode) {
+    const vd = this.vehicleDamage;
+    if ((vd && vd.player.dead) || (this.water && this.water.sink) || !this.vehicleMesh || this.vehicleMesh.userData.charred) return;
+    if (this.parkedCars.isParked(this.vehicleMesh)) return;
+    stopVehicleSirenAudio();
+    this.sirenActive = false;
+    if (this.vehicleMesh.userData) this.vehicleMesh.userData.sirenActive = false;
+    updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
+    const e = this.parkedCars.park(this.vehicleMesh, this.vehicleIdx, this.pos.x, this.pos.y, this.pos.z, this.yaw, vd ? vd.playerHealth : 1);
+    this.speed = 0;
+    if (newMode !== "walk") return;
+    const lht = Boolean(this.traffic && this.traffic.lht);
+    const hx = Math.sin(this.yaw), hz = Math.cos(this.yaw);
+    const side = e.hw + 0.75;
+    // driver's door: left in right-hand-traffic countries; then the other door, then behind the car
+    const tries = [lht ? 1 : -1, lht ? -1 : 1];
+    for (const sgn of tries) {
+      const x = this.pos.x - hz * side * sgn, z = this.pos.z + hx * side * sgn;
+      if (!this.collision.insideAny(x, z, this.pos.y + 0.5) && !(this.water && this.water.isWaterAt(x, z))) { this.pos.x = x; this.pos.z = z; return; }
+    }
+    this.pos.x -= hx * (e.hl + 0.9);
+    this.pos.z -= hz * (e.hl + 0.9);
+  }
+
+  // [parked-cars] Switching to drive: get into your parked car right next to you, else put a car on the nearest
+  // proper road lane (aligned with the lane, clear of buildings and traffic) instead of under your feet.
+  _placeCarForDrive(prevMode) {
+    const how = this._driveEnter || "";
+    this._driveEnter = "";
+    if (how === "keep") return; // car-jacking: the car is already where the traffic car was
+    if (how !== "fresh") {
+      const near = this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 3.5);
+      if (near) { this._enterParked(near); return; }
+    }
+    if (this.parkedCars.isParked(this.vehicleMesh) || this.vehicleMesh.userData.charred) {
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.parkedCars.disposeMesh(this.vehicleMesh);
+      this.vehicleMesh = createVehicleModel(VEHICLE_SPECS[this.vehicleIdx].id, { hero: true });
+      this.scene.add(this.vehicleMesh);
+    }
+    if (this.vehicleDamage) this.vehicleDamage.resetPlayer(1);
+    this.speed = 0;
+    const refY = prevMode === "helicopter" ? getBeijingTerrainElevation(this.pos.x, this.pos.z) : this.pos.y;
+    const sp = findDriveSpawn(this, this.pos.x, refY, this.pos.z, this.camYaw + this.camYawOffset, this.vehicleIdx, Boolean(this.traffic && this.traffic.lht));
+    if (sp) {
+      this.pos.set(sp.x, sp.y, sp.z);
+      this.yaw = sp.yaw;
+      this.camYaw = sp.yaw;
+      this.camYawOffset = 0;
+    }
+    this.vehicleMesh.rotation.set(0, this.yaw, 0);
+  }
+
+  _enterParked(e) {
+    this.parkedCars.take(e);
+    if (e.mesh !== this.vehicleMesh) {
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.parkedCars.disposeMesh(this.vehicleMesh);
+      this.vehicleMesh = e.mesh;
+      this.vehicleIdx = e.specIdx;
+    }
+    this.pos.set(e.x, e.y, e.z);
+    this.yaw = e.yaw;
+    this.camYaw = e.yaw;
+    this.camYawOffset = 0;
+    this.speed = 0;
+    this.vehicleMesh.rotation.set(0, e.yaw, 0);
+    if (this.vehicleDamage) this.vehicleDamage.resetPlayer(e.hp / 8);
+    this._updateModeAndCamBadges();
   }
 
   cycleCameraMode() {
@@ -2406,23 +2492,23 @@ class WorldExplorerApp {
     stopVehicleSirenAudio();
     this.sirenActive = false;
     this.vehicleIdx = ((idx % VEHICLE_SPECS.length) + VEHICLE_SPECS.length) % VEHICLE_SPECS.length;
-    this.scene.remove(this.vehicleMesh);
-    // [hero-vehicles] free the old car's GPU buffers; detailed bodies are several MB each
-    this.vehicleMesh.traverse((o) => {
-      if (!o.isMesh) return;
-      o.geometry.dispose();
-      for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) m.dispose();
-    });
+    // [hero-vehicles] free the old car's GPU buffers; detailed bodies are several MB each ([parked-cars] unless parked)
+    if (!this.parkedCars || !this.parkedCars.isParked(this.vehicleMesh)) {
+      if (this.parkedCars) this.parkedCars.disposeMesh(this.vehicleMesh);
+      else this.scene.remove(this.vehicleMesh);
+    }
+    if (this.vehicleDamage) this.vehicleDamage.resetPlayer(1); // [crash-damage] a new car is undamaged
     const spec = VEHICLE_SPECS[this.vehicleIdx];
     this.vehicleMesh = createVehicleModel(spec.id, { ...options, hero: true });
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
+    this.scene.add(this.vehicleMesh);
     if (this.mode !== "drive") {
+      this._driveEnter = options.keepPose ? "keep" : "fresh"; // [parked-cars] see _placeCarForDrive
       this.setMode("drive");
     } else {
       this.vehicleMesh.visible = true;
     }
-    this.scene.add(this.vehicleMesh);
     this._updateModeAndCamBadges();
     if (options.toast !== false) {
       const vName = getVehicleName(spec.id, spec.name);
@@ -2467,6 +2553,7 @@ class WorldExplorerApp {
           : trafficType.id;
     const specIdx = Math.max(0, VEHICLE_SPECS.findIndex((s) => s.id === specId));
 
+    if (this.mode === "drive") this._parkCurrentCar("drive"); // [parked-cars] the car you jumped out of stays
     this.pos.set(bestCar.x, bestCar.y, bestCar.z);
     this.yaw = bestCar.ryaw != null ? bestCar.ryaw : Math.atan2(bestCar.ux || 0, bestCar.uz || 1);
     this.camYaw = this.yaw;
@@ -2476,6 +2563,7 @@ class WorldExplorerApp {
     this.selectVehicle(specIdx, {
       paintColor: bestCar.paint ? bestCar.paint.getHex() : undefined,
       hideTaxiSign: trafficType.id === "sedan",
+      keepPose: true, // [parked-cars]
       toastSub: getLang() === "zh" ? "已接管街头车辆" : "CLAIMED",
     });
     return { typeId: trafficType.id, specId };
@@ -2486,15 +2574,17 @@ class WorldExplorerApp {
     if (this.mode === "walk") {
       if (this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
         this.setMode("helicopter");
+      } else if (this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 3.5)) {
+        this.setMode("drive"); // [parked-cars] your own parked car first
       } else if (!this.hijackNearestTrafficCar(16)) {
         this.setMode("drive");
       }
     } else if (this.mode === "drive") {
-      if (!this.hijackNearestTrafficCar(10.5)) {
-        stopVehicleSirenAudio();
-        this.sirenActive = false;
-        this.setMode("walk");
-      }
+      // [parked-cars] E in a car always gets out (GTA) and leaves it parked; car-jacking is done on foot
+      // (it used to jack any traffic car within 10.5 m, so you could not get out in traffic).
+      stopVehicleSirenAudio();
+      this.sirenActive = false;
+      this.setMode("walk");
     }
   }
 
@@ -2863,6 +2953,7 @@ class WorldExplorerApp {
     if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
     if (this.walkerWeapons) this.walkerWeapons.update(dt);
     if (this.weaponPickups) this.weaponPickups.update(dt); // [weapon-pickups]
+    this.parkedCars.update(dt); // [parked-cars]
     this._updateCamera(dt);
     if (this.nitroFx) this.nitroFx.update(dt); // [nitro-fx] after the camera: shake + world-space boost effects
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
