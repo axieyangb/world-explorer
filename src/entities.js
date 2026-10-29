@@ -697,8 +697,9 @@ function createHeroVehicleModel(typeId, options) {
   nitroVfx.visible = false;
   chassis.add(nitroVfx);
   const vfxParts = { plumes: [], shockCones: [], rings: [], trails: [], aeroFlaps: [] };
-  const flameOuter = typeId === 'supercar' ? 0xff4d00 : 0x3a86ff;
-  const trailCol = typeId === 'supercar' ? 0xff0055 : 0x00e5ff;
+  const flameOuter = hero.flameColor ?? (typeId === 'supercar' ? 0xff4d00 : 0x3a86ff);
+  const trailCol = hero.trailColor ?? (typeId === 'supercar' ? 0xff0055 : 0x00e5ff);
+  if (hero.aeroFlaps) vfxParts.aeroFlaps.push(...hero.aeroFlaps); // tilt on nitro (updateEntityNitroVfx)
   for (const [x, y, z] of hero.exhausts) {
     const plume = createThrusterFlameCone(hero.exhausts.length > 2 ? 0.14 : 0.22, 3.8, 0xffffff, flameOuter);
     plume.position.set(x, y, z);

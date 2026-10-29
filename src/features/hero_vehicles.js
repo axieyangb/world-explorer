@@ -138,9 +138,11 @@ export function makeBody(spec) {
     return best;
   };
   // z of the body surface at (x, y) seen from the nose (end = 1) or tail (end = -1).
-  const surfaceZ = (x, y, end) => {
-    let lo = end * hl, hi = lo;
-    for (let d = 0.01; d < 0.9; d += 0.01) { hi = end * (hl - d); if (widthAt(hi, y) >= Math.abs(x)) break; lo = hi; }
+  // `from` (distance from the centre, default the very end) lets a patch land on an inner face such as
+  // a sidepod front.
+  const surfaceZ = (x, y, end, from = hl) => {
+    let lo = end * from, hi = lo;
+    for (let d = 0.01; d < 0.9; d += 0.01) { hi = end * (from - d); if (widthAt(hi, y) >= Math.abs(x)) break; lo = hi; }
     for (let k = 0; k < 28; k++) {
       const mid = (lo + hi) / 2;
       if (widthAt(mid, y) >= Math.abs(x)) hi = mid; else lo = mid;
@@ -190,7 +192,7 @@ export function splitByMaterial(body, classify) {
 
 // A lamp lens: superellipse outline in the (x, y) plane wrapped onto the nose or tail surface, standing
 // `lift` metres proud of the paint. `slant` tilts the outline (y offset per metre of x).
-export function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 0.006 } = {}) {
+export function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 0.006, from } = {}) {
   const RAD = 6, ANG = 40, pos = [], idx = [];
   pos.push(cx, cy, 0);
   for (let r = 1; r <= RAD; r++) {
@@ -202,7 +204,7 @@ export function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 
       pos.push(x, cy + ay * u * k * st + slant * (x - cx), 0);
     }
   }
-  for (let i = 0; i < pos.length; i += 3) pos[i + 2] = body.surfaceZ(pos[i], pos[i + 1], end) + end * lift;
+  for (let i = 0; i < pos.length; i += 3) pos[i + 2] = body.surfaceZ(pos[i], pos[i + 1], end, from) + end * lift;
   for (let a = 0; a < ANG; a++) idx.push(0, 1 + a, 1 + ((a + 1) % ANG));
   for (let r = 1; r < RAD; r++) {
     for (let a = 0; a < ANG; a++) {
@@ -233,6 +235,14 @@ export function lampGeometries(spec, body) {
 }
 
 // Superellipse test in the (|x|, y) plane: a lamp/grille outline that follows the curved surface.
+// Height of point c as a fraction (0..1) of the lower side wall, measured in the loft's own rows (from
+// the sill corner up to the side's widest point). Thresholds on it give borders that follow grid lines.
+export function lowerT(b, c) {
+  const yb = b.bottom(c.z), yt = b.belt(c.z);
+  const ys = Math.min(yt - 0.05, Math.max(yb + 0.05, yb + (yt - yb) * 0.45));
+  return (c.y - yb - 0.04) / Math.max(0.01, ys - yb - 0.04);
+}
+
 export const blob = (x, y, cx, cy, ax, ay, p = 4) => Math.pow(Math.abs(x - cx) / ax, p) + Math.pow(Math.abs(y - cy) / ay, p) < 1;
 
 export function materials(spec) {
@@ -339,6 +349,7 @@ export function addCommonDetails(spec, body, M, chassis) {
   const yt = body.belt(ws - 0.12);
   const wx = body.halfW(ws - 0.12) * spec.glass.base;
   for (const s of [-1, 1]) {
+    if (spec.mirrors === false) break;
     const shell = new THREE.SphereGeometry(0.1, 16, 10);
     shell.scale(1.0, 0.62, 0.85);
     const mir = addMesh(chassis, shell, M.paint, s * (wx + 0.13), yt + 0.1, ws - 0.16);
@@ -377,6 +388,95 @@ export function addCommonDetails(spec, body, M, chassis) {
   const sw = new THREE.TorusGeometry(0.16, 0.02, 8, 24);
   const swm = addMesh(chassis, sw, M.trim, -0.38, body.belt(c1) - 0.0, c1 - 0.5);
   swm.rotation.x = -0.45;
+}
+
+const fnOf = (v) => (typeof v === 'function' ? v : () => v);
+
+// A band hugging one body side (side = -1 / 1) between heights y0..y1 (numbers or z -> y functions) over
+// [z0, z1], `lift` metres proud of the paint. u runs along z in metres, v 0..1 bottom to top. Used for
+// liveries (checker band) and glowing light lines that follow the sculpted flank.
+export function sideStrip(body, z0, z1, y0, y1, side, { lift = 0.003, rows = 3, step = 0.025 } = {}) {
+  const f0 = fnOf(y0), f1 = fnOf(y1);
+  const pos = [], uv = [], idx = [];
+  const nz = Math.max(2, Math.ceil(Math.abs(z1 - z0) / step) + 1);
+  for (let i = 0; i < nz; i++) {
+    const z = z0 + ((z1 - z0) * i) / (nz - 1);
+    const a = f0(z), b = f1(z);
+    for (let j = 0; j <= rows; j++) {
+      const y = a + ((b - a) * j) / rows;
+      pos.push(side * (body.widthAt(z, y) + lift), y, z);
+      uv.push(z - z0, j / rows);
+    }
+  }
+  const R = rows + 1;
+  for (let i = 0; i < nz - 1; i++) for (let j = 0; j < rows; j++) {
+    const a = i * R + j, b = a + 1, c = a + R, d = c + 1;
+    idx.push(a, c, b, b, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // Winding depends on side and on the direction of z0 -> z1; make the normals face out of the body.
+  if (g.attributes.normal.getX(R + 1) * side < 0) {
+    const ix = g.index.array;
+    for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+    g.computeVertexNormals();
+  }
+  return g;
+}
+
+// Wing element: cambered aerofoil section extruded along X (span centred on x = 0). Leading edge at
+// z = 0, trailing edge at z = -chord; positive rotation.x lifts the trailing edge.
+export function airfoil(chord, thick, span, camber = 0) {
+  const s = new THREE.Shape();
+  s.moveTo(0, 0);
+  s.bezierCurveTo(chord * 0.04, thick * 0.9, chord * 0.35, thick + camber, chord, camber);
+  s.bezierCurveTo(chord * 0.5, camber * 0.5 - thick * 0.15, chord * 0.12, -thick * 0.45, 0, 0);
+  const g = new THREE.ExtrudeGeometry(s, { depth: span, bevelEnabled: false, curveSegments: 10 });
+  g.translate(0, 0, -span / 2);
+  g.rotateY(Math.PI / 2);
+  return g;
+}
+
+// Flat plate from a (z, y) outline, `thick` across X and centred on x = 0 (endplates, fins, pylons).
+export function plate(pts, thick, bevel = 0) {
+  const s = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
+  const g = new THREE.ExtrudeGeometry(s, { depth: thick, bevelEnabled: bevel > 0, bevelSize: bevel, bevelThickness: bevel, bevelSegments: 2, curveSegments: 8 });
+  g.translate(0, 0, -thick / 2);
+  g.rotateY(-Math.PI / 2);
+  return g;
+}
+
+// Horizontal slab from an (x, z) outline, top face at y = 0 and `thick` downwards (floors, splitters).
+export function slab(pts, thick) {
+  const s = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, z)));
+  const g = new THREE.ExtrudeGeometry(s, { depth: thick, bevelEnabled: false, curveSegments: 8 });
+  g.rotateX(Math.PI / 2);
+  return g;
+}
+
+// Round tube from a to b (suspension arms, pushrods, stays).
+const _UP = new THREE.Vector3(0, 1, 0), _A = new THREE.Vector3(), _B = new THREE.Vector3();
+export function rod(parent, a, b, r, mat, seg = 8) {
+  _A.set(a[0], a[1], a[2]); _B.set(b[0], b[1], b[2]);
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, _A.distanceTo(_B), seg), mat);
+  m.position.copy(_A).add(_B).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(_UP, _B.sub(_A).normalize());
+  parent.add(m);
+  return m;
+}
+
+// Small CanvasTexture; draw(ctx, w, h) paints it.
+export function canvasTexture(w, h, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -536,15 +636,301 @@ const CARS = {
       }
     },
   },
+
+  // Modern four-door city taxi: solid yellow paint, checker band, black cladding, lit roof sign. A claimed
+  // plain traffic sedan reuses it with options.hideTaxiSign (no sign, no livery) and its own paint.
+  taxi: {
+    length: 4.5, width: 1.9, pFront: 4.2, pRear: 4.8, crown: 0.03,
+    paint: 0xf5b800, paintMetal: 0.12, rimColor: 0xb8bdc4,
+    glass: { base: 0.88, roof: 0.72 },
+    sill: [[-2.25, 0.45], [-2.1, 0.3], [2.1, 0.28], [2.25, 0.41]],
+    belt: [[-2.25, 0.84], [-2.17, 1.0], [-1.25, 1.02], [0.0, 0.98], [1.15, 0.95], [1.9, 0.87], [2.2, 0.75], [2.25, 0.6]],
+    roof: [[-1.4, 0.0], [-1.2, 1.03], [-0.8, 1.38], [0.05, 1.45], [0.5, 1.43], [1.2, 0.98], [1.4, 0.0]],
+    arches: [{ z: 1.4, cy: 0.35, r: 0.43 }, { z: -1.36, cy: 0.35, r: 0.43 }],
+    wheel: { R: 0.35, tw: 0.24, rimFrac: 0.66, spokes: 5, style: 'split' },
+    track: 0.8, wheelZ: [1.4, -1.36],
+    gaps: [0.95, -0.06, -1.0],
+    handles: [0.12, -0.9],
+    windshieldBase: 1.17,
+    lamps: [[1, 0.64, 0.74, 0.2, 0.05, 'head', { slant: 0.1 }], [1, 0.64, 0.705, 0.17, 0.007, 'drl', { slant: 0.1, lift: 0.009, p: 2 }], [-1, 0.66, 0.86, 0.2, 0.06, 'tail', { slant: -0.05 }], [-1, 0, 0.62, 0.22, 0.07, 'plate', { p: 8 }], [-1, 0, 0.86, 0.44, 0.008, 'chrome', { p: 2 }], [1, 0, 0.67, 0.36, 0.07, 'gloss', { p: 6, lift: 0.006 }], [1, 0, 0.67, 0.34, 0.006, 'chrome', { p: 2, lift: 0.01 }], [1, 0, 0.42, 0.2, 0.05, 'plate', { p: 8, lift: 0.008 }]],
+    cabin: [-1.15, 1.05], rearSeats: true,
+    seat: 0x2b2c30,
+    classify(c, n, b) {
+      const front = c.z > 1.84, rear = c.z < -1.8; // bumper zone starts at the arch edges
+      if (c.y < b.bottom(c.z) + 0.015) return 'under';
+      if (c.y > b.belt(c.z) + 0.012 && n.y < 0.8 && c.z < 1.25 && c.z > -1.3) {
+        if (Math.abs(c.z + 0.06) < 0.05 && Math.abs(n.x) > 0.3) return 'gloss'; // B-pillar
+        if (Math.abs(c.z + 0.98) < 0.035 && Math.abs(n.x) > 0.3) return 'gloss'; // C-pillar divider
+        return 'glass';
+      }
+      for (const g of [0.95, -0.06, -1.0]) if (Math.abs(c.z - g) < 0.006 && Math.abs(n.x) > 0.4 && c.y < b.belt(c.z) - 0.01) return 'under';
+      // Black lower bumpers, rocker cladding and arch eyebrows, bordered along loft rows
+      if (lowerT(b, c) < (front || rear ? 0.5 : 0.34)) return 'trim';
+      return 'paint';
+    },
+    extras(chassis, M, b, exhausts, lightbar, ctx) {
+      for (const x of [0.52]) {
+        const t = new THREE.CylinderGeometry(0.03, 0.032, 0.1, 12, 1, true);
+        t.rotateX(Math.PI / 2);
+        addMesh(chassis, t, M.chrome, x, 0.3, -2.2);
+        exhausts.push([x, 0.3, -2.26]);
+      }
+      // Window surround: thin chrome line along the beltline of the side glass
+      for (const s of [-1, 1]) {
+        const g = sideStrip(b, -1.28, 1.2, (z) => b.belt(z) - 0.012, (z) => b.belt(z) - 0.002, s, { rows: 1, lift: 0.002 });
+        chassis.add(new THREE.Mesh(g, M.chrome));
+      }
+      if (ctx.options.hideTaxiSign) return;
+      // Checker band along both flanks (two rows of checks wrapped onto the door skins)
+      const chk = canvasTexture(128, 64, (g, w, h) => {
+        g.fillStyle = '#f4f2ea'; g.fillRect(0, 0, w, h);
+        g.fillStyle = '#121214';
+        g.fillRect(0, 0, w / 2, h / 2); g.fillRect(w / 2, h / 2, w / 2, h / 2);
+      });
+      chk.wrapS = THREE.RepeatWrapping;
+      chk.repeat.set(1 / 0.11, 1); // one black+white pair per 11 cm
+      const chkMat = new THREE.MeshPhysicalMaterial({ map: chk, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.08 });
+      for (const s of [-1, 1]) {
+        const g = sideStrip(b, -0.96, 0.93, (z) => b.belt(z) - 0.27, (z) => b.belt(z) - 0.16, s, { rows: 4 });
+        chassis.add(new THREE.Mesh(g, chkMat));
+      }
+      // Roof sign: trapezoid lightbox with lettering on both faces, self-lit
+      const ry = b.roofOf(0.0) + 0.03 * 1.15;
+      const sign = new THREE.Group();
+      sign.position.set(0, ry, -0.05);
+      chassis.add(sign);
+      const D = 0.16, Ht = 0.17, Wd = 0.66;
+      const box = new THREE.Shape();
+      box.moveTo(-D, 0.0); box.lineTo(D, 0.0); box.lineTo(D * 0.55, Ht); box.lineTo(-D * 0.55, Ht); box.closePath();
+      const sg = new THREE.ExtrudeGeometry(box, { depth: Wd, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.012, bevelSegments: 3 });
+      sg.translate(0, 0, -Wd / 2); sg.rotateY(-Math.PI / 2);
+      const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff3c2, emissive: 0xffd34d, emissiveIntensity: 0.65, roughness: 0.35 });
+      addMesh(sign, sg, lightMat, 0, 0.03, 0);
+      addMesh(sign, new THREE.BoxGeometry(Wd + 0.06, 0.035, D * 2 + 0.06), M.trim, 0, 0.018, 0);
+      for (const x of [-0.24, 0.24]) addMesh(sign, new THREE.BoxGeometry(0.05, 0.03, 0.22), M.trim, x, -0.005, 0);
+      const txt = canvasTexture(256, 64, (g, w, h) => {
+        g.fillStyle = '#ffe680'; g.fillRect(0, 0, w, h);
+        g.fillStyle = '#161616'; g.font = 'bold 50px Arial, Helvetica, sans-serif';
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText('TAXI', w / 2, h / 2 + 3);
+      });
+      const txtMat = new THREE.MeshBasicMaterial({ map: txt });
+      const slope = Math.atan2(D * 0.45, Ht);
+      for (const e of [-1, 1]) {
+        const p = new THREE.Mesh(new THREE.PlaneGeometry(Wd * 0.86, Ht * 0.78), txtMat);
+        p.position.set(0, 0.03 + Ht * 0.5, e * (D * 0.775 + 0.0135));
+        p.rotation.set(-e * slope, e > 0 ? 0 : Math.PI, 0);
+        sign.add(p);
+      }
+    },
+  },
+  // Open-wheel single-seater. The loft is the tub, nose, sidepods and engine cover (plan width shaped by
+  // `hip`); wings, halo, floor and suspension are separate meshes. Emerald paint, carbon, gold accents.
+  aero_formula: {
+    length: 4.6, width: 1.5, pFront: 8, pRear: 6, crown: 0.02,
+    paint: 0x0b9a68, paintMetal: 0.5, rimColor: 0x24272c, caliper: 0xd9a92b,
+    glass: { base: 0.48, roof: 0.22 },
+    sill: [[-2.3, 0.3], [-2.0, 0.22], [-1.6, 0.12], [1.05, 0.1], [1.6, 0.2], [2.3, 0.23]],
+    belt: [[-2.3, 0.36], [-1.8, 0.42], [-1.2, 0.5], [-0.3, 0.58], [0.3, 0.6], [0.9, 0.64], [1.6, 0.5], [2.3, 0.33]],
+    roof: [[-2.0, 0.0], [-1.75, 0.5], [-0.9, 0.7], [-0.3, 0.92], [-0.05, 1.0], [0.06, 0.98], [0.12, 0.0]],
+    hip: [[-2.3, 0.16], [-1.8, 0.3], [-1.35, 0.4], [-0.9, 0.72], [-0.2, 1.0], [0.3, 0.98], [0.42, 0.5], [0.9, 0.42], [1.6, 0.25], [2.1, 0.16], [2.3, 0.12]],
+    arches: [],
+    wheel: { R: 0.36, tw: 0.3, rimFrac: 0.64, spokes: 5, style: 'split' },
+    rearWheel: { R: 0.36, tw: 0.38, rimFrac: 0.64, spokes: 5, style: 'split' },
+    track: 0.85, trackRear: 0.84, wheelZ: [1.56, -1.52],
+    common: false, tray: false,
+    lamps: [[-1, 0, 0.33, 0.045, 0.022, 'tail', { p: 2 }], [1, 0.56, 0.43, 0.15, 0.085, 'cockpit', { p: 3, from: 0.75, lift: 0.004 }]],
+    mats(M) {
+      M.gold = M.paint2;
+      M.gold.color.set(0xe0ad35); M.gold.metalness = 0.85; M.gold.roughness = 0.28;
+      M.cockpit = new THREE.MeshStandardMaterial({ color: 0x08090b, roughness: 0.9 });
+      M.trim = new THREE.MeshStandardMaterial({ color: 0x1a1b1f, metalness: 0.15, roughness: 0.42 }); // carbon
+    },
+    classify(c, n, b) {
+      const ax = Math.abs(c.x), yt = b.belt(c.z);
+      if (c.y < b.bottom(c.z) + 0.015) return 'trim';
+      if (c.z > 0.12 && c.z < 0.9 && ax < 0.2 && n.y > 0.3 && c.y > yt - 0.04) return 'cockpit'; // cockpit opening
+      if (lowerT(b, c) < 0.45) return 'trim'; // carbon lower flanks
+      if (c.z < 0.4 && c.z > -1.7 && c.y > yt - 0.055 && c.y < yt + 0.002) return 'gold'; // shoulder pinstripe
+      if (c.z > 2.08) return 'gold'; // nose tip
+      return 'paint';
+    },
+    extras(chassis, M, b, exhausts, lightbar, ctx) {
+      const C = M.trim;
+      // Floor plank with the sidepod undercut, diffuser fins at the back
+      const fl = [[0.24, 1.05], [0.6, 0.78], [0.8, 0.56], [0.82, -0.7], [0.66, -1.0], [0.46, -1.16], [0.4, -2.0]];
+      addMesh(chassis, slab([...fl, ...fl.slice().reverse().map(([x, z]) => [-x, z])], 0.025), C, 0, 0.115, 0);
+      for (const x of [-0.3, -0.12, 0.12, 0.3]) addMesh(chassis, plate([[-1.6, 0.1], [-2.1, 0.1], [-2.1, 0.3], [-1.75, 0.16]], 0.012), C, x, 0, 0);
+      // Front wing: full-span mainplane, two stacked flaps per side, endplates, nose pylons
+      addMesh(chassis, airfoil(0.3, 0.03, 1.86, 0.02), C, 0, 0.09, 2.47).rotation.x = 0.06;
+      for (const s of [-1, 1]) {
+        addMesh(chassis, airfoil(0.2, 0.022, 0.66, 0.015), C, s * 0.6, 0.145, 2.27).rotation.x = 0.32;
+        addMesh(chassis, airfoil(0.15, 0.018, 0.66, 0.01), M.gold, s * 0.6, 0.205, 2.15).rotation.x = 0.56;
+        addMesh(chassis, plate([[2.5, 0.04], [2.0, 0.04], [1.96, 0.18], [2.06, 0.3], [2.38, 0.26], [2.5, 0.13]], 0.014), C, s * 0.94, 0, 0);
+        addMesh(chassis, plate([[2.34, 0.1], [2.12, 0.1], [2.14, 0.27], [2.3, 0.27]], 0.012), C, s * 0.09, 0, 0);
+      }
+      // Rear wing: mainplane + DRS flap between tall endplates, beam wing, central swan-neck pylon
+      for (const s of [-1, 1]) addMesh(chassis, plate([[-1.97, 0.66], [-2.3, 0.6], [-2.44, 0.72], [-2.45, 1.01], [-2.04, 1.02], [-1.95, 0.9]], 0.014), C, s * 0.53, 0, 0);
+      addMesh(chassis, airfoil(0.3, 0.035, 1.05, 0.02), C, 0, 0.84, -2.0).rotation.x = 0.12;
+      addMesh(chassis, airfoil(0.18, 0.022, 1.05, 0.01), M.paint, 0, 0.885, -2.25).rotation.x = 0.5;
+      addMesh(chassis, new THREE.BoxGeometry(1.05, 0.012, 0.03), M.gold, 0, 0.98, -2.42).rotation.x = 0.5;
+      addMesh(chassis, airfoil(0.16, 0.02, 0.8, 0.01), C, 0, 0.5, -2.12).rotation.x = 0.22;
+      addMesh(chassis, plate([[-1.9, 0.38], [-2.12, 0.38], [-2.16, 0.85], [-2.02, 0.86]], 0.02), C, 0, 0, 0);
+      // Halo: titanium hoop over the cockpit plus its centre pillar
+      const halo = new THREE.CatmullRomCurve3([[-0.24, 0.6, -0.02], [-0.27, 0.82, 0.14], [-0.2, 0.9, 0.42], [0, 0.92, 0.6], [0.2, 0.9, 0.42], [0.27, 0.82, 0.14], [0.24, 0.6, -0.02]].map((p) => new THREE.Vector3(...p)));
+      addMesh(chassis, new THREE.TubeGeometry(halo, 48, 0.024, 10), C);
+      rod(chassis, [0, 0.92, 0.6], [0, 0.63, 0.88], 0.026, C, 10);
+      // Airbox intake above the driver's head
+      const ab = new THREE.CircleGeometry(0.1, 24); ab.scale(1, 0.75, 1);
+      addMesh(chassis, ab, M.cockpit, 0, 0.885, 0.11);
+      // Driver: helmet with a dark visor band, steering wheel
+      addMesh(chassis, new THREE.SphereGeometry(0.125, 24, 16), M.gold, 0, 0.73, 0.3);
+      addMesh(chassis, new THREE.SphereGeometry(0.128, 24, 6, Math.PI / 2 - 0.95, 1.9, 1.25, 0.42), M.glass, 0, 0.73, 0.3);
+      addMesh(chassis, new THREE.CylinderGeometry(0.07, 0.07, 0.26, 12), M.cockpit, 0, 0.64, 0.3);
+      addMesh(chassis, new THREE.BoxGeometry(0.24, 0.1, 0.03), C, 0, 0.62, 0.62).rotation.x = -0.3;
+      // Mirrors on stalks at the front of the sidepods
+      for (const s of [-1, 1]) {
+        rod(chassis, [s * 0.28, 0.62, 0.52], [s * 0.42, 0.76, 0.5], 0.01, C);
+        const mh = new THREE.SphereGeometry(0.07, 16, 10); mh.scale(1, 0.55, 0.6);
+        addMesh(chassis, mh, M.paint, s * 0.45, 0.77, 0.5);
+        const mg = new THREE.CircleGeometry(0.055, 14); mg.scale(1, 0.5, 1); mg.rotateY(Math.PI);
+        addMesh(chassis, mg, M.chrome, s * 0.45, 0.77, 0.455);
+      }
+      // Double-wishbone suspension: carbon arms from the tub to the uprights, push/pull rods, driveshafts
+      const arm = (a, bb, r = 0.014) => { for (const s of [-1, 1]) rod(chassis, [s * a[0], a[1], a[2]], [s * bb[0], bb[1], bb[2]], r, C); };
+      arm([0.15, 0.25, 1.8], [0.68, 0.22, 1.56]); arm([0.15, 0.25, 1.32], [0.68, 0.22, 1.56]);
+      arm([0.16, 0.44, 1.74], [0.66, 0.5, 1.58]); arm([0.16, 0.44, 1.38], [0.66, 0.5, 1.58]);
+      arm([0.66, 0.24, 1.53], [0.17, 0.5, 1.46]); arm([0.15, 0.33, 1.66], [0.68, 0.34, 1.68], 0.012);
+      arm([0.24, 0.22, -1.22], [0.62, 0.2, -1.52]); arm([0.2, 0.22, -1.82], [0.62, 0.2, -1.52]);
+      arm([0.24, 0.46, -1.28], [0.62, 0.52, -1.5]); arm([0.2, 0.46, -1.76], [0.62, 0.52, -1.5]);
+      arm([0.62, 0.5, -1.56], [0.22, 0.24, -1.62]); arm([0.2, 0.36, -1.52], [0.64, 0.36, -1.52], 0.024);
+      // Single exhaust under the beam wing
+      const ex = new THREE.CylinderGeometry(0.05, 0.055, 0.3, 16, 1, true); ex.rotateX(Math.PI / 2);
+      addMesh(chassis, ex, M.disc, 0, 0.44, -2.12);
+      exhausts.push([0, 0.44, -2.28]);
+      ctx.trails = [[-0.53, 1.0, -2.48], [0.53, 1.0, -2.48]];
+      ctx.flameColor = 0x10b981; ctx.trailColor = 0xffd166;
+    },
+    // Coloured sidewall band on the slicks
+    decorWheel(wheelMesh, M, side, front, w) {
+      const band = new THREE.TorusGeometry(w.R * 0.83, 0.009, 4, 48);
+      band.rotateY(Math.PI / 2);
+      addMesh(wheelMesh, band, M.gold, side * (w.tw * 0.5 + 0.002), 0, 0);
+    },
+  },
+  // Sci-fi concept hypercar: long low wedge, narrow bubble canopy, pontoon haunches, dorsal fin, cyan
+  // light blades and a magenta tail bar. Two rear aero flaps lift on nitro (vfxParts.aeroFlaps).
+  cyber_mach1: {
+    length: 5.1, width: 2.16, pFront: 2.4, pRear: 5.5, crown: 0.02,
+    paint: 0x151d30, paint2: 0x2c3548, paintMetal: 0.85, rimColor: 0x5a6578, caliper: 0x00d8ea,
+    glass: { base: 0.6, roof: 0.3 },
+    sill: [[-2.55, 0.3], [-2.3, 0.16], [2.15, 0.13], [2.55, 0.2]],
+    belt: [[-2.55, 0.62], [-2.45, 0.83], [-1.6, 0.86], [-0.6, 0.8], [0.6, 0.78], [1.55, 0.8], [2.0, 0.71], [2.3, 0.55], [2.55, 0.3]],
+    roof: [[-1.75, 0.0], [-1.5, 0.88], [-0.8, 1.06], [-0.1, 1.15], [0.4, 1.13], [0.95, 0.9], [1.2, 0.0]],
+    hip: [[-2.55, 0.92], [-1.56, 1.0], [-0.5, 0.88], [0.5, 0.88], [1.56, 1.0], [2.55, 0.94]],
+    arches: [{ z: 1.56, cy: 0.36, r: 0.42 }, { z: -1.56, cy: 0.36, r: 0.42 }],
+    wheel: { R: 0.36, tw: 0.28, rimFrac: 0.74, spokes: 6, style: 'aero' },
+    rearWheel: { R: 0.36, tw: 0.32, rimFrac: 0.74, spokes: 6, style: 'aero' },
+    track: 0.91, trackRear: 0.9, wheelZ: [1.56, -1.56],
+    gaps: [0.98],
+    handles: [], mirrors: false,
+    windshieldBase: 0.98,
+    lamps: [
+      [1, 0.7, 0.54, 0.2, 0.022, 'head', { slant: 0.2, p: 3 }], [1, 0, 0.47, 0.82, 0.01, 'cyan', { p: 2, lift: 0.008 }],
+      [1, 0, 0.27, 0.72, 0.075, 'trim', { p: 6, lift: 0.006 }],
+      [-1, 0, 0.7, 0.98, 0.016, 'magenta', { p: 2, lift: 0.016 }], [-1, 0, 0.42, 0.88, 0.16, 'trim', { p: 8, lift: 0.006 }],
+    ],
+    cabin: [-0.85, 0.95],
+    seat: 0x1c2536,
+    mats(M) {
+      M.cyan = new THREE.MeshBasicMaterial({ color: 0x00f5ff });
+      M.magenta = new THREE.MeshBasicMaterial({ color: 0xff2a85 });
+      M.glass.color.set(0x06202e);
+    },
+    classify(c, n, b) {
+      const ax = Math.abs(c.x);
+      if (c.y < b.bottom(c.z) + 0.015) return 'under';
+      if (c.y > b.belt(c.z) + 0.012 && c.z < 1.18 && c.z > -0.7) return 'glass'; // bubble canopy
+      // Engine-cover louvres behind the canopy
+      if (c.y > b.belt(c.z) + 0.02 && c.z < -0.8 && c.z > -1.75 && ax < 0.42 && n.y > 0.55) return Math.floor(c.z / 0.07) % 2 ? 'gloss' : 'paint2';
+      if (Math.abs(c.z - 0.98) < 0.006 && Math.abs(n.x) > 0.4 && c.y < b.belt(c.z) - 0.01) return 'under';
+      // Side intake scoop ahead of the rear haunch
+      if (c.z < -0.45 && c.z > -1.05 && Math.abs(n.x) > 0.5) { const t = lowerT(b, c); if (t > 0.9 && c.y < b.belt(c.z) - 0.1) return 'gloss'; }
+      if (lowerT(b, c) < 0.5) return 'paint2'; // gunmetal lower body
+      return 'paint';
+    },
+    extras(chassis, M, b, exhausts, lightbar, ctx) {
+      // Light lines that follow the flanks: cyan along the sill and the shoulder
+      for (const s of [-1, 1]) {
+        chassis.add(new THREE.Mesh(sideStrip(b, -1.12, 1.12, (z) => b.sill(z) + 0.12, (z) => b.sill(z) + 0.135, s, { rows: 1, lift: 0.004 }), M.cyan));
+        chassis.add(new THREE.Mesh(sideStrip(b, -2.42, 2.25, (z) => b.belt(z) - 0.055, (z) => b.belt(z) - 0.043, s, { rows: 1, lift: 0.004 }), M.cyan));
+      }
+      // Dorsal stabiliser fin from the canopy to the tail, lit along its top edge
+      addMesh(chassis, plate([[-0.75, 1.0], [-2.38, 0.82], [-2.44, 1.04], [-2.2, 1.09], [-1.3, 1.08]], 0.026, 0.006), M.paint, 0, 0, 0);
+      const fe = new THREE.CatmullRomCurve3([[0, 1.02, -0.85], [0, 1.088, -1.3], [0, 1.094, -2.2], [0, 1.05, -2.44]].map((p) => new THREE.Vector3(...p)));
+      addMesh(chassis, new THREE.TubeGeometry(fe, 32, 0.012, 6), M.cyan);
+      // Active aero flaps: hinged at their leading edge, trailing edge lifts on nitro
+      ctx.aeroFlaps = [];
+      for (const s of [-1, 1]) {
+        const flap = new THREE.Group();
+        flap.position.set(s * 0.5, b.belt(-2.05) + 0.03, -2.0);
+        chassis.add(flap);
+        addMesh(flap, airfoil(0.42, 0.03, 0.66, 0.012), M.paint2);
+        addMesh(flap, new THREE.BoxGeometry(0.66, 0.014, 0.03), M.magenta, 0, 0.01, -0.41);
+        for (const e of [-1, 1]) addMesh(flap, plate([[0.02, -0.04], [-0.42, -0.04], [-0.4, 0.04], [0.0, 0.03]], 0.012), M.paint2, e * 0.33, 0, 0);
+        ctx.aeroFlaps.push(flap);
+      }
+      // Twin turbine nozzles with glowing cores in the diffuser
+      for (const x of [-0.42, 0.42]) {
+        const nz = new THREE.CylinderGeometry(0.17, 0.21, 0.3, 24, 1, true); nz.rotateX(Math.PI / 2);
+        addMesh(chassis, nz, M.disc, x, 0.42, -2.5);
+        const back = new THREE.CircleGeometry(0.17, 24); back.rotateY(Math.PI);
+        addMesh(chassis, back, M.gloss, x, 0.42, -2.55);
+        const core = new THREE.CircleGeometry(0.07, 20); core.rotateY(Math.PI);
+        addMesh(chassis, core, M.cyan, x, 0.42, -2.555);
+        addMesh(chassis, new THREE.TorusGeometry(0.125, 0.008, 6, 32), M.cyan, x, 0.42, -2.555);
+        for (let i = 0; i < 8; i++) addMesh(chassis, new THREE.BoxGeometry(0.012, 0.06, 0.01), M.disc, x, 0.42, -2.553).geometry.translate(0, 0.095, 0).rotateZ((i / 8) * Math.PI * 2);
+        const ring = new THREE.TorusGeometry(0.17, 0.012, 6, 32);
+        addMesh(chassis, ring, M.chrome, x, 0.42, -2.65);
+        exhausts.push([x, 0.42, -2.67]);
+      }
+      // Diffuser fins and a front splitter blade with a cyan edge
+      for (const x of [-0.75, -0.2, 0, 0.2, 0.75]) addMesh(chassis, plate([[-2.05, 0.14], [-2.52, 0.14], [-2.5, 0.3], [-2.25, 0.2]], 0.014), M.gloss, x, 0, 0);
+      const sp = [];
+      for (let z = 1.98; z <= 2.56; z += 0.04) sp.push([b.halfW(z) * 0.94 + 0.02, Math.min(z, 2.58)]);
+      addMesh(chassis, slab([[0, 1.98], ...sp, ...sp.slice().reverse().map(([x, z]) => [-x, z])], 0.022), M.gloss, 0, 0.135, 0);
+      // Camera pods in place of mirrors
+      for (const s of [-1, 1]) {
+        const pod = new THREE.CapsuleGeometry(0.028, 0.12, 4, 10); pod.rotateX(Math.PI / 2);
+        addMesh(chassis, pod, M.paint2, s * 0.78, b.belt(0.9) + 0.09, 0.86);
+        rod(chassis, [s * 0.66, b.belt(0.9) + 0.01, 0.84], [s * 0.78, b.belt(0.9) + 0.09, 0.86], 0.012, M.paint2);
+        addMesh(chassis, new THREE.CircleGeometry(0.02, 12).rotateY(Math.PI), M.cyan, s * 0.78, b.belt(0.9) + 0.09, 0.78);
+      }
+      ctx.trails = [[-0.98, 0.25, -2.5], [0.98, 0.25, -2.5], [-0.5, 1.0, -2.45], [0.5, 1.0, -2.45]];
+      ctx.flameColor = 0x00f5ff; ctx.trailColor = 0xff2a85;
+    },
+    // Neon ring on the face of each wheel (echo of the old hubless rims)
+    decorWheel(wheelMesh, M, side, front, w) {
+      const ring = new THREE.TorusGeometry(w.R * w.rimFrac * 0.93, 0.009, 6, 48);
+      ring.rotateY(Math.PI / 2);
+      addMesh(wheelMesh, ring, M.cyan, side * (w.tw * 0.31 + 0.014), 0, 0);
+    },
+  },
 };
 
 export const HERO_VEHICLE_IDS = new Set(Object.keys(CARS));
 const GEO_CACHE = new Map();
 
-/** Returns { group, chassis, wheels, frontSteerPivots, paintMeshes, lightbarParts, exhausts }. */
+/**
+ * Returns { group, chassis, wheels, frontSteerPivots, paintMeshes, lightbarParts, exhausts } plus, when
+ * the car's extras set them, trails / aeroFlaps / flameColor / trailColor.
+ * Optional spec hooks: mats(M) adds materials, common:false skips mirrors+cabin, tray:false skips the
+ * underbody tray, rearWheel/trackRear override the rear axle, decorWheel(wheelMesh, M, side, front).
+ */
 export function buildHeroVehicle(typeId, options = {}) {
   const spec = CARS[typeId];
   const M = materials(spec);
+  if (spec.mats) spec.mats(M);
   if (options.paintColor != null) M.paint.color.set(options.paintColor);
   const group = new THREE.Group();
   const chassis = new THREE.Group();
@@ -563,21 +949,25 @@ export function buildHeroVehicle(typeId, options = {}) {
     mesh.name = 'body-' + key;
     chassis.add(mesh);
   }
-  addCommonDetails(spec, body, M, chassis);
+  if (spec.common !== false) addCommonDetails(spec, body, M, chassis);
   for (const [key, geo] of cache.lamps) chassis.add(new THREE.Mesh(geo, M[key]));
   const exhausts = [];
   const lightbarParts = { typeId, phaseAMeshes: [], phaseBMeshes: [] };
-  spec.extras(chassis, M, body, exhausts, lightbarParts);
+  const ctx = { options };
+  spec.extras(chassis, M, body, exhausts, lightbarParts, ctx);
 
   // Underbody tray hides the see-through gap between the arches
   const tw = spec.wheel.tw;
-  addMesh(chassis, new THREE.BoxGeometry((spec.track - tw / 2 - 0.04) * 2, 0.3, spec.length * 0.86), M.under, 0, 0.36, 0);
+  if (spec.tray !== false) addMesh(chassis, new THREE.BoxGeometry((spec.track - tw / 2 - 0.04) * 2, 0.3, spec.length * 0.86), M.under, 0, 0.36, 0);
 
   const wheels = [], frontSteerPivots = [];
   for (const [zi, wz] of spec.wheelZ.entries()) {
+    const ws = zi > 0 && spec.rearWheel ? { ...spec, wheel: spec.rearWheel } : spec;
+    const track = zi > 0 && spec.trackRear ? spec.trackRear : spec.track;
     for (const s of [-1, 1]) {
-      const { pivot, wheelMesh } = buildWheel(spec, M, s);
-      pivot.position.set(s * spec.track, spec.wheel.R, wz);
+      const { pivot, wheelMesh } = buildWheel(ws, M, s);
+      pivot.position.set(s * track, ws.wheel.R, wz);
+      if (spec.decorWheel) spec.decorWheel(wheelMesh, M, s, zi === 0, ws.wheel);
       group.add(pivot);
       wheels.push(wheelMesh);
       if (zi === 0) frontSteerPivots.push(pivot);
@@ -590,5 +980,8 @@ export function buildHeroVehicle(typeId, options = {}) {
   const paintMeshes = [];
   chassis.traverse((o) => { if (o.isMesh && o.material === M.paint) paintMeshes.push(o); });
   // Paint meshes share one material; applyVehiclePaint recolours it via any of them.
-  return { group, chassis, wheels, frontSteerPivots, paintMeshes, lightbarParts: typeId === 'police' ? lightbarParts : null, exhausts };
+  return {
+    group, chassis, wheels, frontSteerPivots, paintMeshes, lightbarParts: typeId === 'police' ? lightbarParts : null, exhausts,
+    trails: ctx.trails, aeroFlaps: ctx.aeroFlaps, flameColor: ctx.flameColor, trailColor: ctx.trailColor,
+  };
 }
