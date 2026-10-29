@@ -4,6 +4,8 @@ import * as THREE from '../../vendor/three.module.js';
 import { getSignalPhase } from './signals.js';
 import { getDaylight } from './daylight.js';
 import { setStreetWorldOrigin, DECAL_CELLS } from './street_worker.js';
+import { SURFACE_UNIFORMS } from './surfaces.js'; // [street-props]
+import { NEAR_CFG, buildNearModels, busStopGlass, patchFurnitureMaterial, FURNITURE_UNIFORMS, PropDamage, PROP_DAMAGE_CFG } from './street_props.js'; // [street-props]
 
 const STRIDE = 5;
 const SIG_STRIDE = 8;
@@ -746,7 +748,7 @@ function buildStreetBladeTexture(streetName) {
   return tex;
 }
 
-function buildModels() {
+export function buildModels() {
   const m = {};
   // Generic single-arm light (JP/EU/intl major roads). Bulb at (2.3, 8.35).
   m.lampArm = merge([
@@ -773,9 +775,9 @@ function buildModels() {
   ]);
   // European post-top lantern (residential). Glass at y 3.6..4.1.
   m.lampPost = merge([
-    cyl(0.05, 0.08, 3.6, [0.12, 0.14, 0.13], 0, 0, 0),
-    box(0.22, 0.4, 0.22, [0.12, 0.14, 0.13], 0, 0.2, 0),
-    cyl(0.02, 0.3, 0.18, [0.12, 0.14, 0.13], 0, 4.08, 0, 6),
+    cyl(0.05, 0.08, 3.6, [0.07, 0.09, 0.08], 0, 0, 0),
+    box(0.22, 0.4, 0.22, [0.07, 0.09, 0.08], 0, 0.2, 0),
+    cyl(0.02, 0.3, 0.18, [0.07, 0.09, 0.08], 0, 4.08, 0, 6),
   ]);
   m.bulb = merge([box(0.55, 0.05, 0.26, [1, 1, 1], 0, 0, 0)]);
   m.bulbPost = merge([box(0.34, 0.46, 0.34, [1, 1, 1], 0, 0, 0)]);
@@ -847,7 +849,7 @@ function buildModels() {
     box(0.4, 0.45, 0.06, DARK, 0, 0.22, -0.8),
     box(0.4, 0.45, 0.06, DARK, 0, 0.22, 0.8),
   ]);
-  m.bollard = merge([cyl(0.09, 0.1, 0.85, [0.22, 0.23, 0.25], 0, 0, 0), cyl(0.095, 0.095, 0.08, [0.9, 0.85, 0.3], 0, 0.68, 0)]);
+  m.bollard = merge([cyl(0.09, 0.1, 0.9, [0.33, 0.35, 0.36], 0, 0, 0), cyl(0.095, 0.095, 0.12, [0.88, 0.88, 0.85], 0, 0.64, 0)]);
   const red = [0.78, 0.12, 0.1];
   m.hydrant = merge([
     cyl(0.13, 0.15, 0.55, red, 0, 0, 0),
@@ -855,7 +857,7 @@ function buildModels() {
     box(0.34, 0.09, 0.09, red, 0, 0.38, 0),
     box(0.09, 0.09, 0.2, [0.85, 0.82, 0.78], 0.12, 0.38, 0),
   ]);
-  m.bin = merge([cyl(0.27, 0.24, 0.85, [0.2, 0.32, 0.26], 0, 0, 0), cyl(0.29, 0.29, 0.06, [0.15, 0.18, 0.16], 0, 0.85, 0)]);
+  m.bin = merge([cyl(0.27, 0.27, 0.86, [0.07, 0.16, 0.11], 0, 0, 0, 10), cyl(0.29, 0.2, 0.16, [0.07, 0.16, 0.11], 0, 0.86, 0, 10)]);
   return m;
 }
 
@@ -922,6 +924,7 @@ const SIGN_TYPE_CFG = {
 };
 
 const HEAD_CULL = 450;
+const PAVER_REGIONS = new Set(['eu', 'jp', 'cn', 'kr', 'intl']); // [street-props] block pavers; us / uk / au: concrete flags
 
 const HALO_VS = `
 uniform float uSize;
@@ -958,48 +961,6 @@ void main() {
   gl_FragColor = vec4(uColor * a, a);
 }`;
 
-/** Adds subtle world-space asphalt grain, blotches and patch repairs to the road material (dark surfaces only). */
-function patchAsphalt(mat) {
-  if (!mat || mat.userData.streetAsphalt) return;
-  mat.userData.streetAsphalt = true;
-  const prev = mat.onBeforeCompile;
-  mat.onBeforeCompile = (shader, renderer) => {
-    if (prev) prev(shader, renderer);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vStreetWp;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvStreetWp = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-varying vec3 vStreetWp;
-float stHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float stNoise(vec2 p) {
-  vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(stHash(i), stHash(i + vec2(1.0, 0.0)), f.x), mix(stHash(i + vec2(0.0, 1.0)), stHash(i + vec2(1.0, 1.0)), f.x), f.y);
-}`
-      )
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-{
-  float aLum = dot(diffuseColor.rgb, vec3(0.3333));
-  float aMask = 1.0 - smoothstep(0.40, 0.47, aLum);
-  vec2 wp = vStreetWp.xz;
-  float grain = stNoise(wp * 1.7) - 0.5;
-  float mottle = stNoise(wp * 0.13) - 0.5;
-  float patchN = stNoise(wp * 0.031 + 17.0);
-  float repair = smoothstep(0.66, 0.70, patchN) * (1.0 - smoothstep(0.80, 0.84, patchN));
-  float v = grain * 0.08 + mottle * 0.12 - repair * 0.11;
-  diffuseColor.rgb *= 1.0 + aMask * v;
-}`
-      );
-  };
-  const prevKey = mat.customProgramCacheKey ? mat.customProgramCacheKey.bind(mat) : null;
-  mat.customProgramCacheKey = () => (prevKey ? prevKey() : '') + '|streetAsphalt';
-  mat.needsUpdate = true;
-}
-
 function makeDoubleSidedSignGeom(w, h) {
   const f = new THREE.PlaneGeometry(w, h);
   f.rotateY(Math.PI / 2);
@@ -1032,7 +993,7 @@ function makeDoubleSidedSignGeom(w, h) {
 export class StreetFeatures {
   /**
    * @param {THREE.Scene} scene
-   * @param {object} mats shared chunk materials (street materials are added to it, roadMat is patched)
+   * @param {object} mats shared chunk materials (street materials are added to it; surfaces.js patches them)
    */
   constructor(scene, mats) {
     this.scene = scene;
@@ -1073,12 +1034,13 @@ export class StreetFeatures {
       mats.streetWearMat = this.wearMat;
       mats.streetCurbMat = this.curbMat;
       mats.streetDecalMat = this.decalMat;
-      patchAsphalt(mats.roadMat);
+      // asphalt / paving / kerb / line-wear detail lives in surfaces.js (installSurfaceShaders) [street-props]
     }
     this.detailMats = new Set([this.lineMat, this.wearMat, this.curbMat, this.decalMat]);
 
     const models = buildModels();
     const furnMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.3 });
+    patchFurnitureMaterial(furnMat); // [street-props]
     this.meshes = {};
     for (const [type, [cull, cap, shadow]] of Object.entries(TYPE_CFG)) {
       const mesh = new THREE.InstancedMesh(models[type], furnMat, cap);
@@ -1093,6 +1055,35 @@ export class StreetFeatures {
       this.meshes[type] = mesh;
       this.root.add(mesh);
     }
+
+    // [street-props] detailed near-LOD twins (`<type>Near`), filled in _refresh for instances within NEAR_CFG range
+    const nearModels = buildNearModels();
+    const nearMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.3, side: THREE.DoubleSide });
+    patchFurnitureMaterial(nearMat);
+    this.nearOf = {};
+    for (const [type, [dist, cap, shadow]] of Object.entries(NEAR_CFG)) {
+      const mesh = new THREE.InstancedMesh(nearModels[type], nearMat, cap);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.count = 0;
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      mesh.castShadow = shadow;
+      mesh.receiveShadow = true;
+      mesh.name = `street_${type}Near`;
+      mesh.userData.near2 = dist * dist;
+      this.meshes[`${type}Near`] = mesh;
+      this.nearOf[type] = mesh;
+      this.root.add(mesh);
+    }
+    // bus shelter glazing: same matrices as busStopNear, written alongside it
+    this.glassMesh = new THREE.InstancedMesh(busStopGlass(), new THREE.MeshStandardMaterial({
+      color: 0xa9c4cf, roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide,
+    }), NEAR_CFG.busStop[1]);
+    this.glassMesh.instanceMatrix = this.nearOf.busStop.instanceMatrix;
+    this.glassMesh.count = 0;
+    this.glassMesh.frustumCulled = false;
+    this.glassMesh.name = 'street_busStopGlass';
+    this.root.add(this.glassMesh); // [/street-props]
 
     // Roadside Traffic Signs InstancedMeshes (STOP, Speed Limit, Warning Diamonds)
     this.signAtlasTex = buildTrafficSignAtlasTexture();
@@ -1178,6 +1169,8 @@ export class StreetFeatures {
     this.root.add(this.lamps);
 
     this.activeSignals = [];
+    this.damage = new PropDamage(); // [prop-damage] knocked-over props (persist across refreshes)
+    this._hitList = []; // [prop-damage] damageable props near the camera, rebuilt each refresh
     this.lastRefresh = { x: Infinity, z: Infinity, sig: '', vis: true };
     this.stats = { instances: 0, signals: 0, heads: 0, gantries: 0, blades: 0, refreshMs: 0 };
     this._col = { green: new THREE.Color(0.15, 1.0, 0.45), yellow: new THREE.Color(1.0, 0.72, 0.05), red: new THREE.Color(1.0, 0.12, 0.08) };
@@ -1249,6 +1242,10 @@ export class StreetFeatures {
     while (this.gantrySignGroup.children.length > 0) this.gantrySignGroup.remove(this.gantrySignGroup.children[0]);
     while (this.bladeSignGroup.children.length > 0) this.bladeSignGroup.remove(this.bladeSignGroup.children[0]);
     let gantryCount = 0, bladeCount = 0;
+    let pavD = Infinity, pavRegion = ''; // [street-props] sidewalk paving style follows the nearest chunk's region
+    const dmgList = this.damage.list, hitList = this._hitList; // [prop-damage]
+    for (const e of dmgList) e.slots.length = 0;
+    hitList.length = 0;
 
     // [feature/street-detail] real OSM furniture as a pseudo chunk (world coords) + suppression of nearby procedural duplicates
     const sd = this.streetDetail && this.streetDetail.st ? this.streetDetail : null;
@@ -1267,6 +1264,7 @@ export class StreetFeatures {
       }
       if (!st || (chunkD > 1300 && !isReal)) continue;
       const region = st.region || 'us';
+      if (!isReal && chunkD < pavD) { pavD = chunkD; pavRegion = region; } // [street-props]
 
       for (const [type, arr] of Object.entries(st.types || {})) {
         const mesh = this.meshes[type];
@@ -1275,14 +1273,28 @@ export class StreetFeatures {
         const cap = mesh.instanceMatrix.count;
         const out = mesh.instanceMatrix.array;
         const supG = sup && sup[type]; // [feature/street-detail]
+        const near = this.nearOf[type], nearKey = `${type}Near`; // [street-props]
+        const near2 = near ? near.userData.near2 : -1, nearCap = near ? near.instanceMatrix.count : 0;
         for (let i = 0; i < arr.length; i += STRIDE) {
           const x = arr[i] + ox, z = arr[i + 2] + oz;
           const dx = x - cx, dz = z - cz;
-          if (dx * dx + dz * dz > r2) continue;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > r2) continue;
           if (supG && supG.near(x, z)) continue; // [feature/street-detail]
+          const dmg = dmgList.length ? this.damage.find(type, x, z) : null; // [prop-damage]
+          if (!dmg && d2 < 8100 && (PROP_DAMAGE_CFG[type] || type === 'tlArm' || type === 'tlHeadV' || type === 'tlHeadH')) {
+            hitList.push({ type, x, y: arr[i + 1], z, rot: arr[i + 3], sx: arr[i + 4] });
+          }
+          if (d2 < near2 && counts[nearKey] < nearCap) { // [street-props]
+            const k = counts[nearKey]++;
+            writeMatrix(near.instanceMatrix.array, k * 16, x, arr[i + 1], z, arr[i + 3], arr[i + 4]);
+            if (dmg) this.damage.place(dmg, near, k); // [prop-damage]
+            continue;
+          }
           const n = counts[type];
           if (n >= cap) break;
           writeMatrix(out, n * 16, x, arr[i + 1], z, arr[i + 3], arr[i + 4]);
+          if (dmg) this.damage.place(dmg, mesh, n); // [prop-damage]
           counts[type] = n + 1;
         }
       }
@@ -1369,6 +1381,7 @@ export class StreetFeatures {
             const hh = y - heads[i + 4], ho = hh > 9.5 ? 2.4 : hh > 8.5 ? 2.6 : hh > 8 ? 2.3 : 0;
             if (sup._lamp.near(x - Math.cos(heads[i + 3]) * ho, z + Math.sin(heads[i + 3]) * ho)) continue;
           }
+          if (dmgList.length && this.damage.lampDown(x, z, heads[i + 3], y - heads[i + 4])) continue; // [prop-damage] bulb is out
           const isPost = y - heads[i + 4] < 5;
           if (isPost) {
             if (nBulbPost < 2000) writeMatrix(bulbPostArr, nBulbPost++ * 16, x, y, z, heads[i + 3], 1);
@@ -1386,6 +1399,7 @@ export class StreetFeatures {
           const x = sig[i] + ox, z = sig[i + 2] + oz;
           const dx = x - cx, dz = z - cz;
           if (dx * dx + dz * dz > HEAD_CULL * HEAD_CULL) continue;
+          if (dmgList.length && (this.damage.find('tlHeadV', x, z, 0.6) || this.damage.find('tlHeadH', x, z, 0.6))) continue; // [prop-damage]
           const nx = sig[i + 5] + ox, nz = sig[i + 6] + oz;
           this.activeSignals.push({
             x, y: sig[i + 1], z, c: Math.cos(sig[i + 3]), s: Math.sin(sig[i + 3]), axis: sig[i + 4],
@@ -1402,6 +1416,9 @@ export class StreetFeatures {
       mesh.instanceMatrix.needsUpdate = true;
       total += counts[type];
     }
+    if (pavRegion) SURFACE_UNIFORMS.uPaving.value = PAVER_REGIONS.has(pavRegion) ? 1 : 0; // [street-props]
+    this.glassMesh.count = counts.busStopNear; // [street-props]
+    this.glassMesh.visible = counts.busStopNear > 0;
     this.bulbs.count = nBulb;
     this.bulbsPost.count = nBulbPost;
     this.halos.count = nHalo;
@@ -1451,12 +1468,15 @@ export class StreetFeatures {
     if (worldOrigin !== this._origin) {
       this._origin = worldOrigin;
       setStreetWorldOrigin(worldOrigin);
+      this.damage.clear(); // [prop-damage]
     }
     const vis = !layerVisibility || layerVisibility.facilities !== false;
     this.root.visible = vis && !this._forceHidden;
     if (!vis || !loadedChunks) return;
     const sig = this._chunkSignature(loadedChunks) + (this.streetDetail ? `|sd${this.streetDetail.version}` : ''); // [feature/street-detail]
     const lr = this.lastRefresh;
+    this.damage.update(dt); // [prop-damage] falling props
+    if (this.damage.dirty) { this.damage.dirty = false; lr.sig = ''; } // bulbs / signal lamps of a downed prop go out
     if (sig !== lr.sig || Math.hypot(camPos.x - lr.x, camPos.z - lr.z) > REFRESH_MOVE_M) {
       lr.sig = sig;
       lr.x = camPos.x;
@@ -1470,11 +1490,108 @@ export class StreetFeatures {
     if (Math.abs(on - this._lightOn) > 0.005) {
       this._lightOn = on;
       this.bulbMat.color.setRGB(0.54 + 0.46 * on, 0.54 + 0.36 * on, 0.5 + 0.2 * on);
+      FURNITURE_UNIFORMS.uFurnNight.value = on; // [street-props] lit refractors, LED panels, ad boxes
       this.haloMat.uniforms.uIntensity.value = 1.0 * on;
       this.poolMat.uniforms.uIntensity.value = 0.55 * on;
       this.halos.visible = on > 0.02 && this.halos.count > 0;
       this.pools.visible = on > 0.02 && this.pools.count > 0;
     }
+  }
+
+  // ---------- [prop-damage] ----------
+
+  /** Knocks over prop `p` (a _hitList entry) toward (fx, fz); a signal pole takes its arm and head with it. */
+  _knock(p, fx, fz) {
+    if (p.type === 'tlArm' || p.type === 'tlHeadV' || p.type === 'tlHeadH') {
+      // hit the arm / head: find the pole it hangs from
+      const pole = this._hitList.find((q) => q.type === 'tlPole' && Math.abs(q.x - p.x) < 8.5 && Math.abs(q.z - p.z) < 8.5 &&
+        (p.type === 'tlArm' ? Math.abs(q.x - p.x) < 0.3 && Math.abs(q.z - p.z) < 0.3 : true) && this._headOf(q, p));
+      if (!pole) return false;
+      p = pole;
+    }
+    if (p.type === 'tlPole' || p.type === 'lampArm' || p.type === 'lampCobra' || p.type === 'lampDouble') {
+      // poles with a mast arm fall sideways to it, so the arm lands flat instead of spearing the road
+      const px = Math.sin(p.rot), pz = Math.cos(p.rot), sg = fx * px + fz * pz < 0 ? -1 : 1;
+      fx = px * sg; fz = pz * sg;
+    }
+    const e = this.damage.topple(p.type, p.x, p.y, p.z, fx, fz);
+    if (!e) return false;
+    if (p.type === 'tlPole') {
+      const piv = [p.x + fx * 0.18 / (Math.hypot(fx, fz) || 1), p.y, p.z + fz * 0.18 / (Math.hypot(fx, fz) || 1)];
+      for (const q of this._hitList) {
+        if (q.type === 'tlArm' && Math.abs(q.x - p.x) < 0.3 && Math.abs(q.z - p.z) < 0.3) this.damage.topple('tlArm', q.x, q.y, q.z, fx, fz, piv, 'tlPole', e);
+        else if ((q.type === 'tlHeadV' || q.type === 'tlHeadH') && this._headOf(p, q)) this.damage.topple(q.type, q.x, q.y, q.z, fx, fz, piv, 'tlPole', e);
+      }
+    }
+    return true;
+  }
+
+  /** True when signal head h hangs at the end of pole's mast arm. */
+  _headOf(pole, h) {
+    if (h.type === 'tlArm') return true;
+    for (const q of this._hitList) {
+      if (q.type !== 'tlArm' || Math.abs(q.x - pole.x) > 0.3 || Math.abs(q.z - pole.z) > 0.3) continue;
+      const ex = pole.x + Math.cos(q.rot) * q.sx, ez = pole.z - Math.sin(q.rot) * q.sx;
+      if (Math.abs(ex - h.x) < 0.7 && Math.abs(ez - h.z) < 0.7) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Weapon impact (walker_weapons _applyImpact): explosions knock over everything in the splash radius; bullets
+   * chip hit points off the first prop along the shot (from -> to) or right at the impact point.
+   */
+  weaponHit(from, to, splash) {
+    const L = this._hitList;
+    if (!L.length) return 0;
+    let n = 0;
+    if (splash > 0) {
+      for (const p of L) {
+        const dx = p.x - to.x, dz = p.z - to.z, d = Math.hypot(dx, dz);
+        if (d > splash + 0.5 || to.y > p.y + 12) continue;
+        if (this.damage.hit(p.type, p.x, p.z, d < splash * 0.6 ? 99 : 4) && this._knock(p, dx || Math.random() - 0.5, dz || Math.random() - 0.5)) n++;
+      }
+      return n;
+    }
+    const ox = from.x, oy = from.y + 1.4, oz = from.z, sx = to.x - ox, sy = to.y - oy, sz = to.z - oz;
+    const len2 = sx * sx + sz * sz;
+    let best = null, bt = 2;
+    for (const p of L) {
+      if (p.type === 'tlArm' || p.type === 'tlHeadV' || p.type === 'tlHeadH') continue;
+      const c = PROP_DAMAGE_CFG[p.type];
+      // closest approach of the shot (2D) to the prop's axis, then height check at that point
+      const t = len2 > 1e-6 ? Math.max(0, Math.min(1, ((p.x - ox) * sx + (p.z - oz) * sz) / len2)) : 1;
+      const qx = ox + sx * t - p.x, qz = oz + sz * t - p.z, qy = oy + sy * t;
+      if (qx * qx + qz * qz > (c[2] + 0.12) * (c[2] + 0.12) || qy < p.y - 0.1 || qy > p.y + c[3]) continue;
+      if (t < bt) { bt = t; best = p; }
+    }
+    if (best && this.damage.hit(best.type, best.x, best.z, 1) && this._knock(best, sx, sz)) n++;
+    return n;
+  }
+
+  /**
+   * Player vehicle sweep (main.js drive step): props inside the car's footprint go over in the travel direction.
+   * Returns the factor the car keeps of its speed (1 when nothing was hit).
+   */
+  collideVehicle(pos, yaw, speed, spec) {
+    const L = this._hitList;
+    if (!L.length || Math.abs(speed) < 2.5) return 1;
+    const sy = Math.sin(yaw), cy = Math.cos(yaw), hl = (spec && spec.length ? spec.length : 4.6) * 0.5, hw = (spec && spec.width ? spec.width : 2.0) * 0.5;
+    const dir = Math.sign(speed);
+    let keep = 1;
+    for (const p of L) {
+      if (p.type === 'tlArm' || p.type === 'tlHeadV' || p.type === 'tlHeadH') continue;
+      const dx = p.x - pos.x, dz = p.z - pos.z;
+      if (dx * dx + dz * dz > 64 || Math.abs(p.y - pos.y) > 3) continue;
+      const c = PROP_DAMAGE_CFG[p.type];
+      const f = dx * sy + dz * cy, l = dx * cy - dz * sy;
+      if (Math.abs(f) > hl + c[2] || Math.abs(l) > hw + c[2]) continue;
+      if (this.damage.find(p.type, p.x, p.z)) continue;
+      // pushed along the travel direction, a little away from the car's centre line
+      const side = Math.sign(l) * 0.35;
+      if (this._knock(p, (sy + cy * side) * dir, (cy - sy * side) * dir)) keep *= c[4];
+    }
+    return keep;
   }
 
   debugStats() {

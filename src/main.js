@@ -1744,6 +1744,7 @@ class WorldExplorerApp {
         this.driveVelY = 0;
       }
     }
+    if (this.streetFeatures) this.speed *= this.streetFeatures.collideVehicle(this.pos, this.yaw, this.speed, spec); // [prop-damage]
 
     const axleHalfSpan = Math.max(1.6, (spec.length || 4.6) * 0.38);
     const sinY = Math.sin(this.yaw);

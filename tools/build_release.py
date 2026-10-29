@@ -70,6 +70,7 @@ MOD_ID_MAP = {
     'src/features/map_tiles.js': '__MOD_map_tiles',
     'src/features/route_graph.js': '__MOD_route_graph',
     'src/features/street_furniture.js': '__MOD_street_furniture',
+    'src/features/street_props.js': '__MOD_street_props',  # [street-props]
     'src/features/vegetation.js': '__MOD_vegetation',
     'src/features/places.js': '__MOD_places',
     'src/features/sky.js': '__MOD_sky',

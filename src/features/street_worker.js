@@ -339,6 +339,7 @@ class GeoBuf {
   constructor() {
     this.pos = [];
     this.col = [];
+    this.uv = null; // [street-props] optional per-vertex (along metres, 0 top / 1 face) for kerbs
   }
   quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, rgb) {
     // a-b-c-d counter-clockwise seen from above (+Y normal when a->b is along road and d is on the left)
@@ -352,6 +353,7 @@ class GeoBuf {
     const u8 = new Uint8Array(this.col.length);
     for (let i = 0; i < u8.length; i++) u8[i] = Math.max(0, Math.min(255, (this.col[i] * 255 + 0.5) | 0));
     geom.setAttribute('color', new THREE.BufferAttribute(u8, 3, true));
+    if (this.uv && this.uv.length === (this.pos.length / 3) * 2) geom.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(this.uv), 2)); // [street-props]
     // Flat up-facing normals (cheaper than computeVertexNormals and correct for decals/curb tops)
     const nrm = new Float32Array(this.pos.length);
     for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
@@ -733,6 +735,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
   const lines = new GeoBuf();
   const wear = new GeoBuf();
   const curbs = new GeoBuf();
+  curbs.uv = []; // [street-props]
   const decals = new DecalBuf();
   const centerRgb = style.center === 'yellow' ? YELLOW : WHITE;
   const inChunk = (x, z) => x >= -499.5 && x < 499.5 && z >= -499.5 && z < 499.5;
@@ -875,6 +878,8 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         for (const [a, b] of civs) {
           for (const side of [-1, 1]) {
             strip(curbs, s, a, b, side * (hw + 0.09), 0.09, 0.1, CURB_TOP);
+            const ua = a * s.len, ub = b * s.len; // [street-props]
+            curbs.uv.push(ua, 0, ub, 0, ub, 0, ua, 0, ua, 0, ub, 0, ua, 1, ub, 1, ub, 1, ua, 1, ub, 1, ua, 1);
             const e = side * hw;
             const ax = s.x1 + (s.x2 - s.x1) * a + rx * e, az = s.z1 + (s.z2 - s.z1) * a + rz * e;
             const bx = s.x1 + (s.x2 - s.x1) * b + rx * e, bz = s.z1 + (s.z2 - s.z1) * b + rz * e;
