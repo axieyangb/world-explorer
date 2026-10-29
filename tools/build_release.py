@@ -97,6 +97,7 @@ MOD_ID_MAP = {
     'src/features/occupants.js': '__MOD_occupants',  # [drivers]
     'src/features/drivers.js': '__MOD_drivers',  # [drivers]
     'src/features/ped_ragdoll.js': '__MOD_ped_ragdoll',  # [drivers]
+    'src/features/carjack.js': '__MOD_carjack',  # [polish]
     'src/features/hero_heli.js': '__MOD_hero_heli',  # [hero-vehicles]
     'src/features/nitro_fx.js': '__MOD_nitro_fx',  # [nitro-fx]
     'src/features/sea_state.js': '__MOD_sea_state',  # [sea-state]

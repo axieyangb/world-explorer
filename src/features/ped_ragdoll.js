@@ -59,8 +59,10 @@ function frame(A, f, q) {
  * Start a ragdoll for a walking pedestrian. look: { wScale, hScale }; (vx, vy, vz) launch velocity of the
  * body; (dx, dz) unit push direction (the feet are swept along it, the body tumbles over them).
  * Returns the parts array (one entry per RAGDOLL_PART_SPECS with pose fields and pt.q).
+ * [polish] specs: other part lists ({ name, ox, oy, oz }, part origin in the rest pose, names from FRAMES),
+ * e.g. the AI soldier's limb groups; aim: start with both hands forward (rifle hold) instead of hanging.
  */
-export function startRagdoll(ped, L, groundY, vx, vy, vz, dx, dz, spin) {
+export function startRagdoll(ped, L, groundY, vx, vy, vz, dx, dz, spin, specs = RAGDOLL_PART_SPECS, aim = false) {
   const ws = L.wScale || 1, hs = L.hScale || 1;
   const cy = Math.cos(ped.ryaw || 0), sy = Math.sin(ped.ryaw || 0);
   const X = new Float32Array(NP * 3), O = new Float32Array(NP * 3), R = new Float32Array(NP * 3);
@@ -70,6 +72,7 @@ export function startRagdoll(ped, L, groundY, vx, vy, vz, dx, dz, spin) {
     let [lx, ly, lz] = REST[i];
     if (i === FL || i === FR) lz += (i === FL ? sw : -sw) * 0.9;
     if (i === HL || i === HR) lz += (i === HL ? -sw : sw) * 0.5;
+    if (aim && (i === HL || i === HR)) { ly = 1.3; lz = 0.54; lx *= 0.8; } // [polish] arms out in front (same arm length)
     lx *= ws; ly *= hs; lz *= ws;
     R[i * 3] = REST[i][0] * ws; R[i * 3 + 1] = REST[i][1] * hs; R[i * 3 + 2] = REST[i][2] * ws;
     X[i * 3] = ped.x + lx * cy + lz * sy;
@@ -95,7 +98,7 @@ export function startRagdoll(ped, L, groundY, vx, vy, vz, dx, dz, spin) {
   }
   // per part: inverse rest rotation and the part origin's offset in its rest frame
   const parts = [];
-  for (const spec of RAGDOLL_PART_SPECS) {
+  for (const spec of specs) {
     const f = FRAMES[spec.name];
     const qr = frame(R, f, new THREE.Quaternion());
     const a = f[0];

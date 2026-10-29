@@ -633,6 +633,7 @@ export class CityTraffic {
     }
     if (app.railTransit) app.railTransit.addTrafficObstacles(this); // [feature/rail-transit] cars brake for trams/trains
     if (app.parkedCars) app.parkedCars.addTrafficObstacles(this); // [parked-cars] the player's parked cars: brake / route around
+    if (app.carjack) app.carjack.addTrafficObstacles(this); // [polish] the car being jacked
   }
 
   _updateCar(c, dt, now) {
@@ -1263,6 +1264,7 @@ export class CityTraffic {
 
     if (ped.state === 'lying') {
       ped.lieTimer = ped.stateTimer;
+      if (ped.getUp > 0 && ped.stateTimer >= ped.getUp) { this._actorGetUp(ped); return; } // [polish] carjacked driver
       if (ped.stateTimer >= RAGDOLL_LIE_DURATION) {
         ped.active = false;
         ped.state = 'walking';
@@ -1282,7 +1284,7 @@ export class CityTraffic {
     if (this.damage && this.damage.ped(ped, dt)) return; // [car-explosions] flee from explosions
     if (this.agents.drive(ped, dt)) return; // [people-agents] brain command / flinch
     const e = ped.e;
-    if (!e.alive) { ped.active = false; return; }
+    if (!e || !e.alive) { ped.active = false; return; } // [polish] actors are off the graph
     let speed = ped.v;
     if (ped.crossState === 0) {
       const end = ped.fwd ? e.b : e.a;
@@ -1402,7 +1404,8 @@ export class CityTraffic {
       if (ped.state === 'walking') this._pedGait(ped, dt); // [human-motion]
       const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
       const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
-      if (ped.state === 'walking' && ((dP > PED_DESPAWN && dK > 220) || (!kj && walking >= this.pedTarget))) {
+      if (ped.actorT > 0) ped.actorT -= dt; // [polish] carjack actors are not culled by the crowd cap
+      if (ped.state === 'walking' && ((dP > PED_DESPAWN && dK > 220) || (!kj && walking >= this.pedTarget && !(ped.actorT > 0)))) {
         ped.active = false;
         continue;
       }
@@ -1430,6 +1433,66 @@ export class CityTraffic {
       }
     }
     return active;
+  }
+
+  // [polish] Temporary pedestrian outside the sidewalk graph (carjack.js: the driver pulled out of the car, the
+  // passengers bailing out). look: a person_model look. opts.flee = { x, z }: run away from that point (the
+  // explosion-flee of vehicle_damage.ped, which recycles the person once out of sight); opts.rag = { vx, vy,
+  // vz, dx, dz, spin }: thrown to the ground as a connected ragdoll instead, getting up after opts.getUp s
+  // and then fleeing. Returns the ped or null when the pool is full.
+  spawnActor(x, y, z, yaw, look, opts = {}) {
+    let ped = null;
+    for (const q of this.peds) if (!q.active) { ped = q; break; }
+    if (!ped) return null;
+    ped.state = 'walking'; ped.crossState = 0; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0;
+    ped.parts = null; ped.partsByName = null; ped.rag = null;
+    ped.e = null; ped.lat = 0; ped.latBase = 0; ped.crossT = 0; ped.side = 1; ped.footOff = 0.5; ped.willCross = false;
+    ped.look = look;
+    ped.v = 1.3;
+    ped.x = x; ped.y = y; ped.z = z; ped.groundY = y;
+    ped.ryaw = yaw; ped.hx = Math.sin(yaw); ped.hz = Math.cos(yaw);
+    ped.phase = Math.random() * 6.28; ped.amp = 0.5;
+    ped.gph = Math.random() * 6.28; ped.gx = x; ped.gz = z; ped.gspd = ped.v;
+    ped.px = x; ped.pz = z;
+    ped.kFlee = 0; ped.kOff = 0; ped.dFlee = 0;
+    ped.leader = null;
+    ped.actorT = 12; ped.getUp = 0;
+    this.agents.onSpawn(ped);
+    ped.active = true;
+    ped.fleeFrom = opts.flee || null;
+    if (opts.rag) {
+      const r = opts.rag;
+      ped.amp = 0;
+      const parts = startRagdoll(ped, look, y, r.vx, r.vy, r.vz, r.dx, r.dz, r.spin);
+      const byName = {};
+      for (const pt of parts) byName[pt.name] = pt;
+      ped.parts = parts; ped.partsByName = byName;
+      ped.state = 'falling_apart';
+      ped.getUp = opts.getUp || 0;
+      if (!ped.fleeFrom) ped.fleeFrom = { x: x - r.dx, z: z - r.dz };
+    } else if (ped.fleeFrom) {
+      this._actorFlee(ped);
+    }
+    return ped;
+  }
+
+  _actorFlee(ped) { // [polish] run from ped.fleeFrom (vehicle_damage.ped moves the person)
+    const f = ped.fleeFrom;
+    let hx = ped.x - f.x, hz = ped.z - f.z;
+    const l = Math.hypot(hx, hz) || 1, j = (Math.random() - 0.5) * 0.7, cj = Math.cos(j), sj = Math.sin(j);
+    hx /= l; hz /= l;
+    ped.dHx = hx * cj - hz * sj; ped.dHz = hx * sj + hz * cj;
+    ped.dFlee = 4 + Math.random() * 2; ped.dSpd = 3.8 + Math.random() * 1.2;
+    ped.crossState = 0;
+  }
+
+  _actorGetUp(ped) { // [polish] back on the feet where the body lies, then run
+    ped.state = 'walking'; ped.stateTimer = 0; ped.getUp = 0;
+    ped.parts = null; ped.partsByName = null; ped.rag = null;
+    ped.y = ped.groundY; ped.amp = 0.3;
+    ped.gx = ped.x; ped.gz = ped.z; ped.px = ped.x; ped.pz = ped.z;
+    if (ped.fleeFrom) this._actorFlee(ped);
+    ped.ryaw = Math.atan2(ped.dHx || 0, ped.dHz || 1);
   }
 
   // [people-agents] Companion walking abreast of `leader` (same edge, direction, speed and crossing plan).

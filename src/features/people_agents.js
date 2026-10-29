@@ -20,7 +20,7 @@
 // Events are perception-filtered per person (hearing range by loudness, sight within ~60 m and roughly
 // facing): { type, t, dist, dir: 'ahead'|'left'|'right'|'behind', seen, heard, actor?, severity 0..1,
 // acked? } — types: gunshot, rocket, railgun, explosion, crash, impact, person_hit, near_miss, speech,
-// player_approach. At most 8 per person (oldest dropped).
+// player_approach, carjacked. At most 8 per person (oldest dropped).
 // ongoing = { playerNear?: m, playerArmed?: 'rifle'|'rpg'|'railgun' (within 15 m), fire?: dir (burning
 // wreck within 30 m), peopleRunning?: count within 25 m, vehicleNear?: m (player driving within 8 m) }.
 // Cost when unused: tracking starts on the first API call; until then update() only polls weapon fire for
@@ -29,7 +29,7 @@ import * as THREE from '../../vendor/three.module.js';
 
 const MAX_TRACK = 20;
 const MAX_EVENTS = 8;
-const HEAR = { gunshot: 150, rocket: 160, railgun: 150, explosion: 400, crash: 80, impact: 40, person_hit: 50, near_miss: 30, speech: 10, player_approach: 0 };
+const HEAR = { gunshot: 150, rocket: 160, railgun: 150, explosion: 400, crash: 80, impact: 40, person_hit: 50, near_miss: 30, speech: 10, player_approach: 0, carjacked: 45 }; // [polish] carjacked
 const SIGHT = 60;
 const ACTIONS = new Set(['walk_to', 'flee_from', 'stop_and_watch', 'turn_to', 'wave', 'phone_call', 'idle', 'follow']);
 // Shader idle-pose modes driven by actions (person_model.js PERSON_ANIM_GLSL).
@@ -98,6 +98,22 @@ export class PeopleAgents {
     ped.poseMode = -1;
     ped.extraStyle = 0;
     ped.flinchT = 0;
+  }
+
+  /**
+   * [polish] The player pulled a driver out of a car at (x, z) (carjack.js): a 'carjacked' event for the people
+   * around, and the built-in reflex — close bystanders bolt, the others stop and turn to look.
+   * except: the people involved (the jacked driver and passengers).
+   */
+  onCarjack(x, y, z, except = null) {
+    this.emit('carjacked', x, y, z, { actor: 'player', severity: 0.85 });
+    for (const ped of this.T.peds) {
+      if (!ped.active || ped.state !== 'walking' || ped.dFlee > 0 || ped.kFlee > 0 || (except && except.includes(ped))) continue;
+      const d = Math.hypot(ped.x - x, ped.z - z);
+      if (d > 22) continue;
+      if (d < 9 || Math.random() < 0.35) this._flee(ped, x, z);
+      else { ped.flinchT = 0.5 + Math.random() * 0.5; this._faceDir(ped, x - ped.x, z - ped.z, 1); }
+    }
   }
 
   /** Impact sphere (punch, kaiju stomp, weapon splash) reported by city_traffic.triggerImpactSphere. */

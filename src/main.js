@@ -96,6 +96,7 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
+import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -290,6 +291,7 @@ class WorldExplorerApp {
     this.vehicleMesh.rotation.y = this.yaw;
     this.scene.add(this.vehicleMesh);
     this.parkedCars = new ParkedCars(this); // [parked-cars] cars you got out of stay where you left them
+    this.carjack = new Carjack(this); // [polish]
 
     this.avatarMesh = createPlayerAvatarModel();
     this.avatarMesh.visible = false;
@@ -1548,10 +1550,11 @@ class WorldExplorerApp {
     }
 
     if (this.mode === "walk") {
-      const fwd =
+      const jacking = this.carjack && this.carjack.active; // [polish] no walking / jumping during a carjack
+      const fwd = jacking ? 0 :
         (this.keys.has("KeyW") ? 1 : 0) -
         (this.keys.has("KeyS") ? 1 : 0);
-      const strafe =
+      const strafe = jacking ? 0 :
         (this.keys.has("KeyD") ? 1 : 0) -
         (this.keys.has("KeyA") ? 1 : 0);
       const isNitro = shiftPressed;
@@ -1573,7 +1576,7 @@ class WorldExplorerApp {
         this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.z));
       }
 
-      if (this.keys.has("Space") && this.isGrounded) {
+      if (this.keys.has("Space") && this.isGrounded && !jacking) {
         this.walkVelY = isNitro ? 14.5 : 8.2;
         this.isGrounded = false;
       }
@@ -2506,7 +2509,7 @@ class WorldExplorerApp {
     }
     if (this.vehicleDamage) this.vehicleDamage.resetPlayer(1); // [crash-damage] a new car is undamaged
     const spec = VEHICLE_SPECS[this.vehicleIdx];
-    this.vehicleMesh = createVehicleModel(spec.id, { ...options, hero: true });
+    this.vehicleMesh = options.mesh || createVehicleModel(spec.id, { ...options, hero: true }); // [polish] carjack: the staged car
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
     this.scene.add(this.vehicleMesh);
@@ -2537,7 +2540,8 @@ class WorldExplorerApp {
     this.selectVehicle(this.vehicleIdx + 1);
   }
 
-  hijackNearestTrafficCar(maxDist = 16) {
+  // [polish] opts.sequence: play the carjack (carjack.js) when possible; else (and from the API) claim instantly.
+  hijackNearestTrafficCar(maxDist = 16, opts = {}) {
     if (!this.traffic || !Array.isArray(this.traffic.cars)) return null;
     let bestCar = null;
     let bestD = maxDist;
@@ -2559,31 +2563,44 @@ class WorldExplorerApp {
           ? "supercar"
           : trafficType.id;
     const specIdx = Math.max(0, VEHICLE_SPECS.findIndex((s) => s.id === specId));
-
-    if (this.mode === "drive") this._parkCurrentCar("drive"); // [parked-cars] the car you jumped out of stays
-    this.pos.set(bestCar.x, bestCar.y, bestCar.z);
-    this.yaw = bestCar.ryaw != null ? bestCar.ryaw : Math.atan2(bestCar.ux || 0, bestCar.uz || 1);
-    this.camYaw = this.yaw;
-    this.speed = bestCar.v || 0;
-    bestCar.active = false;
-
-    this.selectVehicle(specIdx, {
+    const claim = {
+      x: bestCar.x, y: bestCar.y, z: bestCar.z,
+      yaw: bestCar.ryaw != null ? bestCar.ryaw : Math.atan2(bestCar.ux || 0, bestCar.uz || 1),
+      v: bestCar.v || 0, specIdx, specId: VEHICLE_SPECS[specIdx].id, typeId: trafficType.id,
       paintColor: bestCar.paint ? bestCar.paint.getHex() : undefined,
       hideTaxiSign: trafficType.id === "sedan",
-      keepPose: true, // [parked-cars]
-      toastSub: getLang() === "zh" ? "已接管街头车辆" : "CLAIMED",
-    });
+    };
+    if (opts.sequence && this.carjack.start(bestCar, claim)) return { typeId: trafficType.id, specId, sequence: true }; // [polish]
+    bestCar.active = false;
+    this._claimTrafficCar(claim, null);
     return { typeId: trafficType.id, specId };
   }
 
+  // Sit in a claimed traffic car (instantly, or at the end of a carjack with its staged mesh, stopped).
+  _claimTrafficCar(claim, mesh) {
+    if (this.mode === "drive") this._parkCurrentCar("drive"); // [parked-cars] the car you jumped out of stays
+    this.pos.set(claim.x, claim.y, claim.z);
+    this.yaw = claim.yaw;
+    this.camYaw = this.yaw;
+    this.speed = mesh ? 0 : claim.v;
+    this.selectVehicle(claim.specIdx, {
+      paintColor: claim.paintColor,
+      hideTaxiSign: claim.hideTaxiSign,
+      keepPose: true, // [parked-cars]
+      mesh, // [polish]
+      toastSub: getLang() === "zh" ? "已接管街头车辆" : "CLAIMED",
+    });
+  }
+
   handleVehicleInteract() {
+    if (this.carjack.active) { this.carjack.skip(); return; } // [polish] E again skips the carjack
     if (this.mode === "helicopter" || (this.kaiju && this.kaiju.active)) return;
     if (this.mode === "walk") {
       if (this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
         this.setMode("helicopter");
       } else if (this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 3.5)) {
         this.setMode("drive"); // [parked-cars] your own parked car first
-      } else if (!this.hijackNearestTrafficCar(16)) {
+      } else if (!this.hijackNearestTrafficCar(16, { sequence: true })) { // [polish]
         this.setMode("drive");
       }
     } else if (this.mode === "drive") {
@@ -2961,6 +2978,7 @@ class WorldExplorerApp {
     if (this.walkerWeapons) this.walkerWeapons.update(dt);
     if (this.weaponPickups) this.weaponPickups.update(dt); // [weapon-pickups]
     this.parkedCars.update(dt); // [parked-cars]
+    this.carjack.update(dt); // [polish] after the physics step: drives the avatar during a carjack
     this._updateCamera(dt);
     if (this.nitroFx) this.nitroFx.update(dt); // [nitro-fx] after the camera: shake + world-space boost effects
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
