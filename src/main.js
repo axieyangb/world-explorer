@@ -46,6 +46,7 @@ import { PlacesInfo } from "./features/places_info/index.js"; // places-info
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
 import { getWeaponSfx } from "./features/weapon_sfx.js";
+import { NitroFx } from "./features/nitro_fx.js"; // [nitro-fx]
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
 import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
 import { initWalkerWeapons } from "./features/walker_weapons.js";
@@ -511,6 +512,7 @@ class WorldExplorerApp {
     this.seaState = initSeaState(this); // [sea-state] live waves/swell -> water shader + ship motion
     this.satellites = initSatellites(this); // [satellites] real satellites + ISS in the night sky
     this.reflections = new ReflectionProbe(this.renderer, this.skyDome); // [hero-vehicles] live-sky reflections on the player's car
+    this.nitroFx = new NitroFx(this); // [nitro-fx] boost flames, sparks, trails, speed lines, shake, audio
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
     this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
@@ -1888,7 +1890,7 @@ class WorldExplorerApp {
       ? Math.min(20.0, 6.0 + (absSpd / 340.3) * 14.0)
       : Math.min(6.0, (absSpd / 145.0) * 6.0);
     const heliFov = this.mode === "helicopter" && this.heli && this.camMode !== "topdown";
-    const targetFov = 58.0 + (heliFov ? this.heli.fovAdd() : boostFovAdd);
+    const targetFov = 58.0 + (heliFov ? this.heli.fovAdd() : boostFovAdd) + (this.nitroFx ? this.nitroFx.fovAdd : 0); // [nitro-fx] boost kick
 
     const camTerrY = getBeijingTerrainElevation(this.camera.position.x, this.camera.position.z);
     const camAlt = Math.max(1.0, this.camera.position.y - camTerrY);
@@ -2859,6 +2861,7 @@ class WorldExplorerApp {
     if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
     if (this.walkerWeapons) this.walkerWeapons.update(dt);
     this._updateCamera(dt);
+    if (this.nitroFx) this.nitroFx.update(dt); // [nitro-fx] after the camera: shake + world-space boost effects
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
     if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]
     // [integration] atmosphere first: daylight/sun/weather are then current for traffic, street, places and shadows

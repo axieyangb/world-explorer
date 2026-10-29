@@ -5,6 +5,7 @@ import { HERO_VEHICLE_IDS, buildHeroVehicle } from './features/hero_vehicles.js'
 import { HEAVY_VEHICLE_IDS, buildHeavyVehicle } from './features/hero_heavy.js'; // [hero-vehicles] bus, trucks, tank
 import { buildHeroAvatar } from './features/hero_avatar.js'; // [hero-vehicles] player character
 import { buildHeroHelicopter } from './features/hero_heli.js'; // [hero-vehicles] player helicopter
+import { createNitroRig, updateNitroRig, nitroStyleFor } from './features/nitro_fx.js'; // [nitro-fx] shader flames + light trails
 
 export const VEHICLE_SPECS = [
   {
@@ -697,22 +698,18 @@ function createHeroVehicleModel(typeId, options) {
   nitroVfx.visible = false;
   chassis.add(nitroVfx);
   const vfxParts = { plumes: [], shockCones: [], rings: [], trails: [], aeroFlaps: [] };
-  const flameOuter = hero.flameColor ?? (typeId === 'supercar' ? 0xff4d00 : 0x3a86ff);
-  const trailCol = hero.trailColor ?? (typeId === 'supercar' ? 0xff0055 : 0x00e5ff);
-  if (hero.aeroFlaps) vfxParts.aeroFlaps.push(...hero.aeroFlaps); // tilt on nitro (updateEntityNitroVfx)
-  for (const [x, y, z] of hero.exhausts) {
-    const plume = createThrusterFlameCone(hero.exhausts.length > 2 ? 0.14 : 0.22, 3.8, 0xffffff, flameOuter);
-    plume.position.set(x, y, z);
-    nitroVfx.add(plume);
-    vfxParts.plumes.push(plume);
-  }
+  // [nitro-fx] shader exhaust flames + world-space tail-light trails (NitroFx) instead of cones and ribbons
   const tailZ = -VEHICLE_SPECS.find((s) => s.id === typeId).length / 2 - 0.05;
-  for (const [x, y, z] of hero.trails || [[-0.66, 0.85, tailZ], [0.66, 0.85, tailZ]]) {
-    const trail = createSpeedTrailRibbon(0.14, 9.5, trailCol, 0.72);
-    trail.position.set(x, y, z);
-    nitroVfx.add(trail);
-    vfxParts.trails.push(trail);
-  }
+  const style = nitroStyleFor(typeId);
+  const low = hero.exhausts.filter(([, y, z]) => style !== 'diesel' || y < 2.5 || z > tailZ + 1.5); // diesel: no roof "rockets"
+  const exhausts = (low.length ? low : hero.exhausts).map(([x, y, z]) => (z > tailZ + 1.5 ? { pos: [x, y + 0.08, z], dir: [0, 1, -0.25] } : [x, y, z])); // stacks point up
+  const big = style === 'diesel' && typeId !== 'tank';
+  const trailColors = typeId === 'cyber_mach1' ? [0x00f5ff, 0x00f5ff, 0xff2a85, 0xff2a85] : null;
+  vfxParts.rig = createNitroRig(nitroVfx, {
+    style, exhausts, trails: hero.trails || [[-0.66, 0.85, tailZ], [0.66, 0.85, tailZ]], trailColors,
+    radius: big ? 0.34 : hero.exhausts.length > 2 && style !== 'diesel' ? 0.12 : undefined, length: big ? 3.8 : undefined,
+    aeroFlaps: vfxParts.aeroFlaps,
+  });
   group.userData = {
     ...(hero.userData || {}),
     typeId,
@@ -841,7 +838,7 @@ export function createPlayerAvatarModel() {
  */
 export function createHelicopterModel() {
   const hero = buildHeroHelicopter(); // [hero-vehicles] detailed helicopter when available
-  if (hero) return hero;
+  if (hero) return upgradeHeliNitro(hero); // [nitro-fx]
   const root = new THREE.Group();
   const fuselage = new THREE.Group();
   root.add(fuselage);
@@ -1057,6 +1054,26 @@ export function createHelicopterModel() {
   return root;
 }
 
+// [nitro-fx] Swap the hero helicopter's cone plumes, flat rotor rings and ribbons for turbine shader flames
+// (same exhaust transforms) and thin contrails from the pod tips.
+function upgradeHeliNitro(root) {
+  const { nitroVfx, vfxParts } = root.userData;
+  if (!nitroVfx || !vfxParts) return root;
+  const dir = new THREE.Vector3();
+  const exhausts = vfxParts.plumes.map((p) => {
+    dir.set(0, 0, -1).applyEuler(p.rotation);
+    return { pos: p.position.toArray(), dir: dir.toArray() };
+  });
+  const trails = vfxParts.trails.map((t) => t.position.toArray());
+  for (const o of [...nitroVfx.children]) {
+    nitroVfx.remove(o);
+    o.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
+  }
+  root.userData.vfxParts = { plumes: [], shockCones: [], rings: [], trails: [], aeroFlaps: [] };
+  root.userData.vfxParts.rig = createNitroRig(nitroVfx, { style: 'turbine', exhausts, trails });
+  return root;
+}
+
 /**
  * Animates the mode-specific Nitro Boost visual effects (`nitroVfx`) on any entity
  * (Mach-1 Cyber Hypercar, Standard Vehicles, Pedestrian Cyber-Sprint, or Helicopter).
@@ -1069,6 +1086,7 @@ export function updateEntityNitroVfx(entityRoot, isActive, speedMps, timeSec) {
 
   const absSpd = Math.abs(speedMps);
   const show = Boolean(isActive && absSpd > 0.8);
+  if (vfxParts.rig) { updateNitroRig(vfxParts.rig, show, absSpd, timeSec); return; } // [nitro-fx]
   nitroVfx.visible = show;
 
   // Deploy active aero flaps on cyber_mach1 when boosting
