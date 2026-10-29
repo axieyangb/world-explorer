@@ -51,10 +51,12 @@ const LAYOUTS = {
     { code: 'KeyE', label: 'Exit' },
   ],
   walk: [
-    { code: 'Space', label: 'Fire', hold: true, cls: 'tc-primary' },
+    // [weapon-pickups] Unarmed the primary button punches (F); with a gun in hand it fires (Space).
+    { code: (app) => (app.walkerWeapons && !app.walkerWeapons.isArmed() ? 'KeyF' : 'Space'),
+      label: (app) => (app.walkerWeapons && !app.walkerWeapons.isArmed() ? 'Punch' : 'Fire'), hold: true, cls: 'tc-primary' },
     { code: 'ShiftLeft', label: 'Run', hold: true },
     { code: 'KeyX', label: 'RPG' },
-    { code: 'KeyR', label: 'Weapon' },
+    { code: 'KeyR', label: (app) => (app.walkerWeapons && app.walkerWeapons.isArmed() ? 'Reload' : 'Weapon') },
     { code: 'KeyF', label: 'Punch' },
     { code: 'KeyE', label: 'Enter' },
   ],
@@ -261,21 +263,22 @@ export class TouchControls {
     btn._def = def;
     btn.textContent = typeof def.label === 'function' ? def.label(this.app) : def.label;
     btn.setAttribute('aria-label', def.title || btn.textContent);
-    let id = null;
+    let id = null, code = null;
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       if (id !== null) return;
       id = e.pointerId;
       btn.setPointerCapture(id);
       btn.classList.add('pressed');
-      if (def.hold) this._press(def.code);
-      else this._tap(def.code);
+      code = typeof def.code === 'function' ? def.code(this.app) : def.code; // held key is fixed for this press
+      if (def.hold) this._press(code);
+      else this._tap(code);
     });
     const up = (e) => {
       if (e.pointerId !== id) return;
       id = null;
       btn.classList.remove('pressed');
-      if (def.hold) this._release(def.code);
+      if (def.hold) this._release(code);
     };
     btn.addEventListener('pointerup', up);
     btn.addEventListener('pointercancel', up);

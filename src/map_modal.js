@@ -1279,6 +1279,7 @@ export class MapSystem {
     this._drawTrafficOverlay(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, false);
     this._drawRoute(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, 5.5, 3.2, false);
     if (this.app && this.app.liveSky) this.app.liveSky.drawMap(ctx, (mx) => (mx - pmx) * ws, (my) => (my - pmy) * ws, lonToMx, latToMy, false); // [live-sky-weather]
+    if (this.app && this.app.weaponPickups) this.app.weaponPickups.drawMinimap(ctx, (wx, wz) => { const ll = this.navigator.worldToLatLon(wx, wz); return [(lonToMx(ll[1]) - pmx) * ws, (latToMy(ll[0]) - pmy) * ws]; }); // [weapon-pickups]
     ctx.restore();
 
     this._drawPlayer(ctx, S / 2, S / 2, 0, 0.85);

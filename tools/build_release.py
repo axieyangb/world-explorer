@@ -67,6 +67,8 @@ MOD_ID_MAP = {
     'src/features/city_traffic.js': '__MOD_city_traffic',
     'src/features/vehicle_damage.js': '__MOD_vehicle_damage',  # [car-explosions]
     'src/features/walker_weapons.js': '__MOD_walker_weapons',  # [walker-weapons]
+    'src/features/weapon_models.js': '__MOD_weapon_models',  # [weapon-pickups]
+    'src/features/weapon_pickups.js': '__MOD_weapon_pickups',  # [weapon-pickups]
     'src/features/map_tiles.js': '__MOD_map_tiles',
     'src/features/route_graph.js': '__MOD_route_graph',
     'src/features/street_furniture.js': '__MOD_street_furniture',

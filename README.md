@@ -72,15 +72,22 @@ Try it:
 | `E` | Enter or leave a vehicle |
 | `G` | Next vehicle |
 | `V` | Next camera (`Shift` + `V` while driving) |
-| `Space` / `X` | Fire / heavy weapon |
+| `Space` / `X` | Fire / heavy weapon (on foot: needs a weapon you picked up; `X` fires your RPG) |
+| Click | On foot: punch when unarmed, shoot with a weapon (hold still to keep firing; dragging only looks around) |
+| `R` / `Tab` | On foot: reload (switches weapon when the magazine is full) / next weapon you own |
 | `Shift` | Boost |
 | `H` | Horn or siren |
 | `M` | World map (click anywhere to teleport) |
 | `/` | Search for a place |
 | `Shift` + `F` | Full screen |
 
+**On foot you start unarmed.** Weapons and ammo cans lie around the city (sidewalks, alleys, parks, low rooftops,
+next to parked police cars), marked by a faint light beam and on the minimap: walk over one to pick it up. Assault
+rifles are common, RPGs rare and railguns very rare; ammo is limited (rifle 30 / 90, RPG 1 / 3, railgun 4 / 8) and
+you go back to your fists when it runs out. A new city starts you empty-handed again. Vehicles keep their own guns.
+
 **On a phone or tablet:** left thumb on the joystick to move or steer; right-thumb buttons change with the mode
-(fire, rockets, climb/descend and land in the helicopter; boost, brake, horn and exit in a car; fire, run and punch on foot).
+(fire, rockets, climb/descend and land in the helicopter; boost, brake, horn and exit in a car; punch or fire, run, reload and enter on foot).
 Drag the view to look around, pinch to zoom, tap the mode button at the top to switch, and tap **MAP** then anywhere to go there.
 Touch controls appear automatically on touch devices; `?touch=1` or `?touch=0` forces them on or off.
 

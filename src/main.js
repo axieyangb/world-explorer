@@ -49,6 +49,7 @@ import { getWeaponSfx } from "./features/weapon_sfx.js";
 import { FullscreenToggle } from "./features/fullscreen.js"; // feature/fullscreen
 import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-transit]
 import { initWalkerWeapons } from "./features/walker_weapons.js";
+import { initWeaponPickups } from "./features/weapon_pickups.js"; // [weapon-pickups]
 import {
   getLang,
   setLang,
@@ -290,6 +291,7 @@ class WorldExplorerApp {
     this.walker = this.avatarMesh;
     this.createVehicleModel = createVehicleModel;
     this.walkerWeapons = initWalkerWeapons(this);
+    this.weaponPickups = initWeaponPickups(this); // [weapon-pickups]
 
     this.heliMesh = createHelicopterModel();
     this.heli = null; // feature/heli-gta: created once scene/camera exist (see _ensureHeli)
@@ -556,6 +558,7 @@ class WorldExplorerApp {
     this.isTeleporting = true;
     this.water.reset(); // fix/water
     if (this.walkerWeapons) this.walkerWeapons.clearAiSquad(); // AI squad positions belong to the old region
+    if (this.walkerWeapons) this.walkerWeapons.resetInventory(); // [weapon-pickups] new city: empty-handed again
     const isBj =
       Math.abs(numLat - BEIJING_DEFAULT_ORIGIN.centerLat) < 0.06 &&
       Math.abs(numLon - BEIJING_DEFAULT_ORIGIN.centerLon) < 0.06;
@@ -1589,19 +1592,19 @@ class WorldExplorerApp {
         const swing = Math.sin(this.walkAnimTime) * 0.65;
         if (leftLeg) leftLeg.rotation.x = swing;
         if (rightLeg) rightLeg.rotation.x = -swing;
-        if (!this.walkerWeapons) {
+        if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) { // [weapon-pickups] unarmed arms swing
           if (leftArm) leftArm.rotation.x = -swing * 0.8;
           if (rightArm) rightArm.rotation.x = swing * 0.8;
         }
       } else {
         if (leftLeg) leftLeg.rotation.x = 0;
         if (rightLeg) rightLeg.rotation.x = 0;
-        if (!this.walkerWeapons) {
+        if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
           if (leftArm) leftArm.rotation.x = 0;
           if (rightArm) rightArm.rotation.x = 0;
         }
       }
-      if (!this.walkerWeapons) {
+      if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
         if (leftArm) leftArm.rotation.z = 0;
         if (rightArm) rightArm.rotation.z = 0;
       }
@@ -1998,14 +2001,20 @@ class WorldExplorerApp {
       } else if (e.code === "KeyX" && !e.repeat && this.mode === "helicopter") {
         this._ensureHeli().fireRockets();
       } else if (e.code === "KeyR" && !e.repeat && this.mode === "walk") {
-        if (this.walkerWeapons) this.walkerWeapons.cycleWeapon();
+        if (this.walkerWeapons) this.walkerWeapons.reloadOrCycle(); // [weapon-pickups] reload, or switch when full
+      } else if (e.code === "Tab" && this.mode === "walk") {
+        e.preventDefault(); // [weapon-pickups] Tab: next weapon you own
+        if (!e.repeat && this.walkerWeapons) this.walkerWeapons.cycleWeapon();
       } else if (e.code === "KeyX" && !e.repeat) {
         if (this.mode === "walk" && this.walkerWeapons) this.walkerWeapons.quickFireRpg();
         else if (this.isDrivingTank() && this.walkerWeapons) this.walkerWeapons.fireTankCannon();
       } else if (e.code === "Space") {
         if (this.mode === "walk" && this.walkerWeapons) {
-          this.walkerWeapons.isFiring = true;
-          this.walkerWeapons.fireCurrentWeapon();
+          // [weapon-pickups] Fire only with a gun in hand (Space is also jump, so no punch here; F / click punch).
+          if (this.walkerWeapons.isArmed()) {
+            this.walkerWeapons.isFiring = true;
+            this.walkerWeapons.fireCurrentWeapon();
+          }
         } else if (this.isDrivingTank() && this.walkerWeapons) {
           this.walkerWeapons.fireTankCannon();
         }
@@ -2092,6 +2101,8 @@ class WorldExplorerApp {
     const releaseAll = () => {
       this.keys.clear();
       if (this.heli) this.heli.cancelTrigger();
+      this._canvasEngaged = false; // [weapon-pickups] the next canvas click is a focus click
+      if (this.walkerWeapons) { this.walkerWeapons.cancelPress(); this.walkerWeapons.isFiring = false; }
     };
     window.addEventListener("blur", releaseAll);
     document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAll(); });
@@ -2101,10 +2112,8 @@ class WorldExplorerApp {
     let pointerStartX = 0, pointerStartY = 0;
     let isDragging = false;
     let dragPointerId = null;
-    let lastPointerType = "mouse";
 
     this.canvas.addEventListener("pointerdown", (e) => {
-      lastPointerType = e.pointerType;
       if (isDragging && e.pointerId !== dragPointerId) return; // extra finger: pinch zoom (touch_controls.js), not a new drag
       dragPointerId = e.pointerId;
       pointerDownX = e.clientX;
@@ -2113,15 +2122,17 @@ class WorldExplorerApp {
       pointerStartY = e.clientY;
       isDragging = e.button === 0 || e.button === 2;
       // On touch the view only looks around; firing goes through the on-screen buttons.
+      // [weapon-pickups] The first press after the window gains focus only focuses / looks (never attacks).
+      const focusClick = !this._canvasEngaged;
+      this._canvasEngaged = true;
       if (e.pointerType === "touch") {
         // fall through to the popover/panel cleanup below
       } else if (e.button === 0 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
         this._ensureHeli().pressTrigger(e.clientX, e.clientY); // hold to fire the cannon
-      } else if (e.button === 0 && this.mode === "walk" && this.walkerWeapons) {
-        this.walkerWeapons.isFiring = true;
-        this.walkerWeapons.fireCurrentWeapon();
-      } else if (e.button === 2 && this.mode === "walk" && this.walkerWeapons) {
-        this.walkerWeapons.quickFireRpg();
+      } else if ((e.button === 0 || e.button === 2) && this.mode === "walk" && this.walkerWeapons) {
+        // [weapon-pickups] On foot a press attacks only if it stays still (click = shot / punch, hold = auto
+        // fire); a drag is camera look. Kaiju Defense's soldier has its own pointer path (kaiju_mode.js).
+        if (!(this.kaiju && this.kaiju.active)) this.walkerWeapons.beginPress(e.button, e.clientX, e.clientY, focusClick);
       } else if (e.button === 0 && this.isDrivingTank() && this.walkerWeapons) {
         this.walkerWeapons.fireTankCannon();
       } else if (e.button === 2 && this.isDrivingTank() && this.walkerWeapons) {
@@ -2135,6 +2146,7 @@ class WorldExplorerApp {
 
     this.canvas.addEventListener("pointermove", (e) => {
       if (this.heli) this.heli.moveTrigger(e.clientX, e.clientY); // a drag orbits the camera instead of firing
+      if (this.walkerWeapons) this.walkerWeapons.movePress(e.clientX, e.clientY); // [weapon-pickups] drag = look
       if (!isDragging || (e.buttons & 3) === 0 || e.pointerId !== dragPointerId) return;
       const dx = e.clientX - pointerDownX;
       const dy = e.clientY - pointerDownY;
@@ -2151,24 +2163,11 @@ class WorldExplorerApp {
     this.canvas.addEventListener("pointerup", (e) => {
       if (e.pointerType === "touch") return;
       const moveDist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
-      if (e.button === 0 && this.mode === "walk") {
-        if (moveDist < 6) {
-          this._lastPointerPunchAt = performance.now();
-          this.triggerPlayerPunch();
-        }
+      if ((e.button === 0 || e.button === 2) && this.mode === "walk") {
+        if (this.walkerWeapons) this.walkerWeapons.endPress(e.button); // [weapon-pickups] click: shot, or punch unarmed
       } else if (this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
         if (e.button === 0) this._ensureHeli().releaseTrigger(); // quick tap = one round
         else if (e.button === 2 && moveDist < 6) this._ensureHeli().fireRockets();
-      }
-    });
-
-    this.canvas.addEventListener("click", (e) => {
-      if (lastPointerType === "touch") return;
-      if (e.button === 0 && this.mode === "walk") {
-        const moveDist = Math.hypot((e.clientX || 0) - pointerStartX, (e.clientY || 0) - pointerStartY);
-        if (moveDist < 6 && this.walkerWeapons) {
-          this.walkerWeapons.fireCurrentWeapon();
-        }
       }
     });
 
@@ -2178,6 +2177,7 @@ class WorldExplorerApp {
       dragPointerId = null;
       if (this.heli) this.heli.cancelTrigger();
       if (this.walkerWeapons && !this.keys.has("Space")) this.walkerWeapons.isFiring = false; // Fire may still be held
+      if (this.walkerWeapons) this.walkerWeapons.cancelPress(); // released off the canvas: no late auto-fire
     };
     window.addEventListener("pointerup", endDrag);
     window.addEventListener("pointercancel", endDrag); // e.g. a touch taken over by the browser
@@ -2214,8 +2214,8 @@ class WorldExplorerApp {
         : "W/S Move · A/D Turn · Q/E Alt · ←/→ Strafe · Space Cannon · F Rockets · L Land";
     } else if (this.mode === "walk") {
       text = zh
-        ? "WASD 移动 · Shift 疾跑 · 空格 射击 · X 火箭筒 · R 切枪 · F 出拳 · E 驾车"
-        : "WASD Walk · Shift Run · Space Shoot · X RPG · R Weapon · F Punch · E Drive";
+        ? "WASD 移动 · Shift 疾跑 · 单击/F 出拳 · 空格/单击 射击 · R 换弹 · Tab 切枪 · X 火箭筒 · E 驾车"
+        : "WASD Walk · Shift Run · Click/F Punch · Space/Click Shoot · R Reload · Tab Weapon · X RPG · E Drive"; // [weapon-pickups]
     } else if (this.isDrivingTank()) {
       text = zh
         ? "WASD 驾驶 · 空格/左键 120mm主炮 · Shift 加速 · V 换车 · E 下车"
@@ -2856,6 +2856,7 @@ class WorldExplorerApp {
     this._updatePhysics(dt);
     if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
     if (this.walkerWeapons) this.walkerWeapons.update(dt);
+    if (this.weaponPickups) this.weaponPickups.update(dt); // [weapon-pickups]
     this._updateCamera(dt);
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
     if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]

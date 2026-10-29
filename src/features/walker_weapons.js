@@ -3,6 +3,8 @@ import * as THREE from '../../vendor/three.module.js';
 import { getWeaponSfx } from './weapon_sfx.js';
 import { getBeijingTerrainElevation } from '../environment.js';
 import { createVehicleModel, createHelicopterModel } from '../entities.js';
+import { createWeaponModel } from './weapon_models.js'; // [weapon-pickups]
+import { t as tr } from '../i18n.js'; // [weapon-pickups]
 
 const HALF_PI = Math.PI * 0.5;
 
@@ -59,6 +61,17 @@ export const WALKER_WEAPONS = {
 };
 
 const WEAPON_KEYS = ['RIFLE', 'RPG', 'RAILGUN'];
+
+// [weapon-pickups] On foot the player starts unarmed ('FISTS') and owns only what it picks up. mag = magazine
+// size, start = rounds in reserve on the first pickup, add = rounds a repeat pickup / ammo box adds, cap = most
+// rounds carried in reserve, reload = seconds.
+export const WEAPON_AMMO = {
+  RIFLE: { mag: 30, start: 90, add: 60, box: 60, cap: 300, reload: 1.6 },
+  RPG: { mag: 1, start: 3, add: 2, box: 2, cap: 10, reload: 2.1 },
+  RAILGUN: { mag: 4, start: 8, add: 4, box: 4, cap: 24, reload: 2.0 },
+};
+const HOLD_FIRE_MS = 170; // a still press held this long starts automatic fire
+const DRAG_PX = 6;        // pointer travel that turns a press into a camera drag
 
 // -----------------------------------------------------------------------------
 // 3D Weapon Models Builder
@@ -350,7 +363,14 @@ const SHARED_RAGDOLL_GEOMS = [
 export class WalkerWeaponsSystem {
   constructor(app) {
     this.app = app;
-    this.activeWeapon = 'RIFLE';
+    this.activeWeapon = 'FISTS'; // [weapon-pickups] unarmed until something is picked up
+    this.inventory = {};         // id -> { mag, reserve }
+    this.reloadTimer = 0;
+    this.reloadWeapon = null;
+    this._press = null;
+    this._hint = '';
+    this._wasUnlimited = false;
+    this._badgeKey = '';
     this.fireTimer = 0;
     this.rpgQuickTimer = 0;
     this.tankCannonTimer = 0;
@@ -414,7 +434,7 @@ export class WalkerWeaponsSystem {
     if (typeof window !== 'undefined' && !this._pointerMoveBound) {
       this._pointerMoveBound = true;
       window.addEventListener('pointermove', (e) => {
-        if (!this.isAimingMode()) return;
+        if (!this.isAimingMode() || this._civilianWalk()) return;
         const w = window.innerWidth || 1;
         const h = window.innerHeight || 1;
         const xPct = (e.clientX / w) * 100;
@@ -452,13 +472,252 @@ export class WalkerWeaponsSystem {
     this._updateWeaponBadge();
   }
 
+  // [weapon-pickups] The pill shows the weapon, the magazine / reserve count (or RELOADING), and the nearest
+  // pickup hint. Rebuilt only when its text changes.
   _updateWeaponBadge() {
     if (!this.weaponBadgeEl) return;
-    const w = WALKER_WEAPONS[this.activeWeapon];
-    if (!w) return;
     const zh = this.app.getLang ? this.app.getLang() === 'zh' : false;
-    const name = zh ? w.nameZh : w.name.toUpperCase();
-    this.weaponBadgeEl.innerHTML = `<span style="color:#ffcc33;margin-right:6px;">[R]</span>${name}`;
+    let key, html;
+    if (!this.isArmed()) {
+      key = `F|${zh}|${this._hint}`;
+      html = `<span style="color:#ffcc33;margin-right:6px;">[F]</span>${tr('wp_fists')}`;
+    } else {
+      const w = WALKER_WEAPONS[this.activeWeapon];
+      const name = zh ? w.nameZh : w.name.toUpperCase();
+      const inv = this.inventory[this.activeWeapon];
+      let ammo;
+      if (this._unlimited()) ammo = '∞';
+      else if (this.reloadTimer > 0) ammo = `<span style="color:#ffcc33">${tr('wp_reloading')}</span>`;
+      else if (inv) ammo = `<b style="color:${inv.mag === 0 ? '#ff6b5a' : '#fff'}">${inv.mag}</b><span style="opacity:0.6"> / ${inv.reserve}</span>`;
+      else ammo = '';
+      key = `${this.activeWeapon}|${zh}|${ammo}|${this._hint}`;
+      html = `<span style="color:#ffcc33;margin-right:6px;">[R]</span>${name}<span style="margin-left:10px;font-variant-numeric:tabular-nums;">${ammo}</span>`;
+    }
+    if (this._hint) html += `<div style="font-weight:500;font-size:11px;letter-spacing:0.3px;opacity:0.85;margin-top:2px;text-align:center;">${this._hint}</div>`;
+    if (key === this._badgeKey) return;
+    this._badgeKey = key;
+    this.weaponBadgeEl.innerHTML = html;
+  }
+
+  /** [weapon-pickups] Second line in the weapon pill (nearest pickup); '' clears it. */
+  setPickupHint(text) {
+    if (text === this._hint) return;
+    this._hint = text || '';
+    this._updateWeaponBadge();
+  }
+
+  /** Kaiju Defense keeps the soldier fully armed with endless ammo. */
+  _unlimited() {
+    return Boolean(this.app.kaiju && this.app.kaiju.active);
+  }
+
+  isArmed() {
+    return this.activeWeapon !== 'FISTS';
+  }
+
+  // Walking empty-handed (no reticle, no aim pose).
+  _civilianWalk() {
+    return this.app.mode === 'walk' && !this.isArmed();
+  }
+
+  _hasAmmo(id) {
+    if (this._unlimited()) return true;
+    const inv = this.inventory[id];
+    return Boolean(inv && inv.mag + inv.reserve > 0);
+  }
+
+  _setWeapon(id) {
+    if (id === this.activeWeapon) return;
+    this.activeWeapon = id;
+    this.reloadTimer = 0;
+    this.reloadWeapon = null;
+    this.fireTimer = Math.max(this.fireTimer, 0.25); // raise / holster time
+    if (id === 'FISTS') {
+      // Drop the aim pose; main.js swings the arms from here on.
+      const ud = (this.app.avatarMesh || this.app.walker)?.userData;
+      for (const arm of [ud?.leftArm, ud?.rightArm]) if (arm) arm.rotation.set(0, 0, 0);
+    }
+    this._updateRigWeaponVisibility();
+    this._updateWeaponBadge();
+  }
+
+  /** Back to an empty-handed civilian (new city / new game). */
+  resetInventory() {
+    this.inventory = {};
+    this.isFiring = false;
+    this._press = null;
+    this._setWeapon('FISTS');
+  }
+
+  /**
+   * Adds a pickup ('RIFLE' | 'RPG' | 'RAILGUN' | 'AMMO') to the inventory. Returns the toast text, or null
+   * when it cannot be taken (ammo with no gun to load, or reserves already full).
+   */
+  collectPickup(kind) {
+    const zh = this.app.getLang ? this.app.getLang() === 'zh' : false;
+    const nm = (id) => (zh ? WALKER_WEAPONS[id].nameZh : WALKER_WEAPONS[id].name);
+    if (kind === 'AMMO') {
+      const parts = [];
+      for (const id of WEAPON_KEYS) {
+        const inv = this.inventory[id];
+        if (!inv) continue;
+        const A = WEAPON_AMMO[id];
+        const add = Math.min(A.box, A.cap - inv.reserve);
+        if (add <= 0) continue;
+        inv.reserve += add;
+        parts.push(`${nm(id)} +${add}`);
+      }
+      if (!parts.length) return null;
+      if (!this.isArmed() || !this._hasAmmo(this.activeWeapon)) this._autoSwitch(true);
+      this._updateWeaponBadge();
+      return `${tr('wp_ammo_box')} · ${parts.join(' · ')}`;
+    }
+    const A = WEAPON_AMMO[kind];
+    if (!A) return null;
+    let msg;
+    const inv = this.inventory[kind];
+    if (!inv) {
+      this.inventory[kind] = { mag: A.mag, reserve: A.start };
+      msg = `${nm(kind)} · ${A.mag}/${A.start}`;
+    } else {
+      const add = Math.min(A.add, A.cap - inv.reserve);
+      if (add <= 0) return null;
+      inv.reserve += add;
+      msg = tr('wp_plus_rounds', { name: nm(kind), n: add });
+    }
+    // Pick up and ready a new gun when empty-handed (or holding an empty one).
+    if (!this.isArmed() || !this._hasAmmo(this.activeWeapon)) this._setWeapon(kind);
+    this._updateWeaponBadge();
+    return msg;
+  }
+
+  // Next weapon with ammo after the current one (fists close the cycle); `prefer` skips fists if a gun has ammo.
+  _nextWeapon(prefer = false) {
+    const order = this._unlimited() ? WEAPON_KEYS : ['FISTS', ...WEAPON_KEYS];
+    const i0 = order.indexOf(this.activeWeapon);
+    for (let k = 1; k <= order.length; k++) {
+      const id = order[(Math.max(0, i0) + k) % order.length];
+      if (id === 'FISTS') { if (!prefer) return id; continue; }
+      if (this._hasAmmo(id)) return id;
+    }
+    return this._unlimited() ? 'RIFLE' : 'FISTS';
+  }
+
+  _autoSwitch(prefer = true) {
+    this._setWeapon(this._nextWeapon(prefer));
+  }
+
+  /** R: reload when the magazine is not full and rounds are left, otherwise switch weapon. */
+  reloadOrCycle() {
+    const inv = this.inventory[this.activeWeapon];
+    if (this.isArmed() && !this._unlimited() && inv && this.reloadTimer <= 0 && inv.mag < WEAPON_AMMO[this.activeWeapon].mag && inv.reserve > 0) {
+      this.startReload();
+      return;
+    }
+    this.cycleWeapon();
+  }
+
+  startReload() {
+    const id = this.activeWeapon;
+    const inv = this.inventory[id];
+    if (!inv || this._unlimited() || this.reloadTimer > 0 || inv.reserve <= 0 || inv.mag >= WEAPON_AMMO[id].mag) return false;
+    this.reloadTimer = WEAPON_AMMO[id].reload;
+    this.reloadWeapon = id;
+    getWeaponSfx(this.app).play('spark', { gain: 0.22 });
+    this._updateWeaponBadge();
+    return true;
+  }
+
+  _updateReload(dt) {
+    if (this.reloadTimer <= 0) return;
+    if (this.reloadWeapon !== this.activeWeapon) { this.reloadTimer = 0; return; }
+    this.reloadTimer -= dt;
+    if (this.reloadTimer > 0) return;
+    this.reloadTimer = 0;
+    const inv = this.inventory[this.reloadWeapon];
+    if (inv) {
+      const n = Math.min(WEAPON_AMMO[this.reloadWeapon].mag - inv.mag, inv.reserve);
+      inv.mag += n;
+      inv.reserve -= n;
+    }
+    this.reloadWeapon = null;
+    getWeaponSfx(this.app).play('spark', { gain: 0.3 });
+    this._updateWeaponBadge();
+  }
+
+  // Spends one round of the active weapon; false (and reload / switch) when the magazine is empty.
+  _consumeRound() {
+    if (this._unlimited()) return true;
+    const inv = this.inventory[this.activeWeapon];
+    if (!inv) return false;
+    if (inv.mag <= 0) {
+      if (!this.startReload() && this.reloadTimer <= 0) this._autoSwitch(true);
+      return false;
+    }
+    inv.mag--;
+    if (inv.mag === 0) {
+      if (inv.reserve > 0) this.startReload();
+      else this._autoSwitch(true); // out of everything for this gun: next loaded gun, else fists
+    }
+    this._updateWeaponBadge();
+    return true;
+  }
+
+  // ---- [weapon-pickups] deliberate mouse attacks (walk mode, outside Kaiju Defense) ----
+  // A press only attacks if the pointer stays still: a quick click fires one shot (or punches when unarmed),
+  // holding still for HOLD_FIRE_MS starts automatic fire, and any drag is camera look and never attacks.
+  beginPress(button, x, y, ignore = false) {
+    this._press = { button, x, y, t: performance.now(), ignore, moved: false, holding: false };
+  }
+
+  movePress(x, y) {
+    const P = this._press;
+    if (!P || P.moved) return;
+    if (Math.abs(x - P.x) + Math.abs(y - P.y) > DRAG_PX) {
+      P.moved = true;
+      if (P.holding) this.isFiring = false;
+    }
+  }
+
+  endPress(button) {
+    const P = this._press;
+    if (!P || P.button !== button) return;
+    this._press = null;
+    if (P.holding) { this.isFiring = false; return; }
+    if (P.ignore || P.moved || performance.now() - P.t > 600) return;
+    if (button === 0) {
+      if (this.isArmed()) this.fireCurrentWeapon();
+      else if (this.app.triggerPlayerPunch) this.app.triggerPlayerPunch();
+    } else if (button === 2) {
+      this.quickFireRpg();
+    }
+  }
+
+  cancelPress() {
+    if (this._press && this._press.holding) this.isFiring = false;
+    this._press = null;
+  }
+
+  _updatePress() {
+    const P = this._press;
+    if (!P || P.ignore || P.moved || P.holding || P.button !== 0) return;
+    if (!this.isArmed() || this.app.mode !== 'walk') return;
+    if (performance.now() - P.t >= HOLD_FIRE_MS) {
+      P.holding = true;
+      this.isFiring = true;
+    }
+  }
+
+  /** Kaiju soldier hold-to-fire hooks (kaiju_mode.js calls these when present). */
+  startFiring() {
+    if (!this.isArmed()) return false;
+    this.isFiring = true;
+    this.fireCurrentWeapon();
+    return true;
+  }
+
+  stopFiring() {
+    this.isFiring = false;
   }
 
   _initPlayerWeaponGroup() {
@@ -469,9 +728,11 @@ export class WalkerWeaponsSystem {
     // Rotate weaponRig so weapon barrel points forward along arm direction
     this.weaponRig.rotation.x = HALF_PI;
 
-    this.rifleMesh = createRifleModel();
-    this.rpgMesh = createRpgModel();
-    this.railgunMesh = createRailgunModel();
+    // [weapon-pickups] detailed models (same hand anchors as the old ones; child order rifle/RPG/railgun is
+    // what hero_avatar's grip table indexes).
+    this.rifleMesh = createWeaponModel('RIFLE');
+    this.rpgMesh = createWeaponModel('RPG');
+    this.railgunMesh = createWeaponModel('RAILGUN');
 
     this.weaponRig.add(this.rifleMesh);
     this.weaponRig.add(this.rpgMesh);
@@ -491,16 +752,17 @@ export class WalkerWeaponsSystem {
 
   _updateRigWeaponVisibility() {
     if (!this.weaponRig) return;
+    this.weaponRig.visible = this.isArmed(); // [weapon-pickups] unarmed: nothing in the hand
     if (this.rifleMesh) this.rifleMesh.visible = this.activeWeapon === 'RIFLE';
     if (this.rpgMesh) this.rpgMesh.visible = this.activeWeapon === 'RPG';
     if (this.railgunMesh) this.railgunMesh.visible = this.activeWeapon === 'RAILGUN';
   }
 
+  // [weapon-pickups] Cycles fists -> owned weapons with ammo (all three, no fists, in Kaiju Defense).
   cycleWeapon() {
-    const curIdx = WEAPON_KEYS.indexOf(this.activeWeapon);
-    this.activeWeapon = WEAPON_KEYS[(curIdx + 1) % WEAPON_KEYS.length];
-    this._updateRigWeaponVisibility();
-    this._updateWeaponBadge();
+    const next = this._nextWeapon(false);
+    if (next === this.activeWeapon) return;
+    this._setWeapon(next);
     getWeaponSfx(this.app).play('spark', { gain: 0.3 });
   }
 
@@ -599,6 +861,8 @@ export class WalkerWeaponsSystem {
     if (reticleDx !== 0 || reticleDy !== 0) {
       this.moveReticle(reticleDx, reticleDy);
     }
+
+    if (this._civilianWalk()) return; // [weapon-pickups] no reticle edge-steering while unarmed
 
     // 2. Edge camera steering & pitch when mouse reticle is near screen edges
     const leftMargin = 22.0;
@@ -719,9 +983,11 @@ export class WalkerWeaponsSystem {
   }
 
   fireCurrentWeapon() {
-    if (this.fireTimer > 0) return;
+    if (this.fireTimer > 0) return false;
     const w = WALKER_WEAPONS[this.activeWeapon];
-    if (!w) return;
+    if (!w) return false; // fists
+    if (this.reloadTimer > 0) return false;
+    if (!this._consumeRound()) return false; // [weapon-pickups] limited ammo
 
     this.fireTimer = w.cooldown;
     const ray = this.getAimRay();
@@ -753,6 +1019,15 @@ export class WalkerWeaponsSystem {
 
   quickFireRpg() {
     if (this.rpgQuickTimer > 0) return;
+    // [weapon-pickups] Only with an RPG in the inventory: spends a rocket from its magazine, else its reserve.
+    if (this.activeWeapon === 'RPG') { this.fireCurrentWeapon(); return; }
+    if (!this._unlimited()) {
+      const inv = this.inventory.RPG;
+      if (!inv || inv.mag + inv.reserve <= 0) return;
+      if (inv.mag > 0) inv.mag--;
+      else inv.reserve--;
+      this._updateWeaponBadge();
+    }
     this.rpgQuickTimer = WALKER_WEAPONS.RPG.cooldown;
     const ray = this.getAimRay();
     const hit = this.raycastAim(ray, WALKER_WEAPONS.RPG.range);
@@ -1467,7 +1742,7 @@ export class WalkerWeaponsSystem {
     const isWalk = (this.app.mode === 'walk') || (this.app.kaiju && this.app.kaiju.active && this.app.kaiju.activeUnit === 'soldier');
 
     if (this.reticleEl) {
-      this.reticleEl.style.display = isAiming ? 'block' : 'none';
+      this.reticleEl.style.display = isAiming && !this._civilianWalk() ? 'block' : 'none';
     }
     if (this.weaponBadgeEl) {
       this.weaponBadgeEl.style.display = isWalk ? 'block' : 'none';
@@ -1475,11 +1750,22 @@ export class WalkerWeaponsSystem {
 
     this._updateAimControls(dt);
 
-    if (isWalk && this.isFiring) {
+    // [weapon-pickups] Kaiju soldier is always armed; outside it an unowned / empty weapon falls back.
+    if (this._unlimited()) {
+      if (!this.isArmed()) this._setWeapon('RIFLE');
+    } else if (this.isArmed() && !this._hasAmmo(this.activeWeapon) && this.reloadTimer <= 0) {
+      this._autoSwitch(true);
+    }
+    const unl = this._unlimited();
+    if (unl !== this._wasUnlimited) { this._wasUnlimited = unl; this._updateWeaponBadge(); }
+    this._updateReload(dt);
+    this._updatePress();
+
+    if (isWalk && this.isFiring && this.isArmed()) {
       this.fireCurrentWeapon();
     }
 
-    if (isWalk) {
+    if (isWalk && this.isArmed()) {
       this._updateWalkerAimPose();
     }
 
@@ -1667,12 +1953,13 @@ export class WalkerWeaponsSystem {
   onModeChange(newMode, prevMode) {
     if (this.reticleEl) {
       const isTank = newMode === 'drive' && this.app.vehicleMesh?.userData?.isTank;
-      this.reticleEl.style.display = (newMode === 'walk' || isTank) ? 'block' : 'none';
+      this.reticleEl.style.display = ((newMode === 'walk' && this.isArmed()) || isTank) ? 'block' : 'none';
     }
     if (this.weaponBadgeEl) {
       this.weaponBadgeEl.style.display = newMode === 'walk' ? 'block' : 'none';
     }
     this.isFiring = false;
+    this._press = null;
   }
 }
 
