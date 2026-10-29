@@ -23,6 +23,7 @@ import {
 import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehicles]
 import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.js'; // [feature/people]
 import { PeopleAgents } from './people_agents.js'; // [people-agents]
+import { QUALITY } from './quality.js'; // [ui-mobile]
 import { VehicleDamage, DAMAGE_BY_SOURCE } from './vehicle_damage.js'; // [car-explosions]
 import { LiveTraffic } from './live_traffic.js'; // [live-traffic]
 
@@ -436,8 +437,8 @@ export class CityTraffic {
         }
       }
     }
-    this.carTarget = Math.min(CARS_BASE + Math.round(30 * clamp((cwSlow / (cwT || 1)) * 2.5, 0, 1)), Math.round(cwT / 110));
-    const basePed = Math.min(this.pedCap, Math.round((pw / 28) * this.pedMult));
+    this.carTarget = Math.round(Math.min(CARS_BASE + Math.round(30 * clamp((cwSlow / (cwT || 1)) * 2.5, 0, 1)), Math.round(cwT / 110)) * QUALITY.traffic); // [ui-mobile] tier scales traffic
+    const basePed = Math.round(Math.min(this.pedCap, (pw / 28) * this.pedMult) * QUALITY.peds);
     this.pedBaseTarget = basePed;
     this.pedTarget = Math.min(this.pedCap, Math.round(basePed * this._pedTimeFactor()));
   }

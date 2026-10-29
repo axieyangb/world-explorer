@@ -29,6 +29,7 @@ import {
 } from './tree_impostors.js'; // [tree-impostor]
 import { getBeijingTerrainElevation } from '../environment.js';
 import { TreeDamage } from './tree_damage.js'; // [tree-damage]
+import { QUALITY } from './quality.js'; // [ui-mobile]
 
 const REBUILD_DIST = 14;
 const SHADOW_LAYER = 3; // [tree-detail] shadow-only proxies (sun shadow camera only)
@@ -532,7 +533,9 @@ export class VegetationSystem {
     // ease so altitude changes move the band smoothly
     this._lodR1 += (r1 - this._lodR1) * Math.min(1, dt * 2 + 0.02);
     const L = LOD_UNIFORMS.uLodR.value;
-    L.set(NEAR_R * Math.min(1, 0.4 + 0.6 * q), Math.max(NEAR_R + 30, this._lodR1), LOD_BAND, FAR_R0 + Math.min(250, h * 0.6));
+    // [ui-mobile] quality tier scales the three rings (phones: shorter near/mid/far)
+    const nearR = NEAR_R * Math.min(1, 0.4 + 0.6 * q) * QUALITY.treeNear;
+    L.set(nearR, Math.max(nearR + 30, this._lodR1 * QUALITY.treeMid), LOD_BAND, (FAR_R0 + Math.min(250, h * 0.6)) * QUALITY.treeFar);
     this._impCam.value.set(cp.x, cp.y, cp.z, SHADOW_IMP_R);
   }
 

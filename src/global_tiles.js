@@ -547,7 +547,8 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     const net = String(network || "").toUpperCase();
     if (/^[0-9]+[A-Z]?$/.test(first)) {
       if (net.includes("US:I") || net.includes("INTERSTATE")) return "I-" + first;
-      if (net.includes("US:US")) return "US " + first;
+      if (net.includes("US:US") || net === "US-HIGHWAY") return "US " + first; // [ui-mobile] OpenMapTiles network names
+      if (net === "US-STATE") return "SR " + first; // [ui-mobile]
       if (net.includes("US:CA")) return "CA " + first;
       if (net.includes("US:NY")) return "NY " + first;
     }

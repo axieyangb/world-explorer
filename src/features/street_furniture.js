@@ -5,6 +5,7 @@ import { getSignalPhase } from './signals.js';
 import { getDaylight } from './daylight.js';
 import { setStreetWorldOrigin, DECAL_CELLS } from './street_worker.js';
 import { SURFACE_UNIFORMS } from './surfaces.js'; // [street-props]
+import { QUALITY } from './quality.js'; // [ui-mobile]
 import { NEAR_CFG, buildNearModels, busStopGlass, patchFurnitureMaterial, FURNITURE_UNIFORMS, PropDamage, PROP_DAMAGE_CFG } from './street_props.js'; // [street-props]
 
 const STRIDE = 5;
@@ -159,9 +160,7 @@ function drawInterstateShield(ctx, cx, cy, w, h, numStr) {
   ctx.fillText('INTERSTATE', cx, y0 + h * 0.18);
 
   // Route number
-  const fontSz = numStr.length >= 3 ? Math.round(h * 0.40) : Math.round(h * 0.46);
-  ctx.font = `900 ${fontSz}px "Arial Black", Impact, sans-serif`;
-  ctx.fillText(numStr, cx, y0 + h * 0.62);
+  fitText(ctx, numStr, cx, y0 + h * 0.6, w * (numStr.length >= 3 ? 0.7 : 0.66), Math.round(h * 0.46)); // [ui-mobile] 3-digit routes fit
   ctx.restore();
 
   // Outer crisp white border
@@ -199,9 +198,7 @@ function drawUSRouteShield(ctx, cx, cy, w, h, numStr) {
   ctx.textBaseline = 'middle';
   ctx.font = `900 ${Math.round(h * 0.22)}px "Arial Black", Impact, sans-serif`;
   ctx.fillText('US', cx, y0 + h * 0.28);
-  const fontSz = numStr.length >= 3 ? Math.round(h * 0.38) : Math.round(h * 0.44);
-  ctx.font = `900 ${fontSz}px "Arial Black", Impact, sans-serif`;
-  ctx.fillText(numStr, cx, y0 + h * 0.65);
+  fitText(ctx, numStr, cx, y0 + h * 0.65, w * 0.74, Math.round(h * 0.44)); // [ui-mobile]
   ctx.restore();
 }
 
@@ -218,10 +215,8 @@ function drawStateShield(ctx, cx, cy, w, h, label, numStr, bg = '#006b3f') {
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `bold ${Math.round(h * 0.16)}px "Arial Black", sans-serif`;
-  ctx.fillText(label, cx, y0 + h * 0.27);
-  ctx.font = `900 ${Math.round(h * 0.46)}px "Arial Black", Impact, sans-serif`;
-  ctx.fillText(numStr, cx, y0 + h * 0.66);
+  fitText(ctx, label, cx, y0 + h * 0.27, w * 0.8, Math.round(h * 0.16), 'bold'); // [ui-mobile] fit long labels / numbers
+  fitText(ctx, numStr, cx, y0 + h * 0.66, w * 0.82, Math.round(h * 0.46));
   ctx.restore();
 }
 
@@ -241,6 +236,152 @@ function drawForwardArrow(ctx, cx, yTop, yBot, w, color = '#ffffff') {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+
+// ── [ui-mobile] Route shields from the way's own OSM ref ──────────────────────────────────────────────
+// Style by ref + region: US Interstate / US route / state, European E-road, UK M / A / B, French / German
+// A N D B, Japanese national route, Chinese G / S, and a plain generic plate for anything else.
+function shieldStyle(ref, region) {
+  const u = String(ref || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  let m;
+  if ((m = u.match(/^I[- ]?(\d{1,3}[A-Z]?)\b/))) return { kind: 'interstate', num: m[1] };
+  if ((m = u.match(/^US[- ]?(\d{1,3}[A-Z]?)\b/))) return { kind: 'us', num: m[1] };
+  if ((m = u.match(/^E[- ]?(\d{1,3})\b/))) return { kind: 'plate', text: `E ${m[1]}`, bg: '#00873c', fg: '#fff' };
+  if (region === 'us' && (m = u.match(/^(CA|SR|[A-Z]{2})[- ]?(\d{1,4}[A-Z]?)\b/))) {
+    if (m[1] === 'CA') return { kind: 'state', label: 'CALIFORNIA', num: m[2], bg: '#006b3f' };
+    return { kind: 'plate', text: m[2], label: m[1] === 'SR' ? 'STATE' : m[1], bg: '#fff', fg: '#111', border: '#111', round: true };
+  }
+  if (region === 'uk') {
+    if ((m = u.match(/^M ?(\d{1,3})\b/))) return { kind: 'plate', text: `M${m[1]}`, bg: '#1d5aa8', fg: '#fff' };
+    if ((m = u.match(/^A ?(\d{1,4})(\(M\))?/))) return { kind: 'plate', text: `A${m[1]}${m[2] || ''}`, bg: '#00703c', fg: '#ffd200' };
+    if ((m = u.match(/^B ?(\d{1,4})\b/))) return { kind: 'plate', text: `B${m[1]}`, bg: '#fff', fg: '#111', border: '#111' };
+  }
+  if (region === 'eu') {
+    if ((m = u.match(/^A ?(\d{1,3})\b/))) return { kind: 'plate', text: `A ${m[1]}`, bg: '#1d5aa8', fg: '#fff' };
+    if ((m = u.match(/^N ?(\d{1,4})\b/))) return { kind: 'plate', text: `N ${m[1]}`, bg: '#c8102e', fg: '#fff' };
+    if ((m = u.match(/^([BD]) ?(\d{1,4})\b/))) return { kind: 'plate', text: `${m[1]} ${m[2]}`, bg: '#f6c700', fg: '#111', border: '#111' };
+  }
+  if (region === 'jp') {
+    if ((m = u.match(/^(?:国道)?(\d{1,3})(?:号)?$/))) return { kind: 'jpRoute', num: m[1] };
+    if ((m = u.match(/^C ?(\d)\b/))) return { kind: 'plate', text: `C${m[1]}`, bg: '#00873c', fg: '#fff' };
+  }
+  if (region === 'cn') {
+    if ((m = u.match(/^G ?(\d{1,2})\b/))) return { kind: 'plate', text: `G${m[1]}`, bg: '#00873c', fg: '#fff', band: '#c8102e' };
+    if ((m = u.match(/^G ?(\d{3})\b/))) return { kind: 'plate', text: `G${m[1]}`, bg: '#c8102e', fg: '#fff' };
+    if ((m = u.match(/^S ?(\d{1,3})\b/))) return { kind: 'plate', text: `S${m[1]}`, bg: '#f6c700', fg: '#111', border: '#111' };
+  }
+  const text = u.split(/[;,]/)[0].slice(0, 7);
+  return text ? { kind: 'plate', text, bg: '#fff', fg: '#111', border: '#111' } : null;
+}
+
+// Text that shrinks to fit maxW.
+function fitText(ctx, text, x, y, maxW, px, weight = 900) {
+  let size = px;
+  ctx.font = `${weight} ${size}px "Arial Black", Impact, sans-serif`;
+  const w = ctx.measureText(text).width;
+  if (w > maxW) { size = Math.max(10, Math.floor(size * maxW / w)); ctx.font = `${weight} ${size}px "Arial Black", Impact, sans-serif`; }
+  ctx.fillText(text, x, y);
+}
+
+function drawPlateShield(ctx, cx, cy, w, h, st) {
+  const x0 = cx - w / 2, y0 = cy - h / 2;
+  ctx.save();
+  roundRectPath(ctx, x0, y0, w, h, st.round ? h * 0.45 : w * 0.1);
+  ctx.fillStyle = st.bg;
+  ctx.fill();
+  ctx.lineWidth = Math.max(4, w * 0.045);
+  ctx.strokeStyle = st.border || '#ffffff';
+  ctx.stroke();
+  ctx.clip();
+  let top = y0;
+  if (st.band) { ctx.fillStyle = st.band; ctx.fillRect(x0, y0, w, h * 0.24); top = y0 + h * 0.24; }
+  ctx.fillStyle = st.fg;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (st.label) {
+    ctx.font = `bold ${Math.round(h * 0.17)}px "Arial Black", sans-serif`;
+    ctx.fillText(st.label, cx, y0 + h * 0.24);
+    fitText(ctx, st.text, cx, y0 + h * 0.64, w * 0.8, Math.round(h * 0.46));
+  } else {
+    fitText(ctx, st.text, cx, (top + y0 + h) / 2 + h * 0.02, w * 0.84, Math.round(h * 0.5));
+  }
+  ctx.restore();
+}
+
+function drawJpRouteShield(ctx, cx, cy, w, h, num) {
+  // Inverted rounded pentagon, blue with a white rim (国道 national route marker).
+  const x0 = cx - w / 2, y0 = cy - h / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x0 + w * 0.06, y0 + h * 0.04);
+  ctx.lineTo(x0 + w * 0.94, y0 + h * 0.04);
+  ctx.lineTo(x0 + w * 0.94, y0 + h * 0.58);
+  ctx.quadraticCurveTo(x0 + w * 0.9, y0 + h * 0.8, cx, y0 + h * 0.97);
+  ctx.quadraticCurveTo(x0 + w * 0.1, y0 + h * 0.8, x0 + w * 0.06, y0 + h * 0.58);
+  ctx.closePath();
+  ctx.fillStyle = '#1d4fa0';
+  ctx.fill();
+  ctx.lineWidth = Math.max(4, w * 0.045);
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.round(h * 0.15)}px "Hiragino Sans", "Noto Sans CJK JP", sans-serif`;
+  ctx.fillText('国道', cx, y0 + h * 0.2);
+  fitText(ctx, num, cx, y0 + h * 0.55, w * 0.7, Math.round(h * 0.42));
+  ctx.restore();
+}
+
+/** Draws the shield for `ref` centred at (cx, cy) inside a w x h box. Returns false when there is nothing to draw. */
+function drawRouteShield(ctx, cx, cy, w, h, ref, region) {
+  const st = shieldStyle(ref, region);
+  if (!st) return false;
+  if (st.kind === 'interstate') drawInterstateShield(ctx, cx, cy, w, h, st.num);
+  else if (st.kind === 'us') drawUSRouteShield(ctx, cx, cy, w * 0.98, h * 0.97, st.num);
+  else if (st.kind === 'state') drawStateShield(ctx, cx, cy, w * 0.96, h * 0.97, st.label, st.num, st.bg);
+  else if (st.kind === 'jpRoute') drawJpRouteShield(ctx, cx, cy, w, h, st.num);
+  else drawPlateShield(ctx, cx, cy, w, Math.min(h, w * 0.62), st);
+  return true;
+}
+
+// Painted-on-the-road shields: one 256 px cell per distinct ref (arrow + shield), drawn on demand into a
+// 2048 x 1024 atlas (32 cells). A full atlas reclaims cells no loaded chunk still uses.
+const SH_COLS = 8, SH_ROWS = 4, SH_CELL = 256, SH_MAX_SLOTS = 16; // slots: distinct refs per chunk
+class ShieldAtlas {
+  constructor() {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = SH_COLS * SH_CELL;
+    this.canvas.height = SH_ROWS * SH_CELL;
+    this.ctx = this.canvas.getContext('2d');
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.anisotropy = 8;
+    if ('colorSpace' in this.tex && THREE.SRGBColorSpace) this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.slots = new Map(); // key -> cell index
+    this.free = [];
+    for (let i = SH_COLS * SH_ROWS - 1; i >= 0; i--) this.free.push(i);
+  }
+
+  /** Cell for `key` ('region|ref'), drawing it if new; -1 if the atlas is full of cells in use. */
+  cellFor(key, inUse) {
+    let c = this.slots.get(key);
+    if (c !== undefined) return c;
+    if (!this.free.length && inUse) {
+      for (const [k, cell] of this.slots) if (!inUse.has(k)) { this.slots.delete(k); this.free.push(cell); }
+    }
+    if (!this.free.length) return -1;
+    c = this.free.pop();
+    const sep = key.indexOf('|');
+    const region = key.slice(0, sep), ref = key.slice(sep + 1);
+    const ctx = this.ctx, ox = (c % SH_COLS) * SH_CELL, oy = Math.floor(c / SH_COLS) * SH_CELL;
+    ctx.clearRect(ox, oy, SH_CELL, SH_CELL);
+    drawForwardArrow(ctx, ox + 128, oy + 13, oy + 61, 58, '#f5f7fa');
+    if (!drawRouteShield(ctx, ox + 128, oy + 156, 170, 165, ref, region)) ctx.clearRect(ox, oy, SH_CELL, SH_CELL);
+    this.tex.needsUpdate = true;
+    this.slots.set(key, c);
+    return c;
+  }
 }
 
 /**
@@ -665,21 +806,9 @@ function buildGantryPanelTexture(region, isMotorway, refStr, mainText, subText, 
     ctx.font = '900 28px "Arial Black", sans-serif';
     ctx.fillText('EXIT   ONLY     ↗', W * 0.5, H - 47);
   } else {
-    // Draw authentic Route Shield on the left
-    const cleanRef = String(refStr || 'I-80').trim();
-    const numOnly = cleanRef.replace(/^[A-Z]+[-\s]*/i, '') || '80';
-    if (region === 'us') {
-      if (cleanRef.startsWith('I-')) {
-        drawInterstateShield(ctx, 84, 88, 108, 108, numOnly);
-      } else if (cleanRef.startsWith('US')) {
-        drawUSRouteShield(ctx, 84, 88, 106, 102, numOnly);
-      } else {
-        drawStateShield(ctx, 84, 88, 106, 102, 'CA', numOnly, '#006b3f');
-      }
-    } else {
-      const hdr = region === 'cn' ? 'EXPWY' : region === 'jp' ? 'SHUTO' : 'ROUTE';
-      drawStateShield(ctx, 84, 88, 112, 102, hdr, cleanRef, region === 'cn' ? '#c8102e' : '#004696');
-    }
+    // [ui-mobile] Route shield from the way's own ref (none when the way has no ref: text moves left)
+    const hasShield = Boolean(refStr) && drawRouteShield(ctx, 84, 88, 108, 106, String(refStr).trim(), region);
+    const textX = hasShield ? 154 : 40;
 
     // Primary street / highway destination
     ctx.fillStyle = '#ffffff';
@@ -688,13 +817,13 @@ function buildGantryPanelTexture(region, isMotorway, refStr, mainText, subText, 
     const primary = String(mainText || 'The Embarcadero').slice(0, 22);
     const pFont = primary.length > 17 ? 31 : primary.length > 14 ? 36 : 42;
     ctx.font = `900 ${pFont}px "Arial Black", sans-serif`;
-    ctx.fillText(primary, 154, 66);
+    ctx.fillText(primary, textX, 66);
 
     // Secondary destination + distance
     ctx.fillStyle = '#d9ece4';
     const secondary = String(subText || 'Downtown').slice(0, 18);
     ctx.font = 'bold 28px Arial, sans-serif';
-    ctx.fillText(`${secondary}   1/2 MI`, 154, 122);
+    ctx.fillText(`${secondary}   1/2 MI`, textX, 122);
 
     // Divider rule
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
@@ -1051,15 +1180,46 @@ export class StreetFeatures {
       polygonOffsetUnits: -10,
     });
     this.decalMat.name = 'streetDecalMat';
+    this.shieldAtlas = new ShieldAtlas(); // [ui-mobile] route shields from OSM refs (cells drawn on demand)
+    this.shieldMat = this.decalMat.clone();
+    this.shieldMat.map = this.shieldAtlas.tex;
+    this.shieldMat.name = 'streetShieldMat';
+    this.shieldUniforms = { uShieldCells: { value: new Float32Array(SH_MAX_SLOTS).fill(-1) } };
+    this.shieldMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uShieldCells = this.shieldUniforms.uShieldCells;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\nuniform float uShieldCells[${SH_MAX_SLOTS}];`)
+        .replace('#include <uv_vertex>', `#include <uv_vertex>
+#ifdef USE_MAP
+  {
+    float slot = floor(uv.x * 0.5);
+    float u01 = uv.x - slot * 2.0;
+    int si = int(slot);
+    float cell = si < ${SH_MAX_SLOTS} ? uShieldCells[si] : -1.0;
+    if (cell < 0.0) vMapUv = vec2(0.0); // clear atlas corner -> alpha-tested away
+    else {
+      float col = mod(cell, ${SH_COLS}.0), row = floor(cell / ${SH_COLS}.0);
+      vMapUv = vec2((col + 0.004 + u01 * 0.992) / ${SH_COLS}.0, 1.0 - (row + 0.996 - uv.y * 0.992) / ${SH_ROWS}.0);
+    }
+  }
+#endif`);
+    };
+    this.shieldMat.customProgramCacheKey = () => 'we-route-shields-v1';
+    const noCells = this.shieldUniforms.uShieldCells.value;
+    this.shieldMat.onBeforeRender = (renderer, scene, camera, geometry, object) => { // per-mesh slot table
+      this.shieldUniforms.uShieldCells.value = object.userData.shieldCells || noCells;
+      this.shieldMat.uniformsNeedUpdate = true;
+    };
 
     if (mats) {
       mats.streetLineMat = this.lineMat;
       mats.streetWearMat = this.wearMat;
       mats.streetCurbMat = this.curbMat;
       mats.streetDecalMat = this.decalMat;
+      mats.streetShieldMat = this.shieldMat; // [ui-mobile]
       // asphalt / paving / kerb / line-wear detail lives in surfaces.js (installSurfaceShaders) [street-props]
     }
-    this.detailMats = new Set([this.lineMat, this.wearMat, this.curbMat, this.decalMat]);
+    this.detailMats = new Set([this.lineMat, this.wearMat, this.curbMat, this.decalMat, this.shieldMat]);
 
     const models = buildModels();
     const furnMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.3 });
@@ -1258,6 +1418,24 @@ export class StreetFeatures {
     return mat;
   }
 
+  // [ui-mobile] Worker shield decals carry uv.x = slot * 2 + [0..1] into the chunk's st.shieldKeys. Each mesh gets
+  // its slot -> atlas-cell table, uploaded in onBeforeRender (the geometry arrays are already released to the GPU).
+  // Cells come back when no loaded chunk lists their key any more.
+  _mapShields(mesh, st, loadedChunks) {
+    const keys = (st && st.shieldKeys) || [];
+    const cells = new Float32Array(SH_MAX_SLOTS).fill(-1);
+    let inUse = null;
+    for (let i = 0; i < Math.min(keys.length, SH_MAX_SLOTS); i++) {
+      let c = this.shieldAtlas.cellFor(keys[i], null);
+      if (c < 0) {
+        if (!inUse) { inUse = new Set(); for (const g of loadedChunks.values()) for (const k of (g.userData.street && g.userData.street.shieldKeys) || []) inUse.add(k); }
+        c = this.shieldAtlas.cellFor(keys[i], inUse);
+      }
+      cells[i] = c;
+    }
+    mesh.userData.shieldCells = cells;
+  }
+
   _chunkSignature(loadedChunks) {
     let s = loadedChunks.size * 7919;
     for (const g of loadedChunks.values()) s = (s + g.id * 2654435761) % 4294967296;
@@ -1295,7 +1473,8 @@ export class StreetFeatures {
       const sg = group.userData.subGroups;
       if (sg && sg.markings) {
         for (const m of sg.markings.children) {
-          if (this.detailMats.has(m.material)) m.visible = chunkD < (m.material === this.wearMat ? DETAIL_CULL_M - 350 : DETAIL_CULL_M);
+          if (m.material === this.shieldMat && !m.userData.shieldCells) this._mapShields(m, st, loadedChunks); // [ui-mobile]
+          if (this.detailMats.has(m.material)) m.visible = chunkD < (m.material === this.wearMat ? (QUALITY.wear ? DETAIL_CULL_M - 350 : -1) : DETAIL_CULL_M); // [ui-mobile] Low drops the wear overlay
         }
       }
       if (!st || (chunkD > 1300 && !isReal)) continue;
@@ -1305,7 +1484,7 @@ export class StreetFeatures {
       for (const [type, arr] of Object.entries(st.types || {})) {
         const mesh = this.meshes[type];
         if (!mesh) continue;
-        const r2 = mesh.userData.cull * mesh.userData.cull;
+        const r2 = (mesh.userData.cull * QUALITY.props) ** 2; // [ui-mobile] tier scales prop draw distance
         const cap = mesh.instanceMatrix.count;
         const out = mesh.instanceMatrix.array;
         const supG = sup && sup[type]; // [feature/street-detail]

@@ -377,7 +377,8 @@ kbd {
   gap: 5px;
 }
 
-.popover-mode-btn {
+.popover-mode-btn,
+.popover-gfx-btn { /* [ui-mobile] graphics row shares the mode-button look */
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 9px;
@@ -395,12 +396,14 @@ kbd {
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
-.popover-mode-btn:hover {
+.popover-mode-btn:hover,
+.popover-gfx-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   color: var(--text-bright);
 }
 
-.popover-mode-btn.active {
+.popover-mode-btn.active,
+.popover-gfx-btn.active {
   background: rgba(77, 171, 247, 0.22);
   border-color: rgba(77, 171, 247, 0.6);
   color: var(--text-bright);
@@ -976,4 +979,61 @@ body.touch-ui .kj-unit-picker {
 body.touch-ui .kj-toast { bottom: auto; top: calc(118px + env(safe-area-inset-top, 0px)); }
 @media (orientation: portrait) {
   body.touch-ui .kj-unit-picker { left: 50%; transform: translateX(-50%); bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ── [ui-mobile] Top bar fit (src/features/hud_layout.js sets the pill's max width and these classes) ──
+   The pill shrinks first, then moves left, then drops under the dock; the dock compacts on narrow screens
+   so the mode / vehicle chip stays readable. */
+.location-bar.lb-left {
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  transform: none;
+  align-items: flex-start;
+}
+.location-bar.lb-row2 { top: calc(62px + env(safe-area-inset-top, 0px)); }
+body:has(#mode-vehicle-menu:not(.hidden)) .location-bar.lb-row2 { visibility: hidden; }
+#mode-vehicle-label {
+  display: inline-block;
+  max-width: 34vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  body:not(.touch-ui) #time-btn { display: none; }
+  body:not(.touch-ui) .hud-dock { gap: 6px; }
+  body:not(.touch-ui) .dock-pill { padding: 0 10px; }
+  body:not(.touch-ui) .dock-pill-icon { padding: 0; }
+  .hud-controls-hint { display: none; }
+}
+@media (max-width: 440px) {
+  body:not(.touch-ui) .hud-dock { right: calc(8px + env(safe-area-inset-right, 0px)); gap: 4px; }
+  body:not(.touch-ui) .dock-pill { padding: 0 8px; }
+  body:not(.touch-ui) .dock-pill-icon { width: 32px; padding: 0; }
+  #mode-vehicle-label { max-width: 30vw; }
+  body:not(.touch-ui) .location-bar { --lb-margin: 8px; }
+  body:not(.touch-ui) .location-bar.lb-left { left: calc(8px + env(safe-area-inset-left, 0px)); }
+}
+/* Keyboard hint bar: never under the minimap (left) or the speedometer (right). */
+.hud-controls-hint { max-width: calc(100vw - 460px); }
+/* Narrow desktop windows: smaller minimap, weapon pill above it. */
+@media (max-width: 640px) {
+  body:not(.touch-ui) .radar-squircle,
+  body:not(.touch-ui) #minimap-canvas { width: 110px; height: 110px; }
+  body:not(.touch-ui) .radar-readout { display: none; }
+  body:not(.touch-ui) #walker-weapon-badge { bottom: calc(150px + env(safe-area-inset-bottom, 0px)) !important; }
+}
+
+/* ── [ui-mobile] Touch: the weapon pill moves off the thumb zones to the top centre, under the top bar
+   (landscape) or between the minimap and the speedometer (portrait). */
+body.touch-ui #walker-weapon-badge {
+  bottom: auto !important;
+  top: calc(52px + env(safe-area-inset-top, 0px));
+  max-width: calc(100vw - 260px);
+  font-size: 11px !important;
+  padding: 4px 11px !important;
+  white-space: nowrap;
+}
+@media (orientation: portrait) {
+  /* below the minimap / speedometer row, centred */
+  body.touch-ui #walker-weapon-badge { top: calc(196px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 24px); }
 }

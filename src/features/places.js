@@ -10,6 +10,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { getLang } from '../i18n.js';
 import { isNight } from './daylight.js';
+import { QUALITY } from './quality.js'; // [ui-mobile]
 
 const STRIDE = 8;
 const M4 = new THREE.Matrix4();
@@ -364,6 +365,18 @@ const LABEL_FAR = 110;
 const LABEL_NEAR = 72;
 const LABEL_GEO_FAR = 1350;
 const LABEL_GEO_NEAR = 920;
+const LABEL_CLOSE = 9; // [ui-mobile] local labels fade out inside this distance (m)
+
+// [ui-mobile] Label height in CSS pixels: larger when near, within a fixed range, and never wider than ~40%
+// of a phone-sized viewport.
+function labelPx(isGeo, d, aspect) {
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || 1400;
+  const vh = (typeof window !== 'undefined' && window.innerHeight) || 850;
+  const k = Math.min(1, Math.max(0.72, Math.min(vw, vh) / 800)); // phones: a little smaller
+  let px = isGeo ? Math.max(17, Math.min(26, 27 - d * 0.004)) : Math.max(14, Math.min(22, 24 - d * 0.09));
+  px *= k;
+  return Math.min(px, (vw * 0.4) / Math.max(1, aspect));
+}
 
 export class PlacesSystem {
   constructor(scene) {
@@ -496,6 +509,7 @@ export class PlacesSystem {
       }
     }
     const camPos = camera.position;
+    this._cam = camera; // [ui-mobile] labels are sized and decluttered in screen space
     const px = camPos.x, pz = camPos.z;
     if (dirty) {
       this.trackedGroups = new Set(loadedChunks.values());
@@ -601,7 +615,7 @@ export class PlacesSystem {
       for (const kind in pl.inst) {
         const pool = this.pools[kind];
         if (!pool) continue;
-        const r = KINDS[kind][1];
+        const r = KINDS[kind][1] * QUALITY.places; // [ui-mobile] tier scales rooftop / roadside detail distance
         if (chunkDist > r) continue;
         const r2 = r * r;
         const a = pl.inst[kind];
@@ -1103,13 +1117,16 @@ export class PlacesSystem {
       if (chosen.some((o) => o.text === text || Math.hypot(o.L[0] - c.L[0], o.L[2] - c.L[2]) < 140)) continue;
       chosen.push({ L: c.L, text, kind: c.kind });
     }
+    let nLocal = 0;
     for (const c of localCands) {
-      if (chosen.length >= LABEL_MAX) break;
+      if (chosen.length >= LABEL_MAX || nLocal >= QUALITY.labels) break; // [ui-mobile] clutter cap per tier
       const text = zh ? c.L[3] : c.L[4] || c.L[3];
       if (!text) continue;
       if (chosen.some((o) => o.text === text && Math.hypot(o.L[0] - c.L[0], o.L[2] - c.L[2]) < 60)) continue;
       chosen.push({ L: c.L, text, kind: c.kind });
+      nLocal++;
     }
+    this._declutter(chosen, camPos); // [ui-mobile]
     const wanted = new Map(chosen.map((c) => [`${c.kind}:${c.text}@${Math.round(c.L[0])},${Math.round(c.L[2])}`, c]));
     for (const sp of this.labelSprites) {
       if (wanted.has(sp.userData.key)) {
@@ -1135,6 +1152,40 @@ export class PlacesSystem {
     }
   }
 
+  // World metres per CSS pixel at distance d (vertical), for the current camera and viewport.
+  _pxToWorld(d) {
+    const cam = this._cam;
+    const fov = cam && cam.isPerspectiveCamera ? cam.fov : 58;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 850;
+    return (2 * Math.max(d, 1) * Math.tan((fov * Math.PI) / 360)) / vh;
+  }
+
+  // [ui-mobile] Drops labels that would overlap a nearer / higher-priority one on screen, or sit behind the camera.
+  _declutter(chosen, camPos) {
+    const cam = this._cam;
+    if (!cam || !chosen.length) return;
+    cam.updateMatrixWorld();
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 1400;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 850;
+    const v = this._projV || (this._projV = new THREE.Vector3());
+    const rects = [];
+    const order = [...chosen.filter((c) => c.kind < 3), ...chosen.filter((c) => c.kind >= 3)]; // street labels win
+    chosen.length = 0;
+    for (const c of order) {
+      v.set(c.L[0], c.L[1], c.L[2]).project(cam);
+      if (v.z > 1 || v.z < -1) continue; // behind the camera
+      const d = Math.hypot(c.L[0] - camPos.x, c.L[1] - camPos.y, c.L[2] - camPos.z);
+      const isGeo = c.kind >= 3;
+      const aspect = Math.min(560, c.text.length * 15 + 32) / 46;
+      const hpx = labelPx(isGeo, d, aspect);
+      const x = (v.x * 0.5 + 0.5) * vw, y = (0.5 - v.y * 0.5) * vh;
+      const r = { x0: x - (hpx * aspect) / 2 - 4, x1: x + (hpx * aspect) / 2 + 4, y0: y - hpx / 2 - 3, y1: y + hpx / 2 + 3 };
+      if (rects.some((o) => r.x0 < o.x1 && r.x1 > o.x0 && r.y0 < o.y1 && r.y1 > o.y0)) continue;
+      rects.push(r);
+      chosen.push(c);
+    }
+  }
+
   _fadeLabels(dt, camPos) {
     for (const sp of this.labelSprites) {
       const u = sp.userData;
@@ -1147,8 +1198,15 @@ export class PlacesSystem {
       const goal = u.target * distFade;
       u.opacity += (goal - u.opacity) * Math.min(1, dt * 4);
       sp.material.opacity = u.opacity;
-      const h = isGeo ? 1.6 + d * 0.013 : 0.5 + d * 0.009;
+      // [ui-mobile] On-screen size, not world size: a fixed pixel range by distance (never screen-filling up
+      // close), labels you stand next to fade out (the shop sign itself is readable then).
+      const px = labelPx(isGeo, d, u.aspect || 4);
+      const h = px * this._pxToWorld(d);
       sp.scale.set(h * (u.aspect || 4), h, 1);
+      if (!isGeo && d < LABEL_CLOSE) {
+        u.opacity = Math.min(u.opacity, Math.max(0, (d - LABEL_CLOSE * 0.5) / (LABEL_CLOSE * 0.5)));
+        sp.material.opacity = u.opacity;
+      }
       if (u.target === 0 && u.opacity < 0.02) {
         sp.visible = false;
         u.key = '';
