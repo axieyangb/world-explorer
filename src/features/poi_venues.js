@@ -1149,8 +1149,8 @@ export function buildPoiVenues(ctx) {
     } else {
       // supermarket in the base of a taller building: lit panel on the facade above the entrance canopy
       const y0 = cy + 0.9, h = 1.5;
-      box(bld, F, 0, y0 + h / 2, 0.15, sw + 0.5, h + 0.3, 0.3, [0.86, 0.86, 0.84], 'f', 'b');
-      sign(F, 0, y0 + h / 2, 0.31, sw, h - 0.4, 5, name || '超市', nameEn || name || 'SUPERMARKET', 0xf2f2ee, toHex(scheme[0]));
+      box(bld, F, 0, y0 + h / 2, 0.35, sw + 0.5, h + 0.3, 0.7, [0.86, 0.86, 0.84], 'f', 'b'); // stands proud of ornate facades
+      sign(F, 0, y0 + h / 2, 0.72, sw, h - 0.4, 5, name || '超市', nameEn || name || 'SUPERMARKET', 0xf2f2ee, toHex(scheme[0]));
     }
     pool(F.wx(0, res.D + cd / 2), F.wz(0, res.D + cd / 2), cw * 0.55, C.lightWarm, 0.5, 0.1, cd * 0.9, F.rotY());
     // cart corral beside the doors
