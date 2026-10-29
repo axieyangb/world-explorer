@@ -555,7 +555,7 @@ export function buildPoiVenues(ctx) {
     }
     // spill light on the pavement at night
     const [lx, , lz] = F.p(doorX, 0, D + 2.0);
-    pool(lx, lz, Math.min(5, W * 0.5), C.lightWarm, 0.55, 0.1, 2.6, F.rotY());
+    pool(lx, lz, Math.min(5, W * 0.5), C.lightWarm, 0.28, 0.1, 2.6, F.rotY());
     return { GH, fB, D, fz1 };
   }
   function A_ceiling(F, W, D, GH) {
@@ -581,7 +581,7 @@ export function buildPoiVenues(ctx) {
           box(bld, F, (a + b) / 2, y - 0.045, z + 0.17, b - a, 0.05, 0.01, [0.95, 0.85, 0.2]); // price rail
           let x = a + 0.02;
           while (x < b - 0.06) {
-            const w = 0.07 + rnd() * 0.16, h = 0.1 + rnd() * 0.22;
+            const w = 0.1 + rnd() * 0.2, h = 0.1 + rnd() * 0.22;
             if (x + w > b) break;
             const c = PRODUCT[(rnd() * PRODUCT.length) | 0];
             face(bld, F, x, x + w - 0.012, y, y + Math.min(h, 0.32), z + 0.12, mul(c, 0.82), true);
