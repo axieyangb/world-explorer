@@ -654,6 +654,7 @@ export class MapSystem {
     const traffic = (this.app && this.app.traffic) || (typeof window !== 'undefined' && window.__cityTraffic);
     if (!traffic || typeof traffic.getTrafficSegments !== 'function' || !this.lastPlayerPos || !this._origin()) return;
     if (full && this.zoom < 12.5) return;
+    if (this.app && this.app.liveTraffic) this.app.liveTraffic.drawMap(ctx, toSx, toSy, full); // [live-traffic] congestion overlay
     const radius = full ? 1400 : 480;
     const segs = traffic.getTrafficSegments(this.lastPlayerPos.x, this.lastPlayerPos.z, radius);
     this._lastTrafficSegs = segs;

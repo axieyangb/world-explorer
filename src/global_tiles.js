@@ -235,7 +235,7 @@ const INTERESTING_LAYERS = new Set([
   "boundary", // places-info: admin borders (minimap dashes + crossing toast)
 ]);
 
-export function decodeMvtTile(arrayBuffer, z, tx, ty) {
+export function decodeMvtTile(arrayBuffer, z, tx, ty, wanted = INTERESTING_LAYERS) { // [live-traffic] wanted: other tile sets' layers
   const buf = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const layers = {};
@@ -262,7 +262,7 @@ export function decodeMvtTile(arrayBuffer, z, tx, ty) {
           const slen = readVarint(buf, p);
           layerName = textDecoder.decode(buf.subarray(p.i, p.i + slen));
           p.i += slen;
-          if (layerName && !INTERESTING_LAYERS.has(layerName)) {
+          if (layerName && !wanted.has(layerName)) {
             p.i = layerEnd;
             break;
           }
@@ -310,7 +310,7 @@ export function decodeMvtTile(arrayBuffer, z, tx, ty) {
         }
       }
 
-      if (!INTERESTING_LAYERS.has(layerName)) {
+      if (!wanted.has(layerName)) {
         p.i = layerEnd;
         continue;
       }
