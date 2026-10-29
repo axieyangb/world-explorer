@@ -18,6 +18,7 @@ import {
   buildGlobalHorizonTerrain,
   updateGlobalHorizonTerrainCutout,
   createAtmosphericSkyDome,
+  applyHorizonGroundAsync, // [ground]
 } from "./environment.js";
 import {
   LANDMARKS_40,
@@ -744,6 +745,7 @@ class WorldExplorerApp {
     this.horizonCutoutMeshes = [];
     this.hiddenSkylineChunks = new Set();
     if (!this.overview) return;
+    applyHorizonGroundAsync(this.horizonTerrainMesh, this.overview, this.worldOrigin, this.horizonRoot, this.mats); // [ground] land-use colours
 
     // 1. Parks & Forests: [id, kind, flatXZ, name]
     const parkVerts = [];

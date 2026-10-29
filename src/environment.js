@@ -6,7 +6,8 @@ import * as THREE from '../vendor/three.module.js';
  */
 let demState = null;
 
-import { fetchGlobalDem } from './global_tiles.js';
+import { fetchGlobalDem, horizonGroundFor } from './global_tiles.js';
+import { GROUND_MEADOW, groundSlopeTint, overviewGroundSampler } from './features/ground_cover.js'; // [ground]
 
 export async function initBeijingDem() {
   try {
@@ -133,58 +134,41 @@ export function snowCover(elev, slope) {
   return THREE.MathUtils.smoothstep(asl, line - 200, line + 250) * (1 - THREE.MathUtils.smoothstep(slope, 0.75, 1.3));
 }
 
-function sampleTerrainBiomeColor(wx, wz, elev, slope) {
-  const rgb = sampleTerrainBiomeColorBase(wx, wz, elev, slope);
+function sampleTerrainBiomeColor(wx, wz, elev, slope, ground = null) {
+  const rgb = sampleTerrainBiomeColorBase(wx, wz, elev, slope, ground);
   const t = snowCover(elev, slope);
   if (t <= 0) return rgb;
-  return [rgb[0] + (0.93 - rgb[0]) * t, rgb[1] + (0.95 - rgb[1]) * t, rgb[2] + (0.98 - rgb[2]) * t];
+  return [rgb[0] + (0.93 - rgb[0]) * t, rgb[1] + (0.95 - rgb[1]) * t, rgb[2] + (0.98 - rgb[2]) * t, rgb[3], rgb[4]];
 }
 
-function sampleTerrainBiomeColorBase(wx, wz, elev, slope) {
-  const distCenter = Math.hypot(wx, wz);
-
-  // High mountain rocky ridges & alpine pine (Western Hills / Fragrant Hills > 140m above plain)
-  if (elev > 140) {
-    const t = Math.min(1, (elev - 140) / 320);
-    if (slope > 0.34) {
-      return [0.46 + 0.08 * t, 0.44 + 0.06 * t, 0.40 + 0.05 * t];
+// [ground] Base colour + ground info [r, g, b, built, flavour] from real land use (features/ground_cover.js):
+// `ground` is the chunk / horizon sampler; without one (no data yet) the land is untagged meadow.
+// No elevation or distance-from-teleport rules: a hillside in SF or Rio stays city, a valley farm stays farm.
+function sampleTerrainBiomeColorBase(wx, wz, elev, slope, ground) {
+  const g = ground ? ground(wx, wz) : null;
+  const rgb = g || [GROUND_MEADOW[0], GROUND_MEADOW[1], GROUND_MEADOW[2], 0, 0];
+  const built = rgb[3];
+  // Above the treeline (~900 m under the snowline) untagged slopes thin out to alpine turf and scree
+  if (demState && Number.isFinite(demState.centerLat) && built < 0.5) {
+    const asl = elev + (demState.baseAslM || 0);
+    const line = Math.max(700, Math.min(5000, 5000 - Math.max(0, Math.abs(demState.centerLat) - 20) * 95));
+    const alpine = THREE.MathUtils.smoothstep(asl, line - 1100, line - 500) * (1 - built);
+    if (alpine > 0) {
+      rgb[0] += (0.45 - rgb[0]) * alpine * 0.7;
+      rgb[1] += (0.45 - rgb[1]) * alpine * 0.7;
+      rgb[2] += (0.38 - rgb[2]) * alpine * 0.7;
     }
-    return [0.22 + 0.04 * t, 0.36 + 0.03 * t, 0.20 + 0.03 * t];
   }
-
-  // Forested hills & foothills (Jingshan, Longevity Hill, Baiwangshan, Western Hills foothills: > 15m)
-  if (elev > 15.0) {
-    const t = Math.min(1, (elev - 15.0) / 65.0);
-    const r = THREE.MathUtils.lerp(0.34, 0.23, t);
-    const g = THREE.MathUtils.lerp(0.41, 0.39, t);
-    const b = THREE.MathUtils.lerp(0.31, 0.23, t);
-    return [r, g, b];
-  }
-
-  // Urban core vs outer greenbelt plain (smooth continuous radial & elevation gradient, zero grid-vertex noise)
-  const urbanFactor = 1.0 - THREE.MathUtils.smoothstep(distCenter, 10500, 18000);
-  const elevTint = THREE.MathUtils.clamp((elev + 25.0) / 50.0, 0.0, 1.0) * 0.02;
-  // Urban ground: architectural slate plaza baseplate for high contrast with streets & sidewalks
-  const uR = 0.32 + elevTint;
-  const uG = 0.34 + elevTint;
-  const uB = 0.37 + elevTint;
-
-  // Suburban plain: muted olive-ochre meadow & farmland
-  const sR = 0.30 + elevTint;
-  const sG = 0.36 + elevTint;
-  const sB = 0.26 + elevTint;
-
-  return [
-    THREE.MathUtils.lerp(sR, uR, urbanFactor),
-    THREE.MathUtils.lerp(sG, uG, urbanFactor),
-    THREE.MathUtils.lerp(sB, uB, urbanFactor),
-  ];
+  const c = groundSlopeTint(rgb, slope, built);
+  return [c[0], c[1], c[2], built, rgb[4]];
 }
 
 /**
  * Computes raw TypedArray buffers for a 1km x 1km 3D heightfield terrain mesh (usable in Web Worker).
  */
-export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null) {
+export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null, chunkGround = null) {
+  // [ground] chunk-local land-use sampler -> world sampler; uv carries (built, flavour) for patchUrbanGround
+  const ground = chunkGround ? (wx, wz) => chunkGround(wx - ox, wz - oz) : null;
   const segs = 24;
   const step = 1000.0 / segs;
   const pos = [];
@@ -222,9 +206,9 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null) {
       const slope = Math.hypot(hR - hL, hU - hD) / (2.0 * step);
 
       pos.push(lx, h, lz);
-      uv.push((wx + 20000) / 140.0, (wz + 20000) / 140.0);
-      const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.25, slope);
+      const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.25, slope, ground);
       col.push(rgb[0], rgb[1], rgb[2]);
+      uv.push(rgb[3] || 0, rgb[4] || 0); // [ground]
     }
   }
 
@@ -258,6 +242,7 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null) {
       const cbR = col[b * 3], cbG = col[b * 3 + 1], cbB = col[b * 3 + 2];
       const ccR = col[c * 3], ccG = col[c * 3 + 1], ccB = col[c * 3 + 2];
       const cdR = col[d * 3], cdG = col[d * 3 + 1], cdB = col[d * 3 + 2];
+      const ua = a * 2, ub = b * 2, uc = c * 2, ud = d * 2; // [ground] corner ground info
 
       for (let siz = 0; siz <= subSegs; siz++) {
         const tz = siz / subSegs;
@@ -287,7 +272,11 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null) {
             cdB * tx * tz;
           pos.push(slx, sh, slz);
           col.push(sr, sg, sb);
-          uv.push((ox + slx + 20000) / 140.0, (oz + slz + 20000) / 140.0);
+          const w00 = (1 - tx) * (1 - tz), w10 = tx * (1 - tz), w01 = (1 - tx) * tz, w11 = tx * tz;
+          uv.push(
+            uv[ua] * w00 + uv[ub] * w10 + uv[uc] * w01 + uv[ud] * w11,
+            uv[ua + 1] * w00 + uv[ub + 1] * w10 + uv[uc + 1] * w01 + uv[ud + 1] * w11
+          );
         }
       }
 
@@ -324,8 +313,8 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null) {
 /**
  * Builds a 1km x 1km 3D heightfield terrain mesh for a single chunk (cx, cz) from real DEM data.
  */
-export function buildChunkTerrainMesh(ox, oz, terrainMat, isPointInSunkenTrench = null, precomputedArrays = null) {
-  const arrs = precomputedArrays || buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench);
+export function buildChunkTerrainMesh(ox, oz, terrainMat, isPointInSunkenTrench = null, precomputedArrays = null, chunkGround = null) {
+  const arrs = precomputedArrays || buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench, chunkGround);
   const geom = new THREE.BufferGeometry();
   geom.setIndex(new THREE.BufferAttribute(arrs.indices, 1));
   geom.setAttribute('position', new THREE.BufferAttribute(arrs.positions, 3));
@@ -367,9 +356,9 @@ export function buildGlobalHorizonTerrain(terrainMat) {
       const hU = getBeijingTerrainElevation(wx, Math.min(half, wz + 40.0));
       const slope = Math.hypot(hR - hL, hU - hD) / 80.0;
       pos.push(wx, h, wz);
-      uv.push((wx + half) / 140.0, (wz + half) / 140.0);
       const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.35, slope);
       col.push(rgb[0], rgb[1], rgb[2]);
+      uv.push(0, 0); // [ground] (built, flavour) filled in by applyHorizonGround once the overview is in
     }
   }
 
@@ -442,6 +431,52 @@ export function updateGlobalHorizonTerrainCutout(mesh, loadedChunks) {
 
   indexAttr.needsUpdate = true;
   mesh.geometry.setDrawRange(0, writePos);
+}
+
+/**
+ * [ground] Recolours the horizon terrain from the overview's coarse land-use grid (built after the mesh on teleport).
+ * `sampler(wx, wz)` -> [r, g, b, built, flavour] (ground_cover.js overviewGroundSampler).
+ */
+export function applyHorizonGround(mesh, sampler) {
+  if (!mesh || !mesh.geometry || !sampler) return;
+  const pos = mesh.geometry.attributes.position, col = mesh.geometry.attributes.color, uv = mesh.geometry.attributes.uv;
+  if (!pos || !col || !uv) return;
+  const P = pos.array, n = pos.count;
+  const segs = mesh.userData.segs || 80, stride = segs + 1;
+  for (let i = 0; i < n; i++) {
+    const wx = P[i * 3], h = P[i * 3 + 1], wz = P[i * 3 + 2];
+    const ix = i % stride, iz = (i / stride) | 0;
+    const hL = P[(iz * stride + Math.max(0, ix - 1)) * 3 + 1], hR = P[(iz * stride + Math.min(segs, ix + 1)) * 3 + 1];
+    const hD = P[(Math.max(0, iz - 1) * stride + ix) * 3 + 1], hU = P[(Math.min(segs, iz + 1) * stride + ix) * 3 + 1];
+    const step = 40000 / segs;
+    const slope = Math.hypot(hR - hL, hU - hD) / (2 * step);
+    const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.8, slope, sampler);
+    col.setXYZ(i, rgb[0], rgb[1], rgb[2]);
+    uv.setXY(i, rgb[3] || 0, rgb[4] || 0);
+  }
+  col.needsUpdate = true;
+  uv.needsUpdate = true;
+}
+
+/** [ground] Fetches/builds the overview's land-use grid, then recolours `mesh` (resolves when done). */
+export async function applyHorizonGroundAsync(mesh, overview, worldOrigin, horizonRoot = null, mats = null) {
+  try {
+    await null; // let the caller finish building the horizon layer
+    // The horizon park / arterial ribbons use vertex-coloured materials but carry no colour attribute, which WebGL
+    // reads as black (dark scars across the distant city): give them their surface colour.
+    for (const m of (horizonRoot && horizonRoot.children) || []) {
+      const g = m.geometry, mat = m.material;
+      if (!g || !mat || !mat.vertexColors || g.attributes.color || !g.attributes.position || m === mesh) continue;
+      const rgb = mats && mat === mats.parkMat ? [0.29, 0.43, 0.24] : mats && mat === mats.waterMat ? [1, 1, 1] : [0.36, 0.37, 0.38];
+      const n = g.attributes.position.count, c = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) c.set(rgb, i * 3);
+      g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    }
+    const grid = await horizonGroundFor(overview, worldOrigin);
+    if (grid) applyHorizonGround(mesh, overviewGroundSampler(grid));
+  } catch {
+    // keep the meadow colouring
+  }
 }
 
 /**

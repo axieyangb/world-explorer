@@ -425,6 +425,8 @@ class AtmosphereSystem {
     u.uFogMix.value = Math.min(1, fog * 0.9 + rain * 0.35);
     // sky shader writes raw (no tone map / sRGB), so hand it the display-space fog color to match fogged terrain
     u.uFogColor.value.copy(fogCol).convertLinearToSRGB().multiplyScalar(0.9);
+    u.uHazeColor.value.copy(fogCol).convertLinearToSRGB(); // [ground] = what the fog paints on the far terrain
+    u.uHaze.value = 1.0;
     u.uTime.value = this.time;
 
     // Surfaces (water / wet roads)

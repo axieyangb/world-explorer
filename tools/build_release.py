@@ -40,6 +40,8 @@ MOD_ID_MAP = {
     'src/environment.js': '__MOD_environment',
     # Worker-side feature modules (imported by global_tiles.js / chunk_builder.js).
     'src/features/vegetation_extract.js': '__MOD_vegetation_extract',
+    'src/features/ground_cover.js': '__MOD_ground_cover',  # [ground]
+    'src/features/infill_buildings.js': '__MOD_infill_buildings',  # [ground]
     'src/features/places_extract.js': '__MOD_places_extract',
     'src/features/signals.js': '__MOD_signals',
     'src/features/traffic_graph.js': '__MOD_traffic_graph',
