@@ -592,11 +592,11 @@ export class CityTraffic {
   }
 
   // Distance past node n (along exit d) where the exit crosswalk ends: room needed beyond it before entering.
-  _exitClear(n, d) {
+  _exitClear(n, d, avail = d.e.len) {
     const g = this._nodeGeo(n), cw = CROSSWALK_W[d.e.cls];
-    if (this._internal(d)) return Math.min(g.R + 0.8, d.e.len * 0.5);
+    if (this._internal(d)) return Math.min(g.R + 0.8, avail * 0.5);
     const off = (g.sx - n.x) * d.sHx + (g.sz - n.z) * d.sHz;
-    return clamp(off + (cw ? g.RS + cw + 1.0 : g.RS + 0.8), 1.5, d.e.len * 0.5);
+    return clamp(off + (cw ? g.RS + cw + 1.0 : g.RS + 0.8), 1.5, avail * 0.5);
   }
 
   // Where pedestrians cross edge e next to node n: the middle of that arm's crosswalk (-1: no crosswalk there).
@@ -607,7 +607,8 @@ export class CityTraffic {
     const p = e.pts, k = n === e.b ? (e.n - 1) * 3 : 0, k1 = n === e.b ? (e.n - 2) * 3 : 3;
     let hx = p[k] - p[k1], hz = p[k + 2] - p[k1 + 2]; // heading toward n
     const l = Math.hypot(hx, hz) || 1; hx /= l; hz /= l;
-    return (n.x - g.sx) * hx + (n.z - g.sz) * hz + g.RS + 0.4 + (CROSSWALK_W[e.cls] || 3) * 0.5;
+    const at = (n.x - g.sx) * hx + (n.z - g.sz) * hz + g.RS + 0.4 + (CROSSWALK_W[e.cls] || 3) * 0.5;
+    return at < e.len - 0.5 ? at : -1; // [traffic-r2] on a chunk-border stub the crosswalk lies on the next edge: not here
   }
 
   _laneOff(de, lane) {
@@ -717,6 +718,8 @@ export class CityTraffic {
     if (!n) return;
     if (c.holdA === n) c.holdA = null;
     if (c.holdB === n) c.holdB = null;
+    if (c.lookJ === n) c.lookJ = null;
+    if (c.lookJ2 === n) c.lookJ2 = null;
     const i = n.rsv.indexOf(c);
     if (i >= 0) n.rsv.splice(i, 1);
   }
@@ -747,14 +750,17 @@ export class CityTraffic {
 
   // May car c enter the box of node n now? Box free of conflicting movements, no pedestrian on either
   // crosswalk of its movement, room past the exit crosswalk, and no approaching car with priority.
-  _canEnter(c, n, A, toLine) {
+  _canEnter(c, n, A, toLine, after = null) {
     const de = A.inD, nx = A.outD;
     if (n.xpF === this.frame) for (const p of n.xp) if (p.e === de.e || p.e === nx.e) return false;
     this._purgeRsv(n);
     const force = c.waitT > 40; // nothing waits forever (a gridlock breaks on its own)
     if (!force) {
       // don't block the box: room for the whole car behind the last car in the exit lane
-      const clr = this._exitClear(n, nx);
+      // [traffic-r2] an exit that is only a chunk-border stub continues on `after`: its crosswalk and queue are there
+      const stub = after && after.from === nx.to && after.e.alive && !this._nodeGeo(nx.to).jct;
+      const exLen = stub ? nx.e.len + after.e.len : nx.e.len;
+      const clr = this._exitClear(n, nx, exLen);
       let room = Infinity, leadSlow = false, queued = 0;
       if (nx._carsF === this.frame) {
         for (const o of nx._cars) {
@@ -763,12 +769,20 @@ export class CityTraffic {
           if (r < room) { room = r; leadSlow = o.v < 3; }
         }
       }
+      if (stub && after._carsF === this.frame) {
+        const al = Math.min(A.nLane, after.nLanes - 1);
+        for (const o of after._cars) {
+          if (o === c || o.de !== after || Math.abs(o.laneF - al) > 0.8) continue;
+          const r = nx.e.len + o.s - o.len * 0.5 - clr;
+          if (r < room) { room = r; leadSlow = o.v < 3; }
+        }
+      }
       for (const h of n.rsv) {
         if (h === c || h.de === nx) continue;
         const B = this._arcAt(h, n);
         if (B && B.outD === nx && B.nLane === A.nLane) queued += h.len + 2.5;
       }
-      if (queued) { room = Math.min(room, nx.e.len - clr) - queued; leadSlow = true; }
+      if (queued) { room = Math.min(room, exLen - clr) - queued; leadSlow = true; }
       // an internal connector of a big junction only has to be free (the next node's check covers the exit)
       if (this._internal(nx) ? room < 0.5 && leadSlow : room < c.len + 2.5 && leadSlow) return false;
       for (const h of n.rsv) {
@@ -797,19 +811,29 @@ export class CityTraffic {
 
   // Enter node n only when the car can also clear the next node of the same painted intersection (divided
   // roads are several graph nodes): both are reserved at once, so it never stops halfway across the box.
-  _enterChain(c, n, A, toLine, now) {
-    if (!this._canEnter(c, n, A, toLine)) return false;
-    const nx = A.outD, n2 = nx.to;
-    if (A === c.arcIn && !this._holds(c, n2) && this._nodeGeo(n2).jct) {
-      const inner = this._internal(nx);
-      // too short to wait on without standing on a crosswalk / in a box
-      if (inner || nx.e.len < this._exitClear(n, nx) + this._stopLine(n2, nx) + c.len + 1) {
-        if (!inner && n2.sig && getSignalPhase(n2.sig, now, nx.endAxis) !== 'green') return false;
-        if (!c.nnext || c.nnext.from !== n2 || !c.nnext.e.alive) c.nnext = this._chooseNext(nx);
-        if (c.nnext) {
-          const B = this._buildArc(c.arcIn2 || (c.arcIn2 = this._newArc()), nx, A.nLane, c.nnext, Math.min(A.nLane, c.nnext.nLanes - 1));
-          if (!this._canEnter(c, n2, B, toLine + nx.e.len)) return false;
+  _enterChain(c, n, A, toLine, now, after = null, kOut = 0) {
+    if (!this._canEnter(c, n, A, toLine, after)) return false;
+    // [traffic-r2] the next junction on the route, across chunk-border stubs
+    let ap2 = A.outD, k2 = kOut, d2 = ap2.e.len, L2 = A.nLane;
+    while (ap2 && !this._nodeGeo(ap2.to).jct) {
+      const d = k2 - kOut < 3 ? this._chain(c, k2 + 1) : null;
+      if (!d) { ap2 = null; break; }
+      k2++; ap2 = d; d2 += d.e.len; L2 = Math.min(L2, d.nLanes - 1);
+    }
+    const n2 = ap2 && ap2.to;
+    if (n2 && n2 !== n && !this._holds(c, n2)) {
+      const g1 = this._nodeGeo(n), g2 = this._nodeGeo(n2);
+      const inner = Math.abs(g1.sx - g2.sx) < 0.6 && Math.abs(g1.sz - g2.sz) < 0.6;
+      // too short to wait on without standing on a crosswalk / in a box: reserve both at once
+      if (inner || d2 < this._exitClear(n, A.outD, d2) + this._stopLine(n2, ap2, d2) + c.len + 1) {
+        if (!inner && n2.sig && getSignalPhase(n2.sig, now, ap2.endAxis) !== 'green') return false;
+        const nn = this._chain(c, k2 + 1);
+        if (nn) {
+          const obj = A === c.arcIn2 ? (c.arcIn3 || (c.arcIn3 = this._newArc())) : (c.arcIn2 || (c.arcIn2 = this._newArc()));
+          const B = this._buildArc(obj, ap2, L2, nn, Math.min(L2, nn.nLanes - 1));
+          if (!this._canEnter(c, n2, B, toLine + d2, this._chain(c, k2 + 2))) return false;
           this._grant(c, n2);
+          c.lookJ2 = n2;
         }
       }
     }
@@ -817,13 +841,34 @@ export class CityTraffic {
     return true;
   }
 
-  // Movement arc of car c through junction J entered from lane direction ap (this edge or the next one).
-  _apArc(c, ap) {
-    if (ap === c.de) {
+  // [traffic-r2] Lane direction k of the car's route ahead: 0 = c.next, k >= 1 = the k-th choice after it. Choices
+  // made here are kept (c.ahead) and driven, so a junction several chunk-border stubs ahead is planned for real.
+  _chain(c, k) {
+    if (k === 0) return c.next && c.next.e.alive ? c.next : null;
+    const A = c.ahead || (c.ahead = []);
+    for (let i = 0; i < k; i++) {
+      const prev = i === 0 ? c.next : A[i - 1];
+      if (!prev || !prev.e.alive) return null;
+      let d = A[i];
+      if (!d || d.from !== prev.to || !d.e.alive) {
+        A.length = i;
+        d = this._chooseNext(prev);
+        if (!d) return null;
+        A[i] = d;
+      }
+    }
+    return A[k - 1];
+  }
+
+  // Movement arc of car c through the junction at the end of lane direction ap = route step kAp (-1: this edge).
+  _apArc(c, ap, kAp) {
+    if (kAp < 0) {
       const A = c.arcIn;
       return A && A.ok && A.inD === ap && A.outD === c.next && A.lane === c.lane ? A : this._arcFor(c);
     }
-    const L = this._exitLane(c, ap), out = c.nnext, nl = Math.min(L, out.nLanes - 1);
+    let L = c.lane;
+    for (let i = 0; i <= kAp; i++) { const d = this._chain(c, i); L = Math.min(L, d.nLanes - 1); if (d.ltWork && d.ltWork.lane === L) L = Math.max(0, L - 1); }
+    const out = this._chain(c, kAp + 1), nl = Math.min(L, out.nLanes - 1);
     let A = c.arcIn2;
     if (!(A && A.ok && A.inD === ap && A.outD === out && A.lane === L && A.nLane === nl)) A = this._buildArc(c.arcIn2 || (c.arcIn2 = this._newArc()), ap, L, out, nl);
     return A;
@@ -932,7 +977,8 @@ export class CityTraffic {
       if (c.arcIn) c.arcIn.ok = false;
       if (c.arcOut) c.arcOut.ok = false;
       if (c.arcIn2) c.arcIn2.ok = false;
-      c.nnext = null;
+      if (c.ahead) c.ahead.length = 0; c.lookJ = null; c.lookJ2 = null;
+      if (c.arcIn3) c.arcIn3.ok = false;
       this._carPose(c);
       const d = Math.hypot(c.x - p.x, c.z - p.z);
       if (d > CAR_R || d < (initial ? 25 : 60)) continue;
@@ -1187,13 +1233,17 @@ export class CityTraffic {
     if (c.holdA || c.holdB) this._updateHolds(c, dt);
     // Upcoming junction: the end of this edge, or of the next one when this edge only ends at a chunk-border /
     // shape node (its stop line can then lie on this edge).
-    let J = null, ap = null, dist = 0, avail = 0;
+    // [traffic-r2] looks across up to four chunk-border stubs (a chunk corner cuts an approach into two of them)
+    let J = null, ap = null, dist = 0, avail = 0, kAp = -1;
     if (nx && nx.e.alive && nx.from === node) {
-      if (this._nodeGeo(node).jct) { J = node; ap = de; dist = rem; avail = e.len; }
-      else if (rem + nx.e.len < 70 && this._nodeGeo(nx.to).jct) {
-        if (!c.nnext || c.nnext.from !== nx.to || !c.nnext.e.alive) c.nnext = this._chooseNext(nx);
-        if (c.nnext) { J = nx.to; ap = nx; dist = rem + nx.e.len; avail = nx.e.len + e.len; }
+      ap = de; dist = rem; avail = e.len;
+      while (!this._nodeGeo(ap.to).jct) {
+        const d = this._chain(c, kAp + 1);
+        if (!d || d.from !== ap.to || kAp >= 3 || dist + d.e.len >= 70) { ap = null; break; }
+        kAp++; ap = d; dist += d.e.len; avail += d.e.len;
       }
+      if (ap && !this._chain(c, kAp + 1)) ap = null;
+      if (ap) J = ap.to;
     }
     c.apN = null;
     if (J && dist < 70) {
@@ -1205,7 +1255,7 @@ export class CityTraffic {
       if (J.sig && !inner) ph = getSignalPhase(J.sig, now, ap.endAxis);
       if (this._holds(c, J) && J.sig && !inner && ph === 'red' && toLine > 0.3 && c.v * c.v / 12 < toLine + 0.5) this._release(c, J); // caught by red before the line
       if (!this._holds(c, J)) {
-        if (toLine < -0.3) this._grant(c, J); // already over the line (spawned / forced): commit
+        if (toLine < -0.3) { this._grant(c, J); c.lookJ = J; } // already over the line (spawned / forced): commit
         else {
           let stop = false;
           if (J.sig && !inner) {
@@ -1217,12 +1267,12 @@ export class CityTraffic {
           }
           let A = null;
           if (toLine < 40) {
-            A = this._apArc(c, ap);
+            A = this._apArc(c, ap, kAp);
             c.apN = J; c.apArc = A;
             this._apprAdd(J, c);
           }
           if (!stop && toLine < Math.max(3, c.v * c.v / 10 + 2.5)) {
-            if (this._enterChain(c, J, A || this._apArc(c, ap), toLine, now)) c.waitT = 0; else stop = true;
+            if (this._enterChain(c, J, A || this._apArc(c, ap, kAp), toLine, now, this._chain(c, kAp + 2), kAp + 1)) { c.waitT = 0; c.lookJ = J; } else stop = true;
           }
           if (stop) {
             if (toLine < gap) { gap = toLine; leadV = 0; atRed = true; }
@@ -1301,10 +1351,17 @@ export class CityTraffic {
       }
       c.de = nx2;
       c.hint = nx2.fwd ? 0 : nx2.e.n - 2; c.hF = c.hint; c.hR = c.hint;
-      c.next = c.nnext && c.nnext.from === nx2.to && c.nnext.e.alive ? c.nnext : this._chooseNext(nx2); // [traffic-fix] keep the chained choice
-      c.nnext = null;
-      const A2 = c.arcIn2;
-      if (A2 && A2.ok && A2.inD === nx2 && A2.outD === c.next && A2.lane === c.lane) { c.arcIn2 = c.arcIn || this._newArc(); c.arcIn = A2; c.arcIn2.ok = false; }
+      const ah = c.ahead; // [traffic-r2] drive the planned route
+      c.next = ah && ah.length && ah[0].from === nx2.to && ah[0].e.alive ? ah.shift() : (ah && (ah.length = 0), this._chooseNext(nx2));
+      for (let t = 0; t < 2; t++) { // a planned turn further on becomes this edge's turn
+        const A2 = t ? c.arcIn3 : c.arcIn2;
+        if (!(A2 && A2.ok && A2.inD === nx2 && A2.outD === c.next && A2.lane === c.lane)) continue;
+        const old = c.arcIn || this._newArc();
+        old.ok = false;
+        if (t) c.arcIn3 = old; else c.arcIn2 = old;
+        c.arcIn = A2;
+        break;
+      }
     }
     this._carPose(c);
     if (this.damage) this.damage.postPose(c, dt); // [car-explosions]
@@ -1324,7 +1381,7 @@ export class CityTraffic {
       } else if (n === c.de.from) {
         const b = c.arcOut && c.arcOut.ok && c.arcOut.node === n ? c.arcOut.b : this._nodeGeo(n).R + 0.3;
         if (c.s - c.len * 0.5 > b + 0.5) this._release(c, n);
-      } else if (!(c.next && n === c.next.to)) this._release(c, n); // keep a chained / look-ahead hold
+      } else if (n !== c.lookJ && n !== c.lookJ2 && !(c.next && n === c.next.to)) this._release(c, n); // keep a chained / look-ahead hold
     }
   }
 
@@ -2564,6 +2621,7 @@ export class CityTraffic {
     if (this.fillBoost > 0 && cars >= this.carTarget * 0.9 && peds >= this.pedTarget * 0.9 && this.carTarget > 0) this.fillBoost = 0;
     this._collidePlayer();
     this.damage.update(dt); // [car-explosions]
+    this._separateWrecks(); // [traffic-r2] a wreck that landed this frame is pushed off before it is drawn
     this.agents.update(dt); // [people-agents]
     this.uniforms.uLights.value = this._lightsLevel();
     this._writeInstances(!camHigh);
