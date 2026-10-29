@@ -600,7 +600,9 @@ export class VegetationSystem {
       const s0 = t.species[i];
       const x = inst[o], z = inst[o + 2];
       let e = null;
-      if (ctx) e = s0 >= SPECIES_COUNT ? pickFlora(ctx, 0, floraMixU(x, z, hash2(x, z, 1))) : genericEntry(ctx, s0); // [tree-placement] street-coherent mix
+      // [tree-placement] untagged OSM trees: one species per ~120 m block (neighbourhood drift), not per tree
+      const bx = Math.floor(x / 120) * 120, bz = Math.floor(z / 120) * 120;
+      if (ctx) e = s0 >= SPECIES_COUNT ? pickFlora(ctx, 0, floraMixU(bx, bz, hash2(bx, bz, 1) * 0.5)) : genericEntry(ctx, s0);
       const lk = e ? floraLook(ctx, e, hash2(x, z, 2), hash2(x, z, 3), 0) : null;
       const k = lk ? [lk.r, lk.g, lk.b] : [1, 1, 1];
       sp[i] = lk ? lk.sp : s0 >= SPECIES_COUNT ? SP_BROADLEAF : s0;

@@ -1145,8 +1145,26 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   }
 
   const lmSuppress = worldOrigin ? makeLandmarkSuppressor(worldOrigin) : null; // [lm-west] world-space footprint test
-  const groundOk = (x, z, roadClear, bldgClear, waterClear) => {
+  // [tree-placement] beaches, dunes and bare rock carry no trees or shrubs (only back-of-beach palms, see LC_SAND below)
+  const sandGrid = createGrid(25);
+  for (let p = 0; p < landPolys.length; p++) {
+    const [kind, outer] = landPolys[p];
+    if ((kind !== LC_SAND && kind !== LC_ROCK) || !outer || outer.length < 6) continue;
+    const bb = bboxOf(outer);
+    sandGrid.insert(bb[0], bb[1], bb[2], bb[3], { bb, outer });
+  }
+  const onSandOrRock = (x, z) => {
+    const list = sandGrid.query(x, z);
+    for (let i = 0; i < list.length; i++) {
+      const { bb, outer } = list[i];
+      if (x < bb[0] || x > bb[2] || z < bb[1] || z > bb[3]) continue;
+      if (pointInRing(x, z, outer)) return true;
+    }
+    return false;
+  };
+  const groundOk = (x, z, roadClear, bldgClear, waterClear, allowSand = false) => {
     if (x < -500 || x >= 500 || z < -500 || z >= 500) return false;
+    if (!allowSand && onSandOrRock(x, z)) return false;
     if (lmSuppress && lmSuppress(ox + x, oz + z)) return false;
     if (isPointInWater && isPointInWater(x, z, waterClear)) return false;
     if (isPointInSunkenTrench && isPointInSunkenTrench(x, z)) return false;
@@ -1188,7 +1206,29 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
 
   // --- 1. Street trees: rows on sidewalks with irregular spacing / kerb offset / age, skipping junctions & driveways ---
   // [tree-placement] each side of a street is its own row: spacing jitter +-35 %, lateral jitter, occasional gaps and
-  // close pairs, saplings among mature trees, and a 2-4 species mix drifting along the street.
+  // close pairs, saplings among mature trees. Species: one per ~140 m block segment (sometimes two compatible ones
+  // alternating), changing between blocks and streets, never palms next to conifers in one row.
+  const formOf = (sp) => (sp === SP_PALM || sp === SP_DATEPALM ? 1 : sp === SP_CONIFER || sp === SP_COLUMN ? 2 : sp === SP_CACTUS ? 3 : sp === SP_BANANA || sp === SP_BAMBOO ? 4 : 0);
+  const plCache = new Map();
+  const blockPlanting = (streetSeed, alongW, uMain) => {
+    const bk = Math.floor(alongW / 140);
+    const key = streetSeed * 4096 + bk;
+    let pl = plCache.get(key);
+    if (pl) return pl;
+    const h = ihash(streetSeed | 0, bk, 31), h2 = ihash(streetSeed | 0, bk, 32);
+    const u1 = (uMain + (h < 0.55 ? 0 : (h - 0.55) * 0.9)) % 1; // most blocks keep the street's species
+    const e1 = pickFlora(ctx, 0, u1);
+    let e2 = null;
+    if (e1 && h2 > 0.7) {
+      for (let k = 1; k <= 6 && !e2; k++) {
+        const c = pickFlora(ctx, 0, (u1 + k * 0.137) % 1);
+        if (c && c.sp !== e1.sp && formOf(c.sp) === formOf(e1.sp)) e2 = c;
+      }
+    }
+    pl = { e1, e2 };
+    plCache.set(key, pl);
+    return pl;
+  };
   const STREET = { trunk: 2.2, primary: 2.2, secondary: 2.2, tertiary: 2.2, residential: 1.6, living_street: 1.6, unclassified: 1.6 };
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
@@ -1203,9 +1243,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (s.hw * 2 < 7 && sr() < 0.5) continue;
     const spacing = 8 + sr() * 4;
     const mx = (s.x1 + s.x2) * 0.5, mz = (s.z1 + s.z2) * 0.5;
-    const uMain = mixU(mx, mz, null, sr()); // the street's dominant planting
-    const uAlt = (uMain + 0.3 + sr() * 0.45) % 1; // a second species (replacements, other side)
-    const pMain = 0.45 + sr() * 0.3;
+    const uMain = mixU(mx, mz, null, sr()); // the street's planting (drifts by neighbourhood)
     if (!pickFlora(ctx, 0, uMain) || sr() > ctx.streetDens) continue;
     const baseScale = 0.82 + sr() * 0.22;
     const nx = -dz / len, nz = dx / len;
@@ -1213,10 +1251,10 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     const along0 = ((s.x1 + ox) * dx + (s.z1 + oz) * dz) / len;
     for (let side = -1; side <= 1; side += 2) {
       const rng = mulberry32(streetSeed ^ Math.imul(i + 1, 2654435761) ^ (side > 0 ? 0x5bd1e995 : 0));
-      const sideMain = side > 0 || rng() < 0.7 ? uMain : uAlt;
       let d = (spacing - (((along0 % spacing) + spacing) % spacing)) % spacing;
       d += (rng() - 0.5) * spacing * 0.5;
       if (d < 0) d += spacing;
+      let nTree = 0;
       for (; d < len; d += spacing * (0.65 + rng() * 0.7)) {
         if (rng() < 0.08) continue; // driveway / missing tree
         const pair = rng() < 0.06 ? 2 : 1; // two planted close together
@@ -1227,10 +1265,9 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
           const lat = off + (rng() - 0.5) * Math.min(0.9, sw * 0.5);
           const x = s.x1 + dx * t + nx * lat * side, z = s.z1 + dz * t + nz * lat * side;
           if (nearJunction(x, z, 11)) continue;
-          if (!groundOk(x, z, 0.5, 2.8, 2.5)) continue;
-          const pick = rng();
-          const u = pick < pMain ? sideMain : pick < pMain + 0.3 ? uAlt : mixU(x, z, null, rng());
-          const e = pickFlora(ctx, 0, u);
+          if (!groundOk(x, z, 0.5, 2.8, 5)) continue;
+          const pl = blockPlanting(streetSeed, along0 + dd, uMain);
+          const e = pl.e2 && nTree++ % 2 ? pl.e2 : pl.e1;
           if (!e) continue;
           // age: saplings, young and mature trees mixed along one row
           const age = rng();
@@ -1322,16 +1359,25 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
             if (rng() > 1 - clumpK + clumpK * keep * 1.15) continue;
           }
           if (isBush) {
-            if (!groundOk(x, z, 2.0, 1.2, 1.5)) continue;
+            if (!groundOk(x, z, 2.0, 1.2, 3.5)) continue;
             const n = 1 + Math.floor(rng() * 3);
             for (let k = 0; k < n; k++) {
               const bx = x + (rng() - 0.5) * 3.2, bz = z + (rng() - 0.5) * 3.2;
-              if (k > 0 && !groundOk(bx, bz, 2.0, 1.2, 1.5)) continue;
+              if (k > 0 && !groundOk(bx, bz, 2.0, 1.2, 3.5)) continue;
               const sc = 0.9 + rng() * 0.8;
               plantBush(bx, bz, sc, sc * (0.8 + rng() * 0.4), rng);
             }
           } else {
-            if (!groundOk(x, z, 3.0, 2.5, 3)) continue;
+            if (a.key === LC_SAND) {
+              // back-of-beach palms only: tropical climate, well away from the water, along the beachfront road
+              if (!(ctx.zone === 'trop' || ctx.zone === 'sav') || !groundOk(x, z, 3.0, 2.5, 35, true) || roadClearance(x, z) > 16) continue; // next to the promenade road
+              const ep = pickFlora(ctx, role, mixU(x, z, null, rng()));
+              if (!ep || (ep.sp !== SP_PALM && ep.sp !== SP_DATEPALM)) continue;
+              const scp = sMin + rng() * (sMax - sMin);
+              plantTree(ep, x, z, scp, scp * (0.9 + rng() * 0.25), rng);
+              continue;
+            }
+            if (!groundOk(x, z, 3.0, 2.5, 6)) continue;
             const e = pickFlora(ctx, role, mixU(x, z, null, rng()));
             const age = rng();
             const sc = (sMin + rng() * (sMax - sMin)) * (age < 0.15 ? 0.55 + rng() * 0.2 : 1);
