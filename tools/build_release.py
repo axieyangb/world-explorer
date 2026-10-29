@@ -72,6 +72,7 @@ MOD_ID_MAP = {
     'src/features/street_furniture.js': '__MOD_street_furniture',
     'src/features/tree_models.js': '__MOD_tree_models',  # [tree-detail]
     'src/features/tree_damage.js': '__MOD_tree_damage',  # [tree-damage]
+    'src/features/street_props.js': '__MOD_street_props',  # [street-props]
     'src/features/vegetation.js': '__MOD_vegetation',
     'src/features/places.js': '__MOD_places',
     'src/features/sky.js': '__MOD_sky',

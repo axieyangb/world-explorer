@@ -954,6 +954,8 @@ export class WalkerWeaponsSystem {
       }
     }
 
+    this.app.streetFeatures?.weaponHit?.(this.app.pos, hitPos, splashRadius); // [prop-damage] lamps / signals / bins topple
+
     if (hit && hit.kind === 'car' && hit.car) {
       if (this.app.vehicleDamage && typeof this.app.vehicleDamage.hit === 'function') {
         const dmg = splashRadius > 0 ? 6 : 2.5;

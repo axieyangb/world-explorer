@@ -1708,6 +1708,9 @@ function buildRoadsAndBridges(
 ) {
   const rPos = [];
   const rCol = [];
+  // [street-props] road-surface coords for surfaces.js: u = metres along the way; v = 1000 * half-width(0.25 m steps)
+  // + metres from the right edge on carriageways, -(1 + metres from the kerb) on sidewalks / paved footways, 0 = none
+  const rUv = [];
 
   const mPos = [];
   const mCol = [];
@@ -2127,6 +2130,13 @@ function buildRoadsAndBridges(
           lx1, ly1, lz1, lx2, ly2, lz2, rx2, ry2, rz2
         );
         for (let k = 0; k < 6; k++) rCol.push(rgb[0], rgb[1], rgb[2]);
+        { // [street-props]
+          const a0 = subAccumDist, a1 = subAccumDist + segLen;
+          const hwr = Math.hypot(lx1 - rx1, lz1 - rz1) * 0.5;
+          const paved = cls === 'pedestrian' || cls === 'footway' || cls === 'steps' || cls === 'path';
+          const vl = paved ? -1 - 2 * hwr : Math.max(1, Math.round(hwr * 4)) * 1000 + 2 * hwr, vr = paved ? -1 : Math.max(1, Math.round(hwr * 4)) * 1000;
+          rUv.push(a0, vl, a1, vr, a0, vr, a0, vl, a1, vl, a1, vr);
+        }
 
         const dx = (cx2 - cx1) / segLen;
         const dz = (cz2 - cz1) / segLen;
@@ -2158,6 +2168,8 @@ function buildRoadsAndBridges(
             lx2, swY2, lz2
           );
           for (let k = 0; k < 6; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          const so = -1 - swW, a0 = subAccumDist, a1 = subAccumDist + segLen; // [street-props]
+          rUv.push(a0, so, a1, -1, a0, -1, a0, so, a1, so, a1, -1);
           }
           // Right sidewalk strip
           if (!sidewalkOverCycleway(swMx - nx * swHalfRoad, swMz - nz * swHalfRoad, dx, dz, swW * 0.5)) {
@@ -2170,6 +2182,8 @@ function buildRoadsAndBridges(
             rx2 - nx * swW, swY2, rz2 - nz * swW
           );
           for (let k = 0; k < 6; k++) rCol.push(swCol[0], swCol[1], swCol[2]);
+          const so = -1 - swW, a0 = subAccumDist, a1 = subAccumDist + segLen; // [street-props]
+          rUv.push(a0, -1, a1, so, a0, so, a0, -1, a1, -1, a1, so);
           }
         }
 
@@ -2305,6 +2319,7 @@ function buildRoadsAndBridges(
               lx2, ly2 - 0.03, lz2
             );
             for (let k = 0; k < 6; k++) rCol.push(rgb[0] * 0.92, rgb[1] * 0.92, rgb[2] * 0.92);
+            for (let k = 0; k < 12; k++) rUv.push(0); // [street-props]
             if (isGoldenGateBridge) {
               pushColQuad(lx1 + nx * sealW, ly1 - effDeckDepth, lz1 + nz * sealW, lx1, ly1 - effDeckDepth, lz1, lx2, ly2 - effDeckDepth, lz2, lx2 + nx * sealW, ly2 - effDeckDepth, lz2 + nz * sealW, ggbDarkOrange);
             } else {
@@ -2332,6 +2347,7 @@ function buildRoadsAndBridges(
               rx2 - nx * sealW, ry2 - 0.03, rz2 - nz * sealW
             );
             for (let k = 0; k < 6; k++) rCol.push(rgb[0] * 0.92, rgb[1] * 0.92, rgb[2] * 0.92);
+            for (let k = 0; k < 12; k++) rUv.push(0); // [street-props]
             if (isGoldenGateBridge) {
               pushColQuad(rx1, ry1 - effDeckDepth, rz1, rx1 - nx * sealW, ry1 - effDeckDepth, rz1 - nz * sealW, rx2 - nx * sealW, ry2 - effDeckDepth, rz2 - nz * sealW, rx2, ry2 - effDeckDepth, rz2, ggbDarkOrange);
             } else {
@@ -2608,6 +2624,7 @@ function buildRoadsAndBridges(
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.Float32BufferAttribute(rPos, 3));
     geom.setAttribute('color', new THREE.BufferAttribute(toUint8Colors(rCol), 3, true));
+    if (rUv.length === (rPos.length / 3) * 2) geom.setAttribute('uv', new THREE.Float32BufferAttribute(rUv, 2)); // [street-props]
     finalizeAndReleaseGeometry(geom, true, true);
     const mesh = new THREE.Mesh(geom, mats.roadMat);
     mesh.receiveShadow = true;
