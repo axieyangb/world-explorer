@@ -92,12 +92,14 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
+import { QUALITY, QualityManager } from "./features/quality.js"; // [ui-mobile] graphics tiers + governor
+import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
 // Phones get a 3x3 streaming zone: a 5x5 one needs well over a gigabyte, more than mobile browsers allow a tab.
 const TOUCH_UI = isTouchDevice();
-const LOAD_RADIUS = TOUCH_UI ? 1 : 2;   // 5x5 chunks = 25 km^2 active streaming zone (3x3 on touch devices)
+const LOAD_RADIUS = TOUCH_UI || QUALITY.tier === "low" ? 1 : 2; // [ui-mobile] Low also streams 3x3;   // 5x5 chunks = 25 km^2 active streaming zone (3x3 on touch devices)
 const UNLOAD_RADIUS = TOUCH_UI ? 2 : 3; // Hysteresis gap
 const TILE_CACHE_LIMIT = TOUCH_UI ? 12 : 24; // decoded vector tiles kept per thread (global_tiles.js)
 setTileCacheLimit(TILE_CACHE_LIMIT);
@@ -157,7 +159,7 @@ class WorldExplorerApp {
       logarithmicDepthBuffer: false,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, TOUCH_UI ? 1.25 : 1.5)); // [integration perf] cap 1.5 (1.25 on phones)
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUALITY.dprCap)); // [ui-mobile] cap per tier (QualityManager owns it after this)
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -321,6 +323,8 @@ class WorldExplorerApp {
 
     this._bindInputs();
     this.touchControls = new TouchControls(this); // mobile: joystick + action buttons (no-op on desktop)
+    this.quality = new QualityManager(this); // [ui-mobile] window.app.quality
+    this.hudLayout = new HudLayout(); // [ui-mobile]
     this._bindHudControls();
 
     applyDomTranslations();
@@ -2296,6 +2300,7 @@ class WorldExplorerApp {
 
   _refreshLocalizedUi() {
     this._updateModeAndCamBadges();
+    if (this.quality) this.quality.syncMenu(); // [ui-mobile]
     this._showControlsHint();
     this._renderQuickDestinationChips();
     const searchInput = document.getElementById("location-input");
@@ -2898,7 +2903,7 @@ class WorldExplorerApp {
 
     const camTerrY = getBeijingTerrainElevation(this.camera.position.x, this.camera.position.z);
     const camAlt = Math.max(2.0, this.camera.position.y - camTerrY);
-    const targetShadowBounds = THREE.MathUtils.clamp(550 + camAlt * 1.25, 550, 1800);
+    const targetShadowBounds = THREE.MathUtils.clamp(550 + camAlt * 1.25, 550, 1800) * QUALITY.shadowDist; // [ui-mobile]
     if (Math.abs(this.currentShadowBounds - targetShadowBounds) > 35) {
       this.currentShadowBounds = targetShadowBounds;
       const sc = this.sunLight.shadow.camera;
@@ -2938,6 +2943,7 @@ class WorldExplorerApp {
       this.mapSystem.updateMinimap(this.pos, minimapYaw, this.loadedChunks);
     }
 
+    if (this.quality) this.quality.update(rawDt); // [ui-mobile] governor, chunk detail distance, shadows
     this.renderer.render(this.scene, this.camera);
   }
 }

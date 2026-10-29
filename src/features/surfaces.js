@@ -1,5 +1,5 @@
 import * as THREE from '../../vendor/three.module.js';
-import { isTouchDevice } from './touch_controls.js';
+import { liteSurfaces } from './quality.js'; // [ui-mobile] Low / touch-Medium tiers use the lite road + water shaders
 
 /**
  * Weather/sky-aware surface shaders, patched in-place onto the shared materials via onBeforeCompile
@@ -97,7 +97,7 @@ function patchWater(mat) {
         .replace(
           '#include <common>',
           `#include <common>\n${COMMON_PARS}\nvarying vec2 vShoreUv;
-          ${isTouchDevice() ? '#define WATER_LITE' : ''}
+          ${liteSurfaces() ? '#define WATER_LITE' : ''}
           uniform float uSeaChop;
           uniform vec3 uSeaWind;
           uniform vec4 uSwell;
@@ -195,7 +195,7 @@ function patchWater(mat) {
           #include <opaque_fragment>`
         );
     },
-    isTouchDevice() ? 'atmo-water-2-lite' : 'atmo-water-2'
+    liteSurfaces() ? 'atmo-water-2-lite' : 'atmo-water-2'
   );
 }
 
@@ -361,7 +361,7 @@ function patchRoad(mat) {
       addWorldPosVarying(shader);
       addRoadUvVarying(shader);
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', `#include <common>\n${isTouchDevice() ? '#define ROAD_LITE' : ''}\n${COMMON_PARS}\n${DETAIL_PARS}`)
+        .replace('#include <common>', `#include <common>\n${liteSurfaces() ? '#define ROAD_LITE' : ''}\n${COMMON_PARS}\n${DETAIL_PARS}`)
         .replace('#include <color_fragment>', `#include <color_fragment>\n${ROAD_DETAIL}`)
         .replace(
           '#include <roughnessmap_fragment>',
@@ -394,7 +394,7 @@ function patchRoad(mat) {
           #include <opaque_fragment>`
         );
     },
-    isTouchDevice() ? 'atmo-road-2-lite' : 'atmo-road-2'
+    liteSurfaces() ? 'atmo-road-2-lite' : 'atmo-road-2'
   );
 }
 

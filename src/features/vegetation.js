@@ -22,6 +22,7 @@ import {
 } from './flora_climate.js'; // [feature/climate-flora]
 import { buildTreeGeometry, getFloraAtlas, treeExtent, TREE_DIM } from './tree_models.js'; // [tree-detail]
 import { TreeDamage } from './tree_damage.js'; // [tree-damage]
+import { QUALITY } from './quality.js'; // [ui-mobile]
 
 const NEAR_R = 62;
 const MID_R = 190;
@@ -650,9 +651,9 @@ export class VegetationSystem {
     const t0 = performance.now();
     this._updateClimate(cp, loadedChunks); // [feature/climate-flora]
     const counts = new Array(SPECIES_COUNT * 3).fill(0);
-    const far2 = FAR_R * FAR_R;
-    const near2 = NEAR_R * NEAR_R;
-    const mid2 = MID_R * MID_R;
+    const far2 = (FAR_R * QUALITY.treeFar) ** 2; // [ui-mobile] tier scales the three rings
+    const near2 = (NEAR_R * QUALITY.treeNear) ** 2;
+    const mid2 = (MID_R * QUALITY.treeMid) ** 2;
     const tables = [];
     for (const g of loadedChunks.values()) {
       const v = g.userData && g.userData.vegInstances;

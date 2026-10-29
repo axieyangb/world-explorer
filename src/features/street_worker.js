@@ -176,10 +176,7 @@ function cleanOsmRef(rawRef, baseCls, region) {
   const first = rawRef.split(';')[0].trim();
   if (!first) return '';
   if (/^[0-9]+[A-Z]$/.test(first)) return ''; // Exit numbers like '2C' are exit tags, not route shield numbers
-  if (region === 'us' && /^[0-9]+$/.test(first)) {
-    return baseCls === 'motorway' ? `I-${first}` : baseCls === 'trunk' ? `US ${first}` : `CA ${first}`;
-  }
-  return first;
+  return first; // [ui-mobile] a bare number stays a bare number (no guessed I- / US / CA network)
 }
 
 function compassDirFromTangent(dx, dz) {
@@ -224,9 +221,9 @@ function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz, lx, lz, dx
         }
       }
     }
-    name = nearMajor ? (nearMajor.length <= 12 ? `${nearMajor} ${compass}` : nearMajor) : `${ref || 'HWY'} ${compass}`;
+    name = nearMajor ? (nearMajor.length <= 12 ? `${nearMajor} ${compass}` : nearMajor) : `${hasRealRef ? ref : 'HWY'} ${compass}`; // [ui-mobile]
   } else if (!name && (isTrueHighway || hasRealRef)) {
-    name = `${ref} ${compass}`;
+    name = `${hasRealRef ? ref : 'HWY'} ${compass}`;
   }
 
   // Pick nearest distinct cross-street / nearby street name from actual OpenFreeMap roads in this chunk
@@ -266,28 +263,6 @@ function resolveRoadSignage(id, cls, rawName, rawRef, region, wx, wz, lx, lz, dx
   const rawExit = juncRef || ((rawRef && /^[0-9]+[A-Z]$/.test(String(rawRef).trim())) ? String(rawRef).trim() : `${1 + (h % 42)}${(h & 3) === 0 ? 'B' : (h & 3) === 1 ? 'A' : ''}`);
   const exitNum = `EXIT ${rawExit}`;
   return { ref, hasRealRef, realName, hasRealName, name, dest2, exitNum };
-}
-
-function chooseShieldCell(ref, id, cls, region) {
-  const u = String(ref || '').toUpperCase();
-  if (region === 'us') {
-    if (u.includes('280')) return DECAL_CELLS.SHIELD_I280;
-    if (u.includes('80')) return DECAL_CELLS.SHIELD_I80;
-    if (u.includes('101')) return DECAL_CELLS.SHIELD_US101;
-    if (u.includes('95') || u.includes('I-5')) return DECAL_CELLS.SHIELD_I95;
-    if (u.includes('CA') || u.includes('SR') || u === '1') return DECAL_CELLS.SHIELD_CA1;
-    const pool = cls.startsWith('motorway')
-      ? [DECAL_CELLS.SHIELD_I80, DECAL_CELLS.SHIELD_I280, DECAL_CELLS.SHIELD_US101, DECAL_CELLS.SHIELD_I95]
-      : [DECAL_CELLS.SHIELD_US101, DECAL_CELLS.SHIELD_CA1, DECAL_CELLS.SHIELD_I280, DECAL_CELLS.SHIELD_I80];
-    return pool[hashInt(id, 7) % pool.length];
-  }
-  if (region === 'eu' || region === 'uk') {
-    return (hashInt(id, 11) % 3 === 0) ? DECAL_CELLS.ROUNDEL_80 : DECAL_CELLS.SHIELD_EU_E15;
-  }
-  if (region === 'cn' || region === 'jp' || region === 'kr') {
-    return (hashInt(id, 13) % 3 === 0) ? DECAL_CELLS.ROUNDEL_80 : DECAL_CELLS.SHIELD_ASIA_G2;
-  }
-  return (hashInt(id, 17) % 2 === 0) ? DECAL_CELLS.SHIELD_EU_E15 : DECAL_CELLS.ROUNDEL_80;
 }
 
 function pointAt(w, d) {
@@ -374,16 +349,17 @@ class DecalBuf {
    * Emits a 2x2 subdivided road-surface decal centered at (cx, cz), oriented along unit tangent (tx, tz)
    * so cars drive right over it and drivers read it right-side up.
    */
-  add(cx, cz, tx, tz, widthM, lengthM, cellIdx, sampleY, mirror = false) {
+  add(cx, cz, tx, tz, widthM, lengthM, cellIdx, sampleY, mirror = false, uvRect = null) {
     const col = cellIdx & 3;
     const row = (cellIdx >> 2) & 3;
     const pad = 0.01;
     // mirror: flip the glyph left<->right (e.g. straight+right combo -> straight+left combo)
     const uL = (col + pad) * 0.25, uR = (col + 1 - pad) * 0.25;
-    const u0 = mirror ? uR : uL;
-    const u1 = mirror ? uL : uR;
-    const v1 = 1.0 - (row + pad) * 0.25;
-    const v0 = 1.0 - (row + 1 - pad) * 0.25;
+    let u0 = mirror ? uR : uL;
+    let u1 = mirror ? uL : uR;
+    let v1 = 1.0 - (row + pad) * 0.25;
+    let v0 = 1.0 - (row + 1 - pad) * 0.25;
+    if (uvRect) [u0, v0, u1, v1] = uvRect; // [ui-mobile] route shields: per-chunk slot, remapped on the main thread
     const rx = -tz, rz = tx; // driver's right-hand vector
     const hw = widthM * 0.5, hl = lengthM * 0.5;
     const N = 2;
@@ -737,6 +713,14 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
   const curbs = new GeoBuf();
   curbs.uv = []; // [street-props]
   const decals = new DecalBuf();
+  const shields = new DecalBuf(); // [ui-mobile] route shields drawn from each way's own OSM ref
+  const shieldKeys = []; // `${region}|${ref}` per slot; uv.x = slot * 2 + [0..1]
+  const shieldSlot = (ref) => {
+    const key = `${region}|${ref}`;
+    let i = shieldKeys.indexOf(key);
+    if (i < 0) { i = shieldKeys.length; shieldKeys.push(key); }
+    return i;
+  };
   const centerRgb = style.center === 'yellow' ? YELLOW : WHITE;
   const inChunk = (x, z) => x >= -499.5 && x < 499.5 && z >= -499.5 && z < 499.5;
 
@@ -897,7 +881,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     const driveSign = style.left ? -1 : 1; // lateral side of forward traffic (+1 = right of segment)
     const isTrueHighway = cls === 'motorway' || cls === 'trunk' || cls === 'motorway_link' || cls === 'trunk_link';
 
-    if ((isTrueHighway || s.hasRealRef) && s.ref) {
+    if (s.hasRealRef && s.ref) { // [ui-mobile] only a real OSM ref gets a shield (never an invented one)
       const shieldSpacing = 75;
       const shieldPhase = 16;
       let k0 = Math.ceil((segAcc - shieldPhase) / shieldSpacing);
@@ -907,20 +891,21 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         const cx = s.x1 + (s.x2 - s.x1) * t, cz = s.z1 + (s.z2 - s.z1) * t;
         if (!inChunk(cx, cz) || nearNode(cx, cz, 8.0)) continue;
 
-        const shieldCell = chooseShieldCell(s.ref, s.id + k0, cls, region);
+        const slot = shieldSlot(s.ref);
+        const sr = [slot * 2 + 0.01, 0.01, slot * 2 + 0.99, 0.99];
         const decalW = Math.min(3.8, Math.max(2.6, (twoWay ? hw : hw * 2) * 0.62));
         const decalL = 4.0;
 
         if (twoWay) {
           const latOff = driveSign * (hw * 0.5);
-          decals.add(cx + rx * latOff, cz + rz * latOff, s.dx, s.dz, decalW, decalL, shieldCell, sampleDecalY);
-          decals.add(cx - rx * latOff, cz - rz * latOff, -s.dx, -s.dz, decalW, decalL, shieldCell, sampleDecalY);
+          shields.add(cx + rx * latOff, cz + rz * latOff, s.dx, s.dz, decalW, decalL, 0, sampleDecalY, false, sr);
+          shields.add(cx - rx * latOff, cz - rz * latOff, -s.dx, -s.dz, decalW, decalL, 0, sampleDecalY, false, sr);
         } else {
           // Center squarely inside a travel lane, never on a dashed lane divider line
           const laneOff = (effLanes % 2 === 1) ? 0.0 : driveSign * (hw / effLanes);
           const laneW = (hw * 2) / effLanes;
           const fitW = Math.min(decalW, laneW * 0.78);
-          decals.add(cx + rx * laneOff, cz + rz * laneOff, s.dx, s.dz, fitW, decalL, shieldCell, sampleDecalY);
+          shields.add(cx + rx * laneOff, cz + rz * laneOff, s.dx, s.dz, fitW, decalL, 0, sampleDecalY, false, sr);
         }
       }
     }
@@ -1265,7 +1250,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         const isMoto = (s.cls === 'motorway' || s.cls === 'trunk') ? 1 : 0;
         gantries.push([
           cx, cy, cz, faceRot, spanW, s.oneway ? 1 : 0, isMoto,
-          s.ref, localMainDest, localDest2, localExitNum,
+          s.hasRealRef ? s.ref : '', localMainDest, localDest2, localExitNum, // [ui-mobile] no invented route numbers
         ]);
         dbg.gantries++;
       });
@@ -1404,6 +1389,8 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       groups.markings.add(m3);
     }
     if (m4) groups.markings.add(m4);
+    const m5 = shields.toMesh(mk('streetShieldMat')); // [ui-mobile]
+    if (m5) groups.markings.add(m5);
   }
 
   dbg.ms = Date.now() - tStart;
@@ -1418,6 +1405,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     signalNodes: new Float32Array(signalNodes),
     gantries,
     blades,
+    shieldKeys, // [ui-mobile]
     debug: dbg,
   };
 }
