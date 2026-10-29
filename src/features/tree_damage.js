@@ -59,7 +59,7 @@ export class TreeDamage {
     veg.root.add(this.root);
     this.falling = [];
     // stumps (one InstancedMesh, re-gathered on rebuild, appended on snap)
-    this.stumps = new THREE.InstancedMesh(buildStumpGeometry(), veg.nearMat, 512);
+    this.stumps = new THREE.InstancedMesh(buildStumpGeometry(), veg.fxMat || veg.nearMat, 512);
     this.stumps.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(512 * 3).fill(1), 3);
     this.stumps.count = 0;
     this.stumps.frustumCulled = false;
@@ -79,7 +79,7 @@ export class TreeDamage {
       if (old) a.set(this[k].subarray(0, this.n));
       this[k] = a;
     }
-    for (const [k, T] of [['sp', Uint8Array], ['src', Int32Array], ['idx', Int32Array], ['bk', Int16Array], ['slot', Int32Array]]) {
+    for (const [k, T] of [['sp', Uint8Array], ['src', Int32Array], ['idx', Int32Array], ['bk', Int16Array], ['slot', Int32Array], ['bk2', Int16Array], ['slot2', Int32Array]]) {
       const a = mk(T);
       if (old) a.set(this[k].subarray(0, this.n));
       this[k] = a;
@@ -113,12 +113,13 @@ export class TreeDamage {
     return this.srcs.length - 1;
   }
 
-  add(si, idx, sp, x, y, z, s, sy, r, lx, lz, cr, cg, cb, bk, slot) {
+  add(si, idx, sp, x, y, z, s, sy, r, lx, lz, cr, cg, cb, bk, slot, bk2 = -1, slot2 = -1) {
     if (this.n >= this._cap) this._grow(this._cap * 2);
     const i = this.n++;
     this.x[i] = x; this.y[i] = y; this.z[i] = z; this.s[i] = s; this.sy[i] = sy; this.r[i] = r; this.lx[i] = lx; this.lz[i] = lz;
     this.cr[i] = cr; this.cg[i] = cg; this.cb[i] = cb;
     this.sp[i] = sp; this.src[i] = si; this.idx[i] = idx; this.bk[i] = bk; this.slot[i] = slot;
+    this.bk2[i] = bk2; this.slot2[i] = slot2; // [tree-impostor] second LOD bucket while inside a crossfade band
   }
 
   addStump(x, y, z, rad, h, rot) {
@@ -378,18 +379,19 @@ export class TreeDamage {
     const idx = this.idx[i];
     const sc = Math.min(1, (st.scorch.get(idx) || 0) + k);
     capSet(st.scorch, idx, sc);
-    const b = this._bucket(i);
-    if (!b) return;
-    const ca = b.mesh.instanceColor.array, o = this.slot[i] * 3;
     const f = 1 - 0.72 * sc;
-    ca[o] = this.cr[i] * f * (1 + 0.15 * sc);
-    ca[o + 1] = this.cg[i] * f * (1 - 0.25 * sc);
-    ca[o + 2] = this.cb[i] * f * (1 - 0.3 * sc);
-    b.mesh.instanceColor.needsUpdate = true;
+    for (let w = 0; w < 2; w++) {
+      const b = this._bucket(w ? this.bk2[i] : this.bk[i]);
+      if (!b) continue;
+      const ca = b.mesh.instanceColor.array, o = (w ? this.slot2[i] : this.slot[i]) * 3;
+      ca[o] = this.cr[i] * f * (1 + 0.15 * sc);
+      ca[o + 1] = this.cg[i] * f * (1 - 0.25 * sc);
+      ca[o + 2] = this.cb[i] * f * (1 - 0.3 * sc);
+      b.mesh.instanceColor.needsUpdate = true;
+    }
   }
 
-  _bucket(i) {
-    const bk = this.bk[i];
+  _bucket(bk) {
     if (bk < 0) return null;
     const lod = (bk / SPECIES_COUNT) | 0, sp = bk % SPECIES_COUNT;
     const B = this.veg.buckets[sp];
@@ -406,10 +408,11 @@ export class TreeDamage {
     const hb = snap ? (0.5 + Math.random() * 0.9) * Math.min(1.5, sy) : 0;
     capSet(st.dead, idx, snap ? hb : -1);
     this.stats.felled++;
-    // hide the instance in its bucket
-    const b = this._bucket(i);
-    if (b) {
-      const a = b.mesh.instanceMatrix.array, off = this.slot[i] * 16;
+    // hide the instance in its bucket(s)
+    for (let w = 0; w < 2; w++) {
+      const b = this._bucket(w ? this.bk2[i] : this.bk[i]);
+      if (!b) continue;
+      const a = b.mesh.instanceMatrix.array, off = (w ? this.slot2[i] : this.slot[i]) * 16;
       for (let k = 0; k < 16; k++) a[off + k] = 0;
       b.mesh.instanceMatrix.needsUpdate = true;
     }
@@ -441,7 +444,7 @@ export class TreeDamage {
     let f = null;
     for (const e of this.falling) if (!e.active) { f = e; break; }
     if (!f && this.falling.length < MAX_FALLING) {
-      const mesh = new THREE.InstancedMesh(buildTreeGeometry(sp, 0), this.veg.nearMat, 1);
+      const mesh = new THREE.InstancedMesh(buildTreeGeometry(sp, 0), this.veg.fxMat || this.veg.nearMat, 1);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(3), 3);
       mesh.frustumCulled = false;
       mesh.castShadow = true;

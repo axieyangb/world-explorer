@@ -5,9 +5,12 @@
  * into ONE InstancedMesh per species per LOD (14 species x 3 LODs; empty buckets are hidden):
  *   - near (< NEAR_R): detailed tree (bark-textured tapered trunk + limbs, leaf-card clusters), casts shadows,
  *                      wind sway + leaf flutter in the vertex shader                          [tree-detail]
- *   - mid  (< MID_R) : same tree with fewer, larger cards and simpler limbs (same silhouette), casts shadows
- *   - far  (< FAR_R) : crossed alpha-tested billboards; the atlas is an impostor render of the mid trees
- *   - beyond FAR_R   : culled
+ *   - mid            : same tree with fewer, larger cards and simpler limbs (same silhouette); its shadow comes
+ *                      from a sun-facing impostor proxy
+ *   - far            : multi-view (hemi-octahedral) impostors, lit through baked normals, cast shadows [tree-impostor]
+ *   - beyond the far radius: culled
+ * Radii are 3D camera distances retuned per frame (the mid ring grows with altitude, scaled by adaptive quality);
+ * neighbouring LODs overlap in a band and crossfade with complementary dither masks (no popping).
  * Instance buffers are rebuilt only when the camera moves > REBUILD_DIST or the loaded chunk set changes.
  * Per-instance lean / extra size jitter are derived from a position hash (deterministic, no worker change).
  * Trees are destructible (src/features/tree_damage.js): hits, explosions, kaiju and ramming.  [tree-damage]
@@ -20,104 +23,27 @@ import {
   SP_BROADLEAF, SP_TALL, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BIRCH, SP_BAMBOO, SPECIES_COUNT, SPECIES_NAMES,
   floraContext, pickFlora, floraLook, genericEntry, hash2,
 } from './flora_climate.js'; // [feature/climate-flora]
-import { buildTreeGeometry, getFloraAtlas, treeExtent, TREE_DIM } from './tree_models.js'; // [tree-detail]
+import { buildTreeGeometry, getFloraAtlas, TREE_DIM } from './tree_models.js'; // [tree-detail]
+import {
+  bakeTreeImpostors, buildImpostorGeometry, createImpostorMaterial, createImpostorDepthMaterial, LOD_VERT_PARS, LOD_VERT_MAIN, LOD_FRAG_PARS,
+} from './tree_impostors.js'; // [tree-impostor]
+import { getBeijingTerrainElevation } from '../environment.js';
 import { TreeDamage } from './tree_damage.js'; // [tree-damage]
 
-const NEAR_R = 62;
-const MID_R = 190;
-const FAR_R = 600;
 const REBUILD_DIST = 14;
-const IMP_W = 128, IMP_H = 256; // impostor cell (px)
 const SHADOW_LAYER = 3; // [tree-detail] shadow-only proxies (sun shadow camera only)
+// [tree-impostor] LOD radii (3D distance from the camera). Retuned every frame for altitude + adaptive quality:
+//   near/mid at NEAR_R, mid/far at MID_R0 + MID_ALT * height above ground (scaled by quality), far cull grows too.
+const NEAR_R = 62;
+const MID_R0 = 165;
+const MID_ALT = 0.5;
+const FAR_R0 = 600;
+const SHADOW_IMP_R = 320; // impostors farther than this cast no shadow (shadow-map texels are coarse there anyway)
+const LOD_BAND = 9; // crossfade half-width (m)
+const LOD_UNIFORMS = { uLodR: { value: new THREE.Vector4(NEAR_R, MID_R0, LOD_BAND, FAR_R0) } };
 
 // Lean (rad, max) per species: palms lean a lot, columns/cacti stand straight
 const LEAN = { [SP_PALM]: 0.13, [SP_BIRCH]: 0.06, [SP_COLUMN]: 0.012, [SP_CACTUS]: 0.02, [SP_BUSH]: 0, [SP_BAMBOO]: 0.05 };
-
-// Far cap quads: [height frac, half-size frac of width, v0, v1 of the impostor column]
-const CAP = {
-  [SP_BROADLEAF]: [0.66, 0.36, 0.45, 0.9], [SP_TALL]: [0.62, 0.34, 0.4, 0.9], [SP_BUSH]: [0.7, 0.36, 0.3, 0.95],
-  [SP_UMBRELLA]: [0.8, 0.38, 0.62, 0.95], [SP_BIRCH]: [0.66, 0.32, 0.45, 0.9], [SP_EUCALYPT]: [0.72, 0.32, 0.55, 0.92],
-};
-
-// ------------------------------------------------------------------------------------------------
-// Far-LOD crossed billboards (UVs into the impostor atlas, one column per species)
-// ------------------------------------------------------------------------------------------------
-
-function buildFarGeometry(sp) {
-  const [W, H] = treeExtent(sp);
-  const u0 = sp / SPECIES_COUNT + 0.5 / (IMP_W * SPECIES_COUNT), u1 = (sp + 1) / SPECIES_COUNT - 0.5 / (IMP_W * SPECIES_COUNT);
-  const pos = [];
-  const uv = [];
-  const nrm = [];
-  for (const a of [0, Math.PI / 2]) {
-    const dx = Math.cos(a) * W * 0.5, dz = Math.sin(a) * W * 0.5;
-    pos.push(-dx, 0, -dz, dx, 0, dz, dx, H, dz, -dx, 0, -dz, dx, H, dz, -dx, H, -dz);
-    uv.push(u0, 0, u1, 0, u1, 1, u0, 0, u1, 1, u0, 1);
-    for (let i = 0; i < 6; i++) nrm.push(0, 1, 0);
-  }
-  if (CAP[sp]) {
-    // Horizontal canopy cap (crown band of the impostor) so crossed quads don't read as an "X" from above
-    const [fy, fr, v0, v1] = CAP[sp];
-    const r = W * fr, y = H * fy;
-    pos.push(-r, y, -r, -r, y, r, r, y, r, -r, y, -r, r, y, r, r, y, -r);
-    uv.push(u0, v0, u0, v1, u1, v1, u0, v0, u1, v1, u1, v0);
-    for (let i = 0; i < 6; i++) nrm.push(0, 1, 0);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  g.setAttribute('vegSway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3).fill(sp === SP_CACTUS ? 0 : 1), 1));
-  return g;
-}
-
-/** Renders every species' mid-LOD tree side-on into one impostor atlas (albedo x soft light, alpha). [tree-detail] */
-function bakeImpostors(renderer, mat) {
-  const rt = new THREE.WebGLRenderTarget(IMP_W * SPECIES_COUNT, IMP_H, {
-    generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
-  });
-  const scene = new THREE.Scene();
-  scene.add(new THREE.AmbientLight(0xffffff, 2.5));
-  const dl = new THREE.DirectionalLight(0xffffff, 1.3);
-  dl.position.set(0.3, 1, 0.8);
-  scene.add(dl);
-  const prevRT = renderer.getRenderTarget();
-  const prevClear = renderer.getClearColor(new THREE.Color());
-  const prevAlpha = renderer.getClearAlpha();
-  const prevAuto = renderer.autoClear;
-  const prevShadow = renderer.shadowMap.enabled;
-  renderer.shadowMap.enabled = false;
-  renderer.autoClear = false;
-  renderer.setRenderTarget(rt);
-  renderer.setClearColor(0x40552c, 0); // leafy fringe colour so mip edges don't go black
-  renderer.clear(true, true, true);
-  const cam = new THREE.OrthographicCamera(-1, 1, 1, 0, 0.1, 100);
-  for (let sp = 0; sp < SPECIES_COUNT; sp++) {
-    const [W, H] = treeExtent(sp);
-    const mesh = new THREE.Mesh(buildTreeGeometry(sp, 1), mat);
-    scene.add(mesh);
-    cam.left = -W / 2;
-    cam.right = W / 2;
-    cam.top = H;
-    cam.bottom = 0;
-    cam.position.set(0, 0, 40);
-    cam.lookAt(0, 0, 0);
-    cam.updateProjectionMatrix();
-    rt.viewport.set(sp * IMP_W, 0, IMP_W, IMP_H);
-    rt.scissor.set(sp * IMP_W, 0, IMP_W, IMP_H);
-    rt.scissorTest = true;
-    renderer.setRenderTarget(rt);
-    renderer.render(scene, cam);
-    scene.remove(mesh);
-  }
-  rt.scissorTest = false;
-  rt.viewport.set(0, 0, IMP_W * SPECIES_COUNT, IMP_H);
-  renderer.setRenderTarget(prevRT);
-  renderer.setClearColor(prevClear, prevAlpha);
-  renderer.autoClear = prevAuto;
-  renderer.shadowMap.enabled = prevShadow;
-  return rt;
-}
 
 // ------------------------------------------------------------------------------------------------
 // Materials
@@ -136,12 +62,15 @@ export const FLORA_UNIFORMS = {
  * Tree materials: wind sway (per-vertex `vegSway`, scaled by live wind), per-instance tint applied to foliage only
  * (trunks/bark keep their color, so autumn/blossom tints don't paint the trunk), and snow on upward faces.
  */
-function addWind(material, uniforms, far = false) {
+function addWind(material, uniforms, far = false, lodMode = 3) {
   material.onBeforeCompile = (shader) => {
+    shader.uniforms.uLodR = LOD_UNIFORMS.uLodR; // [tree-impostor] distance crossfade
+    shader.uniforms.uLodMode = { value: lodMode };
     shader.uniforms.uWindTime = uniforms.uWindTime;
     shader.uniforms.uWindAmp = FLORA_UNIFORMS.uWindAmp;
     shader.uniforms.uVegSnow = FLORA_UNIFORMS.uVegSnow;
-    shader.vertexShader = 'uniform float uWindTime;\nuniform float uWindAmp;\nattribute float vegSway;\nvarying vec3 vVegTint;\nvarying float vVegUp;\n' + shader.vertexShader
+    shader.vertexShader = LOD_VERT_PARS + 'uniform float uWindTime;\nuniform float uWindAmp;\nattribute float vegSway;\nvarying vec3 vVegTint;\nvarying float vVegUp;\n' + shader.vertexShader
+      .replace('#include <project_vertex>', '#include <project_vertex>\n' + LOD_VERT_MAIN('instanceMatrix[3].xyz'))
       .replace(
         '#include <color_vertex>',
         `#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
@@ -179,7 +108,16 @@ function addWind(material, uniforms, far = false) {
       );
     // [tree-detail] double-sided leaf cards keep their canopy normal on both faces (no dark back faces)
     if (!far) shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'));
-    shader.fragmentShader = 'uniform float uVegSnow;\nvarying vec3 vVegTint;\nvarying float vVegUp;\n' + shader.fragmentShader.replace(
+    shader.fragmentShader = LOD_FRAG_PARS + 'uniform float uVegSnow;\nvarying vec3 vVegTint;\nvarying float vVegUp;\n' + shader.fragmentShader
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  vegLodDiscard();')
+      // [tree-impostor] keep card coverage under minification (mips average alpha away -> thin, crunchy foliage)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        vec2 vegTx = vMapUv * 1024.0;
+        float vegMip = 0.5 * log2(max(max(dot(dFdx(vegTx), dFdx(vegTx)), dot(dFdy(vegTx), dFdy(vegTx))), 1.0));
+        diffuseColor.a *= 1.0 + vegMip * 0.28;
+      }`)
+      .replace(
       '#include <color_fragment>',
       `#include <color_fragment>
       {
@@ -196,16 +134,16 @@ function addWind(material, uniforms, far = false) {
       }`
     );
   };
-  material.customProgramCacheKey = () => (far ? 'veg-flora-far-3' : 'veg-tree-near-3');
+  material.customProgramCacheKey = () => (far ? 'veg-flora-far-4' : 'veg-tree-near-4');
 }
 
 /** Shared material of the detailed (near/mid) trees, stumps and falling trees: one atlas, alpha-tested cards. [tree-detail] */
-export function createTreeMaterial(uniforms) {
+export function createTreeMaterial(uniforms, lodMode = 3) {
   const mat = new THREE.MeshStandardMaterial({
-    map: getFloraAtlas(), vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.82, metalness: 0.0,
+    map: getFloraAtlas(), vertexColors: true, alphaTest: 0.5, alphaToCoverage: true, side: THREE.DoubleSide, roughness: 0.82, metalness: 0.0,
   });
   mat.name = 'treeMat';
-  addWind(mat, uniforms);
+  addWind(mat, uniforms, false, lodMode);
   return mat;
 }
 
@@ -379,26 +317,31 @@ export class VegetationSystem {
     this.root.name = 'vegetation';
     scene.add(this.root);
 
-    this.nearMat = createTreeMaterial(this.uniforms); // [tree-detail]
-    this.farMat = new THREE.MeshStandardMaterial({
-      map: getFloraAtlas(), // replaced by the impostor atlas on the first update with a renderer
-      alphaTest: 0.5,
-      side: THREE.DoubleSide,
-      roughness: 0.9,
-      metalness: 0.0,
-    });
-    addWind(this.farMat, this.uniforms, true);
-    this._impostorRT = null;
+    // [tree-impostor] one material per LOD (they share a shader program; uLodMode picks the crossfade side)
+    this.nearMat = createTreeMaterial(this.uniforms, 0); // [tree-detail]
+    this.midMat = createTreeMaterial(this.uniforms, 1);
+    this.fxMat = createTreeMaterial(this.uniforms, 3); // falling trees / stumps: never faded
+    // Far impostors: material + shadow depth material are created once the atlas is baked (first update with a
+    // renderer); until then far buckets draw nothing.
+    this.farMat = new THREE.MeshBasicMaterial({ visible: false });
+    this._impLight = { value: new THREE.Vector3(0, 1, 0) };
+    this._impCam = { value: new THREE.Vector4(0, 0, 0, SHADOW_IMP_R) };
+    this._imp = null;
+    this._farDepthMat = null;
+    this._quality = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 0.85 : 1;
+    this._dtAvg = 1 / 60;
+    this._qT = 0;
+    this._lodR1 = MID_R0;
+    this._lodBuilt = { r0: NEAR_R, r1: MID_R0, far: FAR_R0 };
 
     this.buckets = [];
-    const farGeos = [];
-    for (let sp = 0; sp < SPECIES_COUNT; sp++) farGeos.push(buildFarGeometry(sp));
     for (let sp = 0; sp < SPECIES_COUNT; sp++) {
+      const impGeo = buildImpostorGeometry(sp);
       this.buckets.push({
         near: this._makeBucket(buildTreeGeometry(sp, 0), this.nearMat, 256, true),
-        // mid ring: detailed-ish trees in the colour pass, crossed impostor quads as their shadow caster [tree-detail]
-        mid: this._makeBucket(buildTreeGeometry(sp, 1), this.nearMat, 512, false, farGeos[sp]),
-        far: this._makeBucket(farGeos[sp], this.farMat, 2048, false),
+        // mid ring: lighter 3D trees in the colour pass, impostor quads (facing the sun) as their shadow caster
+        mid: this._makeBucket(buildTreeGeometry(sp, 1), this.midMat, 512, false, impGeo),
+        far: this._makeBucket(impGeo, this.farMat, 2048, false),
       });
     }
     this._camPos = new THREE.Vector3();
@@ -429,8 +372,9 @@ export class VegetationSystem {
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     mesh.count = 0;
     mesh.frustumCulled = false;
-    mesh.castShadow = b.near;
-    mesh.receiveShadow = true;
+    mesh.castShadow = b.near || (b.geom.attributes.impA && this._farDepthMat != null);
+    if (b.geom.attributes.impA) mesh.customDepthMaterial = this._farDepthMat || undefined;
+    mesh.receiveShadow = !b.geom.attributes.impA; // impostors would self-shadow against their own sun-facing caster
     this.root.add(mesh);
     b.mesh = mesh;
     b.cap = cap;
@@ -446,7 +390,8 @@ export class VegetationSystem {
       sh.instanceColor = mesh.instanceColor;
       sh.count = 0;
       sh.frustumCulled = false;
-      sh.castShadow = true;
+      sh.castShadow = this._farDepthMat != null;
+      sh.customDepthMaterial = this._farDepthMat || undefined;
       sh.layers.set(SHADOW_LAYER);
       this.root.add(sh);
       b.shadow = sh;
@@ -457,9 +402,11 @@ export class VegetationSystem {
   update(camera, loadedChunks, dt) {
     this._time += dt || 0;
     this._camPos.copy(camera.position);
-    if (!this._impostorRT) this._bakeImpostors(); // [tree-detail]
+    if (!this._imp) this._bakeImpostors(); // [tree-impostor]
     const sun = typeof window !== 'undefined' && window.app ? window.app.sunLight : null;
     if (sun && !sun.shadow.camera.layers.isEnabled(SHADOW_LAYER)) sun.shadow.camera.layers.enable(SHADOW_LAYER);
+    if (sun) this._impLight.value.copy(sun.position).sub(sun.target.position).normalize();
+    this._updateLod(camera.position, dt || 0);
     this.damage.update(dt || 0); // [tree-damage]
     this.uniforms.uWindTime.value = this._time;
     // [feature/climate-flora] live weather -> canopy/ground snow + sway amplitude (polled 1 Hz, eased)
@@ -490,6 +437,9 @@ export class VegetationSystem {
     const dx = cp.x - this._lastX, dz = cp.z - this._lastZ;
     if (dx * dx + dz * dz > 4e6 && Number.isFinite(dx)) this.damage.clear(); // [tree-damage] teleport: drop falling trees
     if (this._forceRebuild) (changed = true), (this._forceRebuild = false);
+    // LOD radii drifted past the rebuild margin (altitude / quality change): reclassify
+    const L = LOD_UNIFORMS.uLodR.value, LB = this._lodBuilt;
+    if (Math.abs(L.y - LB.r1) > REBUILD_DIST * 0.5 || Math.abs(L.w - LB.far) > 40) changed = true;
     if (!changed && dx * dx + dz * dz < REBUILD_DIST * REBUILD_DIST && Math.abs(cp.y - this._lastY) < 25) return;
     if (changed) {
       this._known.clear();
@@ -539,15 +489,51 @@ export class VegetationSystem {
   _bakeImpostors() {
     const renderer = typeof window !== 'undefined' && window.app ? window.app.renderer : null;
     if (!renderer) return;
-    const mat = new THREE.MeshLambertMaterial({ map: getFloraAtlas(), vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide });
+    const t0 = performance.now();
     try {
-      this._impostorRT = bakeImpostors(renderer, mat);
-      this.farMat.map = this._impostorRT.texture;
-      this.farMat.needsUpdate = true;
+      this._imp = bakeTreeImpostors(renderer);
+      this._impBakeMs = Math.round(performance.now() - t0);
     } catch (e) {
-      this._impostorRT = { texture: null, dispose() {} }; // keep the leaf atlas; never retry every frame
+      this._imp = { albedo: null, normal: null, failed: true, dispose() {} }; // never retry every frame; far ring stays empty
+      return;
     }
-    mat.dispose();
+    this.farMat = createImpostorMaterial(this._imp, LOD_UNIFORMS, FLORA_UNIFORMS);
+    this._farDepthMat = createImpostorDepthMaterial(this._imp, this._impLight, this._impCam);
+    for (const B of this.buckets) {
+      B.far.mat = this.farMat;
+      B.far.mesh.material = this.farMat;
+      B.far.mesh.castShadow = true;
+      B.far.mesh.customDepthMaterial = this._farDepthMat;
+      const sh = B.mid.shadow;
+      if (sh) (sh.material = this.farMat), (sh.castShadow = true), (sh.customDepthMaterial = this._farDepthMat);
+    }
+  }
+
+  /**
+   * [tree-impostor] LOD radii for this frame: the mid ring grows with height above ground (helicopter / chase cam see
+   * trees from far away), scaled by an adaptive quality factor that backs off when frames run long.
+   */
+  _updateLod(cp, dt) {
+    if (dt > 0 && dt < 0.25) this._dtAvg += (dt - this._dtAvg) * 0.05;
+    this._qT += dt;
+    if (this._qT > 1.5) {
+      this._qT = 0;
+      if (this._dtAvg > 1 / 42) this._quality = Math.max(0.75, this._quality - 0.05);
+      else if (this._dtAvg < 1 / 56) this._quality = Math.min(1.2, this._quality + 0.04);
+    }
+    let h = 0;
+    try {
+      h = Math.max(0, cp.y - getBeijingTerrainElevation(cp.x, cp.z));
+    } catch {
+      h = 0;
+    }
+    const q = this._quality;
+    const r1 = (MID_R0 + MID_ALT * Math.min(450, h)) * q;
+    // ease so altitude changes move the band smoothly
+    this._lodR1 += (r1 - this._lodR1) * Math.min(1, dt * 2 + 0.02);
+    const L = LOD_UNIFORMS.uLodR.value;
+    L.set(NEAR_R * Math.min(1, 0.4 + 0.6 * q), Math.max(NEAR_R + 30, this._lodR1), LOD_BAND, FAR_R0 + Math.min(250, h * 0.6));
+    this._impCam.value.set(cp.x, cp.y, cp.z, SHADOW_IMP_R);
   }
 
   /** Shared KaijuFx instance (fire / smoke / dust) via the vehicle damage system, if any. */
@@ -650,9 +636,17 @@ export class VegetationSystem {
     const t0 = performance.now();
     this._updateClimate(cp, loadedChunks); // [feature/climate-flora]
     const counts = new Array(SPECIES_COUNT * 3).fill(0);
-    const far2 = FAR_R * FAR_R;
-    const near2 = NEAR_R * NEAR_R;
-    const mid2 = MID_R * MID_R;
+    // [tree-impostor] LOD membership with margins: a tree inside a crossfade band (or that the camera can reach before
+    // the next rebuild) goes into both neighbouring LODs; the shaders pick the exact per-frame mix.
+    const L = LOD_UNIFORMS.uLodR.value;
+    const M = REBUILD_DIST + LOD_BAND + 2;
+    const R0 = L.x, R1 = L.y, FAR = L.w;
+    this._lodBuilt.r0 = R0;
+    this._lodBuilt.r1 = R1;
+    this._lodBuilt.far = FAR;
+    const far2 = (FAR + 5) * (FAR + 5);
+    const nearIn2 = (R0 + M) * (R0 + M), midOut2 = Math.max(0, R0 - M) ** 2, midIn2 = (R1 + M) * (R1 + M), farOut2 = Math.max(0, R1 - M) ** 2;
+    const mid2 = R1 * R1;
     const tables = [];
     for (const g of loadedChunks.values()) {
       const v = g.userData && g.userData.vegInstances;
@@ -692,9 +686,12 @@ export class VegetationSystem {
         }
         const hy = inst[o + 1] - cp.y;
         const d2 = h2 + hy * hy;
-        const lod = d2 < near2 ? 0 : d2 < mid2 ? 1 : 2;
-        c[i] = lod;
-        counts[species[i] * 3 + lod]++;
+        const mask = (d2 < nearIn2 ? 1 : 0) | (d2 > midOut2 && d2 < midIn2 ? 2 : 0) | (d2 > farOut2 ? 4 : 0);
+        c[i] = mask;
+        const sp3 = species[i] * 3;
+        if (mask & 1) counts[sp3]++;
+        if (mask & 2) counts[sp3 + 1]++;
+        if (mask & 4) counts[sp3 + 2]++;
       }
       cls.push(c);
     }
@@ -717,15 +714,11 @@ export class VegetationSystem {
       const scorch = st && st.scorch.size ? st.scorch : null;
       const si = D.addSource(v.src || v);
       for (let i = 0; i < count; i++) {
-        const lod = c[i];
-        if (lod < 0) continue;
+        const mask = c[i];
+        if (mask <= 0) continue;
         const sp = species[i];
         const B = this.buckets[sp];
-        const b = lod === 0 ? B.near : lod === 1 ? B.mid : B.far;
         const o = i * INST_STRIDE;
-        const k = b.count++;
-        const m = b.mesh.instanceMatrix.array;
-        const mo = k * 16;
         const x = inst[o], z = inst[o + 2];
         let s = inst[o + 3], sy = inst[o + 4];
         const r = inst[o + 5];
@@ -737,20 +730,30 @@ export class VegetationSystem {
         const lean = (LEAN[sp] ?? 0.035) * h3, la = h1 * 6.283;
         const lx = Math.cos(la) * lean, lz = Math.sin(la) * lean;
         const cr = Math.cos(r) * s, sr = Math.sin(r) * s;
-        // columns of R_y * S, then the small-angle lean rotation (x' = x - lz*y, y' = lz*x + y - lx*z, z' = lx*y + z)
-        m[mo] = cr; m[mo + 1] = lz * cr + lx * sr; m[mo + 2] = -sr; m[mo + 3] = 0;
-        m[mo + 4] = -lz * sy; m[mo + 5] = sy; m[mo + 6] = lx * sy; m[mo + 7] = 0;
-        m[mo + 8] = sr; m[mo + 9] = lz * sr - lx * cr; m[mo + 10] = cr; m[mo + 11] = 0;
-        m[mo + 12] = x; m[mo + 13] = inst[o + 1]; m[mo + 14] = z; m[mo + 15] = 1;
-        const ca = b.mesh.instanceColor.array;
         const cs = col || inst, co = col ? i * 3 : o + 6;
-        let r0 = cs[co], g0 = cs[co + 1], b0 = cs[co + 2];
+        const r0 = cs[co], g0 = cs[co + 1], b0 = cs[co + 2];
         const sc = scorch ? scorch.get(i) || 0 : 0;
         const f = 1 - 0.72 * sc;
-        ca[k * 3] = r0 * f * (1 + 0.15 * sc);
-        ca[k * 3 + 1] = g0 * f * (1 - 0.25 * sc);
-        ca[k * 3 + 2] = b0 * f * (1 - 0.3 * sc);
-        D.add(si, i, sp, x, inst[o + 1], z, s, sy, r, lx, lz, r0, g0, b0, lod * SPECIES_COUNT + sp, k);
+        let bk1 = -1, k1 = -1, bk2 = -1, k2 = -1;
+        for (let lod = 0; lod < 3; lod++) {
+          if (!(mask & (1 << lod))) continue;
+          const b = lod === 0 ? B.near : lod === 1 ? B.mid : B.far;
+          const k = b.count++;
+          const m = b.mesh.instanceMatrix.array;
+          const mo = k * 16;
+          // columns of R_y * S, then the small-angle lean rotation (x' = x - lz*y, y' = lz*x + y - lx*z, z' = lx*y + z)
+          m[mo] = cr; m[mo + 1] = lz * cr + lx * sr; m[mo + 2] = -sr; m[mo + 3] = 0;
+          m[mo + 4] = -lz * sy; m[mo + 5] = sy; m[mo + 6] = lx * sy; m[mo + 7] = 0;
+          m[mo + 8] = sr; m[mo + 9] = lz * sr - lx * cr; m[mo + 10] = cr; m[mo + 11] = 0;
+          m[mo + 12] = x; m[mo + 13] = inst[o + 1]; m[mo + 14] = z; m[mo + 15] = 1;
+          const ca = b.mesh.instanceColor.array;
+          ca[k * 3] = r0 * f * (1 + 0.15 * sc);
+          ca[k * 3 + 1] = g0 * f * (1 - 0.25 * sc);
+          ca[k * 3 + 2] = b0 * f * (1 - 0.3 * sc);
+          if (bk1 < 0) (bk1 = lod * SPECIES_COUNT + sp), (k1 = k);
+          else (bk2 = lod * SPECIES_COUNT + sp), (k2 = k);
+        }
+        D.add(si, i, sp, x, inst[o + 1], z, s, sy, r, lx, lz, r0, g0, b0, bk1, k1, bk2, k2);
       }
     }
     D.endRebuild();
@@ -780,6 +783,10 @@ export class VegetationSystem {
   stats() {
     let drawCalls = 0;
     for (const b of this.buckets) drawCalls += (b.near.mesh.visible ? 1 : 0) + (b.mid.mesh.visible ? 1 : 0) + (b.far.mesh.visible ? 1 : 0);
-    return { ...this._stats, drawCalls, damage: { ...this.damage.stats } };
+    const L = LOD_UNIFORMS.uLodR.value;
+    return {
+      ...this._stats, drawCalls, damage: { ...this.damage.stats },
+      lod: { r0: Math.round(L.x), r1: Math.round(L.y), far: Math.round(L.w), q: +this._quality.toFixed(2) }, bakeMs: this._impBakeMs,
+    };
   }
 }
