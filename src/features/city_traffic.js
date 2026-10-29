@@ -22,9 +22,18 @@ import {
 } from './traffic_models.js';
 import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehicles]
 import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.js'; // [feature/people]
+import { PeopleAgents } from './people_agents.js'; // [people-agents]
 import { VehicleDamage, DAMAGE_BY_SOURCE } from './vehicle_damage.js'; // [car-explosions]
 
 const UMBRELLA_BIT = bit(OPT.UMBRELLA);
+// [human-motion] pedestrians closer than this (and at most this many) use the detailed figure.
+const PED_NEAR_D2 = 38 * 38;
+const PED_NEAR_MAX = 90;
+const DEFAULT_LOOK = {
+  wScale: 1, hScale: 1, style: 0, umbRoll: 1,
+  top: { r: 0.3, g: 0.4, b: 0.6 }, pants: { r: 0.2, g: 0.2, b: 0.25 }, skin: { r: 0.9, g: 0.75, b: 0.6 },
+  hair: { r: 0.1, g: 0.08, b: 0.06 }, acc: { r: 0.2, g: 0.2, b: 0.2 },
+};
 
 const MAX_CARS = 110;
 const MAX_PEDS = 72;
@@ -97,6 +106,14 @@ function obbOverlap(ax, az, ahx, ahz, aL, aW, bx, bz, bhx, bhz, bL, bW) {
   return { depth: best, nx, nz };
 }
 
+function flushPedMesh(T, n) {
+  T.mesh.count = n;
+  if (!n) return;
+  T.mesh.instanceMatrix.needsUpdate = true;
+  T.iAnim.needsUpdate = true; T.iGait.needsUpdate = true; T.iShirt.needsUpdate = true; T.iPants.needsUpdate = true;
+  T.iSkin.needsUpdate = true; T.iHair.needsUpdate = true; T.iAcc.needsUpdate = true;
+}
+
 export class CityTraffic {
   constructor(app) {
     this.app = app;
@@ -109,6 +126,10 @@ export class CityTraffic {
     for (const m of this.carMeshes) this.group.add(m.mesh);
     this.ped = createPedMesh(MAX_PEDS_CAP); // [kaiju]
     this.group.add(this.ped.mesh);
+    this.pedFar = createPedMesh(MAX_PEDS_CAP, 1); // [human-motion] far detail level
+    this.group.add(this.pedFar.mesh);
+    this.agents = new PeopleAgents(app, this); // [people-agents] window.app.people
+    app.people = this.agents;
 
     // Detached ragdoll body part meshes (head, torso, armL, armR, legL, legR, accessory)
     this.partMeshes = createPedPartMeshes(MAX_PEDS_CAP);
@@ -761,7 +782,7 @@ export class CityTraffic {
     const off = this._pedOffset(ped);
     let lat = ped.side * off;
     if (ped.crossState === 2) lat = ped.side * off * (1 - 2 * clamp(ped.crossT / (ped.crossDur || 1), 0, 1));
-    lat += ped.lat;
+    lat += ped.lat + (ped.latBase || 0); // [people-agents] companions walk abreast
     ped.x = t.x - t.uz * lat;
     ped.z = t.z + t.ux * lat;
     ped.y = t.y + (ped.crossState === 2 || e.cls === 8 ? 0.02 : 0.06);
@@ -806,6 +827,9 @@ export class CityTraffic {
       ped.groundY = ped.y;
       ped.phase = Math.random() * 6.28;
       ped.amp = 0.5;
+      ped.gph = Math.random() * 6.28; ped.gx = ped.x; ped.gz = ped.z; ped.gspd = ped.v; // [human-motion]
+      ped.leader = null; ped.latBase = 0;
+      this.agents.onSpawn(ped); // [people-agents]
       ped.ryaw = Math.atan2(ped.hx, ped.hz);
       ped.px = ped.x; ped.pz = ped.z;
       ped.kFlee = 0; ped.kOff = 0; ped.dFlee = 0; // [kaiju] [car-explosions]
@@ -933,6 +957,7 @@ export class CityTraffic {
   hitPedestrian(ped, ix, iy, iz, svx = 0, svy = 0, svz = 0, forceMul = 1) {
     if (!ped || !ped.active || ped.state !== 'walking') return false;
     ped.state = 'falling_apart';
+    this.agents.emit('person_hit', ped.x, ped.y, ped.z, { severity: 0.9, actor: this.app.mode === 'drive' ? 'player_vehicle' : undefined }); // [people-agents]
     ped.stateTimer = 0;
     ped.ragdollTimer = 0;
     ped.lieTimer = 0;
@@ -1018,7 +1043,7 @@ export class CityTraffic {
         avy: rSign() * (4.0 + Math.random() * 7.5),
         avz: rSign() * (5.0 + Math.random() * 7.0),
         r: spec.r || 0.14,
-        scale: 1.12,
+        scale: 1.0, // [human-motion] parts are life-size now
         visible: true,
         instanceIndex: -1,
       };
@@ -1050,6 +1075,7 @@ export class CityTraffic {
     const vz = isObj ? (opts.vz || 0) : (Number.isFinite(vzArg) ? vzArg : 0);
     const dmg = isObj ? (opts.damage ?? DAMAGE_BY_SOURCE[opts.source] ?? 0) : 0; // [car-explosions]
     const r2 = radius * radius;
+    this.agents.onImpact(x, y, z, radius, opts); // [people-agents]
     let count = 0;
     for (const ped of this.peds) {
       if (!ped.active || ped.state !== 'walking') continue;
@@ -1345,6 +1371,7 @@ export class CityTraffic {
     }
     if (this.kaiju && this.kaiju.ped(ped, dt)) return; // [kaiju] panic flee (off the sidewalk graph)
     if (this.damage && this.damage.ped(ped, dt)) return; // [car-explosions] flee from explosions
+    if (this.agents.drive(ped, dt)) return; // [people-agents] brain command / flinch
     const e = ped.e;
     if (!e.alive) { ped.active = false; return; }
     let speed = ped.v;
@@ -1398,13 +1425,17 @@ export class CityTraffic {
       const carry = ped.s - e.len;
       const cands = node.adj.filter((a) => a.e !== e && a.e.alive);
       let nx;
-      if (cands.length) {
+      const ld = ped.leader; // [people-agents] companions take the turn their group leader took here
+      if (ld && ld.active && ld.lastNode === node && ld.lastPick && ld.lastPick.e.alive) nx = ld.lastPick;
+      else if (cands.length) {
         const foot = cands.filter((a) => a.e.cls === 8); // [terrain-roads] pedestrians prefer footpaths/trails
         nx = foot.length && Math.random() < 0.7 ? pick(foot) : pick(cands);
       } else nx = { e, fwd: !ped.fwd };
+      ped.lastNode = node; ped.lastPick = nx;
       // Keep the pedestrian on the same physical side of the street.
       const wx = ped.x - node.x, wz = ped.z - node.z;
       this._enterPedEdge(ped, nx.e, nx.fwd, carry);
+      if (ld && ld.active && ld.e === nx.e) ped.willCross = ld.willCross;
       this._pedPose(ped);
       const s2 = wx * -ped.guz + wz * ped.gux;
       ped.side = s2 >= 0 ? 1 : -1;
@@ -1425,6 +1456,24 @@ export class CityTraffic {
     ped.ryaw += dy * Math.min(1, dt * 8);
   }
 
+  // [human-motion] Gait phase from the distance actually covered (whoever moved the pedestrian: sidewalk
+  // graph, kaiju panic or explosion flee), so planted feet do not slide. One cycle = two steps = `stride`
+  // metres; stride grows with speed and blends to a run stride when the amplitude says running.
+  _pedGait(ped, dt) {
+    const L = ped.look;
+    const d = Math.hypot(ped.x - ped.gx, ped.z - ped.gz);
+    ped.gx = ped.x; ped.gz = ped.z;
+    if (d > 3) return; // teleport / respawn
+    const spd = dt > 0 ? d / dt : 0;
+    ped.gspd += (spd - ped.gspd) * Math.min(1, dt * 4);
+    const run = clamp((ped.amp - 0.62) / 0.28, 0, 1);
+    const h = L ? L.hScale : 1;
+    const walkStride = clamp(0.62 + 0.42 * ped.gspd, 0.85, 1.55) * (L ? L.gaitStride || 1 : 1);
+    const runStride = clamp(0.9 + 0.33 * ped.gspd, 1.5, 2.6);
+    ped.stride = (walkStride + (runStride - walkStride) * run) * h;
+    ped.gph = (ped.gph + (d / ped.stride) * Math.PI * 2) % (Math.PI * 2000);
+  }
+
   _updatePeds(dt, p, now, allowSpawn) {
     let active = 0, walking = 0, ragdolls = 0, lying = 0;
     const app = this.app;
@@ -1441,6 +1490,7 @@ export class CityTraffic {
       if (!ped.active) continue;
       this._updatePed(ped, dt, now, app);
       if (!ped.active) continue;
+      if (ped.state === 'walking') this._pedGait(ped, dt); // [human-motion]
       const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
       const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
       if (ped.state === 'walking' && ((dP > PED_DESPAWN && dK > 220) || (!kj && walking >= this.pedTarget))) {
@@ -1464,9 +1514,40 @@ export class CityTraffic {
       if (this._spawnPed(ped, p, initial)) {
         walking++;
         active++;
+        // [people-agents] some people walk in pairs/small groups (shared groupId)
+        for (let k = Math.random() < 0.18 ? (Math.random() < 0.3 ? 2 : 1) : 0; k > 0 && walking < this.pedTarget; k--) {
+          if (this._spawnCompanion(ped, k)) { walking++; active++; }
+        }
       }
     }
     return active;
+  }
+
+  // [people-agents] Companion walking abreast of `leader` (same edge, direction, speed and crossing plan).
+  _spawnCompanion(leader, k) {
+    let ped = null;
+    for (const q of this.peds) if (!q.active) { ped = q; break; }
+    if (!ped) return false;
+    ped.state = 'walking'; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0;
+    ped.parts = null; ped.partsByName = null;
+    ped.lat = 0; ped.latBase = (leader.latBase || 0) + (k === 1 ? 0.62 : -0.62); // leader in the middle of a trio
+    const o = this.app.worldOrigin || {};
+    ped.look = randomPersonLook(o.centerLat, o.centerLon);
+    ped.v = leader.v;
+    this._enterPedEdge(ped, leader.e, leader.fwd, Math.max(0, leader.s - 0.1 - Math.random() * 0.3));
+    ped.willCross = leader.willCross;
+    ped.crossState = leader.crossState; ped.crossT = leader.crossT; ped.crossDur = leader.crossDur;
+    ped.side = leader.side; ped.footOff = leader.footOff;
+    this._pedPose(ped);
+    ped.groundY = ped.y;
+    ped.phase = Math.random() * 6.28; ped.amp = leader.amp;
+    ped.gph = Math.random() * 6.28; ped.gx = ped.x; ped.gz = ped.z; ped.gspd = ped.v;
+    ped.ryaw = leader.ryaw; ped.px = ped.x; ped.pz = ped.z;
+    ped.kFlee = 0; ped.kOff = 0; ped.dFlee = 0;
+    ped.active = true;
+    this.agents.onSpawn(ped, leader);
+    ped.leader = leader;
+    return true;
   }
 
   _sliceEdgePolyline(e, s0, s1) {
@@ -1707,39 +1788,44 @@ export class CityTraffic {
       }
     }
 
-    const P = this.ped;
-    let nWalk = 0;
+    const P = this.ped, PF = this.pedFar;
+    let nWalk = 0, nFar = 0;
     const partCounts = { head: 0, torso: 0, armL: 0, armR: 0, legL: 0, legR: 0, accessory: 0 };
 
     if (showPeds) {
-      const an = P.iAnim.array, sh = P.iShirt.array, pa = P.iPants.array, sk = P.iSkin.array;
-      const ha = P.iHair.array, ac = P.iAcc.array;
       const rain = typeof daylight.getWeather === 'function' && daylight.getWeather() === 'rain';
+      const cam = this.app.camera;
+      const cx = cam ? cam.position.x : 0, cy = cam ? cam.position.y : 0, cz = cam ? cam.position.z : 0;
+      const clock = performance.now() * 0.001;
       for (const ped of this.peds) {
         if (!ped.active) continue;
-        const L = ped.look || {
-          wScale: 1, hScale: 1, style: 0, umbRoll: 1,
-          top: { r: 0.3, g: 0.4, b: 0.6 },
-          pants: { r: 0.2, g: 0.2, b: 0.25 },
-          skin: { r: 0.9, g: 0.75, b: 0.6 },
-          hair: { r: 0.1, g: 0.08, b: 0.06 },
-          acc: { r: 0.2, g: 0.2, b: 0.2 },
-        };
+        const L = ped.look || DEFAULT_LOOK;
         if (ped.state === 'walking') {
+          // [human-motion] frustum cull + near/far detail level
+          if (!this._visible(ped.x, ped.y, ped.z, 1.6)) continue;
+          const dc = (ped.x - cx) * (ped.x - cx) + (ped.y - cy) * (ped.y - cy) + (ped.z - cz) * (ped.z - cz);
+          const near = dc < PED_NEAR_D2 && nWalk < PED_NEAR_MAX;
+          const T = near ? P : PF;
+          const i = near ? nWalk++ : nFar++;
           q.setFromAxisAngle(this._up || (this._up = new THREE.Vector3(0, 1, 0)), ped.ryaw);
           v3.set(ped.x, ped.y, ped.z);
           s3.set(L.wScale, L.hScale, L.wScale);
           m4.compose(v3, q, s3);
-          P.mesh.setMatrixAt(nWalk, m4);
-          const i3 = nWalk * 3;
-          an[i3] = ped.phase; an[i3 + 1] = ped.amp;
-          an[i3 + 2] = L.style | (rain && L.umbRoll < 0.65 ? UMBRELLA_BIT : 0);
+          T.mesh.setMatrixAt(i, m4);
+          const i3 = i * 3, i4 = i * 4;
+          const an = T.iAnim.array, gt = T.iGait.array;
+          an[i3] = ped.gph || 0; an[i3 + 1] = ped.amp;
+          an[i3 + 2] = L.style | (ped.extraStyle || 0) | (rain && L.umbRoll < 0.65 ? UMBRELLA_BIT : 0);
+          gt[i4] = (ped.stride || 1.2) / L.wScale;
+          gt[i4 + 1] = L.gaitArm || 1;
+          gt[i4 + 2] = (ped.poseMode >= 0 ? ped.poseMode : L.idleMode || 0) + (L.posture || 0) * 0.99; // [people-agents] wave / call
+          gt[i4 + 3] = (clock + (L.clock || 0)) % 1000;
+          const sh = T.iShirt.array, pa = T.iPants.array, sk = T.iSkin.array, ha = T.iHair.array, ac = T.iAcc.array;
           sh[i3] = L.top.r; sh[i3 + 1] = L.top.g; sh[i3 + 2] = L.top.b;
           pa[i3] = L.pants.r; pa[i3 + 1] = L.pants.g; pa[i3 + 2] = L.pants.b;
           sk[i3] = L.skin.r; sk[i3 + 1] = L.skin.g; sk[i3 + 2] = L.skin.b;
           ha[i3] = L.hair.r; ha[i3 + 1] = L.hair.g; ha[i3 + 2] = L.hair.b;
           ac[i3] = L.acc.r; ac[i3 + 1] = L.acc.g; ac[i3 + 2] = L.acc.b;
-          nWalk++;
         } else if ((ped.state === 'falling_apart' || ped.state === 'lying') && ped.parts) {
           for (let k = 0; k < ped.parts.length; k++) {
             const pt = ped.parts[k];
@@ -1771,12 +1857,8 @@ export class CityTraffic {
       }
     }
 
-    P.mesh.count = nWalk;
-    if (nWalk) {
-      P.mesh.instanceMatrix.needsUpdate = true;
-      P.iAnim.needsUpdate = true; P.iShirt.needsUpdate = true; P.iPants.needsUpdate = true; P.iSkin.needsUpdate = true;
-      P.iHair.needsUpdate = true; P.iAcc.needsUpdate = true;
-    }
+    flushPedMesh(P, nWalk);
+    flushPedMesh(PF, nFar);
 
     for (const name of RAGDOLL_PART_NAMES) {
       const pm = this.partMeshes[name];
@@ -1833,6 +1915,7 @@ export class CityTraffic {
     if (this.fillBoost > 0 && cars >= this.carTarget * 0.9 && peds >= this.pedTarget * 0.9 && this.carTarget > 0) this.fillBoost = 0;
     this._collidePlayer();
     this.damage.update(dt); // [car-explosions]
+    this.agents.update(dt); // [people-agents]
     this.uniforms.uLights.value = this._lightsLevel();
     this._writeInstances(!camHigh);
     this.stats.cars = cars;
