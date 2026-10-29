@@ -93,10 +93,21 @@ function segIntersect(ax, az, bx, bz, cx, cz, dx, dz) {
  * @param terrainAt (wx, wz) => DEM ground height (world coords)
  * @returns Array (per road index) of Float32Array absolute surface heights per vertex (NaN = follow ground), or null
  */
-export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worldOrigin = null) {
+export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worldOrigin = null, seam = null) {
   const out = new Array(roads.length).fill(null);
   let anyBridge = false;
   for (const r of roads) if (r && r[7] && !r[8] && r[10] && r[10].length >= 6) { anyBridge = true; break; }
+  // [elevated-roads] a chunk without bridges still has to honour lifted heights a neighbour already published at the seam
+  if (!anyBridge && seam) {
+    for (const t of roads) {
+      const f = t && !t[8] && t[10];
+      if (!f) continue;
+      for (let k = 0; k + 5 < f.length && !anyBridge; k += 3) {
+        if (crossesChunk(f[k], f[k + 2], f[k + 3], f[k + 5]) && (Number.isFinite(seam.get(seamKey(ox + f[k], oz + f[k + 2]))) || Number.isFinite(seam.get(seamKey(ox + f[k + 3], oz + f[k + 5]))))) anyBridge = true;
+      }
+      if (anyBridge) break;
+    }
+  }
   if (!anyBridge) return out;
 
   // ---- 1. node graph over all non-tunnel roads ----
@@ -168,9 +179,16 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
   const N = nodeX.length;
 
   // ---- 1b. stitch vector-tile seams: a way end that joins nothing (degree 1) but lies on / next to a roughly
-  // collinear segment of another way is the cut of a way split across tiles (cut points are quantised per tile,
-  // so the two halves rarely share an exact vertex). Join it to that segment.
-  const stitched = []; // [e, a, b, ra, rb] for the bridge-only graph
+  // collinear segment of a twin way (same class, bridge flag and layer) is the cut of a way split across tiles (cut
+  // points are quantised per tile, so the two halves rarely share an exact vertex). Join it to that segment.
+  // Neighbouring z14 tiles each carry their own copy of a way, clipped ~30 m past the tile edge, so the two copies
+  // overlap for ~60 m without sharing a vertex (bridges are densified per copy). Every unshared vertex inside such
+  // an overlap is joined to the twin copy's segment too: otherwise each copy is its own deck component and one of
+  // them can sit tens of metres lower (a deck "ending in mid-air" next to the real one, e.g. the Bay Bridge
+  // approach at Rincon Hill).
+  const stitched = []; // [e, a, b, ra, rb, da, db] for the bridge-only graph
+  const endJoins = []; // [e, a, b, t]: way end lying on its twin's segment (snapped onto it in step 4c)
+  const endTwin = new Map(); // way end -> index of the twin way it was joined to
   {
     const SC = 16;
     const sgrid = new Map();
@@ -180,7 +198,7 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
       for (let i = 0; i + 1 < ids.length; i++) {
         const a = ids[i], b = ids[i + 1];
         if (a === b) continue;
-        const si = segList.length; segList.push(r, a, b);
+        const si = segList.length / 3; segList.push(r, a, b);
         const x0 = Math.floor((Math.min(nodeX[a], nodeX[b]) - 1.5) / SC), x1 = Math.floor((Math.max(nodeX[a], nodeX[b]) + 1.5) / SC);
         const z0 = Math.floor((Math.min(nodeZ[a], nodeZ[b]) - 1.5) / SC), z1 = Math.floor((Math.max(nodeZ[a], nodeZ[b]) + 1.5) / SC);
         if ((x1 - x0 + 1) * (z1 - z0 + 1) > 900) continue;
@@ -189,41 +207,54 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
         }
       }
     }
+    const join = (e, r, bs, isEnd) => {
+      const sr = segList[bs * 3], a = segList[bs * 3 + 1], b = segList[bs * 3 + 2];
+      const g = Math.max(gradeForClass(roads[r][1]), gradeForClass(roads[sr][1]));
+      const da = Math.hypot(nodeX[e] - nodeX[a], nodeZ[e] - nodeZ[a]);
+      const db = Math.hypot(nodeX[e] - nodeX[b], nodeZ[e] - nodeZ[b]);
+      const fs = FOOT.has(roads[r][1]) && FOOT.has(roads[sr][1]) ? -1 : 1;
+      const wa = fs * (da * g + 1e-9), wb = fs * (db * g + 1e-9);
+      adj[e].push(a, wa, b, wb); adj[a].push(e, wa); adj[b].push(e, wb);
+      stitched.push(e, a, b, r, sr, da, db);
+      if (isEnd) { endJoins.push(e, a, b, da / Math.max(1e-6, da + db)); endTwin.set(e, sr); }
+    };
+    // nearest roughly collinear segment of a twin copy (same class / bridge / layer) within maxD of node e (heading dx, dz)
+    const nearestSeg = (e, r, dx, dz, maxD, minCos) => {
+      const l = sgrid.get(Math.floor(nodeX[e] / SC) * 100003 + Math.floor(nodeZ[e] / SC));
+      if (!l) return -1;
+      const t0 = roads[r];
+      let best = maxD, bs = -1;
+      for (const si of l) {
+        const sr = segList[si * 3], a = segList[si * 3 + 1], b = segList[si * 3 + 2];
+        if (sr === r || a === e || b === e) continue;
+        const t1 = roads[sr];
+        if (t1[1] !== t0[1] || Boolean(t1[7]) !== Boolean(t0[7]) || (Number(t1[9]) || 0) !== (Number(t0[9]) || 0)) continue;
+        const vx = nodeX[b] - nodeX[a], vz = nodeZ[b] - nodeZ[a], L2 = vx * vx + vz * vz;
+        if (L2 < 1e-4) continue;
+        const L = Math.sqrt(L2);
+        if (Math.abs((vx * dx + vz * dz) / L) < minCos) continue; // a road passing under/over is not a continuation
+        let t = ((nodeX[e] - nodeX[a]) * vx + (nodeZ[e] - nodeZ[a]) * vz) / L2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const d = Math.hypot(nodeX[e] - nodeX[a] - vx * t, nodeZ[e] - nodeZ[a] - vz * t);
+        if (d < best) { best = d; bs = si; }
+      }
+      return bs;
+    };
     for (let r = 0; r < roads.length; r++) {
       const ids = wayNodes[r]; if (!ids || ids.length < 2) continue;
-      for (const end of [0, ids.length - 1]) {
-        const e = ids[end];
+      const n = ids.length;
+      for (let i = 0; i < n; i++) {
+        const e = ids[i];
         if (nodeWays[e] > 1) continue; // already joins another way
-        const p = ids[end === 0 ? 1 : ids.length - 2];
-        let dx = nodeX[e] - nodeX[p], dz = nodeZ[e] - nodeZ[p];
+        const isEnd = i === 0 || i === n - 1;
+        const p = ids[Math.max(0, i - 1)], q = ids[Math.min(n - 1, i + 1)]; // local heading (sign is irrelevant)
+        let dx = nodeX[q] - nodeX[p], dz = nodeZ[q] - nodeZ[p];
         const dl = Math.hypot(dx, dz); if (dl < 0.05) continue;
         dx /= dl; dz /= dl;
-        const l = sgrid.get(Math.floor(nodeX[e] / SC) * 100003 + Math.floor(nodeZ[e] / SC));
-        if (!l) continue;
-        let best = 1.6, bs = -1, bt = 0;
-        for (const si of l) {
-          const sr = segList[si * 3], a = segList[si * 3 + 1], b = segList[si * 3 + 2];
-          if (sr === r || a === e || b === e) continue;
-          const vx = nodeX[b] - nodeX[a], vz = nodeZ[b] - nodeZ[a], L2 = vx * vx + vz * vz;
-          if (L2 < 1e-4) continue;
-          const L = Math.sqrt(L2);
-          if (Math.abs((vx * dx + vz * dz) / L) < 0.8) continue; // a road passing under/over is not a continuation
-          let t = ((nodeX[e] - nodeX[a]) * vx + (nodeZ[e] - nodeZ[a]) * vz) / L2;
-          t = t < 0 ? 0 : t > 1 ? 1 : t;
-          const d = Math.hypot(nodeX[e] - nodeX[a] - vx * t, nodeZ[e] - nodeZ[a] - vz * t);
-          if (d < best) { best = d; bs = si; bt = t; }
-        }
-        if (bs < 0) continue;
-        const sr = segList[bs * 3], a = segList[bs * 3 + 1], b = segList[bs * 3 + 2];
-        const g = Math.max(gradeForClass(roads[r][1]), gradeForClass(roads[sr][1]));
-        const da = Math.hypot(nodeX[e] - nodeX[a], nodeZ[e] - nodeZ[a]);
-        const db = Math.hypot(nodeX[e] - nodeX[b], nodeZ[e] - nodeZ[b]);
-        const fs = FOOT.has(roads[r][1]) && FOOT.has(roads[sr][1]) ? -1 : 1;
-        const wa = fs * (da * g + 1e-9), wb = fs * (db * g + 1e-9);
-        adj[e].push(a, wa, b, wb); adj[a].push(e, wa); adj[b].push(e, wb);
-        if (roads[r][7] && !roads[sr][7]) nodeGroundDeg[e]++;
-        else if (!roads[r][7] && roads[sr][7]) { nodeGroundDeg[a]++; nodeGroundDeg[b]++; }
-        stitched.push(e, a, b, r, sr, da, db);
+        // twins only: a different road running alongside within 1.6 m is usually stacked above / below this one
+        // (Shibuya's Route 3 deck right over Route 246), and joining it would hoist the street onto the deck
+        const bs = isEnd ? nearestSeg(e, r, dx, dz, 1.6, 0.8) : nearestSeg(e, r, dx, dz, 0.6, 0.95);
+        if (bs >= 0) join(e, r, bs, isEnd);
       }
     }
   }
@@ -252,6 +283,23 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
           if (Math.abs(dx * c + dz * sn) <= l.deck.hw && Math.abs(lz) <= l.deck.hd) { pinY[v] = y + landmarkDeckY(l.deck, lz); anyPin = true; }
         }
       }
+    }
+  }
+
+  // [elevated-roads] chunk-seam heights. Each chunk solves its own graph (its ways + ~500 m of context), so two
+  // chunks can disagree where a way crosses their shared border. The first chunk to solve publishes the heights of
+  // every vertex of a border-crossing segment (NaN = on the ground); a later neighbour pins those vertices to the
+  // published values (hard heights, also ceilings for the ground ways around them), so the segment it clips at the
+  // seam is drawn with the same two end heights from both sides.
+  const seamPin = new Float64Array(N).fill(NaN); // finite = published lift; -Infinity = published "on the ground"
+  let anySeam = false;
+  if (seam) {
+    for (let v = 0; v < N; v++) {
+      const y = seam.get(seamKey(ox + nodeX[v], oz + nodeZ[v]));
+      if (y === undefined) continue;
+      seamPin[v] = Number.isFinite(y) ? y : -Infinity;
+      if (Number.isFinite(y) && !Number.isFinite(pinY[v])) { pinY[v] = y; anyPin = true; }
+      anySeam = true;
     }
   }
 
@@ -328,6 +376,25 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
     for (const v of comp) opn.set(v, ballReduce(v, bAdj, OPEN_R, (u) => ero.get(u), Math.max, -Infinity));
     for (const v of comp) dil.set(v, ballReduce(v, bAdj, CLOSE_R, (u) => opn.get(u), Math.max, -Infinity));
     for (const v of comp) chord[v] = ballReduce(v, bAdj, CLOSE_R, (u) => dil.get(u), Math.min, Infinity);
+    // [elevated-roads] the closing only sees the deck itself, so on a deck shorter than 2 * CLOSE_R that runs down a
+    // hillside it "fills" the whole slope up to the top abutment (a flat deck striding out 50 m over the hill).
+    // Bound it by the line between the deck's abutments (terrain at the two nearest ground terminals, by path
+    // length): over a valley that line is the bank-to-bank deck the closing gives anyway.
+    if (terms.length >= 2) {
+      const tlist = terms.slice(0, 8), tdist = tlist.map((t) => graphDist(t, bAdj));
+      for (const v of comp) {
+        let i0 = -1, i1 = -1;
+        for (let k = 0; k < tlist.length; k++) {
+          const d = tdist[k].get(v); if (d === undefined) continue;
+          if (i0 < 0 || d < tdist[i0].get(v)) { i1 = i0; i0 = k; } else if (i1 < 0 || d < tdist[i1].get(v)) i1 = k;
+        }
+        if (i1 < 0) continue;
+        const d0 = tdist[i0].get(v), d1 = tdist[i1].get(v);
+        const h0 = opn.get(tlist[i0]), h1 = opn.get(tlist[i1]);
+        const line = (h0 * d1 + h1 * d0) / Math.max(1e-6, d0 + d1);
+        if (line < chord[v]) chord[v] = line;
+      }
+    }
   }
 
   // ---- 3. segment grid of potential lower crossings (ground roads, railways, all bridges) ----
@@ -372,6 +439,7 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
     const A = foot ? UF : UM;
     if (y > A[v] + 1e-6) { A[v] = y; srcOf[v] = v; (foot ? heapF : heapM).push(y, v); }
   };
+  const liftRef = (v) => (isBridgeNode[v] && Number.isFinite(chord[v]) ? chord[v] : nodeG[v]);
   const propagateOne = (A, heap, footOnly) => {
     while (heap.size) {
       const v = heap.pop(); const uv = heap._lastV;
@@ -380,7 +448,13 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
       for (let j = 0; j < l.length; j += 2) {
         const w = l[j + 1];
         if (footOnly && w >= 0) continue;
-        const nb = l[j], c = uv - Math.abs(w);
+        const nb = l[j], aw = Math.abs(w);
+        // [elevated-roads] a ground way also sheds lift above its own terrain at the grade: where the street falls
+        // away faster than the ramp grade (Russian Hill, Hong Kong) it follows the hill down instead of striding out
+        // on a wall tens of metres high. Decks measure the lift from their deck line (`chord`, which already fills
+        // valleys), so a hillside viaduct steps down the slope with it (Hong Kong's Robinson Road held a 5 % grade
+        // down a 20 % hillside and stood 70 m over the street) while a valley crossing stays level.
+        const c = Math.min(uv - aw, liftRef(nb) + Math.max(0, uv - liftRef(v)) - aw);
         if (c > A[nb] + 1e-6 && !(pinY[nb] < c) && (isBridgeNode[nb] || c > nodeG[nb] + 0.02)) { // [release-6-integ] !(pin < c): pins are hard
           A[nb] = c; srcOf[nb] = srcOf[v]; heap.push(c, nb); }
       }
@@ -454,7 +528,10 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
             let groundHere = terrainAt(ox + ax + (bx - ax) * tt, oz + az + (bz - az) * tt);
             if (Number.isFinite(chordHere)) groundHere = Math.min(groundHere, chordHere + 8);
             const base = s.rail ? groundHere + (s.railDeck || 0) : Math.max(s.bridgeRoad ? -Infinity : groundHere, surfaceAtSeg(s, uu));
-            const need = base + clearanceOver(cls, s.cls, s.rail);
+            // [elevated-roads] capped at ~8.5 m per layer above the ground here: a lower way lifted on a steep
+            // slope (or by this deck's own ramps, round after round) must not ratchet the deck up (Hong Kong
+            // Mid-Levels: a layer-4 link reached 78 m above the street, hoisting Peel Street 27 m into the air)
+            const need = Math.min(base + clearanceOver(cls, s.cls, s.rail), groundHere + 8.5 * Math.max(2, L));
             // hold the clearance across the lower way's width (+ margin) on both sides of the crossing point
             const hold = (s.rail ? 3.0 : Math.max(2.5, 0.5 * widthOf(roads, s.r))) + hwSelf * 0.5 + 2.0;
             const dCross = tt * segL;
@@ -478,15 +555,19 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
       for (let i = 0; i < n; i++) if (Number.isFinite(pinY[ids[i]])) req[i] = pinY[ids[i]]; // [release-6-integ] landmark deck
       for (let i = 0; i < n; i++) raise(ids[i], req[i], footBridge);
     }
+    if (anySeam) for (let v = 0; v < N; v++) if (seamPin[v] > -Infinity && !isBridgeNode[v]) raise(v, seamPin[v], false);
     propagate();
   }
 
   // [release-6-integ] landmark deck pins are also ceilings: lower everything near a pin to pin + grade * path so
   // approaches ramp down onto the deck instead of stepping (ground ways still never go below terrain in step 5)
-  if (anyPin) {
+  if (anyPin || anySeam) {
     const cap = new Float64Array(N).fill(Infinity), capTop = new Float64Array(N); // capTop: pin + 8 m (reach limit)
     const hp = new MaxHeap();
-    for (let v = 0; v < N; v++) if (Number.isFinite(pinY[v])) { cap[v] = pinY[v]; capTop[v] = pinY[v] + 8; hp.push(-pinY[v], v); }
+    for (let v = 0; v < N; v++) {
+      const py = Number.isFinite(pinY[v]) ? pinY[v] : seamPin[v] === -Infinity ? nodeG[v] : NaN;
+      if (Number.isFinite(py)) { cap[v] = py; capTop[v] = py + 8; hp.push(-py, v); }
+    }
     while (hp.size) {
       const v = hp.pop(); const cv = -hp._lastV;
       if (cv > cap[v] + 1e-9) continue;
@@ -497,6 +578,29 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
       }
     }
     for (let v = 0; v < N; v++) if (cap[v] < Infinity) { if (UM[v] > cap[v]) UM[v] = cap[v]; if (UF[v] > cap[v]) UF[v] = cap[v]; }
+    // published seam heights are exact
+    for (let v = 0; v < N; v++) {
+      if (Number.isNaN(seamPin[v])) continue;
+      if (seamPin[v] === -Infinity) { if (!isBridgeNode[v]) { UM[v] = -Infinity; UF[v] = -Infinity; } } else { UM[v] = seamPin[v]; if (UF[v] > seamPin[v]) UF[v] = seamPin[v]; }
+    }
+  }
+
+  // ---- 4c. a tile-clipped way end lies mid-segment on its twin copy, which is rendered as a straight line between
+  // its own vertices: the end takes exactly that height, so the two copies show no step where one of them stops
+  // (lifted ground streets have long segments; graph edges alone leave grade * segment-length of slack). Both
+  // copies snap onto each other; a few Gauss-Seidel passes make their lines coincide over the overlap.
+  if (endJoins.length) {
+    const Y = (v) => { const u = U.get(v); return Number.isFinite(u) && u > nodeG[v] ? u : nodeG[v]; };
+    for (let pass = 0; pass < 6; pass++) {
+      for (let k = 0; k < endJoins.length; k += 4) {
+        const e = endJoins[k], a = endJoins[k + 1], b = endJoins[k + 2], t = endJoins[k + 3];
+        if (Number.isFinite(pinY[e]) || !Number.isNaN(seamPin[e])) continue;
+        const ya = Y(a), yb = Y(b);
+        if (!Number.isFinite(U.get(a)) && !Number.isFinite(U.get(b)) && !Number.isFinite(U.get(e))) continue;
+        const y = ya + (yb - ya) * t;
+        UM[e] = y; if (UF[e] > y) UF[e] = y;
+      }
+    }
   }
 
   // ---- 5. per-way vertex heights ----
@@ -504,18 +608,86 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
     const ids = wayNodes[r]; if (!ids) continue;
     let any = false;
     const arr = new Float32Array(ids.length);
+    // [elevated-roads] a street that merely shares a node with a lifted footway keeps the road envelope: the foot
+    // envelope (UF) would otherwise hoist the street's vertex onto the footbridge (Hong Kong: Peel Street 9 m up)
+    const foot = FOOT.has(roads[r][1]);
     for (let i = 0; i < ids.length; i++) {
-      const u = U.get(ids[i]);
+      const u = foot ? U.get(ids[i]) : UM[ids[i]];
       if (Number.isFinite(u) && (roads[r][7] || u > nodeG[ids[i]] + 0.02)) { arr[i] = u; any = true; } else arr[i] = NaN;
     }
     if (any) out[r] = arr;
   }
+  // [elevated-roads] publish this chunk's border-crossing vertices (first writer wins)
+  if (seam) {
+    for (let r = 0; r < roads.length; r++) {
+      const ids = wayNodes[r]; if (!ids) continue;
+      for (let i = 0; i + 1 < ids.length; i++) {
+        const a = ids[i], b = ids[i + 1];
+        if (!crossesChunk(nodeX[a], nodeZ[a], nodeX[b], nodeZ[b])) continue;
+        for (const [v, k] of [[a, i], [b, i + 1]]) {
+          const key = seamKey(ox + nodeX[v], oz + nodeZ[v]);
+          if (seam.get(key) !== undefined) continue;
+          const y = out[r] ? out[r][k] : NaN;
+          seam.set(key, Number.isFinite(y) ? y : NaN);
+        }
+      }
+    }
+  }
+  // [elevated-roads] deck ends that join nothing (not another way, not a tile-clip twin): the OSM deck stops
+  // in mid-air (parking decks, station concourses, pedestrian decks running into a building). chunk_builder gives
+  // them an end support so they never float. bit 1 = first vertex, bit 2 = last vertex.
+  // Lifted ground ways (approach ramps / sidewalks hoisted by a deck) that dead-end while still high count too.
+  const deckEnds = new Map();
+  // An end joined only to a twin copy that itself stops within 2.5 m is the real end of the OSM way (it lies inside
+  // the tile overlap, so both copies carry it).
+  const onlyOwnOrTwin = (v, r) => {
+    const sr = endTwin.get(v);
+    if (sr === undefined) return false;
+    const tw = wayNodes[sr], own = wayNodes[r];
+    if (![tw[0], tw[tw.length - 1]].some((w) => Math.hypot(nodeX[w] - nodeX[v], nodeZ[w] - nodeZ[v]) < 2.5)) return false;
+    const l = adj[v];
+    for (let j = 0; j < l.length; j += 2) if (!tw.includes(l[j]) && !own.includes(l[j])) return false;
+    return true;
+  };
+  const loose = (v, r, br) => nodeWays[v] === 1 && (adj[v].length <= 2 || onlyOwnOrTwin(v, r)) && (br || U.get(v) > nodeG[v] + 1.2);
+  for (let r = 0; r < roads.length; r++) {
+    const ids = wayNodes[r]; if (!ids) continue;
+    const br = Boolean(roads[r][7]);
+    const m = (loose(ids[0], r, br) ? 1 : 0) | (loose(ids[ids.length - 1], r, br) ? 2 : 0);
+    if (m) deckEnds.set(r, m);
+  }
+  out.deckEnds = deckEnds;
   if (computeRoadLiftProfiles.debug) out.dbg = { nodeX, nodeZ, nodeG, U: Float64Array.from(UM, (m, i) => Math.max(m, UF[i])), srcOf, chord, dTerm };
   return out;
 }
 
+// [elevated-roads] chunk-seam height sharing (see computeRoadLiftProfiles): node key at 0.5 m in world coords
+export function seamKey(wx, wz) {
+  return Math.round(wx * 2) * 1e6 + Math.round(wz * 2);
+}
+function crossesChunk(ax, az, bx, bz) {
+  const ina = ax >= -500 && ax < 500 && az >= -500 && az < 500, inb = bx >= -500 && bx < 500 && bz >= -500 && bz < 500;
+  return ina !== inb;
+}
+
 const CLOSE_R = 260;
 const OPEN_R = 45;
+// single-source path lengths over the bridge-only graph (component sized)
+function graphDist(src, bAdj) {
+  const dist = new Map([[src, 0]]);
+  const heap = new MaxHeap();
+  heap.push(0, src);
+  while (heap.size) {
+    const v = heap.pop(); const dv = -heap._lastV;
+    if (dv > dist.get(v) + 1e-9) continue;
+    const l = bAdj.get(v);
+    for (let j = 0; j < l.length; j += 2) {
+      const nb = l[j], nd = dv + l[j + 1], od = dist.get(nb);
+      if (od === undefined || nd < od - 1e-9) { dist.set(nb, nd); heap.push(-nd, nb); }
+    }
+  }
+  return dist;
+}
 const _ballDist = new Map();
 // reduce f(u) over nodes u within graph distance R of v (bridge-only adjacency)
 function ballReduce(v, bAdj, R, f, op, init) {

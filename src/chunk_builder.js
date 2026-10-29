@@ -17,6 +17,7 @@ import {
 import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
 import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
 import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
+const VIADUCT_H = 2.6; // [elevated-roads] lifted non-bridge ways above this many metres are built as viaducts
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
@@ -982,7 +983,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         delete roadSegments.liftWays; // [release-6-integ]
 
         buildingTask = createBuildingBuildTask(
-          data.buildings || [],
+          dropBuildingsOnBridgeDecks(data.buildings || [], roadSegments, isPointInWater, ox, oz), // [elevated-roads]
           ox,
           oz,
           subGroups.buildings,
@@ -1741,7 +1742,8 @@ function buildRoadsAndBridges(
   try {
     // context ways (just outside the chunk) only shape the height field; their own profiles are dropped
     liftProfiles = computeRoadLiftProfiles(
-      roadContext.length ? roads.concat(roadContext) : roads, railways, ox, oz, getBeijingTerrainElevation, worldOrigin
+      roadContext.length ? roads.concat(roadContext) : roads, railways, ox, oz, getBeijingTerrainElevation, worldOrigin,
+      seamHeightStore(worldOrigin) // [elevated-roads] heights published at chunk borders by already-built neighbours
     );
   } catch (err) {
     console.warn('computeRoadLiftProfiles failed', err);
@@ -1994,6 +1996,29 @@ function buildRoadsAndBridges(
       const nz = tx * halfW;
       leftPts.push([x + nx, y, z + nz]);
       rightPts.push([x - nx, y, z - nz]);
+    }
+
+    // [elevated-roads] a deck that stops in mid-air (OSM way ends at height, joining nothing) stands on an end
+    // support: a full-width pier wall under road decks, a column pair under foot decks
+    const endMask = !isTunnel && liftProfiles.deckEnds ? liftProfiles.deckEnds.get(rIdx) || 0 : 0;
+    for (const [bit, i, j] of [[1, 0, 1], [2, nPts - 1, nPts - 2]]) {
+      if (!(endMask & bit) || nPts < 2) continue;
+      const [ex, ey, ez, , eTerr] = centerPts[i];
+      if (ex < -500 || ex >= 500 || ez < -500 || ez >= 500) continue;
+      const footDeck = isHighPedOverpass || (!isBridge && (cls === 'footway' || cls === 'cycleway' || cls === 'pedestrian' || cls === 'steps' || cls === 'path'));
+      const under = ey - yBias - (isHighPedOverpass ? 0.5 : 0.85) - eTerr;
+      if (under < 1.2) continue;
+      let ux = centerPts[j][0] - ex, uz = centerPts[j][2] - ez;
+      const ul = Math.hypot(ux, uz) || 1; ux /= ul; uz /= ul;
+      const px = ex + ux * 0.9, pz = ez + uz * 0.9; // just inside the deck end
+      (roadSegments.deckEndCaps || (roadSegments.deckEndCaps = [])).push(ox + ex, oz + ez);
+      if (!isBridge && ey - yBias - eTerr <= VIADUCT_H) {
+        pushOrientedBox(bPos, ex, eTerr - 0.3, ez, -uz, ux, widthM, 0.3, ey - yBias - eTerr + 0.28); // closes the embankment
+      } else if (footDeck) {
+        for (const sd of [-1, 1]) pushBox(bPos, px - uz * sd * (halfW - 0.4), eTerr - 0.3, pz + ux * sd * (halfW - 0.4), 0.5, under + 0.3, 0.5);
+      } else {
+        pushOrientedBox(bPos, px, eTerr - 0.3, pz, -uz, ux, widthM, 1.4, under + 0.3);
+      }
     }
 
     let accumDist = 0;
@@ -2258,10 +2283,17 @@ function buildRoadsAndBridges(
           mCol.push(...arrowCol, ...arrowCol, ...arrowCol);
         }
 
-        // fix/bridge-continuity: approach embankment (lifted non-bridge ramp) gets retaining walls down to the ground
-        if (!isBridge && !isTunnel && (rawY1 > 0.45 || rawY2 > 0.45)) {
+        // [elevated-roads] a lifted non-bridge way (bridge approach / ramp continuation) is a low embankment between
+        // retaining walls up to VIADUCT_H, and a viaduct (deck on piers, girder underside) above it: walls taller
+        // than that read as a canyon you can drive into from the open end, with the road surface overhead
+        const liftMid = (rawY1 + rawY2) * 0.5;
+        const isViaduct = !isBridge && !isTunnel && liftMid > VIADUCT_H;
+        if (!isBridge && !isTunnel && !isViaduct && (rawY1 > 0.45 || rawY2 > 0.45)) {
           pushQuad(bPos, lx1, terrY1 - 0.4, lz1, lx2, terrY2 - 0.4, lz2, lx2, ly2 - 0.02, lz2, lx1, ly1 - 0.02, lz1);
           pushQuad(bPos, rx2, terrY2 - 0.4, rz2, rx1, terrY1 - 0.4, rz1, rx1, ry1 - 0.02, rz1, rx2, ry2 - 0.02, rz2);
+          // abutment face where the embankment hands over to the viaduct (closes the end of the fill)
+          if (rawY2 > rawY1 && rawY2 > VIADUCT_H - 0.7) pushQuad(bPos, rx2, terrY2 - 0.4, rz2, lx2, terrY2 - 0.4, lz2, lx2, ly2 - 0.02, lz2, rx2, ry2 - 0.02, rz2);
+          if (rawY1 > rawY2 && rawY1 > VIADUCT_H - 0.7) pushQuad(bPos, lx1, terrY1 - 0.4, lz1, rx1, terrY1 - 0.4, rz1, rx1, ry1 - 0.02, rz1, lx1, ly1 - 0.02, lz1);
         }
 
         // Bridge 3D Structural Parapets, Unified Multi-Way Deck Seal, Box-Girder Soffit & Support Piers
@@ -2270,6 +2302,7 @@ function buildRoadsAndBridges(
         if (
           isScenicArchBridge ||
           isBridge ||
+          isViaduct ||
           (onWater && cls !== 'pedestrian' && cls !== 'footway' && cls !== 'cycleway')
         ) {
           const deckDepth = isScenicArchBridge ? 0.32 : isHighPedOverpass ? 0.5 : 0.85;
@@ -2362,6 +2395,18 @@ function buildRoadsAndBridges(
             pushQuad(bPos, lx1, ly1 - effDeckDepth, lz1, rx1, ry1 - effDeckDepth, rz1, rx2, ry2 - effDeckDepth, rz2, lx2, ly2 - effDeckDepth, lz2);
           }
 
+          // [elevated-roads] concrete box girder under road decks / viaducts (drip-edge overhang: the girder is inset
+          // from the deck edges), so the underside reads as structure rather than a flat sheet
+          if (!isGoldenGateBridge && !isScenicArchBridge && !isHighPedOverpass && widthM >= 5 && liftMid > 3.2 && !(onLandmarkDeck && lmDeckTest(ox + mx, oz + mz))) {
+            const inset = Math.min(2.2, halfW * 0.3), gd = Math.min(1.6, 0.6 + widthM * 0.06);
+            const gl1x = lx1 - nx * inset, gl1z = lz1 - nz * inset, gr1x = rx1 + nx * inset, gr1z = rz1 + nz * inset;
+            const gl2x = lx2 - nx * inset, gl2z = lz2 - nz * inset, gr2x = rx2 + nx * inset, gr2z = rz2 + nz * inset;
+            const t1 = ly1 - effDeckDepth, t2 = ly2 - effDeckDepth, b1 = t1 - gd, b2 = t2 - gd;
+            pushQuad(bPos, gl1x, b1, gl1z, gl2x, b2, gl2z, gl2x, t2, gl2z, gl1x, t1, gl1z);
+            pushQuad(bPos, gr2x, b2, gr2z, gr1x, b1, gr1z, gr1x, t1, gr1z, gr2x, t2, gr2z);
+            pushQuad(bPos, gl1x, b1, gl1z, gr1x, b1, gr1z, gr2x, b2, gr2z, gl2x, b2, gl2z);
+          }
+
           // Golden Gate Bridge 3D H-Frame Suspension Towers, Parabolic Catenary Main Cables & Vertical Suspender Cables
           if (isGoldenGateBridge && !onLandmarkDeck && (cls === 'trunk' || cls === 'motorway' || cls === 'primary')) {
             const ll1 = worldXZToLatLon(ox + cx1, oz + cz1, worldOrigin);
@@ -2449,7 +2494,7 @@ function buildRoadsAndBridges(
               }
             }
           } else if (
-            isBridge &&
+            (isBridge || isViaduct) &&
             !isHighPedOverpass &&
             !isScenicArchBridge &&
             !(isGoldenGateBridge && onWater) &&
@@ -2463,7 +2508,10 @@ function buildRoadsAndBridges(
             const pyTop = (cy1 + cy2) * 0.5 - effDeckDepth * 0.5;
             const pw = Math.min(1.4, widthM * 0.16);
             if (pyTop > baseTerr + 0.5) {
-              pushBox(bPos, px, baseTerr, pz, pw, pyTop - baseTerr, pw);
+              // [elevated-roads] column + crosshead under the girder (oriented across the deck)
+              const capH = Math.min(1.2, 0.5 + widthM * 0.04), colTop = pyTop - (liftMid > 3.2 && widthM >= 5 ? Math.min(1.6, 0.6 + widthM * 0.06) : 0);
+              pushBox(bPos, px, baseTerr, pz, pw, Math.max(0.3, colTop - capH - baseTerr), pw);
+              if (widthM >= 5) pushOrientedBox(bPos, px, colTop - capH, pz, nx, nz, Math.max(pw + 0.6, widthM * 0.72), pw * 1.1, capH);
             }
           }
         }
@@ -2619,6 +2667,9 @@ function buildRoadsAndBridges(
       accumDist += fullSegLen;
     }
   }
+
+  // [elevated-roads] towers / main cables / suspenders of suspension bridges that have no hand-built landmark model
+  if (worldOrigin) addSuspensionStructures(ox, oz, worldOrigin, isPointInWater, pushColoredBox, bColPos, bColClr, pushCableBeam, roadSegments);
 
   if (rPos.length > 0) {
     const geom = new THREE.BufferGeometry();
@@ -3432,6 +3483,166 @@ function pushBox(arr, cx, minY, cz, w, h, d) {
   pushQuad(arr, x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0);
   pushQuad(arr, x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1);
   pushQuad(arr, x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0);
+}
+
+// [elevated-roads] chunk-border vertex heights shared between neighbouring chunks (per world origin; bounded)
+let _seamStore = null, _seamOrigin = '';
+function seamHeightStore(worldOrigin) {
+  const tag = worldOrigin ? `${worldOrigin.centerLat},${worldOrigin.centerLon}` : '';
+  if (!_seamStore || _seamOrigin !== tag) { _seamStore = new Map(); _seamOrigin = tag; }
+  if (_seamStore.size > 400000) {
+    let n = _seamStore.size - 300000; // drop the oldest entries (chunks long since built)
+    for (const k of _seamStore.keys()) { _seamStore.delete(k); if (--n <= 0) break; }
+  }
+  return _seamStore;
+}
+
+// [elevated-roads] suspension bridges without a landmark model. Vector tiles carry no bridge:structure tag, so the
+// type comes from this table: stations along the deck axis (metres from `c`, axis = unit [east, north]) are cable
+// anchorages ('anchor', cable ends on the deck), towers, or a mid-bridge anchorage pier ('center'). Heights ASL.
+const SUSPENSION_BRIDGES = [
+  { // San Francisco-Oakland Bay Bridge, West Spans: two end-to-end suspension bridges sharing the centre anchorage
+    c: [37.79819, -122.37786], axis: [0.648, 0.762], half: 17, towerTop: 150, deckTop: 59, sag: 64, centerTop: 78,
+    rgb: [0.70, 0.73, 0.76], leg: [6, 4.6],
+    stations: [[-1412, 'anchor'], [-1058, 'tower'], [-354, 'tower'], [0, 'center'], [354, 'tower'], [1058, 'tower'], [1412, 'anchor']],
+  },
+  { // Brooklyn Bridge: granite towers (OSM maps them as 83 m buildings), 486 m main span, 283 m side spans
+    c: [40.705685, -73.99635], axis: [0.689, -0.724], half: 13, towerTop: 83, deckTop: null, sag: null, centerTop: 0,
+    rgb: [0.76, 0.70, 0.60], leg: [12, 10], masonry: true,
+    stations: [[-526, 'anchor'], [-243, 'tower'], [243, 'tower'], [526, 'anchor']],
+  },
+];
+
+function addSuspensionStructures(ox, oz, worldOrigin, isPointInWater, pushColoredBox, pos, col, pushCableBeam, roadSegments) {
+  const inChunk = (x, z) => x >= -500 && x < 500 && z >= -500 && z < 500;
+  // highest bridge-deck surface within 30 m of a chunk-local point (null if none)
+  const deckNear = (x, z) => {
+    let y = null;
+    const wx = x + ox, wz = z + oz;
+    for (const sg of roadSegments) {
+      if (!sg.bridge) continue;
+      const vx = sg.x2 - sg.x1, vz = sg.z2 - sg.z1, L2 = vx * vx + vz * vz || 1;
+      let t = ((wx - sg.x1) * vx + (wz - sg.z1) * vz) / L2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      if (Math.hypot(sg.x1 + vx * t - wx, sg.z1 + vz * t - wz) > 30) continue;
+      const yy = sg.y1 + (sg.y2 - sg.y1) * t;
+      if (y === null || yy > y) y = yy;
+    }
+    return y;
+  };
+  for (const B0 of SUSPENSION_BRIDGES) {
+    let B = B0;
+    const bx = (B.c[1] - worldOrigin.centerLon) * worldOrigin.mPerDegLon - ox;
+    const bz = (worldOrigin.centerLat - B.c[0]) * worldOrigin.mPerDegLat - oz;
+    const span = B.stations[B.stations.length - 1][0] - B.stations[0][0];
+    if (Math.abs(bx) > 500 + span || Math.abs(bz) > 500 + span) continue;
+    const ax = B.axis[0], az = -B.axis[1]; // world z points south
+    const px = -az * B.half, pz = ax * B.half; // lateral offset to the cable planes
+    const at = (d) => [bx + ax * d, bz + az * d];
+    if (B.deckTop === null) {
+      // deck height from the rendered road (mid-span), so suspenders land on it
+      const dy = deckNear(...at(0));
+      if (dy === null) continue;
+      B = { ...B, deckTop: dy, sag: dy + 3 };
+    }
+    const topOf = (kind) => (kind === 'tower' ? B.towerTop : kind === 'center' ? B.centerTop : B.deckTop + 2);
+    const steel = B.rgb, dark = [B.rgb[0] * 0.8, B.rgb[1] * 0.8, B.rgb[2] * 0.82], concrete = [0.62, 0.63, 0.64];
+    // towers, centre anchorage
+    for (const [d, kind] of B.stations) {
+      const [tx, tz] = at(d);
+      if (!inChunk(tx, tz) || kind === 'anchor') continue;
+      const wet = !isPointInWater || isPointInWater(tx, tz, 0);
+      const base = wet ? -3 : 0;
+      if (kind === 'center') {
+        pushColoredBox(pos, col, tx, base, tz, 34, B.deckTop - 9 - base, 34, concrete); // pier under both decks
+        for (const sd of [-1, 1]) pushColoredBox(pos, col, tx + px * sd, B.deckTop - 9, tz + pz * sd, 7, B.centerTop - B.deckTop + 9, 7, concrete);
+        pushCableBeam(tx - px, B.centerTop - 3, tz - pz, tx + px, B.centerTop - 3, tz + pz, 2.2, concrete);
+        continue;
+      }
+      pushColoredBox(pos, col, tx, base, tz, 2 * B.half + 10, 11 - base, 16, concrete); // caisson cap at the waterline
+      const [w0, w1] = B.leg;
+      for (const sd of [-1, 1]) {
+        const lx = tx + px * sd * (B.masonry ? 1.25 : 1), lz = tz + pz * sd * (B.masonry ? 1.25 : 1);
+        pushColoredBox(pos, col, lx, 8, lz, w0, B.deckTop + 6 - 8, w0, steel); // legs taper above the deck
+        pushColoredBox(pos, col, lx, B.deckTop + 6, lz, w1, B.towerTop - B.deckTop - 6, w1, steel);
+        pushColoredBox(pos, col, lx, B.towerTop, lz, w1 + 0.8, 2.2, w1 + 0.8, dark); // cable saddle / cornice
+      }
+      if (B.masonry) {
+        // solid granite block over the deck with the two pointed-arch openings implied by the legs
+        const top = B.towerTop - 2, lintel = B.deckTop + (B.towerTop - B.deckTop) * 0.55;
+        pushCableBeam(tx - px * 1.25, (lintel + top) * 0.5, tz - pz * 1.25, tx + px * 1.25, (lintel + top) * 0.5, tz + pz * 1.25, (top - lintel) * 0.5, steel);
+      } else {
+        for (const y of [B.deckTop - 22, B.deckTop + 18, B.deckTop + 44, B.deckTop + 70, B.towerTop - 2]) {
+          if (y < B.towerTop && y > 9) pushCableBeam(tx - px, y, tz - pz, tx + px, y, tz + pz, 1.5, steel);
+        }
+      }
+    }
+    // main cables (parabolic between stations) + suspenders down to the upper deck, emitted where each piece's midpoint lies
+    for (let k = 0; k + 1 < B.stations.length; k++) {
+      const [d0, k0] = B.stations[k], [d1, k1] = B.stations[k + 1];
+      const y0 = topOf(k0), y1 = topOf(k1), L = d1 - d0;
+      const main = k0 === 'tower' && k1 === 'tower';
+      const yAt = (u) => (main ? B.sag + (y0 - B.sag) * (2 * u - 1) ** 2 : y0 + (y1 - y0) * u - Math.min(28, L * 0.07) * 4 * u * (1 - u));
+      const n = Math.max(4, Math.ceil(L / 15));
+      for (let i = 0; i < n; i++) {
+        const u0 = i / n, u1 = (i + 1) / n;
+        const [x0, z0] = at(d0 + L * u0), [x1, z1] = at(d0 + L * u1);
+        if (!inChunk((x0 + x1) * 0.5, (z0 + z1) * 0.5)) continue;
+        for (const sd of [-1, 1]) {
+          pushCableBeam(x0 + px * sd, yAt(u0), z0 + pz * sd, x1 + px * sd, yAt(u1), z1 + pz * sd, 0.55, dark);
+          const yc = yAt(u1), yd = B.deckTop + 1.2;
+          if (i + 1 < n && yc > yd + 2) pushColoredBox(pos, col, x1 + px * sd, yd, z1 + pz * sd, 0.22, yc - yd, 0.22, dark);
+        }
+      }
+    }
+  }
+}
+
+// [elevated-roads] OSM maps bridge piers / anchorages / towers as `building` (Bay Bridge centre anchorage: a 67 m
+// "office block" the deck runs through; Brooklyn Bridge's shore tower). A building in or beside the water (40 m)
+// that a road deck runs through is bridge structure, not a building: drop it (the bridge renderer draws piers).
+function dropBuildingsOnBridgeDecks(buildings, roadSegments, isPointInWater, ox, oz) {
+  if (!isPointInWater || !buildings.length) return buildings;
+  const decks = [];
+  for (const s of roadSegments) {
+    if (!s.bridge || s.cls === 'footway' || s.cls === 'cycleway' || s.cls === 'pedestrian' || s.cls === 'steps' || s.cls === 'path') continue;
+    decks.push(s);
+  }
+  if (!decks.length) return buildings;
+  return buildings.filter((b) => {
+    const ring = b[11];
+    if (!ring || ring.length < 6) return true;
+    let sx = 0, sz = 0;
+    const n = ring.length >> 1;
+    for (let k = 0; k < ring.length; k += 2) { sx += ring[k]; sz += ring[k + 1]; }
+    const bx = sx / n, bz = sz / n;
+    let wet = isPointInWater(bx, bz, 0);
+    for (let k = 0; k < 8 && !wet; k++) wet = isPointInWater(bx + Math.cos(k * 0.785) * 40, bz + Math.sin(k * 0.785) * 40, 0);
+    if (!wet) return true;
+    let r2 = 0;
+    for (let k = 0; k < ring.length; k += 2) r2 = Math.max(r2, (ring[k] - bx) ** 2 + (ring[k + 1] - bz) ** 2);
+    const br = Math.sqrt(r2), wx = bx + ox, wz = bz + oz;
+    for (const s of decks) {
+      const vx = s.x2 - s.x1, vz = s.z2 - s.z1, L2 = vx * vx + vz * vz || 1;
+      let t = ((wx - s.x1) * vx + (wz - s.z1) * vz) / L2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      if (Math.hypot(s.x1 + vx * t - wx, s.z1 + vz * t - wz) < br * 0.7 + (s.width || 6) * 0.5) return false;
+    }
+    return true;
+  });
+}
+
+// [elevated-roads] box of length `len` along unit (ux, uz), depth `dep` across it, from minY up h
+function pushOrientedBox(arr, cx, minY, cz, ux, uz, len, dep, h) {
+  const ax = ux * len * 0.5, az = uz * len * 0.5, bx = -uz * dep * 0.5, bz = ux * dep * 0.5;
+  const p = [[cx - ax - bx, cz - az - bz], [cx + ax - bx, cz + az - bz], [cx + ax + bx, cz + az + bz], [cx - ax + bx, cz - az + bz]];
+  const y0 = minY, y1 = minY + h;
+  for (let i = 0; i < 4; i++) {
+    const [x0, z0] = p[i], [x1, z1] = p[(i + 1) % 4];
+    pushQuad(arr, x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0);
+  }
+  pushQuad(arr, p[0][0], y1, p[0][1], p[1][0], y1, p[1][1], p[2][0], y1, p[2][1], p[3][0], y1, p[3][1]);
+  pushQuad(arr, p[0][0], y0, p[0][1], p[3][0], y0, p[3][1], p[2][0], y0, p[2][1], p[1][0], y0, p[1][1]);
 }
 
 function pushColoredBox(pos, col, cx, minY, cz, w, h, d, rgb) {
