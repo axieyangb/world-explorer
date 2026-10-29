@@ -58,6 +58,10 @@ const CAR_SPEED = [25, 20, 14, 12.5, 11, 8, 6, 12, 0, 0];
 // Physical vehicle mass (kg) by CAR_TYPES index: sedan, taxi, coupe, police, bus, tesla, cybertruck, ambulance, tow_truck
 const CAR_MASS_KG = [1500, 1550, 1420, 1850, 11000, 2100, 3100, 4500, 6200];
 const CAR_W = [3, 2.6, 2.2, 1.6, 1.1, 0.35, 0, 0.8, 0, 0];
+// [traffic-fix] painted crosswalk depth per class (street_worker: 4 m trunk..tertiary, 3 m residential, none else)
+const CROSSWALK_W = [0, 4, 4, 4, 4, 3, 0, 0, 0, 0];
+const LANE_STEPS = [-1, 1];
+const EMPTY = [];
 const PED_W = [0, 0, 1.15, 1.0, 0.45, 0.18, 0, 0, 1.0, 0]; // [terrain-roads] footways/trails weigh more
 
 const PAINTS = [
@@ -85,6 +89,25 @@ function evalEdge(e, s, hint, out) {
   out.ux = dx / L;
   out.uz = dz / L;
   out.slope = dy / L;
+  return i;
+}
+
+// [traffic-fix] evalEdge with the tangent blended over the last/first 4 m of each polyline segment, so a lane
+// offset from it stays continuous across vertices (no sideways jump, no yaw snap).
+function evalEdgeSmooth(e, s, hint, out) {
+  const i = evalEdge(e, s, hint, out);
+  const cum = e.cum, p = e.pts;
+  const d0 = s - cum[i], d1 = cum[i + 1] - s;
+  let w = 0, j = -1;
+  if (d1 < d0 && i < e.n - 2) { const B = Math.min(4, (cum[i + 1] - cum[i]) * 0.5, (cum[i + 2] - cum[i + 1]) * 0.5); if (d1 < B) { w = 0.5 * (1 - d1 / B); j = i + 1; } }
+  else if (i > 0) { const B = Math.min(4, (cum[i + 1] - cum[i]) * 0.5, (cum[i] - cum[i - 1]) * 0.5); if (d0 < B) { w = 0.5 * (1 - d0 / B); j = i - 1; } }
+  if (j >= 0 && w > 0) {
+    const k = j * 3, L = cum[j + 1] - cum[j] || 1e-6;
+    const ux = (p[k + 3] - p[k]) / L, uz = (p[k + 5] - p[k + 2]) / L;
+    let bx = out.ux * (1 - w) + ux * w, bz = out.uz * (1 - w) + uz * w;
+    const l = Math.hypot(bx, bz) || 1;
+    out.ux = bx / l; out.uz = bz / l;
+  }
   return i;
 }
 
@@ -180,7 +203,10 @@ export class CityTraffic {
     this._hitSoundCooldown = 0;
     this._audioCtx = null;
 
-    this.obs = { n: 0, x: [], z: [], hx: [], hz: [], hl: [], hw: [], v: [], kind: [], ref: [] };
+    this.obs = { n: 0, x: [], z: [], hx: [], hz: [], hl: [], hw: [], v: [], kind: [], ref: [], st: [] };
+    this.frame = 0; // [traffic-fix] frame stamp for per-direction car lists / junction bookkeeping
+    this._pl = { gap: Infinity, v: 0 };
+    this.tmp2 = { x: 0, y: 0, z: 0, ux: 0, uz: 1, slope: 0 };
     this.cells = new Map();
     this.frustum = new THREE.Frustum();
     this.projM = new THREE.Matrix4();
@@ -224,7 +250,10 @@ export class CityTraffic {
         }
       }
     }
-    const n = { x, y, z, refs: 1, out: [], adj: [], sig: null, cell: nodeKey(qx, qz), stopBack: -1 };
+    const n = {
+      x, y, z, refs: 1, out: [], adj: [], sig: null, cell: nodeKey(qx, qz), stopBack: -1,
+      inc: [], geo: null, sigStop: -1, rsv: [], apprCur: [], apprPrev: [], apprF: -1, xp: [], xpF: -1, // [traffic-fix]
+    };
     const l = this.nodeCells.get(n.cell);
     if (l) l.push(n); else this.nodeCells.set(n.cell, [n]);
     this.stats.nodes++;
@@ -270,7 +299,7 @@ export class CityTraffic {
       refs[i] = this._acquireNode(g.nodes[i * 3], g.nodes[i * 3 + 1], g.nodes[i * 3 + 2]);
       rec.nodes.push(refs[i]);
     }
-    for (const [i, k, sb] of g.sigKeys) { refs[i].sig = k; if (sb > 0) refs[i].stopBack = sb; } // [integration] street's stop line
+    for (const [i, k, sb] of g.sigKeys) { refs[i].sig = k; if (sb > 0) refs[i].sigStop = sb; } // [integration] street's stop line
     const E = g.eA.length;
     for (let i = 0; i < E; i++) {
       if ((i & 255) === 255) yield;
@@ -298,8 +327,9 @@ export class CityTraffic {
       };
       if (car) {
         e.dirs[0] = this._makeDir(e, true);
-        e.a.out.push(e.dirs[0]);
-        if (!e.oneway) { e.dirs[1] = this._makeDir(e, false); e.b.out.push(e.dirs[1]); }
+        e.a.out.push(e.dirs[0]); e.b.inc.push(e.dirs[0]);
+        if (!e.oneway) { e.dirs[1] = this._makeDir(e, false); e.b.out.push(e.dirs[1]); e.a.inc.push(e.dirs[1]); }
+        e.a.geo = null; e.b.geo = null; e.a.bgeo = null; e.b.bgeo = null; // [traffic-fix] junction geometry depends on every arm
       }
       if (ped) {
         e.a.adj.push({ e, fwd: true });
@@ -331,8 +361,10 @@ export class CityTraffic {
       e.alive = false;
       for (const nd of [e.a, e.b]) {
         nd.out = nd.out.filter((d) => d.e !== e);
+        nd.inc = nd.inc.filter((d) => d.e !== e);
         nd.adj = nd.adj.filter((d) => d.e !== e);
         nd.stopBack = -1;
+        nd.geo = null; nd.bgeo = null; // [traffic-fix]
       }
     }
     for (const n of rec.nodes) this._releaseNode(n);
@@ -482,14 +514,319 @@ export class CityTraffic {
     return this.frustum.intersectsSphere(this.sphere);
   }
 
-  _stopBack(node) {
-    if (node.stopBack < 0) {
-      let w = 6;
-      for (const d of node.out) w = Math.max(w, d.e.width);
-      for (const a of node.adj) if (a.e.cls !== 8) w = Math.max(w, a.e.width);
-      node.stopBack = w * 0.5 + 3.5;
+  // ---------------- junctions [traffic-fix] ----------------
+  // Geometry measured the way street_worker paints an intersection: box radius R = widest half-width + 1.2,
+  // crosswalk [R+0.4, R+0.4+cw] (cw 4 m on trunk..tertiary, 3 m on residential), stop bar 0.9 m behind it.
+  // Signalized nodes carry the street's exact stop distance (sigStop = R + cw + 2.35 on a major arm).
+  _baseGeo(n) {
+    let g = n.bgeo;
+    if (g) return g;
+    const seen = this._seenE || (this._seenE = new Set());
+    seen.clear();
+    for (const d of n.out) seen.add(d.e);
+    for (const d of n.inc) seen.add(d.e);
+    let w = 6, minCls = 9;
+    for (const e of seen) { if (e.width > w) w = e.width; if (e.cls < minCls) minCls = e.cls; }
+    for (const a of n.adj) if (a.e.cls !== 8 && a.e.width > w) w = a.e.width;
+    g = n.bgeo = { R: w * 0.5 + 1.2, minCls, deg: seen.size, jct: seen.size >= 3 || Boolean(n.sig) };
+    return g;
+  }
+
+  // Big junctions are clusters of graph nodes that the street paints as ONE intersection (centre S, radius RS):
+  // signalized ones come with the street's own centre (the signal key) and stop distance; others are merged
+  // the way street_worker merges them (nodes closer than 1.3 x the larger radius join the widest one).
+  _nodeGeo(n) {
+    let g = n.geo;
+    if (g) return g;
+    const b = this._baseGeo(n);
+    g = n.geo = { R: b.R, minCls: b.minCls, deg: b.deg, jct: b.jct, sx: n.x, sz: n.z, RS: b.R };
+    if (n.sig) {
+      const i = n.sig.indexOf(',');
+      g.sx = +n.sig.slice(0, i); g.sz = +n.sig.slice(i + 1);
+      if (n.sigStop > 0) g.RS = Math.max(3, n.sigStop + Math.hypot(n.x - g.sx, n.z - g.sz) - 6.35);
+    } else if (b.jct) {
+      let kx = n.x, kz = n.z, kR = b.R;
+      const mem = this._mem || (this._mem = []);
+      mem.length = 0;
+      // members are reached over short connectors (a walk over the lane graph, at most ~25 m out)
+      const q = this._memQ || (this._memQ = []);
+      q.length = 0; q.push(n);
+      for (let qi = 0; qi < q.length && qi < 24; qi++) {
+        const cur = q[qi];
+        for (let t = 0; t < 2; t++) {
+          for (const d of t ? cur.inc : cur.out) {
+            const m = t ? d.from : d.to;
+            if (m === n || q.indexOf(m) >= 0 || d.e.len > 26 || Math.hypot(m.x - n.x, m.z - n.z) > 26) continue;
+            q.push(m);
+            if (m.sig) continue;
+            const bm = this._baseGeo(m);
+            if (!bm.jct || Math.hypot(m.x - n.x, m.z - n.z) >= Math.max(b.R, bm.R) * 1.3) continue;
+            mem.push(m);
+            if (bm.R > kR) { kR = bm.R; kx = m.x; kz = m.z; }
+          }
+        }
+      }
+      if (mem.length) {
+        let RS = kR;
+        RS = Math.max(RS, Math.hypot(n.x - kx, n.z - kz) * 0.5 + b.R);
+        for (const m of mem) RS = Math.max(RS, Math.hypot(m.x - kx, m.z - kz) * 0.5 + this._baseGeo(m).R);
+        g.sx = kx; g.sz = kz; g.RS = RS;
+      }
     }
-    return node.stopBack;
+    return g;
+  }
+
+  // Is lane direction de a connector inside one painted intersection (both ends in the same cluster)?
+  _internal(de) {
+    const a = this._nodeGeo(de.from), b = this._nodeGeo(de.to);
+    return a.jct && b.jct && Math.abs(a.sx - b.sx) < 0.6 && Math.abs(a.sz - b.sz) < 0.6;
+  }
+
+  // Distance from node n (back along approach de) the front bumper must stay behind: just short of the
+  // painted stop bar of the intersection's arm, wherever the graph node sits inside the painted box.
+  _stopLine(n, de, avail = de.e.len) {
+    const g = this._nodeGeo(n), cw = CROSSWALK_W[de.e.cls];
+    if (this._internal(de)) return Math.min(g.R + 1.0, avail * 0.5);
+    const off = (n.x - g.sx) * de.eHx + (n.z - g.sz) * de.eHz;
+    return clamp(off + (cw ? g.RS + cw + 2.55 : g.RS + 1.0), 1.5, avail * 0.5);
+  }
+
+  // Distance past node n (along exit d) where the exit crosswalk ends: room needed beyond it before entering.
+  _exitClear(n, d) {
+    const g = this._nodeGeo(n), cw = CROSSWALK_W[d.e.cls];
+    if (this._internal(d)) return Math.min(g.R + 0.8, d.e.len * 0.5);
+    const off = (g.sx - n.x) * d.sHx + (g.sz - n.z) * d.sHz;
+    return clamp(off + (cw ? g.RS + cw + 1.0 : g.RS + 0.8), 1.5, d.e.len * 0.5);
+  }
+
+  // Where pedestrians cross edge e next to node n: the middle of that arm's crosswalk (-1: no crosswalk there).
+  _crossAt(n, e) {
+    const g = this._nodeGeo(n);
+    const o = n === e.a ? e.b : e.a, go = this._nodeGeo(o);
+    if (go.jct && Math.abs(go.sx - g.sx) < 0.6 && Math.abs(go.sz - g.sz) < 0.6) return -1; // inside the box
+    const p = e.pts, k = n === e.b ? (e.n - 1) * 3 : 0, k1 = n === e.b ? (e.n - 2) * 3 : 3;
+    let hx = p[k] - p[k1], hz = p[k + 2] - p[k1 + 2]; // heading toward n
+    const l = Math.hypot(hx, hz) || 1; hx /= l; hz /= l;
+    return (n.x - g.sx) * hx + (n.z - g.sz) * hz + g.RS + 0.4 + (CROSSWALK_W[e.cls] || 3) * 0.5;
+  }
+
+  _laneOff(de, lane) {
+    return de.e.oneway ? (lane + 0.5 - de.nLanes * 0.5) * de.laneW : (this.lht ? -1 : 1) * (lane + 0.5) * de.laneW;
+  }
+
+  // Pose on a lane at distance s along a lane direction (tangent blended across polyline vertices).
+  _lanePt(de, lane, s, out) {
+    const e = de.e;
+    const sg = de.fwd ? s : e.len - s;
+    evalEdgeSmooth(e, clamp(sg, 0, e.len), sg > e.len * 0.5 ? e.n - 2 : 0, out);
+    if (!de.fwd) { out.ux = -out.ux; out.uz = -out.uz; out.slope = -out.slope; }
+    const off = this._laneOff(de, lane);
+    out.x -= out.uz * off; out.z += out.ux * off;
+    return out;
+  }
+
+  _newArc() {
+    return { ok: false, node: null, inD: null, outD: null, lane: 0, nLane: 0, a: 0, b: 0, straight: 1,
+      x0: 0, y0: 0, z0: 0, x1: 0, z1: 0, x2: 0, y2: 0, z2: 0, L: 1, k: 1, pts: new Float32Array(14) };
+  }
+
+  _exitLane(c, nx) {
+    let l = Math.min(c.lane, nx.nLanes - 1);
+    if (nx.ltWork && nx.ltWork.lane === l) l = Math.max(0, l - 1); // [live-traffic] merge past works
+    return l;
+  }
+
+  // Turn path through the box: quadratic Bezier from the in-lane at the box edge to the out-lane at the box
+  // edge, control point where the two lane lines meet. Sampled for the reservation conflict test.
+  _buildArc(A, de, lane, nx, nLane) {
+    const n = de.to, R = this._nodeGeo(n).R, t = this.tmp2;
+    const a = Math.min(R + 0.3, de.e.len * 0.45), b = Math.min(R + 0.3, nx.e.len * 0.45);
+    this._lanePt(de, lane, de.e.len - a, t);
+    const x0 = t.x, y0 = t.y, z0 = t.z, h0x = t.ux, h0z = t.uz;
+    this._lanePt(nx, nLane, b, t);
+    const x2 = t.x, y2 = t.y, z2 = t.z, h2x = t.ux, h2z = t.uz;
+    let x1 = (x0 + x2) * 0.5, z1 = (z0 + z2) * 0.5;
+    const cr = h0x * h2z - h0z * h2x;
+    if (Math.abs(cr) > 0.17) {
+      const dx = x2 - x0, dz = z2 - z0;
+      const tt = (dx * h2z - dz * h2x) / cr, uu = -(dx * h0z - dz * h0x) / cr;
+      if (tt > 0 && uu > 0 && tt < (a + b) * 1.5 && uu < (a + b) * 1.5) { x1 = x0 + h0x * tt; z1 = z0 + h0z * tt; }
+    }
+    A.ok = true; A.node = n; A.inD = de; A.outD = nx; A.lane = lane; A.nLane = nLane; A.a = a; A.b = b;
+    A.straight = h0x * h2x + h0z * h2z;
+    A.x0 = x0; A.y0 = y0; A.z0 = z0; A.x1 = x1; A.z1 = z1; A.x2 = x2; A.y2 = y2; A.z2 = z2;
+    const P = A.pts;
+    let L = 0;
+    for (let i = 0; i <= 6; i++) {
+      const T = i / 6, u = 1 - T;
+      P[i * 2] = u * u * x0 + 2 * u * T * x1 + T * T * x2;
+      P[i * 2 + 1] = u * u * z0 + 2 * u * T * z1 + T * T * z2;
+      if (i) L += Math.hypot(P[i * 2] - P[i * 2 - 2], P[i * 2 + 1] - P[i * 2 - 1]);
+    }
+    A.L = Math.max(0.5, L);
+    A.k = clamp((a + b) / A.L, 0.6, 1.6); // s advances by straight-leg length: rescale so arc speed = v
+    return A;
+  }
+
+  _arcFor(c) {
+    if (!c.arcIn) c.arcIn = this._newArc();
+    return this._buildArc(c.arcIn, c.de, c.lane, c.next, this._exitLane(c, c.next));
+  }
+
+  _arcPose(c, A, d) {
+    const T = clamp(d / (A.a + A.b), 0, 1), u = 1 - T;
+    c.x = u * u * A.x0 + 2 * u * T * A.x1 + T * T * A.x2;
+    c.z = u * u * A.z0 + 2 * u * T * A.z1 + T * T * A.z2;
+    c.y = A.y0 + (A.y2 - A.y0) * T;
+    let hx = u * (A.x1 - A.x0) + T * (A.x2 - A.x1), hz = u * (A.z1 - A.z0) + T * (A.z2 - A.z1);
+    let l = Math.hypot(hx, hz);
+    if (l < 1e-5) { hx = A.x2 - A.x0; hz = A.z2 - A.z0; l = Math.hypot(hx, hz) || 1; }
+    c.ux = hx / l; c.uz = hz / l;
+    c.slope = (A.y2 - A.y0) / A.L;
+  }
+
+  _arcConflict(A, B, w) {
+    const p = A.pts, q = B.pts, w2 = w * w;
+    for (let i = 0; i < 14; i += 2) {
+      for (let j = 0; j < 14; j += 2) {
+        const dx = p[i] - q[j], dz = p[i + 1] - q[j + 1];
+        if (dx * dx + dz * dz < w2) return true;
+      }
+    }
+    return false;
+  }
+
+  _arcAt(h, n) {
+    if (h.arcOut && h.arcOut.ok && h.arcOut.node === n) return h.arcOut;
+    if (h.arcIn && h.arcIn.ok && h.arcIn.node === n) return h.arcIn;
+    return null;
+  }
+
+  _holds(c, n) { return c.holdA === n || c.holdB === n; }
+
+  _grant(c, n) {
+    if (this._holds(c, n)) return;
+    if (!c.holdA) c.holdA = n;
+    else if (!c.holdB) c.holdB = n;
+    else { this._release(c, c.holdA); c.holdA = n; }
+    if (n.rsv.indexOf(c) < 0) n.rsv.push(c);
+    c.holdT = 0; c.holdStall = 0;
+  }
+
+  _release(c, n) {
+    if (!n) return;
+    if (c.holdA === n) c.holdA = null;
+    if (c.holdB === n) c.holdB = null;
+    const i = n.rsv.indexOf(c);
+    if (i >= 0) n.rsv.splice(i, 1);
+  }
+
+  _purgeRsv(n) {
+    const r = n.rsv;
+    for (let i = r.length - 1; i >= 0; i--) {
+      const h = r[i];
+      if (!h.active || h.kWreck || h.dState >= 2 || (h.holdA !== n && h.holdB !== n)) r.splice(i, 1);
+    }
+  }
+
+  // Cars approaching a junction, double-buffered per frame (the complete previous frame is what others read).
+  _apprAdd(n, c) {
+    if (n.apprF !== this.frame) {
+      const t = n.apprPrev;
+      n.apprPrev = n.apprF === this.frame - 1 ? n.apprCur : (n.apprCur.length = 0, n.apprCur);
+      n.apprCur = t; t.length = 0; n.apprF = this.frame;
+    }
+    n.apprCur.push(c);
+  }
+
+  _apprList(n) {
+    if (n.apprF === this.frame) return n.apprPrev;
+    if (n.apprF === this.frame - 1) return n.apprCur;
+    return EMPTY;
+  }
+
+  // May car c enter the box of node n now? Box free of conflicting movements, no pedestrian on either
+  // crosswalk of its movement, room past the exit crosswalk, and no approaching car with priority.
+  _canEnter(c, n, A, toLine) {
+    const de = A.inD, nx = A.outD;
+    if (n.xpF === this.frame) for (const p of n.xp) if (p.e === de.e || p.e === nx.e) return false;
+    this._purgeRsv(n);
+    const force = c.waitT > 40; // nothing waits forever (a gridlock breaks on its own)
+    if (!force) {
+      // don't block the box: room for the whole car behind the last car in the exit lane
+      const clr = this._exitClear(n, nx);
+      let room = Infinity, leadSlow = false, queued = 0;
+      if (nx._carsF === this.frame) {
+        for (const o of nx._cars) {
+          if (o === c || o.de !== nx || Math.abs(o.laneF - A.nLane) > 0.8) continue;
+          const r = o.s - o.len * 0.5 - clr;
+          if (r < room) { room = r; leadSlow = o.v < 3; }
+        }
+      }
+      for (const h of n.rsv) {
+        if (h === c || h.de === nx) continue;
+        const B = this._arcAt(h, n);
+        if (B && B.outD === nx && B.nLane === A.nLane) queued += h.len + 2.5;
+      }
+      if (queued) { room = Math.min(room, nx.e.len - clr) - queued; leadSlow = true; }
+      // an internal connector of a big junction only has to be free (the next node's check covers the exit)
+      if (this._internal(nx) ? room < 0.5 && leadSlow : room < c.len + 2.5 && leadSlow) return false;
+      for (const h of n.rsv) {
+        if (h === c) continue;
+        const B = this._arcAt(h, n);
+        if (!B || (B.inD === de && B.lane === A.lane)) continue; // same lane: plain car following
+        if (this._arcConflict(A, B, (c.wid + h.wid) * 0.5 + 0.6)) return false;
+      }
+    }
+    if (c.waitT < 20) {
+      const eta = toLine / Math.max(c.v, 0.1);
+      for (const h of this._apprList(n)) {
+        if (h === c || !h.active || h.apN !== n || h.v < 1 || this._holds(h, n)) continue;
+        const B = h.apArc;
+        if (!B || !B.ok || B.node !== n || B.inD === de) continue;
+        const etaH = h.toLine / h.v;
+        if (etaH > 3.5) continue;
+        const prio = n.sig
+          ? h.sigGo && B.straight > A.straight + 0.25 // turning across: give way to oncoming through traffic
+          : B.inD.e.cls < de.e.cls || (B.inD.e.cls === de.e.cls && etaH + 0.6 < eta);
+        if (prio && this._arcConflict(A, B, (c.wid + h.wid) * 0.5 + 0.6)) return false;
+      }
+    }
+    return true;
+  }
+
+  // Enter node n only when the car can also clear the next node of the same painted intersection (divided
+  // roads are several graph nodes): both are reserved at once, so it never stops halfway across the box.
+  _enterChain(c, n, A, toLine, now) {
+    if (!this._canEnter(c, n, A, toLine)) return false;
+    const nx = A.outD, n2 = nx.to;
+    if (A === c.arcIn && !this._holds(c, n2) && this._nodeGeo(n2).jct) {
+      const inner = this._internal(nx);
+      // too short to wait on without standing on a crosswalk / in a box
+      if (inner || nx.e.len < this._exitClear(n, nx) + this._stopLine(n2, nx) + c.len + 1) {
+        if (!inner && n2.sig && getSignalPhase(n2.sig, now, nx.endAxis) !== 'green') return false;
+        if (!c.nnext || c.nnext.from !== n2 || !c.nnext.e.alive) c.nnext = this._chooseNext(nx);
+        if (c.nnext) {
+          const B = this._buildArc(c.arcIn2 || (c.arcIn2 = this._newArc()), nx, A.nLane, c.nnext, Math.min(A.nLane, c.nnext.nLanes - 1));
+          if (!this._canEnter(c, n2, B, toLine + nx.e.len)) return false;
+          this._grant(c, n2);
+        }
+      }
+    }
+    this._grant(c, n);
+    return true;
+  }
+
+  // Movement arc of car c through junction J entered from lane direction ap (this edge or the next one).
+  _apArc(c, ap) {
+    if (ap === c.de) {
+      const A = c.arcIn;
+      return A && A.ok && A.inD === ap && A.outD === c.next && A.lane === c.lane ? A : this._arcFor(c);
+    }
+    const L = this._exitLane(c, ap), out = c.nnext, nl = Math.min(L, out.nLanes - 1);
+    let A = c.arcIn2;
+    if (!(A && A.ok && A.inD === ap && A.outD === out && A.lane === L && A.nLane === nl)) A = this._buildArc(c.arcIn2 || (c.arcIn2 = this._newArc()), ap, L, out, nl);
+    return A;
   }
 
   // ---------------- cars ----------------
@@ -513,37 +850,62 @@ export class CityTraffic {
     return cands[cands.length - 2];
   }
 
+  // [traffic-fix] Lane pose with smooth turns through junction boxes, eased lane changes (laneF), a lateral
+  // swerve around obstacles (sw), and chassis pitch from the road height under both axles.
   _carPose(c) {
     const de = c.de, e = de.e;
+    c.inArc = null;
+    let A = c.arcOut;
+    if (A && A.ok && A.outD === de && c.s < A.b) {
+      this._arcPose(c, A, A.a + Math.max(0, c.s));
+      c.inArc = A;
+    } else {
+      const nx = c.next;
+      if (nx && nx.from === de.to && nx.e.alive) {
+        const g = this._nodeGeo(de.to);
+        if (g.jct && c.s > e.len - Math.min(g.R + 0.3, e.len * 0.45)) {
+          A = c.arcIn;
+          if (!(A && A.ok && A.inD === de && A.outD === nx && A.lane === c.lane)) A = this._arcFor(c);
+          this._arcPose(c, A, c.s - (e.len - A.a));
+          c.inArc = A;
+        }
+      }
+    }
+    if (c.inArc) {
+      c.lx = c.x; c.lz = c.z;
+      if (c.sw) { c.x -= c.uz * c.sw; c.z += c.ux * c.sw; }
+      return;
+    }
     const sg = de.fwd ? c.s : e.len - c.s;
-    c.hint = evalEdge(e, sg, c.hint, this.tmp);
     const t = this.tmp;
+    c.hint = evalEdgeSmooth(e, clamp(sg, 0, e.len), c.hint, t);
     const sgn = de.fwd ? 1 : -1;
     const ux = t.ux * sgn, uz = t.uz * sgn;
-    const off = e.oneway
-      ? (c.lane + 0.5 - de.nLanes * 0.5) * de.laneW
-      : (this.lht ? -1 : 1) * (c.lane + 0.5) * de.laneW;
-    c.x = t.x - uz * off;
-    c.z = t.z + ux * off;
+    const off = this._laneOff(de, Number.isFinite(c.laneF) ? c.laneF : c.lane);
+    c.lx = t.x - uz * off;
+    c.lz = t.z + ux * off;
+    const sw = c.sw || 0;
+    c.x = c.lx - uz * sw;
+    c.z = c.lz + ux * sw;
     c.y = t.y;
     c.ux = ux; c.uz = uz;
-    c.slope = t.slope * sgn;
+    // pitch from the road under the front and rear axles (ramps, crests), looking onto the next edge
+    const h = (c.len || 4.5) * 0.32, t2 = this.tmp2;
+    let yF, yR;
+    if (c.s + h <= e.len) { c.hF = evalEdge(e, de.fwd ? c.s + h : e.len - c.s - h, c.hF | 0, t2); yF = t2.y; }
+    else if (c.next && c.next.e.alive && c.next.from === de.to) {
+      const ne = c.next.e, s2 = Math.min(ne.len, c.s + h - e.len);
+      evalEdge(ne, c.next.fwd ? s2 : ne.len - s2, c.next.fwd ? 0 : ne.n - 2, t2); yF = t2.y;
+    } else { evalEdge(e, de.fwd ? e.len : 0, de.fwd ? e.n - 2 : 0, t2); yF = t2.y; }
+    const sr = Math.max(0, c.s - h);
+    c.hR = evalEdge(e, de.fwd ? sr : e.len - sr, c.hR | 0, t2); yR = t2.y;
+    c.slope = (yF - yR) / Math.max(0.5, c.s + h - sr);
   }
 
   _spawnCar(c, p, initial) {
     for (let tries = 0; tries < 4; tries++) {
       const de = this._pickWeighted(this.carCand, this.carCum);
       if (!de || !de.e.alive) return false;
-      c.de = de;
-      c.s = Math.random() * de.e.len;
-      c.hint = 0;
-      c.lane = (Math.random() * de.nLanes) | 0;
-      if (de.ltWork && de.ltWork.lane === c.lane) c.lane = Math.max(0, c.lane - 1); // [live-traffic] coned-off lane
-      this._carPose(c);
-      const d = Math.hypot(c.x - p.x, c.z - p.z);
-      if (d > CAR_R || d < (initial ? 25 : 60)) continue;
-      if (!initial && d < 220 && this._visible(c.x, c.y, c.z)) continue;
-      if (this.live.ratio(de) < 0.45 ? this._nearInLane(c) : this._nearObstacle(c.x, c.z, 11)) continue; // [live-traffic] jams pack tighter
       const cls = de.e.cls;
       const r = Math.random();
       let type = 0;
@@ -555,19 +917,39 @@ export class CityTraffic {
       else if (r < 0.52) type = 6; // cybertruck
       else if (r < 0.60) type = 7; // ambulance
       else if (r < 0.68) type = 8; // tow_truck
-      c.type = type;
       const spec = CAR_TYPES[type];
       c.len = spec.length; c.wid = spec.width;
+      c.de = de;
+      c.s = Math.random() * de.e.len;
+      // [traffic-fix] never spawn inside a junction box / on its crosswalks (it would hold no reservation)
+      if (this._nodeGeo(de.from).jct && c.s < this._exitClear(de.from, de) + c.len * 0.5 + 1) continue;
+      if (this._nodeGeo(de.to).jct && c.s > de.e.len - this._stopLine(de.to, de) - c.len * 0.5 - 1) continue;
+      c.hint = 0; c.hF = 0; c.hR = 0;
+      c.lane = (Math.random() * de.nLanes) | 0;
+      if (de.ltWork && de.ltWork.lane === c.lane) c.lane = Math.max(0, c.lane - 1); // [live-traffic] coned-off lane
+      c.laneF = c.lane; c.sw = 0; c.swT = 0; c.lcT = 0;
+      c.next = this._chooseNext(de);
+      if (c.arcIn) c.arcIn.ok = false;
+      if (c.arcOut) c.arcOut.ok = false;
+      if (c.arcIn2) c.arcIn2.ok = false;
+      c.nnext = null;
+      this._carPose(c);
+      const d = Math.hypot(c.x - p.x, c.z - p.z);
+      if (d > CAR_R || d < (initial ? 25 : 60)) continue;
+      if (!initial && d < 220 && this._visible(c.x, c.y, c.z)) continue;
+      if (this.live.ratio(de) < 0.45 ? this._nearInLane(c) : this._nearObstacle(c.x, c.z, 6 + c.len * 0.5)) continue; // [live-traffic] jams pack tighter
+      c.type = type;
       c.drv = (0.85 + Math.random() * 0.3) * (type === 4 ? 0.8 : type === 7 ? 1.15 : type === 5 ? 1.1 : 1);
       c.v = CAR_SPEED[cls] * c.drv * 0.8 * this.live.ratio(de); // [live-traffic]
       c.vCap = c.v * 1.25;
       c.paint = type === 1 ? this.taxiPaint : type === 5 ? pick(TESLA_PAINTS) : type === 8 ? pick(TOW_TRUCK_PAINTS) : type === 0 || type === 2 ? pick(PAINTS) : null;
-      c.next = this._chooseNext(de);
       c.brake = 0; c.blockedT = 0; c.ignoreT = 0; c.bumpT = 0; c.stuckT = 0;
+      c.holdA = null; c.holdB = null; c.holdT = 0; c.holdStall = 0; c.waitT = 0; c.stopN = null; c.toLine = 99; c.sigGo = false;
       c.kWreck = 0; c.kPanic = 0; c.kSw = 0; c.kDrv = 0; // [kaiju]
       if (this.damage) this.damage.onSpawn(c); // [car-explosions]
-      c.rx = c.x; c.ry = c.y; c.rz = c.z; c.ryaw = Math.atan2(c.ux, c.uz); c.rpitch = 0;
+      c.rx = c.x; c.ry = c.y; c.rz = c.z; c.ryaw = Math.atan2(c.ux, c.uz); c.rpitch = 0; c.rroll = 0;
       c.active = true;
+      c.obs = this._addObstacle(c.x, c.z, c.ux, c.uz, c.len * 0.5, c.wid * 0.5, c.v, 0, c); // same-frame spawns see it
       return true;
     }
     return false;
@@ -579,13 +961,13 @@ export class CityTraffic {
       for (let j = -1; j <= 1; j++) {
         const l = this.cells.get(hashKey(x + i * HASH, z + j * HASH));
         if (!l) continue;
-        for (const k of l) if (Math.abs(o.x[k] - x) < r && Math.abs(o.z[k] - z) < r) return true;
+        for (const k of l) if (Math.abs(o.x[k] - x) < r + o.hl[k] && Math.abs(o.z[k] - z) < r + o.hl[k]) return true;
       }
     }
     return false;
   }
 
-  // [live-traffic] spawn spacing on a jammed road: only the same lane, ~one car length plus a gap
+  // [live-traffic] spawn spacing on a jammed road: only the same lane, one car length plus a gap
   _nearInLane(c) {
     const o = this.obs;
     for (let i = -1; i <= 1; i++) {
@@ -594,7 +976,7 @@ export class CityTraffic {
         if (!l) continue;
         for (const k of l) {
           const dx = o.x[k] - c.x, dz = o.z[k] - c.z;
-          if (Math.abs(dx * c.ux + dz * c.uz) < 7.5 && Math.abs(dx * c.uz - dz * c.ux) < 1.8) return true;
+          if (Math.abs(dx * c.ux + dz * c.uz) < c.len * 0.5 + o.hl[k] + 2.5 && Math.abs(dx * c.uz - dz * c.ux) < 1.8 + o.hw[k]) return true; // [traffic-fix] real lengths
         }
       }
     }
@@ -604,6 +986,8 @@ export class CityTraffic {
   _addObstacle(x, z, hx, hz, hl, hw, v, kind, ref) {
     const o = this.obs, k = o.n++;
     o.x[k] = x; o.z[k] = z; o.hx[k] = hx; o.hz[k] = hz; o.hl[k] = hl; o.hw[k] = hw; o.v[k] = v; o.kind[k] = kind; o.ref[k] = ref;
+    // [traffic-fix] static: wrecks, burning cars, parked cars (no lane), a stopped player -> go around, never through
+    o.st[k] = kind === 1 ? (v < 0.5 ? 1 : 0) : kind === 0 && ref ? (ref.kWreck || ref.dState >= 2 || ref.de === undefined ? 1 : 0) : 0;
     const key = hashKey(x, z);
     const l = this.cells.get(key);
     if (l) l.push(k); else this.cells.set(key, [k]);
@@ -611,6 +995,7 @@ export class CityTraffic {
   }
 
   _buildObstacles() {
+    this.frame++; // [traffic-fix]
     this.obs.n = 0;
     for (const l of this.cells.values()) l.length = 0;
     const app = this.app;
@@ -622,13 +1007,16 @@ export class CityTraffic {
     for (const p of this.peds) {
       if (p.active && p.state === 'walking' && p.crossState === 2) {
         this._addObstacle(p.x, p.z, p.hx, p.hz, 0.4, 0.4, 0, 2, p);
+        const n = p.fwd ? p.e.b : p.e.a; // [traffic-fix] crossing at this junction: turning cars wait for it
+        if (n.xpF !== this.frame) { n.xpF = this.frame; n.xp.length = 0; }
+        n.xp.push(p);
       }
     }
     if (app.mode === 'drive' || app.mode === 'walk') {
       const spec = VEHICLE_SPECS[app.vehicleIdx] || { length: 4.6, width: 2 };
       const drive = app.mode === 'drive';
       const hx = Math.sin(app.yaw), hz = Math.cos(app.yaw);
-      this.playerObs = this._addObstacle(app.pos.x, app.pos.z, hx, hz, drive ? spec.length * 0.5 : 0.45, drive ? spec.width * 0.5 : 0.45, Math.max(0, app.speed || 0), 1, null);
+      this.playerObs = this._addObstacle(app.pos.x, app.pos.z, hx, hz, drive ? spec.length * 0.5 : 0.45, drive ? spec.width * 0.5 : 0.45, Math.abs(app.speed || 0), 1, null);
     } else {
       this.playerObs = -1;
     }
@@ -637,12 +1025,114 @@ export class CityTraffic {
     if (app.carjack) app.carjack.addTrafficObstacles(this); // [polish] the car being jacked
   }
 
+  // [traffic-fix] Nearest car ahead on the same lane path (this edge, then the exit lane of the next one):
+  // exact along-path gap by real lengths, also on curves where the straight-ahead scan misses it.
+  _pathLeader(c, out) {
+    out.gap = Infinity; out.v = 0;
+    const de = c.de, F = this.frame;
+    if (de._carsF === F) {
+      for (const o of de._cars) {
+        if (o === c || o.de !== de || Math.abs(o.laneF - c.laneF) > 0.85) continue;
+        const d = o.s - c.s;
+        if (d <= 0) continue;
+        const g = d - (o.len + c.len) * 0.5;
+        if (g < out.gap) { out.gap = g; out.v = o.v; }
+      }
+    }
+    const nx = c.next, rem = de.e.len - c.s;
+    if (out.gap === Infinity && nx && nx._carsF === F && rem < 50) {
+      const nl = c.arcIn && c.arcIn.ok && c.arcIn.outD === nx ? c.arcIn.nLane : Math.min(c.lane, nx.nLanes - 1);
+      for (const o of nx._cars) {
+        if (o.de !== nx || Math.abs(o.laneF - nl) > 0.85) continue;
+        const g = rem + o.s - (o.len + c.len) * 0.5;
+        if (g < out.gap) { out.gap = g; out.v = o.v; }
+      }
+    }
+    return out;
+  }
+
+  // Free stretch of lane L around car c (for a lane change).
+  _laneClear(c, L) {
+    const de = c.de;
+    if (de._carsF !== this.frame) return true;
+    for (const o of de._cars) {
+      if (o === c || o.de !== de || Math.abs(o.laneF - L) > 0.9) continue;
+      const d = o.s - c.s;
+      if (d > -(c.len + 6 + Math.max(0, o.v - c.v) * 2) && d < c.len + 4) return false;
+    }
+    return true;
+  }
+
+  // No oncoming car on the opposite direction of this edge within `dist` ahead.
+  _oncomingClear(c, dist) {
+    const e = c.de.e, od = c.de.fwd ? e.dirs[1] : e.dirs[0];
+    if (!od || od._carsF !== this.frame) return true;
+    for (const o of od._cars) {
+      if (o.de !== od) continue;
+      const s = e.len - o.s;
+      if (s > c.s - c.len - 2 && s < c.s + dist + o.v * 5.5) return false;
+    }
+    return true;
+  }
+
+  // [traffic-fix] Static obstacle k in the lane path (wreck, parked car, stopped player): change to a clear
+  // lane, else squeeze past it as far as needed when the oncoming lane is clear, else wait behind it.
+  _avoid(c, k, along, dt) {
+    if (c.lcT > 0) c.lcT -= dt;
+    let want = 0;
+    const de = c.de;
+    if (k >= 0 && along < 32) {
+      const o = this.obs;
+      const hdot = o.hx[k] * c.ux + o.hz[k] * c.uz, ah = Math.abs(hdot), sq = Math.sqrt(Math.max(0, 1 - ah * ah));
+      const extW = ah * o.hw[k] + sq * o.hl[k];
+      const sl = -(o.x[k] - c.lx) * c.uz + (o.z[k] - c.lz) * c.ux; // obstacle offset from my lane centre (sw frame)
+      const need = c.wid * 0.5 + extW + 0.45;
+      if (de.nLanes > 1 && c.lcT <= 0 && !c.inArc) {
+        for (const dl of LANE_STEPS) {
+          const L = c.lane + dl;
+          if (L < 0 || L >= de.nLanes || (de.ltWork && de.ltWork.lane === L)) continue;
+          const shift = this._laneOff(de, L) - this._laneOff(de, c.lane);
+          if (Math.abs(sl - shift) < need) continue; // blocks that lane too
+          if (!this._laneClear(c, L)) continue;
+          c.lane = L; c.lcT = 3; c.swT = 0;
+          break;
+        }
+        if (c.lcT === 3) { c.sw += (0 - c.sw) * Math.min(1, dt * 2); return; }
+      }
+      if (c.lcT <= 0 || de.nLanes === 1) {
+        const base = this._laneOff(de, c.laneF), lim = de.e.width * 0.5 + 0.3;
+        let best = Infinity;
+        for (const y of [sl + need, sl - need]) {
+          const P = base + y;
+          if (Math.abs(P) > lim || Math.abs(y) > 4.8) continue;
+          if (Math.abs(y) < Math.abs(best)) best = y;
+        }
+        if (best !== Infinity) {
+          const into = !de.e.oneway && (this.lht ? -1 : 1) * (base + best) < 0.6; // over the centre line
+          // over the centre line only with the whole pass clear (~5 s at squeeze speed), then committed
+          if (!into || Math.abs(c.sw || 0) > 0.5 || this._oncomingClear(c, along + 12)) { want = best; c.swT = 0.8; }
+        }
+      }
+    }
+    if (want === 0 && c.swT > 0) { c.swT -= dt; if (c.swT > 0) return; }
+    const d = want - (c.sw || 0);
+    const step = dt * (0.7 + 0.3 * c.v);
+    c.sw = (c.sw || 0) + clamp(d, -step, step);
+    if (Math.abs(c.sw) < 0.01) c.sw = 0;
+  }
+
+  _dropHolds(c) {
+    if (c.holdA) this._release(c, c.holdA);
+    if (c.holdB) this._release(c, c.holdB);
+  }
+
   _updateCar(c, dt, now) {
-    if (c.kWreck || c.dState >= 2) { c.v = 0; c.brake = c.kWreck ? 0 : 1; return; } // [car-explosions] wreck / burning: static obstacle
+    if (c.kWreck || c.dState >= 2) { c.v = 0; c.brake = c.kWreck ? 0 : 1; this._dropHolds(c); return; } // [car-explosions] wreck / burning: static obstacle
     if (this.kaiju && this.kaiju.car(c, dt)) return; // [kaiju] wreck / panic reverse
     const de = c.de, e = de.e;
     const o = this.obs;
-    let gap = Infinity, leadV = 0, leadK = -1;
+    let gap = Infinity, leadV = 0;
+    let stK = -1, stAlong = Infinity;
     const lx = c.x + c.ux * 15, lz = c.z + c.uz * 15;
     const cxk = Math.floor(lx / HASH), czk = Math.floor(lz / HASH);
     for (let i = -1; i <= 1; i++) {
@@ -653,36 +1143,91 @@ export class CityTraffic {
           if (k === c.obs) continue;
           const dx = o.x[k] - c.x, dz = o.z[k] - c.z;
           const along = dx * c.ux + dz * c.uz;
-          if (along <= 0.5 || along > 48) continue;
+          if (along < -14 || along > 48) continue;
+          const kind = o.kind[k], st = o.st[k];
           const hdot = o.hx[k] * c.ux + o.hz[k] * c.uz;
-          if (o.kind[k] === 0 && hdot < -0.5) continue;
-          if (c.ignoreT > 0 && o.kind[k] === 0 && hdot < 0.6) continue;
-          if (c.dPassT > 0 && o.kind[k] === 0 && o.ref[k] && (o.ref[k].kWreck || o.ref[k].dState >= 2)) continue; // [car-explosions] squeezing past
-          const ah = Math.abs(hdot);
-          const ext = ah * o.hw[k] + Math.sqrt(Math.max(0, 1 - ah * ah)) * o.hl[k];
+          const ah = Math.abs(hdot), sq = Math.sqrt(Math.max(0, 1 - ah * ah));
+          const extW = ah * o.hw[k] + sq * o.hl[k];
+          const extL = ah * o.hl[k] + sq * o.hw[k];
+          if (st) { // [traffic-fix] in my lane path? (measured from the lane centre, so a swerve keeps holding)
+            const lat0 = Math.abs((o.x[k] - c.lx) * c.uz - (o.z[k] - c.lz) * c.ux);
+            if (lat0 < c.wid * 0.5 + extW + 0.3 && along > -(c.len * 0.5 + extL + 0.8) && along < stAlong) { stAlong = along; stK = k; }
+          }
+          if (along <= 0.5) continue;
           const lat = Math.abs(dx * c.uz - dz * c.ux);
-          if (lat > c.wid * 0.5 + ext + 0.25) continue;
-          const g = along - c.len * 0.5 - (ah * o.hl[k] + Math.sqrt(Math.max(0, 1 - ah * ah)) * o.hw[k]);
-          if (g < gap) { gap = g; leadV = o.v[k] * Math.max(0, hdot); leadK = k; }
+          if (lat > c.wid * 0.5 + extW + (kind === 2 ? 1.2 : 0.25)) continue;
+          // oncoming traffic: only a car passing an obstacle in MY lane counts, and only while I am not passing
+          let back = 0;
+          if (!st && kind === 0 && hdot < -0.5) {
+            const r = o.ref[k];
+            if (Math.abs(c.sw || 0) > 0.5) { if (o.v[k] > 0.5) continue; } // passing: only a stopped car is in the way
+            else if (!r || !(Math.abs(r.sw || 0) > 0.5) || along > 40) continue;
+            else back = 8; // hold well back so the passer can pull in again
+          }
+          if (c.ignoreT > 0 && !st && kind === 0 && hdot < 0.6) continue;
+          const g = along - c.len * 0.5 - extL - back;
+          if (g < gap) { gap = g; leadV = st || hdot < 0 ? 0 : o.v[k] * Math.max(0, hdot); }
         }
       }
     }
-    if (leadK >= 0 && this.damage && o.kind[leadK] === 0 && gap < 14 && c.v < 2) { // [car-explosions] route around wrecks
-      const L = o.ref[leadK];
-      if (L && (L.kWreck || L.dState >= 2)) this.damage.avoid(c, dt);
+    const pl = this._pathLeader(c, this._pl);
+    if (pl.gap < gap) { gap = pl.gap; leadV = pl.v; }
+    const physGap = gap;
+    this._avoid(c, stK, stAlong, dt);
+    if (Number.isFinite(c.laneF) && c.laneF !== c.lane) { // eased lane change
+      const dl = c.lane - c.laneF, st = dt * 0.55;
+      c.laneF = Math.abs(dl) <= st ? c.lane : c.laneF + Math.sign(dl) * st;
     }
 
-    // Traffic signal at the end of this edge.
+    // [traffic-fix] Junction ahead: stop BEHIND the stop bar for red / stop signs / a box it may not enter.
     let atRed = false;
     const rem = e.len - c.s;
     const node = de.to;
-    if (node.sig && rem < 70) {
-      const ph = getSignalPhase(node.sig, now, de.endAxis);
-      if (ph !== 'green') {
-        const stopDist = rem - this._stopBack(node) - c.len * 0.5 + 2.2;
-        const canStop = c.v * c.v / (2 * 7) < stopDist + 0.5;
-        if (stopDist > -0.5 && canStop && (ph === 'red' || c.v * c.v / (2 * 4) < stopDist)) {
-          if (stopDist < gap) { gap = stopDist; leadV = 0; atRed = true; }
+    const nx = c.next;
+    if (c.holdA || c.holdB) this._updateHolds(c, dt);
+    // Upcoming junction: the end of this edge, or of the next one when this edge only ends at a chunk-border /
+    // shape node (its stop line can then lie on this edge).
+    let J = null, ap = null, dist = 0, avail = 0;
+    if (nx && nx.e.alive && nx.from === node) {
+      if (this._nodeGeo(node).jct) { J = node; ap = de; dist = rem; avail = e.len; }
+      else if (rem + nx.e.len < 70 && this._nodeGeo(nx.to).jct) {
+        if (!c.nnext || c.nnext.from !== nx.to || !c.nnext.e.alive) c.nnext = this._chooseNext(nx);
+        if (c.nnext) { J = nx.to; ap = nx; dist = rem + nx.e.len; avail = nx.e.len + e.len; }
+      }
+    }
+    c.apN = null;
+    if (J && dist < 70) {
+      const ng = this._nodeGeo(J);
+      const toLine = dist - this._stopLine(J, ap, avail) - c.len * 0.5;
+      c.toLine = toLine;
+      const inner = this._internal(ap); // inside one painted intersection: committed, no second signal
+      let ph = 'green';
+      if (J.sig && !inner) ph = getSignalPhase(J.sig, now, ap.endAxis);
+      if (this._holds(c, J) && J.sig && !inner && ph === 'red' && toLine > 0.3 && c.v * c.v / 12 < toLine + 0.5) this._release(c, J); // caught by red before the line
+      if (!this._holds(c, J)) {
+        if (toLine < -0.3) this._grant(c, J); // already over the line (spawned / forced): commit
+        else {
+          let stop = false;
+          if (J.sig && !inner) {
+            c.sigGo = ph === 'green';
+            if (ph === 'red') stop = c.v * c.v / 18 < toLine + 1.0;
+            else if (ph === 'yellow') stop = c.v * c.v / 8 < toLine;
+          } else if (ap.e.cls >= 4 && ap.e.cls <= 6 && ng.minCls < ap.e.cls && c.stopN !== J) { // STOP sign: full stop first
+            if (c.v < 0.4 && toLine < 1.5) c.stopN = J; else stop = true;
+          }
+          let A = null;
+          if (toLine < 40) {
+            A = this._apArc(c, ap);
+            c.apN = J; c.apArc = A;
+            this._apprAdd(J, c);
+          }
+          if (!stop && toLine < Math.max(3, c.v * c.v / 10 + 2.5)) {
+            if (this._enterChain(c, J, A || this._apArc(c, ap), toLine, now)) c.waitT = 0; else stop = true;
+          }
+          if (stop) {
+            if (toLine < gap) { gap = toLine; leadV = 0; atRed = true; }
+            if (c.v < 0.5) c.waitT += dt;
+          }
         }
       }
     }
@@ -698,22 +1243,25 @@ export class CityTraffic {
       }
       c.vCap = Number.isFinite(c.vCap) ? c.vCap + (cap - c.vCap) * Math.min(1, dt * 0.6) : cap;
       v0 = c.vCap;
-      if (c.next && rem < 70) {
-        const vn = CAR_SPEED[c.next.e.cls] * c.drv * lt.ratio(c.next);
+      if (nx && rem < 70) {
+        const vn = CAR_SPEED[nx.e.cls] * c.drv * lt.ratio(nx);
         if (vn < v0) v0 = Math.min(v0, vn + rem * 0.22);
       }
     }
     let vT = v0;
     if (gap < Infinity) vT = Math.min(vT, Math.max(0, leadV + (gap - 2.5 - leadV * 1.1) * 0.6));
-    if (c.next && rem < 30) {
-      const dot = de.eHx * c.next.sHx + de.eHz * c.next.sHz;
+    if (nx && rem < 30) {
+      const dot = de.eHx * nx.sHx + de.eHz * nx.sHz;
       if (dot < 0.85) vT = Math.min(vT, 4.5 + 9 * Math.max(0, dot) + rem * 0.45);
     }
+    if (c.inArc && c.inArc.straight < 0.85) vT = Math.min(vT, 4.5 + 9 * Math.max(0, c.inArc.straight));
+    if (Math.abs((c.sw || 0)) > 0.3) vT = Math.min(vT, 6); // squeezing past
     if (c.bumpT > 0) { c.bumpT -= dt; vT = 0; }
     const dv = vT - c.v;
     c.v += dv > 0 ? Math.min(dv, 2.6 * dt) : Math.max(dv, -9 * dt);
-    if (gap < 0.3) c.v = Math.min(c.v, 0.5 * Math.max(0, leadV));
+    if (physGap < 0.3) c.v = Math.min(c.v, 0.5 * Math.max(0, leadV));
     if (c.v < 0) c.v = 0;
+    c.acc = dv > 0 ? Math.min(dv / Math.max(dt, 1e-3), 2.6) : Math.max(dv / Math.max(dt, 1e-3), -9);
     c.brake += ((dv < -0.4 || c.v < 0.3 ? 1 : 0) - c.brake) * Math.min(1, dt * 8);
 
     if (Number.isFinite(c.speed) && c.speed !== c._lastSyncedV) {
@@ -731,32 +1279,72 @@ export class CityTraffic {
     }
     if (c.ignoreT > 0) c.ignoreT -= dt;
 
-    c.s += c.v * dt;
+    // never advance into the thing in front (a hard guarantee on top of the speed control)
+    let ds = c.v * dt * (c.inArc ? c.inArc.k : 1);
+    if (physGap < Infinity && ds > physGap - 0.2) { ds = Math.max(0, physGap - 0.2); c.v = Math.min(c.v, ds / Math.max(dt, 1e-3)); }
+    c.s += ds;
     let guard = 0;
     while (c.s > c.de.e.len && guard++ < 4) {
       c.s -= c.de.e.len;
-      const nx = c.next && c.next.e.alive && c.next.from === c.de.to ? c.next : this._chooseNext(c.de);
-      if (!nx) { c.active = false; return; }
-      c.de = nx;
-      c.hint = nx.fwd ? 0 : nx.e.n - 2;
-      c.lane = Math.min(c.lane, nx.nLanes - 1);
-      if (nx.ltWork && nx.ltWork.lane === c.lane) c.lane = Math.max(0, c.lane - 1); // [live-traffic] merge past works
-      c.next = this._chooseNext(nx);
+      const nx2 = c.next && c.next.e.alive && c.next.from === c.de.to ? c.next : this._chooseNext(c.de);
+      if (!nx2) { c.active = false; this._dropHolds(c); return; }
+      const A = c.arcIn;
+      if (A && A.ok && A.inD === c.de && A.outD === nx2 && A.lane === c.lane) {
+        c.arcIn = c.arcOut || this._newArc(); c.arcOut = A; c.arcIn.ok = false; // the turn continues on the exit edge
+        c.lane = A.nLane; c.laneF = c.lane;
+      } else {
+        if (c.arcOut) c.arcOut.ok = false;
+        c.lane = Math.min(c.lane, nx2.nLanes - 1);
+        if (nx2.ltWork && nx2.ltWork.lane === c.lane) c.lane = Math.max(0, c.lane - 1); // [live-traffic] merge past works
+        if (!Number.isFinite(c.laneF)) c.laneF = c.lane;
+        c.laneF = Math.min(c.laneF, nx2.nLanes - 1);
+      }
+      c.de = nx2;
+      c.hint = nx2.fwd ? 0 : nx2.e.n - 2; c.hF = c.hint; c.hR = c.hint;
+      c.next = c.nnext && c.nnext.from === nx2.to && c.nnext.e.alive ? c.nnext : this._chooseNext(nx2); // [traffic-fix] keep the chained choice
+      c.nnext = null;
+      const A2 = c.arcIn2;
+      if (A2 && A2.ok && A2.inD === nx2 && A2.outD === c.next && A2.lane === c.lane) { c.arcIn2 = c.arcIn || this._newArc(); c.arcIn = A2; c.arcIn2.ok = false; }
     }
     this._carPose(c);
     if (this.damage) this.damage.postPose(c, dt); // [car-explosions]
     if (this.kaiju) this.kaiju.carPost(c, dt); // [kaiju] swerve
   }
 
+  // Release the junctions a car has cleared (rear past the box) or stalled in front of.
+  _updateHolds(c, dt) {
+    c.holdT += dt;
+    for (let i = 0; i < 2; i++) {
+      const n = i ? c.holdB : c.holdA;
+      if (!n) continue;
+      if (c.holdT > 30) { this._release(c, n); continue; }
+      if (n === c.de.to) {
+        const toLine = c.de.e.len - c.s - this._stopLine(n, c.de) - c.len * 0.5;
+        if (c.v < 0.3 && toLine > 0.5) { c.holdStall += dt; if (c.holdStall > 3) this._release(c, n); } else c.holdStall = 0;
+      } else if (n === c.de.from) {
+        const b = c.arcOut && c.arcOut.ok && c.arcOut.node === n ? c.arcOut.b : this._nodeGeo(n).R + 0.3;
+        if (c.s - c.len * 0.5 > b + 0.5) this._release(c, n);
+      } else if (!(c.next && n === c.next.to)) this._release(c, n); // keep a chained / look-ahead hold
+    }
+  }
+
   _updateCars(dt, p, now, allowSpawn) {
+    // [traffic-fix] per-lane-direction car lists for along-path following / room / lane checks
+    const F = this.frame;
+    for (const c of this.cars) {
+      if (!c.active || c.kWreck || c.dState >= 2 || !c.de) continue;
+      const d = c.de;
+      if (d._carsF !== F) { d._carsF = F; if (d._cars) d._cars.length = 0; else d._cars = []; }
+      d._cars.push(c);
+    }
     let active = 0;
     for (const c of this.cars) {
       if (!c.active) continue;
-      if (!c.de.e.alive) { c.active = false; continue; }
+      if (!c.de.e.alive) { c.active = false; this._dropHolds(c); continue; }
       this._updateCar(c, dt, now);
       if (!c.active) continue;
       const d = Math.hypot(c.x - p.x, c.z - p.z);
-      if (d > CAR_DESPAWN || (c.stuckT > 30 && !this._visible(c.x, c.y, c.z))) { c.active = false; continue; }
+      if (d > CAR_DESPAWN || (c.stuckT > 30 && !this._visible(c.x, c.y, c.z))) { c.active = false; this._dropHolds(c); continue; }
       if (c.dPose) { active++; continue; } // [car-explosions] flight / wreck pose owned by VehicleDamage
       if (c.kvx || c.kvz || c.kyawVel) {
         const drag = Math.exp(-4.2 * dt);
@@ -782,18 +1370,28 @@ export class CityTraffic {
           c.kvy = Math.abs(c.kvy) > 2.2 ? -c.kvy * 0.28 : 0;
         }
       }
-      const k = 1 - Math.exp(-dt * 10);
-      c.rx += (c.x + (c.kxOff || 0) - c.rx) * k;
-      c.ry += (c.y + (c.kyOff || 0) - c.ry) * k;
-      c.rz += (c.z + (c.kzOff || 0) - c.rz) * k;
+      // [traffic-fix] the sim pose is continuous now (junction arcs, blended vertices, eased lane changes), so
+      // the rendered car sits exactly on it; only a real jump (kaiju shove, edge removal) is smoothed out.
+      const tx = c.x + (c.kxOff || 0), ty = c.y + (c.kyOff || 0), tz = c.z + (c.kzOff || 0);
+      const jump = Math.abs(tx - c.rx) + Math.abs(tz - c.rz) > c.v * dt * 1.6 + 0.35;
+      const k = jump ? 1 - Math.exp(-dt * 12) : 1;
+      c.rx += (tx - c.rx) * k;
+      c.rz += (tz - c.rz) * k;
+      c.ry += (ty - c.ry) * (Math.abs(ty - c.ry) > 0.5 ? 1 - Math.exp(-dt * 12) : 1);
       let dy = Math.atan2(c.ux, c.uz) - c.ryaw;
       dy -= Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
+      const yaw0 = c.ryaw;
       if (!c.kyawVel || Math.abs(c.kyawVel) < 0.3) {
-        c.ryaw += dy * Math.min(1, dt * 7);
+        c.ryaw += dy * Math.min(1, dt * 14);
       }
-      c.rpitch += (-Math.atan(c.slope) - c.rpitch) * k;
+      // body roll out of the turn and a little dive / squat with braking / throttle
+      const yawRate = dt > 1e-4 ? (c.ryaw - yaw0) / dt : 0;
+      const kb = 1 - Math.exp(-dt * 6);
+      c.rroll = (c.rroll || 0) + (clamp(yawRate * c.v * 0.011, -0.07, 0.07) - (c.rroll || 0)) * kb;
+      c.rpitch += (-Math.atan(c.slope) + clamp(-(c.acc || 0) * 0.004, -0.02, 0.035) - c.rpitch) * (1 - Math.exp(-dt * 10));
       active++;
     }
+    this._separateWrecks();
     if (!allowSpawn) return active;
     const initial = this.fillBoost > 0;
     let budget = initial ? 12 : 2;
@@ -804,6 +1402,35 @@ export class CityTraffic {
       if (this._spawnCar(c, p, initial)) active++;
     }
     return active;
+  }
+
+  // [traffic-fix] A wreck that lands on a car, another wreck or a parked car is pushed off it (wrecks are the
+  // light, physics-owned party; live cars stay in their lanes). The player is handled in _collidePlayer.
+  _separateWrecks() {
+    const ws = this.damage && this.damage.wrecks;
+    if (!ws || !ws.length) return;
+    const parked = this.app.parkedCars ? this.app.parkedCars.list : EMPTY;
+    for (const w of ws) {
+      if (!w.active || !w.dPose || w.dFly) continue;
+      const hx = Math.sin(w.ryaw), hz = Math.cos(w.ryaw);
+      for (const c of this.cars) {
+        if (c === w || !c.active || c.dFly) continue;
+        const wr = c.dPose;
+        const cx = wr ? c.rx : c.x, cz = wr ? c.rz : c.z;
+        if (Math.abs(cx - w.rx) > 10 || Math.abs(cz - w.rz) > 10 || Math.abs((wr ? c.ry : c.y) - w.ry) > 2.5) continue;
+        const r = obbOverlap(w.rx, w.rz, hx, hz, w.len * 0.5, w.wid * 0.5, cx, cz, wr ? Math.sin(c.ryaw) : c.ux, wr ? Math.cos(c.ryaw) : c.uz, c.len * 0.5, c.wid * 0.5);
+        if (!r) continue;
+        const m = wr ? 0.5 : 1;
+        w.rx += r.nx * (r.depth + 0.02) * m; w.rz += r.nz * (r.depth + 0.02) * m;
+        if (wr) { c.rx -= r.nx * (r.depth + 0.02) * 0.5; c.rz -= r.nz * (r.depth + 0.02) * 0.5; c.x = c.rx; c.z = c.rz; }
+      }
+      for (const e of parked) {
+        if (e.lift > 1.8 || Math.abs(e.x - w.rx) > 10 || Math.abs(e.z - w.rz) > 10) continue;
+        const r = obbOverlap(w.rx, w.rz, hx, hz, w.len * 0.5, w.wid * 0.5, e.x, e.z, e.hx, e.hz, e.hl, e.hw);
+        if (r) { w.rx += r.nx * (r.depth + 0.02); w.rz += r.nz * (r.depth + 0.02); }
+      }
+      w.x = w.rx; w.z = w.rz;
+    }
   }
 
   // ---------------- pedestrians & ragdoll physics ----------------
@@ -858,11 +1485,19 @@ export class CityTraffic {
       ped.v = (1.05 + Math.random() * 0.55) * ped.look.speedMul;
       this._enterPedEdge(ped, e, Math.random() < 0.5, Math.random() * e.len);
       // Spawn ~22% of road pedestrians actively crossing near intersections/crosswalks
-      if (e.cls >= 2 && e.cls <= 5 && Math.random() < 0.22) {
+      if (e.cls >= 2 && e.cls <= 5 && Math.random() < 0.22) { // [traffic-fix] ...on a crosswalk, with the walk signal
+        const end = ped.fwd ? e.b : e.a;
         const off = this._pedOffset(ped);
-        ped.crossState = 2;
         ped.crossDur = Math.max(1.5, (2 * off) / ped.v);
-        ped.crossT = Math.random() * ped.crossDur * 0.75;
+        const at = (end.sig || end.adj.length >= 2) && e.len > 12 ? this._crossAt(end, e) : -1;
+        if (at > 0) {
+          ped.s = e.len - Math.min(e.len * 0.5, at);
+          this._pedPose(ped);
+          if (this._pedCrossOk(ped, end, e, signalTime())) {
+            ped.crossState = 2;
+            ped.crossT = Math.random() * ped.crossDur * 0.75;
+          }
+        }
       }
       this._pedPose(ped);
       const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
@@ -1276,6 +1911,33 @@ export class CityTraffic {
     }
   }
 
+  // [traffic-fix] May a pedestrian at junction `end` start across arm e? Signalized: this arm's traffic is
+  // held at red long enough to finish. Always: no car body on the crosswalk band and none about to reach it.
+  _pedCrossOk(ped, end, e, now) {
+    if (end.sig) {
+      const info = getSignalInfo(end.sig, now, approachAxis(ped.gux, ped.guz));
+      if (!(info.phase === 'red' && info.timeLeft > ped.crossDur + 1)) return false;
+    }
+    const mid = this._crossAt(end, e), cw = CROSSWALK_W[e.cls] || 3;
+    if (mid < 0) return false;
+    const b0 = mid - cw * 0.5 - 0.6, b1 = mid + cw * 0.5 + 0.6;
+    for (const d of e.dirs) {
+      if (!d || d._carsF !== this.frame) continue;
+      const toward = d.to === end;
+      for (const o of d._cars) {
+        if (o.de !== d) continue;
+        const dist = toward ? e.len - o.s : o.s; // car centre from the node
+        if (dist + o.len * 0.5 > b0 && dist - o.len * 0.5 < b1) return false; // on the band
+        if (toward && o.v > 1.5 && (dist - o.len * 0.5 - b1) / o.v < 3.5 && !(end.sig && o.toLine > 0.5)) return false;
+      }
+    }
+    for (const h of end.rsv) { // turning in from another arm across this crosswalk
+      const B = h.active ? this._arcAt(h, end) : null;
+      if (B && (B.inD.e === e || B.outD.e === e)) return false;
+    }
+    return true;
+  }
+
   _updatePed(ped, dt, now, app) {
     if (ped.state === 'falling_apart' || ped.state === 'lying') {
       this._updateRagdollPed(ped, dt);
@@ -1290,8 +1952,9 @@ export class CityTraffic {
     if (ped.crossState === 0) {
       const end = ped.fwd ? e.b : e.a;
       if (ped.willCross && (end.sig || (end.adj && end.adj.length >= 2))) {
-        const crossAt = e.len - Math.max(2, this._stopBack(end) - 2);
-        if (ped.s >= crossAt) { ped.s = Math.max(ped.s, crossAt); ped.crossState = 1; ped.waitT = 0; }
+        const at = this._crossAt(end, e); // [traffic-fix] on the crosswalk (none inside a junction box)
+        const crossAt = e.len - Math.min(e.len * 0.5, at);
+        if (at > 0 && ped.s >= crossAt) { ped.s = Math.max(ped.s, crossAt); ped.crossState = 1; ped.waitT = 0; }
       }
     }
     if (ped.crossState === 1) {
@@ -1300,16 +1963,11 @@ export class CityTraffic {
       const end = ped.fwd ? e.b : e.a;
       const off = this._pedOffset(ped);
       ped.crossDur = Math.max(1.5, (2 * off) / ped.v);
-      if (end.sig) {
-        const axis = approachAxis(ped.gux, ped.guz);
-        const info = getSignalInfo(end.sig, now, axis);
-        if ((info.phase === 'red' && info.timeLeft > ped.crossDur + 1) || ped.waitT > 6) {
-          ped.crossState = 2; ped.crossT = 0;
-        } else if (ped.waitT > 45) {
-          ped.crossState = 0; ped.willCross = false;
-        }
-      } else if (ped.waitT > 0.6) {
+      // [traffic-fix] walk signal only (no jaywalking on red), and only once no car is on / about to reach the crosswalk
+      if (ped.waitT > 0.6 && this._pedCrossOk(ped, end, e, now)) {
         ped.crossState = 2; ped.crossT = 0;
+      } else if (ped.waitT > 45) {
+        ped.crossState = 0; ped.willCross = false;
       }
     } else if (ped.crossState === 2) {
       speed = 0;
@@ -1662,6 +2320,26 @@ export class CityTraffic {
     let hit = false;
     for (const c of this.cars) {
       if (!c.active) continue;
+      if (c.dPose) { // [traffic-fix] a wreck's pose is the rendered one (rx/ryaw): solid and immovable, it never clips the player
+        if (c.dFly) continue;
+        if (Math.abs(c.rx - app.pos.x) > 10 || Math.abs(c.rz - app.pos.z) > 10 || Math.abs(c.ry - app.pos.y) > 2.8) continue;
+        const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, pl, pw, c.rx, c.rz, Math.sin(c.ryaw), Math.cos(c.ryaw), c.len * 0.5, c.wid * 0.5);
+        if (!r) continue;
+        const px0 = app.pos.x, pz0 = app.pos.z;
+        app.pos.x += r.nx * r.depth; app.pos.z += r.nz * r.depth;
+        if (app.collision) {
+          const rc = drive
+            ? app.collision.resolveCar(app.pos.x, app.pos.y, app.pos.z, app.yaw, spec, px0, pz0)
+            : app.collision.resolve(app.pos.x, app.pos.y, app.pos.z, app.yaw, 0.45, [0], null, px0, pz0);
+          app.pos.x = rc.x; app.pos.z = rc.z;
+        }
+        if (drive) {
+          const vn = (hx * r.nx + hz * r.nz) * (app.speed || 0);
+          if (vn < 0) app.speed = (app.speed || 0) - 1.3 * vn * (hx * r.nx + hz * r.nz);
+        }
+        hit = true;
+        continue;
+      }
       const cxEff = c.x + (c.kxOff || 0), czEff = c.z + (c.kzOff || 0);
       if (Math.abs(cxEff - app.pos.x) > 10 || Math.abs(czEff - app.pos.z) > 10) continue;
       if (Math.abs(c.y - app.pos.y) > 2.8) continue;
@@ -1735,7 +2413,7 @@ export class CityTraffic {
       if (!c.active) continue;
       const cm = this.carMeshes[c.type];
       const i = counts[c.type]++;
-      eul.set(c.rpitch + (c.xPitch || 0), c.ryaw, c.xRoll || 0, 'YXZ'); // [car-explosions] spin
+      eul.set(c.rpitch + (c.xPitch || 0), c.ryaw, (c.xRoll || 0) + (c.dPose ? 0 : c.rroll || 0), 'YXZ'); // [car-explosions] spin [traffic-fix] body roll
       q.setFromEuler(eul);
       v3.set(c.rx, c.ry + 0.02 + (c.xLift || 0), c.rz);
       m4.compose(v3, q, s3);
