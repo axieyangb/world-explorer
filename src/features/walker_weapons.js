@@ -971,12 +971,13 @@ export class WalkerWeaponsSystem {
         force,
         damage: dmg,
         source: src,
+        noPlayer: true, // the player's own shots never damage the player's vehicle
       });
     }
 
     if (this.app.vehicleDamage) {
       if (typeof this.app.vehicleDamage.applyExplosionSplash === 'function' && splashRadius > 0) {
-        this.app.vehicleDamage.applyExplosionSplash(hitPos, splashRadius, splashRadius >= 7 ? 8 : 4);
+        this.app.vehicleDamage.applyExplosionSplash(hitPos, splashRadius, splashRadius >= 7 ? 8 : 4, { noPlayer: true });
       }
     }
 

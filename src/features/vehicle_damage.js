@@ -156,15 +156,16 @@ export class VehicleDamage {
   }
 
   /** Generic explosion splash damaging traffic cars and player car. */
-  applyExplosionSplash(pos, radius, dmg = 4) {
+  applyExplosionSplash(pos, radius, dmg = 4, opts = {}) {
     if (!pos || !(radius > 0)) return;
     const x = pos.x ?? 0, y = pos.y ?? 0, z = pos.z ?? 0;
-    this.hitPlayerSphere(x, y, z, radius, dmg > 50 ? 50 : dmg);
+    if (!opts.noPlayer) this.hitPlayerSphere(x, y, z, radius, dmg > 50 ? 50 : dmg);
     if (this.T && typeof this.T.triggerImpactSphere === 'function') {
       this.T.triggerImpactSphere(x, y, z, radius, {
         damage: dmg > 50 ? 8 : (dmg || 4),
         source: 'explosion',
         force: 1.8,
+        noPlayer: opts.noPlayer,
       });
     }
   }
