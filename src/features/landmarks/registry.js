@@ -113,12 +113,18 @@ export const LANDMARKS = [
   { id: "mit_dome", name: "MIT Great Dome & Killian Court", nameZh: "麻省理工学院大圆顶（MIT Great Dome）", lat: 42.3598, lon: -71.0921, heading: 332, height: 46, supp: { hw: 84, hd: 70 }, on: true, chip: true },
   { id: "nyse", name: "New York Stock Exchange & Federal Hall", nameZh: "纽约证券交易所与联邦大厅（NYSE）", lat: 40.7069, lon: -74.0113, heading: 30, height: 42, supp: { hw: 52, hd: 44 }, on: true, chip: true },
   { id: "tesla_giga", name: "Tesla Gigafactory Texas", nameZh: "特斯拉得州超级工厂（Giga Texas）", lat: 30.2223, lon: -97.6171, heading: 18, height: 24, supp: { hw: 168, hd: 72 }, on: true, chip: true },
-  { id: "spacex_starbase", name: "SpaceX Starbase & Mechazilla Launch Tower", nameZh: "SpaceX 星舰基地与发射塔（Starbase）", lat: 25.9968, lon: -97.1545, heading: 0, height: 146, supp: { hw: 102, hd: 72 }, on: true, chip: true },
+  { id: "spacex_starbase", name: "SpaceX Starbase & Mechazilla Launch Tower", nameZh: "SpaceX 星舰基地与发射塔（Starbase）", lat: 25.9968, lon: -97.1545, heading: 0, height: 146, supp: { r: 180, hw: 180, hd: 180 }, on: true, chip: true },
   { id: "tsmc_hq", name: "TSMC Global R&D & Fab 12 Campus", nameZh: "台积电全球研发中心与十二厂总部（TSMC HQ）", lat: 24.7738, lon: 121.0118, heading: 0, height: 50, supp: { hw: 112, hd: 84 }, on: true, chip: true },
   { id: "tencent_hq", name: "Tencent Seafront Towers (Binhai HQ)", nameZh: "腾讯滨海大厦（深圳总部）", lat: 22.5229, lon: 113.9353, heading: 0, height: 248, supp: { hw: 78, hd: 64 }, on: true, chip: true },
   { id: "samsung_hq", name: "Samsung Town / Digital City HQ", nameZh: "三星瑞草总部大厦（Samsung Town）", lat: 37.4967, lon: 127.0266, heading: 22, height: 203, supp: { hw: 84, hd: 72 }, on: true, chip: true },
   { id: "cern_globe", name: "CERN Science Gateway & Globe of Science", nameZh: "欧洲核子研究中心科学之球与科学门户（CERN）", lat: 46.2330, lon: 6.0557, heading: 35, height: 27, supp: { hw: 94, hd: 54 }, on: true, chip: true },
   { id: "louvre", name: "Louvre Pyramid & Palace", nameZh: "卢浮宫金字塔与宫殿（Musée du Louvre）", lat: 48.8610, lon: 2.3358, heading: 110, height: 29, supp: { hw: 105, hd: 88 }, on: true, chip: true },
+  // --- Global Spaceports & Launch Complexes (feature/global-spaceports)
+  { id: "nasa_ksc", name: "NASA Kennedy Space Center LC-39B & VAB (SLS Artemis)", nameZh: "美国宇航局肯尼迪航天中心 LC-39B 与垂直装配大楼（NASA KSC）", lat: 28.6272, lon: -80.6209, heading: 0, height: 115, supp: { r: 180, hw: 180, hd: 180 }, on: true, chip: true },
+  { id: "jiuquan", name: "Jiuquan Satellite Launch Center Pad 921 (Long March 2F / Shenzhou)", nameZh: "中国酒泉卫星发射中心 921 载人航天发射场（长征二号F / 神舟）", lat: 40.9581, lon: 100.2911, heading: 0, height: 94, supp: { r: 180, hw: 180, hd: 180 }, on: true, chip: true },
+  { id: "baikonur", name: "Baikonur Cosmodrome Site 1/5 Gagarin's Start (Soyuz)", nameZh: "拜科努尔航天发射场一号加加林发射台（联盟号 Soyuz）", lat: 45.9203, lon: 63.3422, heading: 0, height: 59, supp: { r: 180, hw: 180, hd: 180 }, on: true, chip: true },
+  { id: "kourou_esa", name: "ESA Guiana Space Centre ELA-4 (Ariane 6)", nameZh: "欧洲航天局库鲁圭亚那航天中心 ELA-4（阿丽亚娜6号）", lat: 5.2360, lon: -52.7686, heading: 0, height: 90, supp: { r: 180, hw: 180, hd: 180 }, on: true, chip: true },
+  { id: "tanegashima_jaxa", name: "JAXA Tanegashima Space Center Yoshinobu Pad (H3 Rocket)", nameZh: "日本种子岛宇宙中心吉信射点（JAXA H3 火箭）", lat: 30.4009, lon: 130.9777, heading: 0, height: 80, supp: { r: 180, hw: 180, hd: 180 }, on: true, chip: true },
 ];
 
 const _byId = new Map(LANDMARKS.map((l) => [l.id, l]));
@@ -136,7 +142,7 @@ export function landmarkWorldXZ(l, origin) {
 /** True if world point (wx, wz) lies inside landmark l (placed at lx, lz) suppression footprint. */
 export function inLandmarkFootprint(l, lx, lz, wx, wz) {
   const dx = wx - lx, dz = wz - lz;
-  const s = l.supp || { r: 20 };
+  const s = typeof l.supp === "number" ? { r: l.supp } : (l.supp || { r: 20 });
   if (s.r) return dx * dx + dz * dz <= s.r * s.r;
   // model local frame: rotation.y = -heading  =>  local = R(+heading) * world
   const a = (l.heading || 0) * Math.PI / 180;

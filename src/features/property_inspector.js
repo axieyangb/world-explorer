@@ -244,6 +244,54 @@ const LANDMARK_META = {
     valueEn: "$3.6B Est.",
     valueZh: "估值 $36亿",
   },
+  spacex_starbase: {
+    categoryEn: "Orbital Launch Site · Starship & Mechazilla",
+    categoryZh: "重型轨道发射基地 · 星舰与机械哥斯拉发射塔",
+    floors: 14,
+    areaM2: 185000,
+    valueEn: "$3.0B Spaceport",
+    valueZh: "发射基地 $30亿 · 双击火箭发射",
+  },
+  nasa_ksc: {
+    categoryEn: "NASA Launch Complex 39B & VAB · Artemis SLS",
+    categoryZh: "美国宇航局肯尼迪发射场 LC-39B · 阿尔忒弥斯 SLS",
+    floors: 36,
+    areaM2: 340000,
+    valueEn: "$6.5B Spaceport",
+    valueZh: "航天中心 $65亿 · 双击火箭发射",
+  },
+  jiuquan: {
+    categoryEn: "CMSA Launch Complex 921 · Long March 2F & Shenzhou",
+    categoryZh: "中国酒泉载人航天发射场 921 工位 · 长征二号F与神舟",
+    floors: 18,
+    areaM2: 240000,
+    valueEn: "National Spaceport",
+    valueZh: "国家级航天发射场 · 双击火箭发射",
+  },
+  baikonur: {
+    categoryEn: "Site 1/5 Gagarin's Start · Soyuz-2.1a & Soyuz MS",
+    categoryZh: "拜科努尔一号加加林发射台 · 联盟号载人火箭",
+    floors: 12,
+    areaM2: 195000,
+    valueEn: "Historic Cosmodrome",
+    valueZh: "人类首飞发射场 · 双击火箭发射",
+  },
+  kourou_esa: {
+    categoryEn: "ESA Guiana Space Centre ELA-4 · Ariane 6",
+    categoryZh: "欧洲航天局库鲁发射中心 ELA-4 · 阿丽亚娜6号",
+    floors: 16,
+    areaM2: 210000,
+    valueEn: "European Spaceport",
+    valueZh: "欧洲赤道航天港 · 双击火箭发射",
+  },
+  tanegashima_jaxa: {
+    categoryEn: "JAXA Yoshinobu Launch Complex · H3 Rocket",
+    categoryZh: "日本种子岛宇宙中心吉信射点 · H3 主力火箭",
+    floors: 15,
+    areaM2: 165000,
+    valueEn: "Pacific Spaceport",
+    valueZh: "太平洋海岸航天港 · 双击火箭发射",
+  },
 };
 
 const INSPECTOR_CSS = `
@@ -908,7 +956,12 @@ export class PropertyInspector {
     this._ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this._raycaster.setFromCamera(this._ndc, app.camera);
 
+    if (app.spaceLaunch && app.spaceLaunch.isControllingCamera()) return null;
     const ray = this._raycaster.ray;
+    if (app.spaceLaunch && app.spaceLaunch.tryTriggerFromRay(ray)) {
+      this.dismiss();
+      return null;
+    }
     const lmHit = this._raycastLandmarks(ray);
     const bldgHit = this._raycastChunkBuildings(ray);
 
@@ -920,6 +973,10 @@ export class PropertyInspector {
     }
 
     if (!chosen) return null;
+    if (app.spaceLaunch && app.spaceLaunch.tryTriggerFromClick({ x: chosen.wx, z: chosen.wz })) {
+      this.dismiss();
+      return null;
+    }
 
     const profile =
       chosen.kind === "landmark"

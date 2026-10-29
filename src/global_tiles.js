@@ -63,6 +63,11 @@ export const QUICK_WORLD_DESTINATIONS = [
   {"id":"ch_cern_globe","name":"CERN Science Gateway & Globe · Geneva","nameZh":"日内瓦 · 欧洲核子研究中心科学之球 CERN","street":"Esplanade des Particules 1 · LHC","city":"Geneva, CH","cityZh":"瑞士 日内瓦","lat":46.233,"lon":6.0557},
   {"id":"paris_louvre","name":"Louvre Pyramid & Museum · Paris","nameZh":"巴黎 · 卢浮宫金字塔 Musée du Louvre","street":"Cour Napoléon · Rue de Rivoli","city":"Paris, FR","cityZh":"法国 巴黎","lat":48.861,"lon":2.3358},
   {"id":"bj_cctv","name":"CCTV Headquarters · Beijing","nameZh":"北京 · 中央电视台总部大楼（大裤衩）CCTV","street":"32 East 3rd Ring Middle Rd · CBD","city":"Beijing, CN","cityZh":"中国 北京","lat":39.9138,"lon":116.458},
+  {"id":"fl_nasa_ksc","name":"NASA Kennedy Space Center · LC-39B","nameZh":"卡纳维拉尔角 · NASA 肯尼迪航天中心 LC-39B","street":"Launch Complex 39B · VAB & SLS Artemis · Cape Canaveral","city":"Cape Canaveral, FL","cityZh":"美国 佛州卡纳维拉尔角","keywords":"nasa kennedy space center cape canaveral lc-39b lc39b vab sls artemis orion 肯尼迪航天中心 卡纳维拉尔角","lat":28.6272,"lon":-80.6209},
+  {"id":"cn_jiuquan","name":"Jiuquan Satellite Launch Center · Pad 921","nameZh":"酒泉 · 中国酒泉卫星发射中心 921 发射塔","street":"Pad 921 · Long March 2F & Shenzhou (东风航天城)","city":"Jiuquan, CN","cityZh":"中国 酒泉东风航天城","keywords":"jiuquan shenzhou long march cz-2f tiangong cmsa 酒泉 酒泉卫星发射中心 神舟 长征二号 东风航天城 921","lat":40.9581,"lon":100.2911},
+  {"id":"kz_baikonur","name":"Baikonur Cosmodrome · Site 1/5","nameZh":"拜科努尔 · 拜科努尔航天发射场加加林发射台","street":"Site 1/5 Gagarin's Start · Soyuz R-7 Pad","city":"Baikonur, KZ","cityZh":"哈萨克斯坦 拜科努尔","keywords":"baikonur cosmodrome soyuz gagarin start roscosmos r-7 拜科努尔 联盟号 加加林","lat":45.9203,"lon":63.3422},
+  {"id":"gf_kourou_esa","name":"ESA Guiana Space Centre · Kourou ELA-4","nameZh":"库鲁 · 欧洲航天局圭亚那航天中心 ELA-4","street":"ELA-4 Launch Complex · Ariane 6 Pad","city":"Kourou, GF","cityZh":"法属圭亚那 库鲁","keywords":"esa kourou ariane 6 ariane6 ela-4 guiana space centre csg 欧洲航天局 库鲁 阿丽亚娜","lat":5.2360,"lon":-52.7686},
+  {"id":"jp_tanegashima_jaxa","name":"JAXA Tanegashima Space Center · Yoshinobu","nameZh":"种子岛 · 日本 JAXA 种子岛宇宙中心吉信射点","street":"Yoshinobu Launch Complex LP-2 · H3 Rocket","city":"Tanegashima, JP","cityZh":"日本 鹿儿岛种子岛","keywords":"jaxa tanegashima h3 rocket yoshinobu 种子岛 種子島 宇宙中心","lat":30.4009,"lon":130.9777},
 ];
 
 export function computeWorldOrigin(lat, lon, displayName = "Beijing, CN", streetName = "") {
@@ -1736,7 +1741,9 @@ export async function searchAddress(query) {
       d.name.toLowerCase().includes(ql) ||
       d.nameZh.includes(q) ||
       d.street.toLowerCase().includes(ql) ||
-      d.city.toLowerCase().includes(ql)
+      d.city.toLowerCase().includes(ql) ||
+      (d.cityZh && d.cityZh.includes(q)) ||
+      (d.keywords && d.keywords.toLowerCase().includes(ql))
   );
   for (const lm of LANDMARKS) {
     if (!lm.on) continue;

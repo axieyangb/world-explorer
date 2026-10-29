@@ -102,6 +102,11 @@ import * as m_tencent_hq from "./tencent_hq.js"; // feature/global-companies
 import * as m_samsung_hq from "./samsung_hq.js"; // feature/global-companies
 import * as m_cern_globe from "./cern_globe.js"; // feature/global-companies
 import * as m_louvre from "./louvre.js"; // feature/global-companies
+import * as m_nasa_ksc from "./nasa_ksc.js"; // feature/global-spaceports
+import * as m_jiuquan from "./jiuquan.js"; // feature/global-spaceports
+import * as m_baikonur from "./baikonur.js"; // feature/global-spaceports
+import * as m_kourou_esa from "./kourou_esa.js"; // feature/global-spaceports
+import * as m_tanegashima_jaxa from "./tanegashima_jaxa.js"; // feature/global-spaceports
 
 export const MODELS = {
   liberty: m_liberty,
@@ -201,4 +206,9 @@ export const MODELS = {
   samsung_hq: m_samsung_hq,
   cern_globe: m_cern_globe,
   louvre: m_louvre,
+  nasa_ksc: m_nasa_ksc,
+  jiuquan: m_jiuquan,
+  baikonur: m_baikonur,
+  kourou_esa: m_kourou_esa,
+  tanegashima_jaxa: m_tanegashima_jaxa,
 };

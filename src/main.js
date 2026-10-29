@@ -96,10 +96,11 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r4"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r5"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
+import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261029_r5"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -520,6 +521,7 @@ class WorldExplorerApp {
         pendingChunks: this.pendingChunks.size,
         cityLodCount: this.skylineCount || 0,
         landmarksCount: LANDMARKS_40.length,
+        spaceLaunch: this.spaceLaunch ? this.spaceLaunch.getState() : null,
         workerActive: Boolean(this.chunkWorker),
         shadowBounds: Math.round(this.currentShadowBounds),
       }),
@@ -593,6 +595,7 @@ class WorldExplorerApp {
     this.poiVenues = new PoiVenueSystem(this); // [venues-poi] gas stations, shops, supermarkets, car washes + gameplay
     this.placesInfo = new PlacesInfo(this); // places-info
     this.propertyInspector = new PropertyInspector(this); // [feature/property-inspector]
+    this.spaceLaunch = new SpaceLaunchSystem(this); // [feature/space-launch]
     this._animate();
   }
 
@@ -3045,14 +3048,24 @@ class WorldExplorerApp {
 
     const rawDt = Math.min(0.05, this.clock.getDelta());
     const dt = this.kaiju ? this.kaiju.scaleDt(rawDt) : rawDt; // [kaiju] pause / death slow-mo
-    this._updatePhysics(dt);
-    if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
-    if (this.walkerWeapons) this.walkerWeapons.update(dt);
-    if (this.weaponPickups) this.weaponPickups.update(dt); // [weapon-pickups]
-    this.parkedCars.update(dt); // [parked-cars]
-    this.carjack.update(dt); // [polish] after the physics step: drives the avatar during a carjack
-    this._updateCamera(dt);
+    const inLaunch = this.spaceLaunch && this.spaceLaunch.isControllingCamera();
+    const inOuterSpace = this.spaceLaunch && this.spaceLaunch.isInOuterSpace();
+    if (!inLaunch) {
+      this._updatePhysics(dt);
+      if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
+      if (this.walkerWeapons) this.walkerWeapons.update(dt);
+      if (this.weaponPickups) this.weaponPickups.update(dt); // [weapon-pickups]
+      this.parkedCars.update(dt); // [parked-cars]
+      this.carjack.update(dt); // [polish] after the physics step: drives the avatar during a carjack
+      this._updateCamera(dt);
+    }
     if (this.propertyInspector) this.propertyInspector.update(dt); // [feature/property-inspector]
+    if (this.spaceLaunch) this.spaceLaunch.update(dt); // [feature/space-launch]
+    if (inOuterSpace) {
+      if (this.quality) this.quality.update(rawDt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     if (this.nitroFx) this.nitroFx.update(dt); // [nitro-fx] after the camera: shake + world-space boost effects
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
     if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]
