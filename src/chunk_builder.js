@@ -671,7 +671,7 @@ export function createSharedMaterials() {
       shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45 && vFacadeUv.x >= 23999.5 && vFacadeUv.x < 35999.5) { // [roofs] layers >= 24 live at 36000+
+        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45 && vFacadeUv.x >= 23999.5 && vFacadeUv.y < 949.5) { // [roofs] layers >= 24 live at v 999+
           float doorLayer = clamp(floor((vFacadeUv.x - 24000.0 + 0.5) / 1000.0), 0.0, 11.0);
           float uDoor = clamp(vFacadeUv.x - 24000.0 - doorLayer * 1000.0, 0.0, 1.0);
           float vDoor = clamp(vFacadeUv.y - 1.0, 0.0, 1.0);
@@ -708,10 +708,13 @@ export function createSharedMaterials() {
             totalEmissiveRadiance += glowCol * glassMask * nightLevel * (uNightEmissive * 0.46);
           }
         } else if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45) {
-          float uvLayer = floor((vFacadeUv.x + 0.5) / 1000.0); // [roofs]
-          float texLayer = uvLayer > 35.5 ? min(uvLayer - 12.0, ${FACADE_CATALOG.length - 1}.0) : min(uvLayer, 23.0);
-          float uRep = max(0.0, vFacadeUv.x - uvLayer * 1000.0);
-          float vRep = max(0.0, vFacadeUv.y - 1.0);
+          // [roofs] layers >= 24: uv = (u, 999 + (layer - 24) * 200 + v) (see facadeV in wfc_mesh_builder.js)
+          float xLayer = clamp(floor((vFacadeUv.x + 0.5) / 1000.0), 0.0, 23.0);
+          float yLayer = floor((vFacadeUv.y - 999.0 + 50.0) / 200.0);
+          bool extraLayer = vFacadeUv.y > 949.5;
+          float texLayer = extraLayer ? min(24.0 + yLayer, ${FACADE_CATALOG.length - 1}.0) : xLayer;
+          float uRep = max(0.0, extraLayer ? vFacadeUv.x : vFacadeUv.x - xLayer * 1000.0);
+          float vRep = max(0.0, extraLayer ? vFacadeUv.y - 1000.0 - yLayer * 200.0 : vFacadeUv.y - 1.0);
 
           vec4 texSample = texture(uFacadeArray, vec3(uRep, vRep, texLayer));
           vec3 facadeRgb = texSample.rgb;
@@ -735,7 +738,7 @@ export function createSharedMaterials() {
           float dLy = clamp(dFdy(lum), -0.08, 0.08);
           float uvGrad = max(fwidth(uRep), fwidth(vRep));
           float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
-          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask) * (texLayer > 23.5 ? 0.0 : 1.0))); // [roofs] crisp vector layers: no screen-space bump (jags on hard edges)
+          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask) * (texLayer > 23.5 ? 0.5 : 1.0))); // [roofs] crisp vector layers: softer screen-space bump
 
           // Keep metalness moderate so Three.js PBR without envMap never crushes shaded street-canyon glass to black
           float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;

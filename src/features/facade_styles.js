@@ -6,7 +6,8 @@
  * per-building wall tint applies there; A = 0 trim / shutters / stone keep their own colour).
  *
  * The catalog entries are plain data (worker-safe); `drawExtraFacadeLayers` needs a DOM canvas (main thread).
- * Layer L >= 24 is addressed as uv.x = (L + 12) * 1000 + u: 24000..35999 is the door atlas range.
+ * Layer L >= 24 is addressed as uv = (u, 999 + (L - 24) * 200 + v) (facadeV in wfc_mesh_builder.js): the u range
+ * 24000..35999 is the door atlas and float32 uv that large is too coarse for 512 px tiles.
  */
 
 export const EXTRA_FACADE_BASE = 24;

@@ -724,9 +724,15 @@ export const FACADE_CATALOG = [
   ...EXTRA_FACADES, // [roofs] procedural regional layers 24.. (features/facade_styles.js)
 ];
 
-/** [roofs] Facade atlas uv.x base of a layer: layers >= 24 skip the door range 24000..35999. */
+/**
+ * [roofs] Facade atlas uv of a layer. Layers < 24: u = index * 1000 + u, v = v (1 = ground). Layers >= 24 keep u small
+ * (float32 uv at 36000+ has ~1/256 precision, a 2-pixel jitter on 512 px tiles) and move to v = 999 + (index - 24) * 200 + v.
+ */
 export function facadeUvBase(index) {
-  return (index >= 24 ? index + 12 : index) * 1000.0;
+  return index >= 24 ? 0.0 : index * 1000.0;
+}
+export function facadeV(index, v) {
+  return index >= 24 ? 999.0 + (index - 24) * 200.0 + v : v;
 }
 
 /** [roofs] Regional facade pools by architectural region (features/roofs.js archRegionFor); null = original pools. */
@@ -1522,7 +1528,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
 
         const u0 = facadeUvBase(upperSpec.index) + uStart; // [roofs]
         const u1 = facadeUvBase(upperSpec.index) + uEnd;
-        pushUvQuad(u0, 1.0, u1, 1.0 + upperV1);
+        pushUvQuad(u0, facadeV(upperSpec.index, 1.0), u1, facadeV(upperSpec.index, 1.0 + upperV1));
         uAccumMeters += len;
 
         // 1c. Street-Level Architectural Entrances (Door Quad + 3D Frame / Canopy / Stoop + Night Light)

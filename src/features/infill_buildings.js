@@ -1,5 +1,5 @@
 import * as THREE from '../../vendor/three.module.js';
-import { selectFacadeForBuilding, facadeUvBase } from '../wfc/wfc_mesh_builder.js';
+import { selectFacadeForBuilding, facadeUvBase, facadeV } from '../wfc/wfc_mesh_builder.js';
 import { planRoof, roofRise, emitRoof } from './roofs.js'; // [roofs]
 import { roofFlav, addHouse } from './roofs_chunk.js'; // [roofs]
 
@@ -60,8 +60,8 @@ export function appendInfillBuilding(b, ox, oz, getY, region, out) {
   const wall = sel.wallTint;
   const roof = sel.roofDeck;
   const floors = Math.max(1, Math.round((yTop - Math.max(y0, gLow)) / spec.metersPerFloor));
-  const v1 = 1.0 + floors / spec.floors;
-  const v0 = Math.max(0.55, 1.0 - Math.max(0, gLow - y0) / spec.metersPerFloor / spec.floors); // buried skirt below the street
+  const v1 = facadeV(spec.index, 1.0 + floors / spec.floors);
+  const v0 = facadeV(spec.index, Math.max(0.55, 1.0 - Math.max(0, gLow - y0) / spec.metersPerFloor / spec.floors)); // buried skirt below the street
   const uShift = ((seed >>> 7) % spec.bays) / spec.bays;
   const { pos, norm, col, uv } = out;
 
