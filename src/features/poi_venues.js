@@ -1001,6 +1001,26 @@ export function buildPoiVenues(ctx) {
         const [ax, , az] = F.p(s * (W / 2 + 0.6), 0, 0.3);
         push('atm', ax, groundTop(ax, az), az, F.rotY(), 1, 1, 1, 0x1f3a66);
       }
+    } else if (kind === 'hospital') {
+      // emergency entrance: glazed lobby, porte-cochere canopy on columns, lit EMERGENCY sign, ambulance bay
+      const GH = Math.min(3.2, hostTop - 1.05);
+      res = storefront(F, W, {
+        rnd, scheme: [[0.9, 0.9, 0.88], [0.7, 0.04, 0.04], null], hostTop, glassH: GH, fasciaH: 0.6, depth: 1.2, shelves: false,
+        interior: [0.9, 0.94, 0.96], doorW: 2.6, signText: false, frame: C.alu,
+      });
+      const cd = 8.5, cw = Math.min(W + 1, 13), cy = GH + 1.1;
+      box(bld, F, 0, cy + 0.35, res.D + cd / 2, cw, 0.7, cd, [0.88, 0.88, 0.86], false, '');
+      box(bld, F, 0, cy - 0.01, res.D + cd / 2, cw - 0.1, 0.02, cd - 0.1, C.soffit, false, 't');
+      for (const sx of [-1, 1]) for (const sz of [cd * 0.45, cd - 0.5]) box(bld, F, sx * (cw / 2 - 0.4), cy / 2, res.D + sz, 0.45, cy, 0.45, C.white, false, 'b');
+      for (let i = 0; i < 3; i++) box(bld, F, 0, cy - 0.04, res.D + 1.5 + i * 2.7, cw * 0.6, 0.02, 0.35, C.light, true);
+      box(bld, F, 0, cy + 0.35, res.D + cd + 0.02, cw * 0.62, 0.55, 0.06, [0.85, 0.06, 0.05], 'f');
+      const G = new Frame(F.x0, F.y0, F.z0, F.bx, F.bz);
+      sign(G, 0, cy + 0.35, res.D + cd + 0.06, cw * 0.6, 0.48, 3, '急诊', 'EMERGENCY', 0xc00a0a, 0xffffff);
+      slab(bld, F, -cw / 2, cw / 2, res.D + 0.2, res.D + cd, 0.07, C.concreteLt, 4);
+      gline(bld, F, -cw / 2 + 0.6, res.D + 1.2, cw / 2 - 0.6, res.D + 1.2, 0.2, 0.09, C.paintY);
+      const [ax, , az] = F.p(cw * 0.18, 0, res.D + cd * 0.55);
+      push('car', ax, groundTop(ax, az) - 0.03, az, F.rotY(Math.PI / 2), 7, 1, 1, 0xffffff);
+      pool(F.wx(0, res.D + cd / 2), F.wz(0, res.D + cd / 2), cw * 0.5, C.lightCool, 0.25, 0.12, cd * 0.55, F.rotY());
     } else if (kind === 'fast') {
       const GH = Math.min(3.0, hostTop - 1.05);
       res = storefront(F, W, {
@@ -1390,9 +1410,11 @@ export function buildPoiVenues(ctx) {
     const fast = cls === 'fast_food';
     const pharm = cls === 'pharmacy' || sub === 'chemist';
     const bank = cls === 'bank';
-    if (!conv && !supm && !fast && !pharm && !bank) continue;
+    const hosp = cls === 'hospital' && sub === 'hospital';
+    if (!conv && !supm && !fast && !pharm && !bank && !hosp) continue;
+    if (hosp && near(px, pz, 150, 'hosp')) continue;
     if (nStores >= 70) continue;
-    const B = hostOf(px, pz, supm ? 24 : 12);
+    const B = hostOf(px, pz, supm || hosp ? 24 : 12);
     if (!B) continue;
     if (B.used) continue;
     if (supm && B.area >= 500) { // big box with a car park; small urban supermarkets just get a shop front
@@ -1410,14 +1432,15 @@ export function buildPoiVenues(ctx) {
     }
     if (!bestE || bestE.road > 45) continue;
     // one storefront per facade stretch
-    const fr = frontOn(B, bestE, px, pz, supm ? 12 : conv ? 8.5 : fast ? 10 : 7);
+    const fr = frontOn(B, bestE, px, pz, supm ? 12 : conv ? 8.5 : fast ? 10 : hosp ? 9 : 7);
     const [fx, , fz] = fr.F.p(0, 0, 0);
     if (taken(fx, fz, fr.W / 2)) continue;
     claim(fx, fz, fr.W / 2 + 0.3);
     const scheme = SHOP_SCHEMES[(rnd() * SHOP_SCHEMES.length) | 0];
-    const kind = conv || supm ? 'conv' : fast ? 'fast' : pharm ? 'pharmacy' : 'bank';
+    const kind = conv || supm ? 'conv' : fast ? 'fast' : pharm ? 'pharmacy' : hosp ? 'hospital' : 'bank';
+    if (hosp) done.push([px, pz, 'hosp']);
     const sch = pharm ? [[0.94, 0.95, 0.94], [0.03, 0.5, 0.2], [0.03, 0.5, 0.2]] : fast ? [[0.75, 0.06, 0.04], [0.98, 0.8, 0.1], [0.98, 0.8, 0.1]] : scheme;
-    const [sZh, sEn] = signNames(supm ? 'super' : kind, name, nameEn, repeated(q), rng32(hashAbs(px, pz, 6)));
+    const [sZh, sEn] = signNames(supm ? 'super' : hosp ? 'pharmacy' : kind, name, nameEn, repeated(q), rng32(hashAbs(px, pz, 6)));
     A_store(fr, kind, rnd, {
       name: sZh, nameEn: sEn, scheme: sch,
       awning: conv && rnd() < 0.5 ? [sch[1], sch[0]] : null,
