@@ -1,4 +1,5 @@
-// [hero-vehicles] Detailed models for the car the player drives. Traffic keeps the light box models.
+// [hero-vehicles] Detailed models for the car the player drives. Traffic draws the same bodies through the
+// low-detail path (options.lod: coarse loft, no cabin or small parts, cheap wheels).
 // A body is lofted from cross-sections along its length: plan-view superellipse, side-view curves for
 // sill / beltline / roof, wheel arches cut into the sill. Each triangle is then assigned a material by
 // where it sits on the body (glass above the beltline, lamps on the front and rear faces, door gaps,
@@ -29,15 +30,16 @@ export function curve(keys) {
   };
 }
 
-// Uniform Catmull-Rom through 2D control points, `k` samples per span; mirrored phantom ends keep the
-// tangent horizontal at the centreline so the two halves join smoothly.
+// Uniform Catmull-Rom through 2D control points, `k` samples per span (or an array, one count per span);
+// mirrored phantom ends keep the tangent horizontal at the centreline so the two halves join smoothly.
 export function crPath(pts, k) {
   const ext = [[-pts[1][0], pts[1][1]], ...pts, [-pts[pts.length - 2][0], pts[pts.length - 2][1]]];
   const out = [];
   for (let i = 1; i < ext.length - 2; i++) {
     const p0 = ext[i - 1], p1 = ext[i], p2 = ext[i + 1], p3 = ext[i + 2];
-    for (let s = 0; s < k; s++) {
-      const t = s / k, t2 = t * t, t3 = t2 * t;
+    const ks = Array.isArray(k) ? k[i - 1] : k;
+    for (let s = 0; s < ks; s++) {
+      const t = s / ks, t2 = t * t, t3 = t2 * t;
       const f = (a, b, c, e) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - e) * t2 + (-a + 3 * b - 3 * c + e) * t3);
       out.push([Math.max(0, f(p0[0], p1[0], p2[0], p3[0])), f(p0[1], p1[1], p2[1], p3[1])]);
     }
@@ -48,8 +50,10 @@ export function crPath(pts, k) {
 
 export const SPAN = 6;
 
-export function makeBody(spec) {
-  const L = spec.length, hl = L / 2;
+// `lod` builds the coarse traffic version: 2 samples per profile span, sparse stations, no panel-gap pairs.
+export function makeBody(spec, lod = false) {
+  // Low detail: one sample on the flat underside and the roof centre, two on every other span.
+  const L = spec.length, hl = L / 2, span = lod ? [1, 2, 2, 2, 2, 2, 2, 2, 2, 1] : SPAN;
   const sill = curve(spec.sill), belt = curve(spec.belt), roofK = curve(spec.roof);
   const hip = spec.hip ? curve(spec.hip) : () => 1;
   const roofOf = (z) => Math.max(belt(z), roofK(z));
@@ -83,19 +87,29 @@ export function makeBody(spec) {
       [wb * g.roof, yr],
       [wb * g.roof * 0.5, yr + spec.crown],
       [0, yr + spec.crown * 1.15],
-    ], SPAN);
+    ], span);
   };
 
   // Stations: even spacing, dense at the rounded ends, and pairs hugging arch edges and panel gaps.
   const zs = new Set();
-  for (let z = -hl; z <= hl + 1e-6; z += 0.035) zs.add(+z.toFixed(4));
-  for (let s = 0; s <= 0.6; s += s < 0.12 ? 0.004 : 0.012) { zs.add(+(hl - s).toFixed(4)); zs.add(+(-hl + s).toFixed(4)); }
-  for (const a of spec.arches) {
-    for (let t = -1; t <= 1.0001; t += 0.05) zs.add(+(a.z + a.r * Math.sin(t * Math.PI / 2)).toFixed(4));
-    for (const e of [-1, 1]) for (const o of [-0.004, 0.004]) zs.add(+(a.z + e * a.r + o).toFixed(4));
+  if (lod) {
+    for (let z = -hl; z <= hl + 1e-6; z += L / 15) zs.add(+z.toFixed(4));
+    for (const s of [0, 0.02, 0.06, 0.12, 0.2, 0.32]) { zs.add(+(hl - s).toFixed(4)); zs.add(+(-hl + s).toFixed(4)); }
+    for (const a of spec.arches) {
+      for (let t = -1; t <= 1.0001; t += 0.25) zs.add(+(a.z + a.r * Math.sin(t * Math.PI / 2)).toFixed(4));
+      for (const e of [-1, 1]) zs.add(+(a.z + e * (a.r + 0.006)).toFixed(4));
+    }
+  } else {
+    for (let z = -hl; z <= hl + 1e-6; z += 0.035) zs.add(+z.toFixed(4));
+    for (let s = 0; s <= 0.6; s += s < 0.12 ? 0.004 : 0.012) { zs.add(+(hl - s).toFixed(4)); zs.add(+(-hl + s).toFixed(4)); }
+    for (const a of spec.arches) {
+      for (let t = -1; t <= 1.0001; t += 0.05) zs.add(+(a.z + a.r * Math.sin(t * Math.PI / 2)).toFixed(4));
+      for (const e of [-1, 1]) for (const o of [-0.004, 0.004]) zs.add(+(a.z + e * a.r + o).toFixed(4));
+    }
+    for (const gz of spec.gaps || []) for (const o of [-0.009, -0.004, 0.004, 0.009]) zs.add(+(gz + o).toFixed(4));
   }
-  for (const gz of spec.gaps || []) for (const o of [-0.009, -0.004, 0.004, 0.009]) zs.add(+(gz + o).toFixed(4));
-  const stations = [...zs].filter((z) => z >= -hl && z <= hl).sort((a, b) => a - b);
+  // Drop stations closer than 5 mm (lod sets overlap) so no sliver quads are left.
+  const stations = [...zs].filter((z) => z >= -hl && z <= hl).sort((a, b) => a - b).filter((z, i, a) => !lod || i === 0 || z - a[i - 1] > 0.005);
 
   const geometry = () => {
     const half = halfProfile(0).length; // points per half, centre bottom -> centre top
@@ -127,7 +141,7 @@ export function makeBody(spec) {
   };
 
   // Outer half-width of the body at height y on station z (0 when y is outside the side wall).
-  const sideIdx = 5 * SPAN;
+  const sideIdx = lod ? 9 : 5 * SPAN; // profile index of the shoulder point [0.93 wb, belt]
   const widthAt = (z, y) => {
     const hp = halfProfile(z);
     let best = 0;
@@ -149,7 +163,7 @@ export function makeBody(spec) {
     }
     return hi;
   };
-  return { geometry, sill, belt, roofOf, halfW, bottom, halfProfile, widthAt, surfaceZ };
+  return { geometry, sill, belt, roofOf, halfW, bottom, halfProfile, widthAt, surfaceZ, lod };
 }
 
 // Split the lofted body into one geometry per material. Classification is per grid quad (centre point,
@@ -193,7 +207,9 @@ export function splitByMaterial(body, classify) {
 // A lamp lens: superellipse outline in the (x, y) plane wrapped onto the nose or tail surface, standing
 // `lift` metres proud of the paint. `slant` tilts the outline (y offset per metre of x).
 export function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 0.006, from } = {}) {
-  const RAD = 6, ANG = 40, pos = [], idx = [];
+  // Low detail: a small fan, lifted further so it clears the coarser (flatter) facets.
+  const RAD = body.lod ? 2 : 6, ANG = body.lod ? 14 : 40, pos = [], idx = [];
+  if (body.lod) lift = Math.max(lift, 0.014);
   pos.push(cx, cy, 0);
   for (let r = 1; r <= RAD; r++) {
     const u = r / RAD;
@@ -245,9 +261,11 @@ export function lowerT(b, c) {
 
 export const blob = (x, y, cx, cy, ax, ay, p = 4) => Math.pow(Math.abs(x - cx) / ax, p) + Math.pow(Math.abs(y - cy) / ay, p) < 1;
 
+// userData tags read by the traffic flattener (traffic_models.js): paintWeight marks the recolourable body
+// paint, emitCode the lamps (1 head, 2 tail, 3 always-lit).
 export function materials(spec) {
   const envd = (m) => { m.userData.envProbe = true; return m; };
-  return {
+  const M = {
     paint: envd(new THREE.MeshPhysicalMaterial({ color: spec.paint, metalness: spec.paintMetal ?? 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.06 })),
     paint2: envd(new THREE.MeshPhysicalMaterial({ color: spec.paint2 ?? 0xf4f5f6, metalness: 0.2, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06 })),
     glass: envd(new THREE.MeshPhysicalMaterial({ color: 0x0a0f14, metalness: 0.1, roughness: 0.04, transparent: true, opacity: 0.84, clearcoat: 1, clearcoatRoughness: 0.02 })),
@@ -266,6 +284,31 @@ export function materials(spec) {
     disc: new THREE.MeshStandardMaterial({ color: 0x6c6f74, metalness: 0.9, roughness: 0.45 }),
     caliper: new THREE.MeshStandardMaterial({ color: spec.caliper ?? 0x2b2d31, roughness: 0.4, metalness: 0.3 }),
   };
+  M.paint.userData.paintWeight = 1;
+  M.head.userData.emitCode = 1;
+  M.tail.userData.emitCode = 2;
+  M.drl.userData.emitCode = 3;
+  return M;
+}
+
+// Low-detail wheel for traffic: short lathed tyre and a flat rim disc with a dark centre; no spokes or caliper.
+export function buildWheelLod(spec, M, side) {
+  const { R, tw } = spec.wheel;
+  const rr = R * spec.wheel.rimFrac, h = tw / 2;
+  const pivot = new THREE.Group(), wheelMesh = new THREE.Group(), face = new THREE.Group();
+  if (side < 0) face.rotation.y = Math.PI;
+  pivot.add(wheelMesh); wheelMesh.add(face);
+  const prof = [[rr * 0.96, -h * 0.85], [R - 0.05, -h], [R, -h * 0.6], [R, h * 0.6], [R - 0.05, h], [rr * 0.96, h * 0.85]];
+  const tyre = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 14);
+  tyre.rotateZ(Math.PI / 2);
+  face.add(new THREE.Mesh(tyre, M.tyre));
+  const disc = new THREE.CircleGeometry(rr, 14);
+  disc.rotateY(Math.PI / 2);
+  addMesh(face, disc, spec.wheel.style === 'steel' ? M.trim : M.rim, h * 0.72);
+  const hub = new THREE.CircleGeometry(rr * 0.3, 8);
+  hub.rotateY(Math.PI / 2);
+  addMesh(face, hub, M.disc, h * 0.72 + 0.004);
+  return { pivot, wheelMesh };
 }
 
 // Tyre (lathed sidewalls + tread), spoked rim, brake disc; the caliper stays on the steering pivot.
@@ -348,13 +391,15 @@ export function addCommonDetails(spec, body, M, chassis) {
   const ws = spec.windshieldBase;
   const yt = body.belt(ws - 0.12);
   const wx = body.halfW(ws - 0.12) * spec.glass.base;
+  const lod = body.lod;
   for (const s of [-1, 1]) {
     if (spec.mirrors === false) break;
-    const shell = new THREE.SphereGeometry(0.1, 16, 10);
+    const shell = lod ? new THREE.SphereGeometry(0.1, 8, 5) : new THREE.SphereGeometry(0.1, 16, 10);
     shell.scale(1.0, 0.62, 0.85);
     const mir = addMesh(chassis, shell, M.paint, s * (wx + 0.13), yt + 0.1, ws - 0.16);
     mir.userData.paint = true;
     addMesh(chassis, new THREE.BoxGeometry(0.11, 0.03, 0.06), M.trim, s * (wx + 0.05), yt + 0.06, ws - 0.14);
+    if (lod) continue;
     const glassFace = new THREE.CircleGeometry(0.075, 14);
     glassFace.scale(1, 0.55, 1);
     glassFace.rotateY(Math.PI);
@@ -365,6 +410,7 @@ export function addCommonDetails(spec, body, M, chassis) {
       addMesh(chassis, new THREE.BoxGeometry(0.02, 0.028, 0.16), spec.flushHandles ? M.chrome : M.trim, s * hx, hy, hz);
     }
   }
+  if (lod) return; // traffic glass is opaque: no cabin
   // Cabin: dark backface shell (reads as interior walls), dash, seats, steering wheel, all kept under the roof
   const c0 = spec.cabin[0], c1 = spec.cabin[1];
   let roofMin = Infinity;
@@ -596,7 +642,7 @@ const CARS = {
       if (c.z < 0.98 && c.z > -1.0 && ax > b.halfW(c.z) * 0.86 && c.y > b.bottom(c.z) + 0.08 && c.y < b.belt(c.z) - 0.02) return 'paint2'; // white doors
       return 'paint';
     },
-    extras(chassis, M, b, exhausts, lightbar) {
+    extras(chassis, M, b, exhausts, lightbar, ctx) {
       // Light bar: black base, clear outer lenses over red (left) / blue (right) emitters
       const ry = b.roofOf(0.2) + 0.03;
       addMesh(chassis, new THREE.BoxGeometry(1.3, 0.06, 0.3), M.trim, 0, ry, 0.15);
@@ -608,9 +654,11 @@ const CARS = {
         chassis.add(lens);
         (isA ? lightbar.phaseAMeshes : lightbar.phaseBMeshes).push(lens);
       }
-      const dome = new THREE.Mesh(new THREE.BoxGeometry(1.32, 0.11, 0.3), new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, roughness: 0.05, clearcoat: 1 }));
-      dome.position.set(0, ry + 0.075, 0.15);
-      chassis.add(dome);
+      if (!ctx.lod) { // clear outer dome (an opaque traffic mesh would hide the lenses)
+        const dome = new THREE.Mesh(new THREE.BoxGeometry(1.32, 0.11, 0.3), new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, roughness: 0.05, clearcoat: 1 }));
+        dome.position.set(0, ry + 0.075, 0.15);
+        chassis.add(dome);
+      }
       // Push bar
       for (const s of [-1, 1]) {
         const up = new THREE.CylinderGeometry(0.025, 0.025, 0.5, 10);
@@ -626,7 +674,7 @@ const CARS = {
       spot.rotateX(Math.PI / 2);
       addMesh(chassis, spot, M.chrome, -0.86, b.belt(1.1) + 0.1, 1.08);
       // Antennas
-      for (const z of [-0.6, -0.9]) addMesh(chassis, new THREE.CylinderGeometry(0.004, 0.006, 0.5, 5), M.trim, 0.2 * (z < -0.7 ? -1 : 1), b.roofOf(z) + 0.25, z);
+      if (!ctx.lod) for (const z of [-0.6, -0.9]) addMesh(chassis, new THREE.CylinderGeometry(0.004, 0.006, 0.5, 5), M.trim, 0.2 * (z < -0.7 ? -1 : 1), b.roofOf(z) + 0.25, z);
       // Twin exhaust
       for (const x of [0.5, 0.62]) {
         const t = new THREE.CylinderGeometry(0.035, 0.035, 0.12, 12, 1, true);
@@ -677,22 +725,37 @@ const CARS = {
       }
       // Window surround: thin chrome line along the beltline of the side glass
       for (const s of [-1, 1]) {
-        const g = sideStrip(b, -1.28, 1.2, (z) => b.belt(z) - 0.012, (z) => b.belt(z) - 0.002, s, { rows: 1, lift: 0.002 });
+        const g = sideStrip(b, -1.28, 1.2, (z) => b.belt(z) - 0.012, (z) => b.belt(z) - 0.002, s, { rows: 1, lift: ctx.lod ? 0.008 : 0.002, step: ctx.lod ? 0.2 : 0.025 });
         chassis.add(new THREE.Mesh(g, M.chrome));
       }
       if (ctx.options.hideTaxiSign) return;
       // Checker band along both flanks (two rows of checks wrapped onto the door skins)
-      const chk = canvasTexture(128, 64, (g, w, h) => {
-        g.fillStyle = '#f4f2ea'; g.fillRect(0, 0, w, h);
-        g.fillStyle = '#121214';
-        g.fillRect(0, 0, w / 2, h / 2); g.fillRect(w / 2, h / 2, w / 2, h / 2);
-      });
-      chk.wrapS = THREE.RepeatWrapping;
-      chk.repeat.set(1 / 0.11, 1); // one black+white pair per 11 cm
-      const chkMat = new THREE.MeshPhysicalMaterial({ map: chk, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.08 });
-      for (const s of [-1, 1]) {
-        const g = sideStrip(b, -0.96, 0.93, (z) => b.belt(z) - 0.27, (z) => b.belt(z) - 0.16, s, { rows: 4 });
-        chassis.add(new THREE.Mesh(g, chkMat));
+      if (ctx.lod) {
+        // Low detail: one strip quad per check, black/white baked into a colour attribute.
+        const wht = new THREE.Color(0xf4f2ea), blk = new THREE.Color(0x121214);
+        for (const s of [-1, 1]) {
+          const g = sideStrip(b, -0.96, 0.93, (z) => b.belt(z) - 0.27, (z) => b.belt(z) - 0.16, s, { rows: 2, step: 0.055, lift: 0.008 }).toNonIndexed();
+          const n = g.attributes.position.count, col = new Float32Array(n * 3);
+          for (let v = 0; v < n; v++) {
+            const q = (v / 6) | 0, c = ((q >> 1) + (q & 1)) & 1 ? blk : wht; // quad q = column * 2 + row
+            col[v * 3] = c.r; col[v * 3 + 1] = c.g; col[v * 3 + 2] = c.b;
+          }
+          g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+          chassis.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xffffff })));
+        }
+      } else {
+        const chk = canvasTexture(128, 64, (g, w, h) => {
+          g.fillStyle = '#f4f2ea'; g.fillRect(0, 0, w, h);
+          g.fillStyle = '#121214';
+          g.fillRect(0, 0, w / 2, h / 2); g.fillRect(w / 2, h / 2, w / 2, h / 2);
+        });
+        chk.wrapS = THREE.RepeatWrapping;
+        chk.repeat.set(1 / 0.11, 1); // one black+white pair per 11 cm
+        const chkMat = new THREE.MeshPhysicalMaterial({ map: chk, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.08 });
+        for (const s of [-1, 1]) {
+          const g = sideStrip(b, -0.96, 0.93, (z) => b.belt(z) - 0.27, (z) => b.belt(z) - 0.16, s, { rows: 4 });
+          chassis.add(new THREE.Mesh(g, chkMat));
+        }
       }
       // Roof sign: trapezoid lightbox with lettering on both faces, self-lit
       const ry = b.roofOf(0.0) + 0.03 * 1.15;
@@ -702,12 +765,14 @@ const CARS = {
       const D = 0.16, Ht = 0.17, Wd = 0.66;
       const box = new THREE.Shape();
       box.moveTo(-D, 0.0); box.lineTo(D, 0.0); box.lineTo(D * 0.55, Ht); box.lineTo(-D * 0.55, Ht); box.closePath();
-      const sg = new THREE.ExtrudeGeometry(box, { depth: Wd, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.012, bevelSegments: 3 });
+      const sg = new THREE.ExtrudeGeometry(box, { depth: Wd, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.012, bevelSegments: ctx.lod ? 1 : 3 });
       sg.translate(0, 0, -Wd / 2); sg.rotateY(-Math.PI / 2);
       const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff3c2, emissive: 0xffd34d, emissiveIntensity: 0.65, roughness: 0.35 });
+      lightMat.userData.emitCode = 3;
       addMesh(sign, sg, lightMat, 0, 0.03, 0);
       addMesh(sign, new THREE.BoxGeometry(Wd + 0.06, 0.035, D * 2 + 0.06), M.trim, 0, 0.018, 0);
       for (const x of [-0.24, 0.24]) addMesh(sign, new THREE.BoxGeometry(0.05, 0.03, 0.22), M.trim, x, -0.005, 0);
+      if (ctx.lod) return; // no lettering
       const txt = canvasTexture(256, 64, (g, w, h) => {
         g.fillStyle = '#ffe680'; g.fillRect(0, 0, w, h);
         g.fillStyle = '#161616'; g.font = 'bold 50px Arial, Helvetica, sans-serif';
@@ -926,6 +991,7 @@ const GEO_CACHE = new Map();
  * the car's extras set them, trails / aeroFlaps / flameColor / trailColor.
  * Optional spec hooks: mats(M) adds materials, common:false skips mirrors+cabin, tray:false skips the
  * underbody tray, rearWheel/trackRear override the rear axle, decorWheel(wheelMesh, M, side, front).
+ * options.lod builds the low-detail traffic body (not cached: traffic flattens and disposes it once).
  */
 export function buildHeroVehicle(typeId, options = {}) {
   const spec = CARS[typeId];
@@ -936,12 +1002,13 @@ export function buildHeroVehicle(typeId, options = {}) {
   const chassis = new THREE.Group();
   group.add(chassis);
 
-  const body = makeBody(spec);
+  const lod = !!options.lod;
+  const body = makeBody(spec, lod);
   // Lofting and lamp projection take ~90 ms; geometry is shared by every build of the same car.
-  let cache = GEO_CACHE.get(typeId);
+  let cache = lod ? null : GEO_CACHE.get(typeId);
   if (!cache) {
     cache = { parts: [...splitByMaterial(body, spec.classify)], lamps: lampGeometries(spec, body) };
-    GEO_CACHE.set(typeId, cache);
+    if (!lod) GEO_CACHE.set(typeId, cache);
   }
   for (const [key, geo] of cache.parts) {
     const mat = key === 'louvre' ? M.gloss : M[key];
@@ -953,7 +1020,7 @@ export function buildHeroVehicle(typeId, options = {}) {
   for (const [key, geo] of cache.lamps) chassis.add(new THREE.Mesh(geo, M[key]));
   const exhausts = [];
   const lightbarParts = { typeId, phaseAMeshes: [], phaseBMeshes: [] };
-  const ctx = { options };
+  const ctx = { options, lod };
   spec.extras(chassis, M, body, exhausts, lightbarParts, ctx);
 
   // Underbody tray hides the see-through gap between the arches
@@ -965,9 +1032,9 @@ export function buildHeroVehicle(typeId, options = {}) {
     const ws = zi > 0 && spec.rearWheel ? { ...spec, wheel: spec.rearWheel } : spec;
     const track = zi > 0 && spec.trackRear ? spec.trackRear : spec.track;
     for (const s of [-1, 1]) {
-      const { pivot, wheelMesh } = buildWheel(ws, M, s);
+      const { pivot, wheelMesh } = lod ? buildWheelLod(ws, M, s) : buildWheel(ws, M, s);
       pivot.position.set(s * track, ws.wheel.R, wz);
-      if (spec.decorWheel) spec.decorWheel(wheelMesh, M, s, zi === 0, ws.wheel);
+      if (spec.decorWheel && !lod) spec.decorWheel(wheelMesh, M, s, zi === 0, ws.wheel);
       group.add(pivot);
       wheels.push(wheelMesh);
       if (zi === 0) frontSteerPivots.push(pivot);

@@ -1,73 +1,107 @@
 // Instanced render assets for AI traffic & pedestrians.
-// Cars: existing vehicle models flattened into one merged geometry per type, drawn with one
-// InstancedMesh each; per-instance paint + brake light, emissive head/tail lights at night.
+// Cars: the low-detail build of each player vehicle (hero builders with options.lod) flattened into one
+// merged geometry per type, drawn with one InstancedMesh each; per-instance paint + brake light, emissive
+// head/tail lights at night.
 // Pedestrians: one low-poly merged figure, walk cycle animated in the vertex shader.
 import * as THREE from '../../vendor/three.module.js';
-import { createVehicleModel } from '../entities.js';
+import { buildHeroVehicle } from './hero_vehicles.js';
+import { HEAVY_VEHICLE_IDS, buildHeavyVehicle } from './hero_heavy.js';
 import { personParts, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL, RAGDOLL_PART_SPECS, createRagdollPartGeometries } from './person_model.js';
 
+// Lamp colours in the flat traffic shading (the hero lamp materials rely on reflections and emissive).
 const HEAD_HEX = 0xfff3c4;
-const TAIL_HEX = 0xff2a2a;
-
-// Paint masks per base model: material color hex -> paint weight (1 = main paint, 0.7 = lower band).
-const PAINT_MASKS = {
-  taxi: { 0xf4b942: 1.0, 0x1d4e89: 0.7 },
-  supercar: { 0xd90429: 1.0 },
-  tesla: { 0xf4f6f9: 1.0 },
-  tow_truck: { 0xf59f00: 1.0 },
-};
+const TAIL_HEX = 0xc00a0a; // deep red: brighter values tone-map to salmon when braking at night
 
 const uStrobeTime = { value: 0 };
 
-function flattenVehicle(typeId, { skipHex = [] } = {}) {
-  const model = createVehicleModel(typeId);
-  const vfx = model.userData.nitroVfx;
-  if (vfx && vfx.parent) vfx.parent.remove(vfx);
+// Tags read from mesh.userData, then material.userData (set by the hero builders):
+//   paintWeight  0..1 share of the per-instance paint colour (1 = main body paint)
+//   emitCode     1 head lamp, 2 tail lamp, 3 always-lit glow, 4 / 5 strobe phase A / B
+//   lodColor     flat colour for textured materials (LED signs)
+//   lodSkip      leave the mesh out
+// A geometry `color` attribute (baked liveries, checker bands) overrides the material colour.
+function flattenVehicle(typeId, options = {}) {
+  const lodOpts = { ...options, lod: true };
+  const built = HEAVY_VEHICLE_IDS.has(typeId) ? buildHeavyVehicle(typeId, lodOpts) : buildHeroVehicle(typeId, lodOpts);
+  const lb = built.lightbarParts;
+  if (lb) {
+    for (const m of lb.phaseAMeshes) m.userData.emitCode = 4;
+    for (const m of lb.phaseBMeshes) m.userData.emitCode = 5;
+  }
+  const model = built.group;
   model.updateMatrixWorld(true);
   const pos = [], nor = [], col = [], paint = [], emit = [];
-  const mask = PAINT_MASKS[typeId] || {};
   const tmpN = new THREE.Matrix3();
   const v = new THREE.Vector3();
+  const c = new THREE.Color();
   model.traverse((o) => {
     if (!o.isMesh || !o.geometry || !o.material || Array.isArray(o.material)) return;
-    const hex = o.material.color ? o.material.color.getHex() : 0x888888;
-    if (skipHex.includes(hex)) return;
+    const mat = o.material, ud = mat.userData || {};
+    if (o.userData.lodSkip || ud.lodSkip) return;
+    const em = o.userData.emitCode ?? ud.emitCode ?? (mat.isMeshBasicMaterial ? 3 : 0);
+    const pw = o.userData.paintWeight ?? ud.paintWeight ?? 0;
+    if (ud.lodColor != null) c.set(ud.lodColor);
+    else if (em === 1) c.set(HEAD_HEX);
+    else if (em === 2) c.set(TAIL_HEX);
+    else if (mat.color) c.copy(mat.color);
+    else c.set(0x888888);
     const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     if (!g.attributes.normal) g.computeVertexNormals();
-    const p = g.attributes.position, n = g.attributes.normal;
+    const p = g.attributes.position, n = g.attributes.normal, vc = g.attributes.color;
     tmpN.getNormalMatrix(o.matrixWorld);
-    const c = o.material.color || new THREE.Color(0x888888);
-    const pw = mask[hex] || 0;
-    const em = o.userData?.emitCode || (hex === HEAD_HEX ? 1 : hex === TAIL_HEX ? 2 : o.material.isMeshBasicMaterial ? 3 : 0);
     for (let i = 0; i < p.count; i++) {
       v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
       pos.push(v.x, v.y, v.z);
       v.fromBufferAttribute(n, i).applyMatrix3(tmpN).normalize();
       nor.push(v.x, v.y, v.z);
-      col.push(c.r, c.g, c.b);
+      if (vc) col.push(vc.getX(i), vc.getY(i), vc.getZ(i));
+      else col.push(c.r, c.g, c.b);
       paint.push(pw);
       emit.push(em);
     }
     g.dispose();
   });
+  // The low-detail build is never cached, so everything it made can go.
   model.traverse((o) => {
     if (o.isMesh) {
       o.geometry?.dispose();
       if (o.material && !Array.isArray(o.material)) o.material.dispose();
     }
   });
+  return indexed(pos, nor, col, paint, emit);
+}
+
+// Weld identical vertices into an indexed geometry: smooth lofted bodies share most corners, so the
+// vertex shader runs far fewer times per instance than on the triangle soup.
+function indexed(pos, nor, col, paint, emit) {
+  const map = new Map(), index = [];
+  const P = [], N = [], C = [], A = [], E = [];
+  const q = (v, s) => Math.round(v * s);
+  for (let i = 0; i < pos.length / 3; i++) {
+    const i3 = i * 3;
+    const key = `${q(pos[i3], 1e4)},${q(pos[i3 + 1], 1e4)},${q(pos[i3 + 2], 1e4)},${q(nor[i3], 500)},${q(nor[i3 + 1], 500)},${q(nor[i3 + 2], 500)},${q(col[i3], 500)},${q(col[i3 + 1], 500)},${q(col[i3 + 2], 500)},${paint[i]},${emit[i]}`;
+    let k = map.get(key);
+    if (k === undefined) {
+      k = P.length / 3;
+      map.set(key, k);
+      P.push(pos[i3], pos[i3 + 1], pos[i3 + 2]); N.push(nor[i3], nor[i3 + 1], nor[i3 + 2]); C.push(col[i3], col[i3 + 1], col[i3 + 2]);
+      A.push(paint[i]); E.push(emit[i]);
+    }
+    index.push(k);
+  }
   const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geom.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geom.setAttribute('aPaint', new THREE.Float32BufferAttribute(paint, 1));
-  geom.setAttribute('aEmit', new THREE.Float32BufferAttribute(emit, 1));
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  geom.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  geom.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+  geom.setAttribute('aPaint', new THREE.Float32BufferAttribute(A, 1));
+  geom.setAttribute('aEmit', new THREE.Float32BufferAttribute(E, 1));
+  geom.setIndex(index);
   geom.computeBoundingSphere();
   return geom;
 }
 
 export const CAR_TYPES = [
-  { id: 'sedan', base: 'taxi', skipHex: [0xffe066], length: 4.5, width: 1.9 },
+  { id: 'sedan', base: 'taxi', options: { hideTaxiSign: true }, length: 4.5, width: 1.9 },
   { id: 'taxi', base: 'taxi', length: 4.5, width: 1.9 },
   { id: 'coupe', base: 'supercar', length: 4.6, width: 2.05 },
   { id: 'police', base: 'police', length: 4.7, width: 1.96 },
@@ -116,7 +150,7 @@ export function createCarMaterial(uniforms, matOpts = {}) {
 export function createCarMeshes(capacity, uniforms) {
   const baseMat = createCarMaterial(uniforms);
   return CAR_TYPES.map((t) => {
-    const geom = flattenVehicle(t.base, { skipHex: t.skipHex || [] });
+    const geom = flattenVehicle(t.base, t.options);
     const iPaint = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
     const iBrake = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
     iPaint.setUsage(THREE.DynamicDrawUsage);

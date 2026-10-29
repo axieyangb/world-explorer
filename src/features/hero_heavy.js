@@ -6,8 +6,14 @@
 // object-space position, so colour borders stay crisp whatever the tessellation. Every part is baked
 // into its parent's space and merged per material, and the merged geometry is cached per type.
 // Local frame matches entities.js: +Z forward, +X right, +Y up, tyre contact at y = 0.
+// options.lod builds the low-detail traffic version: the helpers below drop their tessellation while LOD is
+// set, the Kit leaves out interior and tiny parts, and liveries are baked into a vertex colour attribute.
 import * as THREE from '../../vendor/three.module.js';
 import { materials } from './hero_vehicles.js';
+
+// True only while a low-detail build runs (builds are synchronous).
+let LOD = false;
+const lo = (hi, low) => (LOD ? low : hi);
 
 // ---------------------------------------------------------------------------------------------------
 // Geometry helpers
@@ -92,6 +98,7 @@ function extrudeGroup(geo, which) {
 
 // Box with rounded edges and corners (radius r, s segments per 45 degrees).
 function rbox(w, h, d, r, s = 3) {
+  if (LOD) { if (r < 0.025) return new THREE.BoxGeometry(w, h, d); s = 1; }
   r = Math.max(1e-4, Math.min(r, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4));
   const N = 2 * s + 1;
   const g = new THREE.BoxGeometry(w, h, d, N, N, N);
@@ -145,6 +152,7 @@ function poly(pts, shape = new THREE.Shape()) {
 
 // Extrude a shape drawn in the (z, y) side plane across x, centred on x = 0, with rounded edges.
 function prismX(shape, width, { bevel = 0.04, segs = 3, curve = 10, crease = 0.6 } = {}) {
+  if (LOD) { segs = 1; curve = Math.max(3, Math.ceil(curve / 2)); }
   const bt = Math.min(bevel, width / 2 - 0.001);
   const depth = Math.max(0.001, width - 2 * bt);
   const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: bevel > 0, bevelThickness: bt, bevelSize: bevel, bevelOffset: -bevel, bevelSegments: segs, curveSegments: curve });
@@ -154,6 +162,7 @@ function prismX(shape, width, { bevel = 0.04, segs = 3, curve = 10, crease = 0.6
 }
 // Same, but the shape lies in the (x, y) front plane and is extruded along z (depth centred on z = 0).
 function prismZ(shape, depth, { bevel = 0.02, segs = 2, curve = 10, crease = 0.6 } = {}) {
+  if (LOD) { segs = 1; curve = Math.max(3, Math.ceil(curve / 2)); }
   const bt = Math.min(bevel, depth / 2 - 0.001);
   const d = Math.max(0.001, depth - 2 * bt);
   const g = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: bevel > 0, bevelThickness: bt, bevelSize: bevel, bevelOffset: -bevel, bevelSegments: segs, curveSegments: curve });
@@ -173,14 +182,15 @@ function flipWinding(geo, negate = true) {
 // Thin slab from a shape drawn in a local (u, v) frame, placed with origin o and axes u, v; its
 // thickness grows along u x v (outwards).
 function slab(shape, thick, o, u, v, { bevel = 0.006, segs = 1 } = {}) {
-  const g = new THREE.ExtrudeGeometry(shape, { depth: Math.max(0.0005, thick - 2 * Math.min(bevel, thick / 2.2)), bevelEnabled: bevel > 0, bevelThickness: Math.min(bevel, thick / 2.2), bevelSize: bevel, bevelOffset: -bevel, bevelSegments: segs, curveSegments: 8 });
+  if (LOD) bevel = 0;
+  const g = new THREE.ExtrudeGeometry(shape, { depth: Math.max(0.0005, thick - 2 * Math.min(bevel, thick / 2.2)), bevelEnabled: bevel > 0, bevelThickness: Math.min(bevel, thick / 2.2), bevelSize: bevel, bevelOffset: -bevel, bevelSegments: segs, curveSegments: lo(8, 3) });
   const U = new THREE.Vector3(...u).normalize(), V = new THREE.Vector3(...v).normalize(), W = U.clone().cross(V).normalize();
   g.applyMatrix4(new THREE.Matrix4().makeBasis(U, V, W).setPosition(o[0], o[1], o[2]));
   return creased(g, 0.7);
 }
 // Flat shape (no thickness) in a (u, v) frame facing u x v.
 function flat(shape, o, u, v, curve = 8) {
-  const g = new THREE.ShapeGeometry(shape, curve);
+  const g = new THREE.ShapeGeometry(shape, lo(curve, Math.min(curve, 4)));
   const U = new THREE.Vector3(...u).normalize(), V = new THREE.Vector3(...v).normalize(), W = U.clone().cross(V).normalize();
   g.applyMatrix4(new THREE.Matrix4().makeBasis(U, V, W).setPosition(o[0], o[1], o[2]));
   return g;
@@ -197,6 +207,7 @@ function fitUV(geo) {
 
 // Cylinder along an axis ('x' | 'y' | 'z').
 function cyl(r0, r1, len, axis = 'y', seg = 16, open = false) {
+  if (LOD) seg = Math.max(6, Math.round(seg / 3));
   const g = new THREE.CylinderGeometry(r1, r0, len, seg, 1, open);
   if (axis === 'x') g.rotateZ(-Math.PI / 2);
   if (axis === 'z') g.rotateX(Math.PI / 2);
@@ -204,6 +215,7 @@ function cyl(r0, r1, len, axis = 'y', seg = 16, open = false) {
 }
 // Lathe of [radius, axial] points around an axis; axial runs along +axis.
 function lathe(pts, axis = 'x', seg = 32) {
+  if (LOD) seg = Math.max(8, Math.round(seg / 3));
   const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
   if (axis === 'x') g.rotateZ(-Math.PI / 2);
   if (axis === 'z') g.rotateX(Math.PI / 2);
@@ -211,11 +223,13 @@ function lathe(pts, axis = 'x', seg = 32) {
 }
 // Tube through 3D points.
 function tube(pts, r, seg = 24, rs = 8) {
+  if (LOD) { seg = Math.max(3, Math.ceil(seg / 3)); rs = Math.max(4, rs / 2); }
   const c = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)), false, 'catmullrom', 0.2);
   return new THREE.TubeGeometry(c, seg, r, rs, false);
 }
 // Straight bar between two points.
 function bar(a, b, r, rs = 8) {
+  if (LOD) rs = Math.min(rs, 5);
   const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
   const g = new THREE.CylinderGeometry(r, r, A.distanceTo(B), rs, 1, false);
   g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize())));
@@ -227,8 +241,13 @@ function bar(a, b, r, rs = 8) {
 // Kit: builders record parts per (node, material); instantiate() turns the record into meshes. The
 // record holds only geometry and plain data, so it is cached per vehicle type.
 // ---------------------------------------------------------------------------------------------------
+// Left out of low-detail builds: cabin furniture, see-through lenses and domes, lettering decals.
+const LOD_DROP = new Set(['interior', 'seat', 'seatFab', 'lining', 'floor', 'pole', 'lens', 'dome', 'word', 'wordM']);
+const _bs = new THREE.Sphere();
+
 class Kit {
   constructor() {
+    this.lod = LOD;
     this.nodes = [['chassis', 'group', [0, 0, 0], [0, 0, 0]]];
     this.parts = new Map();
     this.singles = [];
@@ -240,6 +259,17 @@ class Kit {
   }
   node(name, parent, p = [0, 0, 0], r = [0, 0, 0]) { this.nodes.push([name, parent, p, r]); }
   add(mat, geo, node = 'chassis') {
+    if (this.lod) {
+      if (!geo.boundingSphere) geo.computeBoundingSphere();
+      _bs.copy(geo.boundingSphere);
+      // A clear lens over a front lamp becomes the lit lamp face (the bulbs inside are too small to keep).
+      if (mat === 'lens' && _bs.center.z > 1) mat = 'head';
+      if (LOD_DROP.has(mat)) return geo;
+      if (_bs.radius < 0.045 && mat !== 'head' && mat !== 'tail' && mat !== 'drl') return geo; // bolts, nuts, seams
+      // White lamps on the back are reversing lamps and red ones on the nose are tow hooks: unlit in traffic.
+      if (mat === 'head' && _bs.center.z < -1) mat = 'reverse';
+      if (mat === 'tail' && _bs.center.z > 1) mat = 'redOff';
+    }
     const k = node + '|' + mat;
     let l = this.parts.get(k);
     if (!l) this.parts.set(k, (l = []));
@@ -248,7 +278,7 @@ class Kit {
   }
   one(mat, geo, opts = {}) { this.singles.push({ node: 'chassis', ...opts, mat, geo }); }
   wheel(set, p, side, steer = false) { this.wheels.push({ set, p, side, steer }); }
-  light(opts) { this.lights.push(opts); }
+  light(opts) { if (!this.lod) this.lights.push(opts); }
   finish() {
     const merged = [];
     for (const [k, list] of this.parts) { const [node, mat] = k.split('|'); merged.push([node, mat, merge(list)]); }
@@ -332,6 +362,7 @@ diffuseColor.rgb = col; }`);
   };
   m.customProgramCacheKey = () => 'livery-' + key;
   m.userData.uAlt = uAlt;
+  m.userData.paintWeight = 0; // traffic keeps the livery colours (baked by lodLivery)
   return envd(m);
 }
 
@@ -414,6 +445,7 @@ function heavyMaterials(spec) {
 // Lathed tyre with sidewall bulge and three tread grooves; `lugs` adds off-road tread blocks.
 function tyreGeo(R, tw, rimR, { lugs = 0, seg = 48 } = {}) {
   const h = tw / 2, g = 0.012;
+  if (LOD) return lathe([[rimR * 0.99, h * 0.82], [R - 0.05, h], [R, h * 0.6], [R, -h * 0.6], [R - 0.05, -h], [rimR * 0.99, -h * 0.82]], 'x', 42);
   const prof = [[rimR * 0.99, -h * 0.82], [rimR + (R - rimR) * 0.35, -h * 1.0], [R - 0.05, -h * 0.98], [R - 0.012, -h * 0.9], [R, -h * 0.74],
     [R, -h * 0.42], [R - g, -h * 0.4], [R - g, -h * 0.3], [R, -h * 0.28], [R, -h * 0.06], [R - g, -h * 0.04], [R - g, h * 0.04], [R, h * 0.06],
     [R, h * 0.28], [R - g, h * 0.3], [R - g, h * 0.4], [R, h * 0.42], [R, h * 0.74], [R - 0.012, h * 0.9], [R - 0.05, h * 0.98], [rimR + (R - rimR) * 0.35, h * 1.0], [rimR * 0.99, h * 0.82]];
@@ -440,6 +472,15 @@ function truckWheelSet({ R, tw, rimR, dual = 0, paint = 'light', lugs = 0, nuts 
   const parts = [];
   const one = (x0, outer) => {
     parts.push(['tyre', xf(tyreGeo(R, tw, rimR, { lugs }), [x0, 0, 0])]);
+    if (LOD) {
+      // Low detail: a flat disc in the wheel colour (or the cover's main piece) and a dark hub.
+      if (!outer) return;
+      const fx = x0 + tw * 0.36;
+      if (cover) { parts.push(cover(fx)[0]); return; }
+      parts.push([paint, xf(new THREE.CircleGeometry(rimR, 14), [fx, 0, 0], [0, Math.PI / 2, 0])]);
+      parts.push(['rubber', xf(new THREE.CircleGeometry(rimR * 0.36, 8), [fx + 0.004, 0, 0], [0, Math.PI / 2, 0])]);
+      return;
+    }
     // rim barrel + flange lip
     parts.push(['rim', xf(cyl(rimR * 0.97, rimR * 0.97, tw * 0.9, 'x', 32, true), [x0, 0, 0])]);
     const lip = new THREE.TorusGeometry(rimR, 0.014, 6, 36); lip.rotateY(Math.PI / 2);
@@ -493,6 +534,7 @@ SPECS.bus = {
     M.screen = envd(new THREE.MeshPhysicalMaterial({ color: 0x0b1218, metalness: 0.2, roughness: 0.03, transparent: true, opacity: 0.86, clearcoat: 1 }));
     M.sign = new THREE.MeshBasicMaterial({ map: ledTexture('42  CENTRAL') });
     M.sideSign = new THREE.MeshBasicMaterial({ map: ledTexture('42', 40) });
+    M.sign.userData.lodColor = M.sideSign.userData.lodColor = 0xd99a24; // flat LED colour in traffic
     M.pole = new THREE.MeshStandardMaterial({ color: 0xf5c400, roughness: 0.35, metalness: 0.3 });
     M.hub = M.rim;
   },
@@ -539,6 +581,7 @@ SPECS.bus = {
       const holes = [...panes.map(([z1, z0]) => [z0, z1, winB, winT])];
       if (side > 0) for (const [z0, z1] of doors) holes.push([z0 + 0.03, z1 - 0.03, 0.42, 2.82]);
       for (const [z0, z1, y0, y1] of holes) {
+        if (K.lod) break; // hidden behind the opaque traffic glass
         const ring = rrect(z1 - z0, y1 - y0, 0.07, (z0 + z1) / 2, (y0 + y1) / 2);
         ring.holes.push(rrPath(z1 - z0 - 0.002, y1 - y0 - 0.002, 0.068, (z0 + z1) / 2, (y0 + y1) / 2));
         const t = new THREE.ExtrudeGeometry(ring, { depth: 0.06, bevelEnabled: false, curveSegments: 8 });
@@ -548,6 +591,10 @@ SPECS.bus = {
       // bonded glazing: black frit border, glass panes flush with the skin
       for (const [z1, z0] of panes) {
         const zc = (z0 + z1) / 2, wz = z1 - z0, hy = winT - winB, yc = (winB + winT) / 2;
+        if (K.lod) { // one dark pane covering glass and frit border
+          K.add('glass', flat(rrect(wz + 0.07, hy + 0.07, 0.1, k * zc, yc), [x + side * 0.003, 0, 0], [0, 0, k], [0, 1, 0]));
+          continue;
+        }
         const frame = rrect(wz + 0.07, hy + 0.07, 0.1, k * zc, yc);
         frame.holes.push(rrPath(wz - 0.1, hy - 0.1, 0.05, k * zc, yc));
         K.add('gloss', slab(frame, 0.012, [x, 0, 0], [0, 0, k], [0, 1, 0]));
@@ -566,7 +613,7 @@ SPECS.bus = {
         K.add('gloss', slab(leaf, 0.03, [hw - 0.01, 0, 0], [0, 0, -1], [0, 1, 0]));
         K.add('glass', slab(rrect(wz - 0.1, 2.16, 0.04, -lz, 1.66), 0.008, [hw - 0.002, 0, 0], [0, 0, -1], [0, 1, 0], { bevel: 0.003 }));
         K.add('rubber', xf(rbox(0.02, 2.3, 0.03, 0.01, 1), [hw + 0.04, 1.62, zc]));
-        K.add('chrome', bar([hw - 0.2, 0.5, zc + s * 0.35], [hw - 0.2, 2.6, zc + s * 0.35], 0.018));
+        if (!K.lod) K.add('chrome', bar([hw - 0.2, 0.5, zc + s * 0.35], [hw - 0.2, 2.6, zc + s * 0.35], 0.018));
       }
       K.add('amber', xf(rbox(0.03, 0.06, 0.12, 0.012, 1), [hw + 0.03, 2.95, zc]));
     }
@@ -583,11 +630,11 @@ SPECS.bus = {
         z = Math.max(z, c1);
       }
       for (const az of [fA, rA]) {
-        const lip = new THREE.TorusGeometry(aR + 0.02, 0.028, 6, 32, Math.PI * 1.08);
+        const lip = new THREE.TorusGeometry(aR + 0.02, 0.028, lo(6, 3), lo(32, 12), Math.PI * 1.08);
         lip.rotateZ(-Math.PI * 0.04); lip.rotateY(s > 0 ? Math.PI / 2 : -Math.PI / 2);
         K.add('rubber', xf(lip, [s * (hw + 0.01), aY, az]));
         // wheel housing liner
-        const liner = new THREE.CylinderGeometry(aR - 0.01, aR - 0.01, 0.5, 24, 1, true, -Math.PI / 2, Math.PI);
+        const liner = new THREE.CylinderGeometry(aR - 0.01, aR - 0.01, 0.5, lo(24, 8), 1, true, -Math.PI / 2, Math.PI);
         liner.rotateZ(Math.PI / 2);
         K.add('under', flipWinding(xf(liner, [s * (hw - 0.25), aY, az])));
         K.add('under', xf(new THREE.PlaneGeometry(2 * aR, aR + 0.2), [s * (hw - 0.5), aY + (aR + 0.2) / 2 - 0.2, az], [0, s > 0 ? -Math.PI / 2 : Math.PI / 2, 0]));
@@ -596,30 +643,32 @@ SPECS.bus = {
       for (const mz of [4.4, 1.6, -0.9, -4.6]) K.add('amber', xf(rbox(0.02, 0.05, 0.1, 0.01, 1), [s * (hw + 0.012), 0.55, mz]));
     }
 
-    // Interior: floor, ceiling with light strips, seat rows, yellow grab poles
-    K.add('floor', xf(new THREE.PlaneGeometry(W - 0.14, L - 0.5), [0, 0.42, 0], [-Math.PI / 2, 0, 0]));
-    K.add('lining', xf(new THREE.PlaneGeometry(W - 0.14, L - 0.5), [0, 2.92, 0], [Math.PI / 2, 0, 0]));
-    K.add('lining', xf(new THREE.PlaneGeometry(W - 0.14, 2.6), [0, 1.7, -hl + 0.3]));
-    K.add('lining', xf(new THREE.PlaneGeometry(W - 0.14, 2.6), [0, 1.7, hl - 0.4], [0, Math.PI, 0]));
-    for (const s of [-1, 1]) K.add('lamp', xf(new THREE.PlaneGeometry(0.12, L - 1.2), [s * 0.62, 2.9, 0], [Math.PI / 2, 0, 0]));
-    const seatAt = (x, z, face = 1) => {
-      K.add('seatFab', xf(rbox(0.44, 0.1, 0.42, 0.04, 1), [x, 0.88, z]));
-      K.add('seatFab', xf(rbox(0.44, 0.56, 0.08, 0.04, 1), [x, 1.2, z - face * 0.22], [face * -0.12, 0, 0]));
-      K.add('grey', xf(rbox(0.42, 0.06, 0.08, 0.02, 1), [x, 1.5, z - face * 0.26]));
-      K.add('grey', xf(rbox(0.3, 0.42, 0.3, 0.04, 1), [x, 0.62, z]));
-    };
-    for (let z = 2.2; z > -4.6; z -= 0.82) {
-      if (z < 0.9 && z > -0.9) continue; // standing area opposite the centre door
-      for (const x of [-0.98, -0.52]) seatAt(x, z);
-      if (z < -1.0) for (const x of [0.52, 0.98]) seatAt(x, z);
+    if (!K.lod) {
+      // Interior: floor, ceiling with light strips, seat rows, yellow grab poles
+      K.add('floor', xf(new THREE.PlaneGeometry(W - 0.14, L - 0.5), [0, 0.42, 0], [-Math.PI / 2, 0, 0]));
+      K.add('lining', xf(new THREE.PlaneGeometry(W - 0.14, L - 0.5), [0, 2.92, 0], [Math.PI / 2, 0, 0]));
+      K.add('lining', xf(new THREE.PlaneGeometry(W - 0.14, 2.6), [0, 1.7, -hl + 0.3]));
+      K.add('lining', xf(new THREE.PlaneGeometry(W - 0.14, 2.6), [0, 1.7, hl - 0.4], [0, Math.PI, 0]));
+      for (const s of [-1, 1]) K.add('lamp', xf(new THREE.PlaneGeometry(0.12, L - 1.2), [s * 0.62, 2.9, 0], [Math.PI / 2, 0, 0]));
+      const seatAt = (x, z, face = 1) => {
+        K.add('seatFab', xf(rbox(0.44, 0.1, 0.42, 0.04, 1), [x, 0.88, z]));
+        K.add('seatFab', xf(rbox(0.44, 0.56, 0.08, 0.04, 1), [x, 1.2, z - face * 0.22], [face * -0.12, 0, 0]));
+        K.add('grey', xf(rbox(0.42, 0.06, 0.08, 0.02, 1), [x, 1.5, z - face * 0.26]));
+        K.add('grey', xf(rbox(0.3, 0.42, 0.3, 0.04, 1), [x, 0.62, z]));
+      };
+      for (let z = 2.2; z > -4.6; z -= 0.82) {
+        if (z < 0.9 && z > -0.9) continue; // standing area opposite the centre door
+        for (const x of [-0.98, -0.52]) seatAt(x, z);
+        if (z < -1.0) for (const x of [0.52, 0.98]) seatAt(x, z);
+      }
+      for (const z of [3.9, 2.0, 0.7, -0.7, -2.2, -3.8]) {
+        for (const x of [-0.28, 0.28]) K.add('pole', bar([x, 0.42, z], [x, 2.92, z], 0.018));
+      }
+      for (const x of [-0.3, 0.3]) K.add('pole', bar([x, 2.6, -4.6], [x, 2.6, 4.2], 0.016));
+      // Driver: seat and dashboard behind the windscreen
+      K.add('black', xf(rbox(2.2, 0.5, 0.5, 0.08, 2), [0, 1.0, hl - 0.45]));
+      seatAt(-0.7, hl - 1.2);
     }
-    for (const z of [3.9, 2.0, 0.7, -0.7, -2.2, -3.8]) {
-      for (const x of [-0.28, 0.28]) K.add('pole', bar([x, 0.42, z], [x, 2.92, z], 0.018));
-    }
-    for (const x of [-0.3, 0.3]) K.add('pole', bar([x, 2.6, -4.6], [x, 2.6, 4.2], 0.016));
-    // Driver: seat and dashboard behind the windscreen
-    K.add('black', xf(rbox(2.2, 0.5, 0.5, 0.08, 2), [0, 1.0, hl - 0.45]));
-    seatAt(-0.7, hl - 1.2);
 
     // Front: windscreen, destination display, lamps, bumper, wipers
     // The front face leans back 6 cm between y = 1.0 and the roof radius: glazing follows that plane.
@@ -696,6 +745,11 @@ SPECS.bus = {
     }
     K.exhausts.push([-0.85, 0.65, -hl - 0.05], [0.85, 0.65, -hl - 0.05], [-0.95, 3.2, -hl], [0.95, 3.2, -hl]);
     K.trails = [[-1.2, 0.3, -hl - 0.05], [1.2, 0.3, -hl - 0.05]];
+  },
+  // Same rule as the shader above: red skirt and roof-line stripe on white.
+  lodLivery: {
+    cuts: [[0, 1, 0, 1.0], [0, 1, 0, 2.86], [0, 1, 0, 2.93]],
+    alt: (x, y) => !(y < 1.0 || (y > 2.86 && y < 2.93)),
   },
 };
 
@@ -829,17 +883,19 @@ SPECS.cybertruck = {
       const band = prismX(poly(outer.map(([z, y]) => [z, y])), 0.08, { bevel: 0.012, segs: 1, crease: 0.5 });
       for (const s of [-1, 1]) K.add('plastic', xf(band.clone(), [s * (W + 0.025), 0, 0]));
     }
-    // Interior behind the glass: dark tub, seats, dash and a square yoke
-    K.add('interior', xf(new THREE.BoxGeometry(1.86, 0.9, 2.3), [0, 1.0, 0.15]));
-    for (const [x, z] of [[-0.42, 0.45], [0.42, 0.45]]) {
-      K.add('seat', xf(rbox(0.52, 0.12, 0.5, 0.05, 2), [x, 0.82, z]));
-      K.add('seat', xf(rbox(0.52, 0.66, 0.12, 0.05, 2), [x, 1.16, z - 0.26], [-0.2, 0, 0]));
+    if (!K.lod) {
+      // Interior behind the glass: dark tub, seats, dash and a square yoke
+      K.add('interior', xf(new THREE.BoxGeometry(1.86, 0.9, 2.3), [0, 1.0, 0.15]));
+      for (const [x, z] of [[-0.42, 0.45], [0.42, 0.45]]) {
+        K.add('seat', xf(rbox(0.52, 0.12, 0.5, 0.05, 2), [x, 0.82, z]));
+        K.add('seat', xf(rbox(0.52, 0.66, 0.12, 0.05, 2), [x, 1.16, z - 0.26], [-0.2, 0, 0]));
+      }
+      K.add('seat', xf(rbox(1.5, 0.12, 0.5, 0.05, 2), [0, 0.82, -0.55]));
+      K.add('seat', xf(rbox(1.5, 0.6, 0.12, 0.05, 2), [0, 1.14, -0.82], [-0.25, 0, 0]));
+      K.add('black', xf(rbox(1.8, 0.12, 0.45, 0.04, 2), [0, 1.18, 1.05], [0.25, 0, 0]));
+      K.add('lamp', xf(rbox(0.42, 0.25, 0.012, 0.01, 1), [0, 1.33, 0.98], [-0.35, 0, 0]));
+      K.add('black', xf(rbox(0.34, 0.2, 0.03, 0.03, 2), [-0.42, 1.24, 0.85], [-0.35, 0, 0]));
     }
-    K.add('seat', xf(rbox(1.5, 0.12, 0.5, 0.05, 2), [0, 0.82, -0.55]));
-    K.add('seat', xf(rbox(1.5, 0.6, 0.12, 0.05, 2), [0, 1.14, -0.82], [-0.25, 0, 0]));
-    K.add('black', xf(rbox(1.8, 0.12, 0.45, 0.04, 2), [0, 1.18, 1.05], [0.25, 0, 0]));
-    K.add('lamp', xf(rbox(0.42, 0.25, 0.012, 0.01, 1), [0, 1.33, 0.98], [-0.35, 0, 0]));
-    K.add('black', xf(rbox(0.34, 0.2, 0.03, 0.03, 2), [-0.42, 1.24, 0.85], [-0.35, 0, 0]));
     // One long windscreen wiper parked at the base of the glass
     K.add('black', xf(rbox(1.55, 0.018, 0.03, 0.008, 1), [-0.05, 1.32, 1.26], [-0.42, 0, 0.02]));
     // Small camera-style mirrors at the A-pillar base
@@ -888,6 +944,39 @@ function archedProfile(pts, bottom, arches) {
 }
 // Strobe lens: its own mesh so updateVehicleEffects can recolour and pulse it.
 function strobe(K, phase, geo, p, color) { K.one(null, geo, { phase, p, color }); }
+
+// Low-detail livery decal: convex polygons in a 2D (u, v) frame placed by to(u, v) -> [x, y, z], facing
+// `normal`, all in one baked colour.
+function decal(polys, to, normal, color) {
+  const pos = [], nor = [], col = [], c = new THREE.Color(color);
+  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), n = new THREE.Vector3(...normal);
+  for (const poly of polys) {
+    if (poly.length < 3) continue;
+    const pts = poly.map(([u, v]) => to(u, v));
+    for (let i = 1; i < pts.length - 1; i++) {
+      let tri = [pts[0], pts[i], pts[i + 1]];
+      A.fromArray(tri[0]); B.fromArray(tri[1]).sub(A); C.fromArray(tri[2]).sub(A);
+      if (B.cross(C).dot(n) < 0) tri = [tri[0], tri[2], tri[1]];
+      for (const p of tri) { pos.push(...p); nor.push(...normal); col.push(c.r, c.g, c.b); }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+// Clip a convex polygon to the half-plane a u + b v >= c.
+function clipPoly(poly, a, b, c) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const dp = a * p[0] + b * p[1] - c, dq = a * q[0] + b * q[1] - c;
+    if (dp >= 0) out.push(p);
+    if (dp * dq < 0) { const f = dp / (dp - dq); out.push([p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f]); }
+  }
+  return out;
+}
 
 // ===== Ambulance: van cab + paramedic box body, Battenburg sides, red/white strobes ====================
 SPECS.ambulance = {
@@ -994,12 +1083,14 @@ SPECS.ambulance = {
     for (const ax of [-0.4, 0.4]) K.add('black', xf(cyl(0.006, 0.01, 0.3, 'y', 6), [ax, 2.85, 0.2]));
     // Underbody, cab interior
     K.add('under', xf(new THREE.BoxGeometry(1.5, 0.2, 5.4), [0, 0.5, 0]));
-    K.add('interior', xf(new THREE.BoxGeometry(1.9, 1.1, 1.3), [0, 1.65, 1.45]));
-    for (const x of [-0.45, 0.45]) {
-      K.add('seat', xf(rbox(0.5, 0.12, 0.5, 0.05, 2), [x, 1.2, 1.2]));
-      K.add('seat', xf(rbox(0.5, 0.7, 0.12, 0.05, 2), [x, 1.6, 0.96], [-0.15, 0, 0]));
+    if (!K.lod) {
+      K.add('interior', xf(new THREE.BoxGeometry(1.9, 1.1, 1.3), [0, 1.65, 1.45]));
+      for (const x of [-0.45, 0.45]) {
+        K.add('seat', xf(rbox(0.5, 0.12, 0.5, 0.05, 2), [x, 1.2, 1.2]));
+        K.add('seat', xf(rbox(0.5, 0.7, 0.12, 0.05, 2), [x, 1.6, 0.96], [-0.15, 0, 0]));
+      }
+      K.add('black', xf(rbox(1.9, 0.25, 0.4, 0.06, 2), [0, 1.35, 2.05]));
     }
-    K.add('black', xf(rbox(1.9, 0.25, 0.4, 0.06, 2), [0, 1.35, 2.05]));
 
     // Emergency lighting: front light bar on the box brow, corner beacons, side and rear flashers, grille
     // flashers. Phase A pulses red, phase B white.
@@ -1019,6 +1110,22 @@ SPECS.ambulance = {
       strobe(K, s > 0 ? 'B' : 'A', rbox(0.04, 0.12, 0.08, 0.015, 1), [s * 1.05, 0.95, 2.62], 0xff1122);
     }
     K.light({ color: 0xff1e2e, dist: 26, decay: 1.5, p: [0, 3.05, 0.2] });
+    if (K.lod) {
+      // Battenburg: red checks (0.3 m) in two rows on the box sides; red chevrons on the rear below 1.66 m.
+      const red = 0xc8101e, checks = [];
+      for (let i = 0; i < 14; i++) for (let j = 0; j < 2; j++) {
+        if ((i + j) % 2 === 0) continue;
+        const z0 = -3.05 + i * 0.3, z1 = Math.min(0.86, z0 + 0.3);
+        if (z1 > z0) checks.push([[z0, 1.02 + j * 0.3], [z1, 1.02 + j * 0.3], [z1, 1.32 + j * 0.3], [z0, 1.32 + j * 0.3]]);
+      }
+      for (const s of [-1, 1]) K.one('decal', decal(checks, (z, y) => [s * 1.134, y, z], [s, 0, 0], red));
+      const stripes = [];
+      for (let k = 2; k < 12; k++) {
+        const poly = clipPoly(clipPoly([[0, 0.6], [1.1, 0.6], [1.1, 1.66], [0, 1.66]], 1, 1, (k + 0.5) / 2.2), -1, -1, -(k + 1) / 2.2);
+        if (poly.length >= 3) stripes.push(poly);
+      }
+      for (const s of [-1, 1]) K.one('decal', decal(stripes, (ax, y) => [s * ax, y, -hl - 0.004], [0, 0, -1], red));
+    }
 
     // Wheels: single front, twin rear, steel rims with hub caps
     const cap = (fx) => [['grey', xf(lathe([[0.2, 0], [0.19, 0.02], [0.08, 0.05], [0.001, 0.055]], 'x', 28), [fx, 0, 0])]];
@@ -1027,6 +1134,16 @@ SPECS.ambulance = {
     for (const s of [-1, 1]) { K.wheel('front', [s * 0.86, R, fA], s, true); K.wheel('rear', [s * 0.86, R, rA], s); }
     K.exhausts.push([-0.72, 0.42, -hl - 0.1], [0.72, 0.42, -hl - 0.1]);
     K.trails = [[-0.95, 2.6, -hl - 0.05], [0.95, 2.6, -hl - 0.05]];
+  },
+  // Same rule as the shader above for the cab waist band and the roof band; the Battenburg checks and rear
+  // chevrons are added as decal quads by build() (cutting the big side faces into checks costs far more).
+  lodLivery: {
+    cuts: [
+      ...[1.0, 1.3].map((y) => [0, 1, 0, y, { ax: [0.9, 2], z: [0.6, 4] }]),
+      ...[-0.965, 0.965].map((x) => [1, 0, 0, x, { y: [0.95, 1.35], z: [0.6, 4] }]),
+      ...[2.42, 2.52].map((y) => [0, 1, 0, y, { z: [-4, 0.9] }]),
+    ],
+    alt: (x, y, z) => (y > 1.0 && y < 1.3 && Math.abs(x) >= 0.965 && z > 0.86) || (z <= 0.86 && y > 2.42 && y < 2.52),
   },
 };
 
@@ -1108,7 +1225,7 @@ SPECS.tow_truck = {
     K.add('chrome', xf(rbox(2.36, 0.3, 0.24, 0.06, 2), [0, 0.62, 3.25]));
     K.add('black', xf(rbox(1.0, 0.06, 0.04, 0.02, 1), [0, 0.62, 3.375]));
     K.add('plate', xf(rbox(0.5, 0.12, 0.01, 0.01, 1), [0, 0.64, 3.38]));
-    for (const s of [-1, 1]) K.add('tail', xf(new THREE.TorusGeometry(0.06, 0.02, 6, 12, Math.PI * 1.3), [s * 0.6, 0.48, 3.33], [0, Math.PI / 2, 0]));
+    for (const s of [-1, 1]) K.add('tail', xf(new THREE.TorusGeometry(0.06, 0.02, lo(6, 4), lo(12, 6), Math.PI * 1.3), [s * 0.6, 0.48, 3.33], [0, Math.PI / 2, 0]));
     // Roof: marker lamps and the amber light bar (phase A / B modules)
     for (let i = 0; i < 5; i++) K.add('amber', xf(rbox(0.07, 0.04, 0.05, 0.015, 1), [-0.3 + i * 0.15, 2.58, 1.33]));
     K.add('black', xf(rbox(1.7, 0.08, 0.34, 0.03, 2), [0, 2.6, 0.8]));
@@ -1129,7 +1246,7 @@ SPECS.tow_truck = {
         K.add('chrome', xf(rbox(0.03, 0.04, 0.14, 0.012, 1), [s * 1.17, 1.12, z1 - 0.15]));
       }
       // rubber arch lip and mud flap
-      const lip = new THREE.TorusGeometry(0.64, 0.03, 6, 28, Math.PI * 1.02);
+      const lip = new THREE.TorusGeometry(0.64, 0.03, lo(6, 3), lo(28, 12), Math.PI * 1.02);
       lip.rotateZ(-0.01); lip.rotateY(Math.PI / 2);
       K.add('rubber', xf(lip, [s * 1.165, 0.46, rA]));
       K.add('rubber', xf(rbox(0.5, 0.45, 0.02, 0.02, 1), [s * 0.86, 0.38, rA - 0.75]));
@@ -1171,10 +1288,10 @@ SPECS.tow_truck = {
     K.add('hazard', xf(rbox(0.1, 0.24, 0.2, 0.03, 2), [0, -0.76, 0]), 'hook');
     K.add('steel', xf(cyl(0.07, 0.07, 0.11, 'x', 18), [0, -0.76, 0]), 'hook');
     K.add('steel', xf(cyl(0.025, 0.025, 0.14, 'y', 8), [0, -0.94, 0]), 'hook');
-    const hook = new THREE.TorusGeometry(0.09, 0.028, 8, 20, Math.PI * 1.45);
+    const hook = new THREE.TorusGeometry(0.09, 0.028, lo(8, 4), lo(20, 8), Math.PI * 1.45);
     K.add('steel', xf(hook, [0, -1.1, 0], [0, Math.PI / 2, Math.PI * 0.6]), 'hook');
     // Interior through the windows: seats, dash, wheel
-    K.add('interior', xf(new THREE.BoxGeometry(2.0, 0.9, 1.25), [0, 1.98, 0.98]));
+    if (!K.lod) K.add('interior', xf(new THREE.BoxGeometry(2.0, 0.9, 1.25), [0, 1.98, 0.98]));
     // Underbody tray and axles
     K.add('under', xf(new THREE.BoxGeometry(1.0, 0.3, 1.2), [0, 0.6, 2.4]));
 
@@ -1412,21 +1529,94 @@ SPECS.tank = {
 };
 
 // ---------------------------------------------------------------------------------------------------
+// Low-detail livery: cut the paint geometry along the colour borders (planes n.p = d, each optionally
+// limited to triangles overlapping a box on x, |x| (ax), y, z), then colour each triangle by the spec's
+// rule at its centroid. Returns a non-indexed geometry with a `color` attribute.
+function bakeLivery(geo, liv, base, alt) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  const P = g.attributes.position.array, Nn = g.attributes.normal.array;
+  let tris = [];
+  for (let t = 0; t < P.length; t += 9) {
+    const tri = [];
+    for (let k = 0; k < 9; k += 3) tri.push([P[t + k], P[t + k + 1], P[t + k + 2], Nn[t + k], Nn[t + k + 1], Nn[t + k + 2]]);
+    tris.push(tri);
+  }
+  const lerp = (a, b, f) => a.map((v, i) => v + (b[i] - v) * f);
+  const overlaps = (tri, box) => {
+    if (!box) return true;
+    for (const [key, i, abs] of [['x', 0, false], ['ax', 0, true], ['y', 1, false], ['z', 2, false]]) {
+      const r = box[key];
+      if (!r) continue;
+      let mn = Infinity, mx = -Infinity;
+      for (const v of tri) { const c = abs ? Math.abs(v[i]) : v[i]; mn = Math.min(mn, c); mx = Math.max(mx, c); }
+      if (mx < r[0] || mn > r[1]) return false;
+    }
+    return true;
+  };
+  for (const [nx, ny, nz, d, box] of liv.cuts) {
+    const len = Math.hypot(nx, ny, nz), out = [];
+    for (const tri of tris) {
+      if (!overlaps(tri, box)) { out.push(tri); continue; }
+      const sd = tri.map((v) => (nx * v[0] + ny * v[1] + nz * v[2]) / len - d / len);
+      const pos = sd.map((v) => v >= 0);
+      if (pos[0] === pos[1] && pos[1] === pos[2]) { out.push(tri); continue; }
+      const a = pos[0] !== pos[1] && pos[0] !== pos[2] ? 0 : pos[1] !== pos[0] && pos[1] !== pos[2] ? 1 : 2;
+      const b = (a + 1) % 3, c = (a + 2) % 3;
+      const A = tri[a], B = tri[b], C = tri[c];
+      const AB = lerp(A, B, sd[a] / (sd[a] - sd[b])), CA = lerp(C, A, sd[c] / (sd[c] - sd[a]));
+      out.push([A, AB, CA], [AB, B, C], [AB, C, CA]); // winding kept
+    }
+    tris = out;
+  }
+  const pos = [], nor = [], col = [];
+  const cBase = new THREE.Color(base), cAlt = new THREE.Color(alt), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  for (const tri of tris) {
+    e1.set(tri[1][0] - tri[0][0], tri[1][1] - tri[0][1], tri[1][2] - tri[0][2]);
+    e2.set(tri[2][0] - tri[0][0], tri[2][1] - tri[0][1], tri[2][2] - tri[0][2]);
+    if (e1.cross(e2).lengthSq() < 1e-14) continue;
+    const cx = (tri[0][0] + tri[1][0] + tri[2][0]) / 3, cy = (tri[0][1] + tri[1][1] + tri[2][1]) / 3, cz = (tri[0][2] + tri[1][2] + tri[2][2]) / 3;
+    const c = liv.alt(cx, cy, cz) ? cAlt : cBase;
+    for (const v of tri) {
+      const l = Math.hypot(v[3], v[4], v[5]) || 1;
+      pos.push(v[0], v[1], v[2]); nor.push(v[3] / l, v[4] / l, v[5] / l); col.push(c.r, c.g, c.b);
+    }
+  }
+  const outGeo = new THREE.BufferGeometry();
+  outGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  outGeo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  outGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return outGeo;
+}
+
 export const HEAVY_VEHICLE_IDS = new Set(Object.keys(SPECS));
 const REC_CACHE = new Map();
 
+// options.lod: low-detail traffic build (not cached: traffic flattens and disposes it once).
 export function buildHeavyVehicle(typeId, options = {}) {
   const spec = SPECS[typeId];
   if (!spec) throw new Error(`no heavy hero model for ${typeId}`);
   const M = heavyMaterials(spec);
   if (!M.hub) M.hub = M.chrome;
   spec.mats(M);
-  let rec = REC_CACHE.get(typeId);
+  if (M.paint.userData.paintWeight == null) M.paint.userData.paintWeight = 1;
+  const lod = !!options.lod;
+  let rec = lod ? null : REC_CACHE.get(typeId);
   if (!rec) {
-    const K = new Kit();
-    spec.build(K);
-    rec = K.finish();
-    REC_CACHE.set(typeId, rec);
+    LOD = lod;
+    try {
+      const K = new Kit();
+      spec.build(K);
+      rec = K.finish();
+    } finally { LOD = false; }
+    if (!lod) REC_CACHE.set(typeId, rec);
+  }
+  if (lod) {
+    M.reverse = new THREE.MeshStandardMaterial({ color: 0xdfe3e6, roughness: 0.3 });
+    M.redOff = new THREE.MeshStandardMaterial({ color: 0xa00c12, roughness: 0.4 });
+    M.decal = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+    if (spec.lodLivery) {
+      for (const m of rec.merged) if (m[1] === 'paint') { const old = m[2]; m[2] = bakeLivery(old, spec.lodLivery, M.paint.color, M.paint.userData.uAlt.value); old.dispose(); }
+    }
   }
   if (options.paintColor != null) M.paint.color.set(options.paintColor);
   const out = instantiate(rec, M, typeId);
