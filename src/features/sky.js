@@ -23,6 +23,10 @@ export function createSkyMaterial() {
     uCloudDark: { value: new THREE.Color(0x8a96a3) },
     uFogMix: { value: 0.0 },
     uFogColor: { value: new THREE.Color(0xbfd8ec) },
+    // [ground] horizon haze: display-space colour of fully fogged terrain (scene fog is applied after tone mapping),
+    // so the distant ground, the haze band and the sky meet without a seam
+    uHazeColor: { value: new THREE.Color(0xbfd8ec) },
+    uHaze: { value: 0.0 },
     uTime: { value: 0.0 },
     // [aurora] intensity (already x night darkness), xz unit vector toward the arc, arc ground distance (km)
     uAurora: { value: 0.0 },
@@ -59,6 +63,8 @@ export function createSkyMaterial() {
       uniform vec3 uCloudDark;
       uniform float uFogMix;
       uniform vec3 uFogColor;
+      uniform vec3 uHazeColor;
+      uniform float uHaze;
       uniform float uTime;
       uniform float uAurora;
       uniform vec2 uAuroraDir;
@@ -182,15 +188,19 @@ export function createSkyMaterial() {
           vec2 cuv = dir.xz / (max(y, 0.0) + 0.09) * 0.55 + vec2(uTime * 0.006, uTime * 0.002);
           float n = fbm(cuv);
           float cov = smoothstep(1.02 - uCloudCover, 1.28 - uCloudCover * 0.9, n + 0.12);
-          cov *= smoothstep(-0.02, 0.10, y);
+          cov *= smoothstep(0.0, 0.16, y); // [ground] the deck thins into the horizon haze instead of ending on a line
           float shade = fbm(cuv * 1.7 + 4.0);
           vec3 cc = mix(uCloudDark, uCloudLit, clamp(0.25 + shade * 0.9 - cov * 0.35, 0.0, 1.0));
           cc += uSunColor * pow(sunDot, 6.0) * 0.45 * uSunIntensity * (1.0 - cov * 0.6);
           col = mix(col, cc, cov * 0.96);
         }
 
+        // [ground] Aerial perspective: towards the horizon the sky fades into the same haze the fog paints on the far
+        // terrain; below the horizon (past the world's edge) there is only haze.
+        float hzK = exp(-max(y, 0.0) * 13.0) * (1.0 - 0.35 * smoothstep(0.0, 0.25, y));
+        col = mix(col, uHazeColor, clamp(hzK, 0.0, 1.0) * uHaze);
         if (y < 0.0) {
-          col = mix(col, uGroundColor, clamp(-y * 4.0, 0.0, 1.0));
+          col = mix(col, uHaze > 0.0 ? uHazeColor : uGroundColor, clamp(-y * 4.0, 0.0, 1.0));
         }
 
         col = mix(col, uFogColor, uFogMix * (1.0 - 0.3 * smoothstep(0.0, 0.8, y)));

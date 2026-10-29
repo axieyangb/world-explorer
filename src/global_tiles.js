@@ -1,5 +1,7 @@
 import { STYLE_24_KEYS } from "./wfc/wfc_archetypes.js";
 import { extractLandcoverPolys } from "./features/vegetation_extract.js"; // [feature/vegetation]
+import { buildOverviewGround } from "./features/ground_cover.js"; // [ground]
+import { INFILL_MAX } from "./features/infill_buildings.js"; // [ground]
 import { waterwayWidth } from "./features/waterways.js"; // [terrain-roads]
 import { extractPlaceFeatures } from "./features/places_extract.js"; // feature/places
 import { extractRailFeatures } from "./features/rail_extract.js"; // [feature/rail-transit]
@@ -1113,9 +1115,13 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       }
     }
   }
+  // [ground] Dense districts (Shibuya, SF, Copacabana) map 1-2.5k footprints per km^2: the 420 highest-scoring get the
+  // detailed facade build, the rest come back flagged (tuple[13] = 1) as plain infill blocks (features/infill_buildings.js)
+  // instead of being dropped, which left whole blocks empty.
   if (buildings.length > 420) {
     buildings.sort((a, b) => b.score - a.score);
-    buildings.length = 420;
+    if (buildings.length > 420 + INFILL_MAX) buildings.length = 420 + INFILL_MAX;
+    for (let i = 420; i < buildings.length; i++) buildings[i].tuple[13] = 1;
   }
   for (let i = 0; i < buildings.length; i++) {
     buildings[i] = buildings[i].tuple;
@@ -1643,7 +1649,30 @@ export async function buildGlobalOverviewFromTiles(worldOrigin) {
     subways,
     stations: [],
     skyline: [],
+    ground: buildOverviewGround(tiles, toWorldXZ), // [ground] coarse land use for the horizon terrain
   };
+}
+
+/**
+ * [ground] Coarse land-use grid for the horizon terrain: from the overview when it was built from tiles, otherwise
+ * (prebuilt Beijing overview JSON) from a fresh read of the z12 tiles.
+ */
+export async function horizonGroundFor(overview, worldOrigin) {
+  if (overview && overview.ground) return overview.ground;
+  if (!worldOrigin) return null;
+  const { centerLat, centerLon, mPerDegLat, mPerDegLon } = worldOrigin;
+  const z = 12, spanM = 16000.0;
+  const [tx0, ty0] = latLonToTileXY(centerLat + spanM / mPerDegLat, centerLon - spanM / mPerDegLon, z);
+  const [tx1, ty1] = latLonToTileXY(centerLat - spanM / mPerDegLat, centerLon + spanM / mPerDegLon, z);
+  const proms = [];
+  for (let tx = Math.min(tx0, tx1); tx <= Math.max(tx0, tx1); tx++) {
+    for (let ty = Math.min(ty0, ty1); ty <= Math.max(ty0, ty1); ty++) proms.push(fetchDecodedMvtTile(z, tx, ty, { cache: false }));
+  }
+  const tiles = await Promise.all(proms);
+  const toWorldXZ = (lat, lon) => [(lon - centerLon) * mPerDegLon, (centerLat - lat) * mPerDegLat];
+  const grid = buildOverviewGround(tiles, toWorldXZ);
+  if (overview) overview.ground = grid;
+  return grid;
 }
 
 /**

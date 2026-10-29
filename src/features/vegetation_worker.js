@@ -781,6 +781,7 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
     const [kind, outer, holes, meta] = polys[p];
     const style = LC_STYLE[kind];
     if (!style || !outer) continue;
+    if (kind <= 4) continue; // [ground] residential/commercial/industrial/institution ground is the terrain's (ground_cover.js)
 
     // 3D Hillside Steps (`LC_STEPS` is a polyline `[x0, z0, x1, z1, ...]`)
     if (kind === LC_STEPS) {

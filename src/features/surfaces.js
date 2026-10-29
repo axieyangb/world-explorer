@@ -496,6 +496,116 @@ function patchGrass(mat, key) {
   );
 }
 
+// [ground] Urban ground between buildings, driven by the terrain's land-use info (uv = built, flavour; see
+// features/ground_cover.js): irregular ~15 m lots of paving, concrete, parking asphalt, gravel and worn soil, with
+// lawns and garden beds only where the flavour says residential. Fades to the per-vertex average with distance.
+// Installed after patchGrass so it runs first: green lawns then get the grass grain, paved lots never do.
+const URBAN_GROUND = `
+{
+  float gBuilt = clamp(vGroundInfo.x, 0.0, 1.0);
+  float gCamD = length(vAtmoWorld - cameraPosition);
+  float gFade = 1.0 - smoothstep(700.0, 2400.0, gCamD);
+  if (gBuilt > 0.004 && gFade > 0.0) {
+    float gFlav = clamp(vGroundInfo.y, -1.0, 1.0);
+    float gRes = max(gFlav, 0.0), gInd = max(-gFlav, 0.0), gDense = 1.0 - gRes - gInd;
+    vec2 wp = vAtmoWorld.xz;
+    float fpw = length(fwidth(wp));
+    // lots: ~19 m cells on a domain-warped grid with per-row offsets (cheap, and never lines up into a ruled grid)
+    vec2 q = wp / vec2(19.0, 15.0) + (vec2(atmoNoise(wp * 0.017), atmoNoise(wp * 0.017 + 7.1)) - 0.5) * 0.9;
+    q.x += atmoHash(vec2(floor(q.y), 4.7)) * 0.9;
+    vec2 lid = floor(q);
+    vec2 qf = fract(q);
+    float edgeD = min(min(qf.x, 1.0 - qf.x) * 19.0, min(qf.y, 1.0 - qf.y) * 15.0); // metres to the lot border
+    float lh = atmoHash(lid + 0.71);
+    float lt = atmoHash(lid + 3.33);
+    // material shares by flavour: lawn, garden, soil, gravel, asphalt, concrete, (rest) paving
+    float pLawn = 0.32 * gRes;
+    float pGarden = 0.14 * gRes;
+    float pSoil = 0.07 * gDense + 0.08 * gRes + 0.05 * gInd;
+    float pGravel = 0.26 * gInd + 0.02 * gDense;
+    float pAsph = 0.24 * gDense + 0.12 * gRes + 0.29 * gInd;
+    float pConc = 0.36 * gDense + 0.14 * gRes + 0.38 * gInd;
+    float a0 = pLawn, a1 = a0 + pGarden, a2 = a1 + pSoil, a3 = a2 + pGravel, a4 = a3 + pAsph, a5 = a4 + pConc;
+    float g1 = clamp(1.0 - fpw * 4.0, 0.0, 1.0), g2 = clamp(1.0 - fpw * 18.0, 0.0, 1.0);
+    float n1 = atmoNoise(wp * 0.13 + lid), n2 = atmoNoise(wp * 0.9);
+    vec3 c;
+    if (lh < a0) {
+      // lawn: soft mowing stripes
+      vec2 sd = vec2(cos(lt * 6.28), sin(lt * 6.28));
+      float stripe = step(0.5, fract(dot(wp, sd) / 1.6));
+      c = vec3(0.32, 0.46, 0.21) * (0.9 + 0.2 * lt) * (1.0 + (stripe - 0.5) * 0.07 * g1) * (0.92 + 0.16 * n1);
+    } else if (lh < a1) {
+      // garden: shrub clumps over mulched beds
+      float sh = smoothstep(0.42, 0.6, atmoNoise(wp * 0.45 + lid * 3.0));
+      c = mix(vec3(0.40, 0.33, 0.24), vec3(0.20, 0.33, 0.15) * (0.85 + 0.3 * n2), sh);
+    } else if (lh < a2) {
+      // worn, compacted soil
+      c = vec3(0.46, 0.40, 0.31) * (0.88 + 0.2 * n1) * (1.0 + (n2 - 0.5) * 0.18 * g1);
+    } else if (lh < a3) {
+      // gravel yard
+      float sp = atmoHash(floor(wp * 3.0));
+      c = vec3(0.50, 0.48, 0.45) * (0.92 + 0.12 * n1) * (1.0 + (sp - 0.5) * 0.3 * g2);
+    } else if (lh < a4) {
+      // parking asphalt with painted bays
+      c = vec3(0.31, 0.32, 0.33) * (0.93 + 0.14 * n1);
+      if (lt > 0.35) {
+        float ang = floor(lt * 4.0) * 1.5708 + atmoHash(lid + 9.0) * 0.4;
+        vec2 ax = vec2(cos(ang), sin(ang));
+        float u = dot(wp, ax), v = dot(wp, vec2(-ax.y, ax.x));
+        float ww = max(0.06, fpw);
+        float bay = (1.0 - smoothstep(0.0, ww, abs(fract(u / 2.6) - 0.5) * 2.6 - 1.2)) * step(0.5, fract(v / 11.0)) * (0.06 / ww);
+        c = mix(c, vec3(0.72, 0.72, 0.68), clamp(bay, 0.0, 1.0) * 0.75 * g1);
+      }
+    } else if (lh < a5) {
+      // poured concrete slabs with saw-cut joints and stains
+      vec2 e = abs(fract(wp / 3.6) - 0.5) * 3.6;
+      float ww = max(0.02, fpw);
+      float jt = (1.0 - smoothstep(1.8 - ww, 1.8, max(e.x, e.y))) ;
+      c = vec3(0.53, 0.52, 0.49) * (0.93 + 0.1 * lt) * (1.0 - 0.18 * (1.0 - jt) * g1);
+      c *= 1.0 - 0.14 * smoothstep(0.6, 0.85, atmoNoise(wp * 0.25 + 4.0));
+    } else {
+      // paving flags
+      vec2 e = abs(fract(wp / 0.9) - 0.5) * 0.9;
+      float ww = max(0.01, fpw);
+      float jt = 1.0 - smoothstep(0.45 - ww, 0.45, max(e.x, e.y));
+      float th = atmoHash(floor(wp / 0.9) + lid);
+      c = mix(vec3(0.57, 0.54, 0.50), vec3(0.52, 0.51, 0.49), step(0.5, lt)) * (1.0 + (th - 0.5) * 0.12 * g2);
+      c *= 1.0 - 0.2 * (1.0 - jt) * g2;
+    }
+    // lot borders: hedges between gardens, kerbs and walls elsewhere
+    float ew = max(0.45, fpw * 1.5);
+    float border = (1.0 - smoothstep(0.0, ew, edgeD)) * g1;
+    vec3 bc = mix(vec3(0.6, 0.58, 0.55), vec3(0.19, 0.30, 0.15), step(0.55, gRes + (lt - 0.5) * 0.4));
+    c = mix(c, bc, border * 0.8);
+    // neighbourhood-scale grime / sun bleaching
+    c *= 0.92 + 0.16 * atmoNoise(wp * 0.011 + 3.7);
+    diffuseColor.rgb = mix(diffuseColor.rgb, c, gBuilt * gFade);
+  }
+  if (gBuilt > 0.004 && gFade < 1.0) {
+    // far city: block-scale mottling so the distant urban carpet is not one flat tone
+    vec2 wq = vAtmoWorld.xz;
+    float m = atmoNoise(wq * 0.0045) * 0.6 + atmoNoise(wq * 0.017 + 2.3) * 0.4;
+    diffuseColor.rgb *= 1.0 + (m - 0.5) * 0.28 * gBuilt * (1.0 - gFade);
+  }
+}
+`;
+
+function patchUrbanGround(mat) {
+  chainCompile(
+    mat,
+    (shader) => {
+      // vAtmoWorld + atmoNoise/atmoHash come from patchGrass on the same material
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vGroundInfo;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvGroundInfo = uv;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vGroundInfo;')
+        .replace('#include <color_fragment>', `#include <color_fragment>\n${URBAN_GROUND}`);
+    },
+    '-urban-ground-1'
+  );
+}
+
 function patchWetGround(mat, amount, key) {
   chainCompile(
     mat,
@@ -521,6 +631,7 @@ export function installSurfaceShaders(mats) {
   // [street-props]
   if (mats.terrainMat) patchGrass(mats.terrainMat, '-grass-1');
   if (mats.parkMat) patchGrass(mats.parkMat, '-grass-1');
+  if (mats.terrainMat) patchUrbanGround(mats.terrainMat); // [ground] after patchGrass so it runs first
   if (mats.streetCurbMat) patchKerb(mats.streetCurbMat);
   if (mats.streetLineMat) patchLines(mats.streetLineMat, true, 'atmo-lines-1');
   if (mats.markingMat) patchLines(mats.markingMat, true, 'atmo-lines-1');

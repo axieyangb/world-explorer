@@ -20,6 +20,8 @@ import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
 const VIADUCT_H = 2.6; // [elevated-roads] lifted non-bridge ways above this many metres are built as viaducts
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
+import { chunkGroundSampler } from './features/ground_cover.js'; // [ground]
+import { appendInfillBuilding } from './features/infill_buildings.js'; // [ground]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
 import { buildPoiVenues, poiVenuesTransfer, createPoiVenueMats } from './features/poi_venues.js'; // [venues-poi]
@@ -933,7 +935,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         isPointInSunkenTrench = createSunkenTrenchChecker(data.roads || []);
 
         // 0. 3D Heightfield Terrain Mesh for this 1km x 1km chunk (with open-trench cutouts for sunken roads)
-        subGroups.terrain.add(buildChunkTerrainMesh(ox, oz, mats.terrainMat, isPointInSunkenTrench));
+        subGroups.terrain.add(buildChunkTerrainMesh(ox, oz, mats.terrainMat, isPointInSunkenTrench, null, chunkGroundSampler(data))); // [ground] land-use ground colour
 
         // 1. Parks & Landuse Plazas + Water Bodies (conforming to 3D terrain)
         buildParksAndWater(data, ox, oz, subGroups.terrain, mats, isPointInWater, isPointInSunkenTrench);
@@ -2862,6 +2864,10 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const b = buildings[curIdx];
         const i = curIdx;
         curIdx++;
+        if (b[13]) { // [ground] plain infill block past the detailed-build budget
+          appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders });
+          continue;
+        }
 
         const [osmId, name, rawBtype, isPart, rawH, rawMinH, lvl, style, , rawColour, , flatOuter, flatHoles] = b;
         if (!flatOuter || flatOuter.length < 6) continue;
