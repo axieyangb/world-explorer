@@ -22,6 +22,7 @@ const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalk
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
+import { buildPoiVenues, poiVenuesTransfer, createPoiVenueMats } from './features/poi_venues.js'; // [venues-poi]
 setVenueTerrainSampler(getBeijingTerrainElevation); // [release-6-integ] breaks environment<->venues import cycle
 import { addPlacesInfo } from './features/places_info/pi_worker.js'; // places-info
 import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
@@ -777,6 +778,7 @@ export function createSharedMaterials() {
     vegetationMat,
     railMat,
     facilityMat,
+    ...createPoiVenueMats(wfcNightUniforms), // [venues-poi]
   };
 }
 
@@ -1011,6 +1013,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
       }
 
       if (stage === 3) {
+        root.userData.poiVenues = buildPoiVenues({ data, ox, oz, groups: subGroups, mats, buildingEntities, roadSegments, isPointInWater, colliders: buildingColliders }); // [venues-poi] before places: claims its POIs
         // 5. 3D Vegetation (Street Boulevard Trees, Park Cypress/Pine & Western Hills Forests)
         // [feature/vegetation] Landcover ground mesh + instanced street/park/forest trees (replaces legacy buildVegetation)
         root.userData.vegInstances = buildVegetationLayer({
@@ -3721,6 +3724,7 @@ const WORKER_DUMMY_MATS = {
   vegetationMat: { name: 'vegetationMat' },
   facilityMat: { name: 'facilityMat' },
   streetDecalMat: { name: 'streetDecalMat' },
+  poiGlassMat: { name: 'poiGlassMat' }, poiGlowMat: { name: 'poiGlowMat' }, // [venues-poi]
 };
 
 /**
@@ -3793,6 +3797,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       places: root.userData.places || null, // feature/places
       rail: root.userData.rail || null, // [feature/rail-transit]
       venues: root.userData.venues || null, // [venues]
+      poiVenues: poiVenuesTransfer(root.userData.poiVenues, transferSet), // [venues-poi]
       waterMask: waterMaskTransfer(root.userData.waterMask, transferSet), // fix/water
       deckSegments: root.userData.deckSegments || [], // fix/water
       roadGrid: roadGridTransfer(buildRoadGrid(root.userData.roadSegments, root.userData.deckSegments), transferSet), // fix/water
@@ -3871,6 +3876,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     places: payload.places || null, // feature/places
     rail: payload.rail || null, // [feature/rail-transit]
     venues: payload.venues || null, // [venues]
+    poiVenues: payload.poiVenues || null, // [venues-poi]
     waterMask: payload.waterMask || null, // fix/water
     deckSegments: payload.deckSegments || [], // fix/water
     roadGrid: payload.roadGrid !== undefined ? payload.roadGrid : undefined, // fix/water (built lazily if absent)

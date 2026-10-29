@@ -42,6 +42,7 @@ import { StreetFeatures } from "./features/street_furniture.js"; // [feature/str
 import { StreetDetail } from "./features/street_detail.js"; // [feature/street-detail]
 import { PlacesSystem } from "./features/places.js"; // feature/places
 import { VenueRides } from "./features/venue_rides.js"; // [venues]
+import { PoiVenueSystem } from "./features/poi_venue_system.js"; // [venues-poi]
 import { PlacesInfo } from "./features/places_info/index.js"; // places-info
 import { HeliFlight } from "./features/heli_flight.js"; // feature/heli-gta
 import { KaijuMode } from "./features/kaiju/kaiju_mode.js"; // [kaiju]
@@ -518,6 +519,7 @@ class WorldExplorerApp {
     this.reflections = new ReflectionProbe(this.renderer, this.skyDome); // [hero-vehicles] live-sky reflections on the player's car
     this.nitroFx = new NitroFx(this); // [nitro-fx] boost flames, sparks, trails, speed lines, shake, audio
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
+    this.poiVenues = new PoiVenueSystem(this); // [venues-poi] gas stations, shops, supermarkets, car washes + gameplay
     this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
   }
@@ -1674,7 +1676,7 @@ class WorldExplorerApp {
       (this.keys.has("KeyA") || (!isTank && this.keys.has("ArrowLeft")) ? 1 : 0) -
       (this.keys.has("KeyD") || (!isTank && this.keys.has("ArrowRight")) ? 1 : 0);
     const handbrake = !isTank && this.keys.has("Space");
-    const isNitro = shiftPressed && throttle > 0;
+    const isNitro = shiftPressed && throttle > 0 && !(this.poiVenues && this.poiVenues.nitroEmpty); // [venues-poi] nitro tank
     this.nitroActive = isNitro;
 
     const mouseIdleSec = (performance.now() - this.lastMouseOrbitTime) * 0.001;
@@ -2976,6 +2978,7 @@ class WorldExplorerApp {
     if (this.satellites) this.satellites.update(dt); // [satellites]
     if (this.reflections) this.reflections.update(dt, [this.vehicleMesh, this.avatarMesh, this.heliMesh]); // [hero-vehicles]
     if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
+    if (this.poiVenues) this.poiVenues.update(dt); // [venues-poi]
     if (this.placesInfo) this.placesInfo.update(dt); // places-info
     if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
     this._updateHud();

@@ -622,11 +622,11 @@ export function computePlacesPayload(ctx) {
       placedFuel.push([cx, cz]);
       const gy = terrainY(cx, cz);
       const brandTint = [0xe63946, 0x2a9d8f, 0xf4a261, 0x1d4ed8][Math.floor(rng() * 4)];
-      push('gasStation', ox + cx, gy, oz + cz, rotY, 1, 1, 1, brandTint);
+      if (!q.venue) push('gasStation', ox + cx, gy, oz + cz, rotY, 1, 1, 1, brandTint); // [venues-poi] modelled by poi_venues.js
       const nmZh = '⛽ ' + (name || '加油站');
       const nmEn = '⛽ ' + (nameEn || name || 'Gas Station');
       geo.push([ox + cx, gy, oz + cz, 'fuel', 'fuel', nmZh, nmEn, ox + rqx, oz + rqz]);
-      if (labels.length < 360) labels.push([ox + cx, gy + 6.5, oz + cz, nmZh, nmEn, 1]);
+      if (labels.length < 360 && !q.venue) labels.push([ox + cx, gy + 6.5, oz + cz, nmZh, nmEn, 1]); // [venues-poi] no floating brand label
       continue;
     }
 
@@ -744,7 +744,7 @@ export function computePlacesPayload(ctx) {
       [px, pz] = pushOffRoad(px, pz);
       push('transit', ox + px, terrainY(px, pz), oz + pz, rng() * Math.PI * 2, 1, 1, 1, sub === 'subway' || sub === 'subway_entrance' ? 0x1f5fbf : 0x2f7d4a);
       labelY = terrainY(px, pz) + 4.4;
-    } else if (isStore) {
+    } else if (isStore && !q.venue) { // [venues-poi] claimed shops get a full storefront + sign instead
       // Nearest facade edge within 18 m
       let best = null;
       for (const B of blds) {
@@ -785,7 +785,7 @@ export function computePlacesPayload(ctx) {
       }
     }
 
-    if (name && (isTransit || isStore || cls === 'attraction' || cls === 'museum')) {
+    if (name && !q.venue && (isTransit || isStore || cls === 'attraction' || cls === 'museum')) { // [venues-poi]
       if (labels.length < 360) labels.push([ox + px, labelY, oz + pz, name, nameEn || name, isTransit ? 2 : cls === 'attraction' ? 1 : 0]);
     }
   }
