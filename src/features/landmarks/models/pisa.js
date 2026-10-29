@@ -21,22 +21,46 @@ function arcadeStorey(k, y0, h, R, n, seg, open) {
   k.color(MARBLE).cyl(0, y0, 0, R + 0.35, R + 0.35, 0.6, seg);
   // arch band at the top of the storey
   const bandH = open ? h * 0.28 : h * 0.22;
-  k.color(MARBLE).cyl(0, y0 + h - bandH, 0, R + 0.05, R + 0.05, bandH, seg, { caps: false });
+  if (!k.fine || !open || !n) k.color(MARBLE).cyl(0, y0 + h - bandH, 0, R + 0.05, R + 0.05, bandH, seg, { caps: false });
   if (!hi) return;
+  if (open && n && k.fine) {
+    // [lm-materials] real open arches: per bay an arched frame (outer face + soffit) springing from the capitals
+    const bw = 2 * (R + 0.05) * Math.sin(Math.PI / n), r = bw / 2 - 0.2, yS = y0 + h - bandH, yT = y0 + h, rise = Math.min(r, bandH * 0.75);
+    const ns = 8;
+    for (let i = 0; i < n; i++) {
+      const am = ((i + 0.5) / n) * Math.PI * 2;
+      k.push().translate(Math.cos(am) * (R + 0.05) * Math.cos(Math.PI / n), 0, Math.sin(am) * (R + 0.05) * Math.cos(Math.PI / n)).rotateY(-am - Math.PI / 2);
+      k.color(MARBLE);
+      const P = [];
+      for (let j = 0; j <= ns; j++) { const t = Math.PI * (1 - j / ns); P.push([Math.cos(t) * r, yS + Math.sin(t) * rise]); }
+      for (let j = 0; j < ns; j++) {
+        k.quadN([P[j][0], P[j][1], 0], [P[j + 1][0], P[j + 1][1], 0], [P[j + 1][0], yT, 0], [P[j][0], yT, 0], [0, 0, -1]);
+        k.quadN([P[j][0], P[j][1], 0], [P[j + 1][0], P[j + 1][1], 0], [P[j + 1][0], P[j + 1][1], 0.55], [P[j][0], P[j][1], 0.55], [-P[j][0] - P[j + 1][0], 2 * yS - P[j][1] - P[j + 1][1], 0]);
+      }
+      for (const sx of [-1, 1]) k.quadN([sx * r, yS, 0], [sx * bw / 2, yS, 0], [sx * bw / 2, yT, 0], [sx * r, yT, 0], [0, 0, -1]);
+      k.color(MARBLE_SH);
+      for (let j = 0; j < ns; j++) k.strut([P[j][0] * 1.12, yS + (P[j][1] - yS) * 1.12, -0.06], [P[j + 1][0] * 1.12, yS + (P[j + 1][1] - yS) * 1.12, -0.06], 0.12);
+      k.pop();
+    }
+  }
   // columns + arch heads
   const colH = h - bandH - 0.6;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
     const cx = Math.cos(a) * (R - 0.1), cz = Math.sin(a) * (R - 0.1);
-    k.color(MARBLE).cyl(cx, y0 + 0.6, cz, open ? 0.26 : 0.4, open ? 0.24 : 0.38, colH, 6, { caps: false });
-    k.color(MARBLE_DK).box(cx, y0 + 0.6 + colH - 0.35, cz, open ? 0.62 : 0.9, 0.35, open ? 0.62 : 0.9); // capital
+    const cr = open ? 0.26 : 0.4;
+    if (!k.fine) {
+      k.color(MARBLE).cyl(cx, y0 + 0.6, cz, cr, cr * 0.92, colH, 6, { caps: false });
+      k.color(MARBLE_DK).box(cx, y0 + 0.6 + colH - 0.35, cz, cr * 2.4, 0.35, cr * 2.4);
+    } else k.color(MARBLE).lathe(cx, y0 + 0.6, cz, [[cr * 1.45, 0], [cr * 1.45, 0.12], [cr * 1.15, 0.22], [cr, 0.32], [cr * 0.92, colH - 0.5], [cr * 1.05, colH - 0.42], [cr * 1.5, colH - 0.12], [cr * 1.5, colH]], 10, { caps: false });
+    if (k.fine) k.color(MARBLE_DK).box(cx, y0 + 0.6 + colH - 0.12, cz, cr * 3.2, 0.14, cr * 3.2); // abacus
     // dark arch void suggestion on the band (half-round)
     const am = a + Math.PI / n;
     const ax = Math.cos(am) * (R + 0.08), az = Math.sin(am) * (R + 0.08);
     const span = ((2 * Math.PI * R) / n) * 0.42;
     k.push().translate(ax, y0 + h - bandH, az).rotateY(-am + Math.PI / 2);
     k.color(open ? CORE_DK : MARBLE_SH);
-    const st = 6;
+    const st = open && k.fine ? 0 : 6;
     for (let s = 0; s < st; s++) {
       const t0 = (s / st) * Math.PI, t1 = ((s + 1) / st) * Math.PI;
       k.tri([0, 0, -0.02], [Math.cos(t1) * span, Math.sin(t1) * span * 0.9, -0.02], [Math.cos(t0) * span, Math.sin(t0) * span * 0.9, -0.02]);

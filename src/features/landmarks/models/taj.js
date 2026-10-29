@@ -41,33 +41,40 @@ function archPanel(k, x, y0, z, w, h, col) {
 /** One facade face: centred at local origin facing -Z, half-width hw. Built in the face frame. */
 function mainFace(k) {
   const hi = k.hi;
-  // pishtaq frame (projects 1.4 m, rises above the parapet)
-  k.color(MARBLE).box(0, PL, -28.3 - 0.7, 26, 31, 1.4);
-  archPanel(k, 0, PL, -29.45, 17, 24.5, RECESS);
+  // pishtaq: a 4 m deep iwan (stepped four-centred arch, door + grille at the back) in a frame that projects from
+  // the wall and rises above the parapet
+  const ZP = -28.3 - 4.0;
+  k.color(MARBLE).recessArch(0, PL, ZP, 17, 24.5, 4.0, hi ? 3 : 1, 13.4, {
+    frame: [-13, 13, PL + 31], back: hi ? "door" : "glass", rk: 0.62,
+    col: { face: MARBLE, side: MARBLE_DK, back: RECESS_DK, tymp: RECESS, fig: MARBLE_SH },
+  });
+  for (const sx of [-1, 1]) k.quadN([sx * 13, PL, ZP], [sx * 13, PL + 31, ZP], [sx * 13, PL + 31, -28.3], [sx * 13, PL, -28.3], [sx, 0, 0]);
+  k.color(MARBLE_DK).quadN([-13, PL + 31, ZP], [13, PL + 31, ZP], [13, PL + 31, -28.3], [-13, PL + 31, -28.3], [0, 1, 0]);
   if (hi) {
-    // calligraphy frame around the arch
+    // calligraphy frame (black marble inlay) around the arch: a band of short strokes
     k.color(INLAY);
-    k.box(0, PL + 26.6, -29.42, 21.5, 0.6, 0.1);
-    k.box(-10.5, PL, -29.42, 0.6, 27.2, 0.1);
-    k.box(10.5, PL, -29.42, 0.6, 27.2, 0.1);
-    // inner arch (door + window grille) inside the recess
-    archPanel(k, 0, PL, -29.5, 7.5, 12, RECESS_DK);
-    archPanel(k, 0, PL + 13.5, -29.5, 7.5, 8, RECESS_DK);
+    k.box(0, PL + 26.6, ZP - 0.02, 21.5, 0.9, 0.1);
+    k.box(-10.5, PL, ZP - 0.02, 0.9, 27.2, 0.1);
+    k.box(10.5, PL, ZP - 0.02, 0.9, 27.2, 0.1);
+    k.color(0x2b2622, "marble");
+    let q = k.fine ? 0 : 1e9;
+    if (k.fine) for (let x = -10.3; x < 10.3; x += 0.32) { const hh = 0.25 + ((q++ * 7919) % 11) / 30; k.box(x, PL + 26.85 + ((q % 3) - 1) * 0.08, ZP - 0.08, 0.08, hh, 0.06); }
+    if (k.fine) for (const sx of [-10.5, 10.5]) for (let y = PL + 0.6; y < PL + 26.4; y += 0.32) { const ww = 0.25 + ((q++ * 7919) % 11) / 30; k.box(sx, y, ZP - 0.08, ww, 0.08, 0.06); }
     // parapet crenellation on the pishtaq top
     k.color(MARBLE_DK);
-    for (let i = -6; i <= 6; i++) k.box(i * 2, PL + 31, -28.9, 1.0, 0.9, 0.6);
+    for (let i = -6; i <= 6; i++) k.box(i * 2, PL + 31, ZP + 0.4, 1.0, 0.9, 0.6);
     // slender guldasta pinnacles at the pishtaq corners
     for (const sx of [-13.2, 13.2]) {
-      k.color(MARBLE).cyl(sx, PL, -29.2, 0.75, 0.6, 33.6, 8);
-      k.color(MARBLE_DK).sphere(sx, PL + 34.3, -29.2, 0.9, 8, 4, 1.4);
-      k.color(GOLD).cyl(sx, PL + 35.3, -29.2, 0.12, 0.05, 1.4, 4);
+      k.color(MARBLE).cyl(sx, PL, ZP + 0.3, 0.75, 0.6, 33.6, 8);
+      k.color(MARBLE_DK).sphere(sx, PL + 34.3, ZP + 0.3, 0.9, 8, 4, 1.4);
+      k.color(GOLD).cyl(sx, PL + 35.3, ZP + 0.3, 0.12, 0.05, 1.4, 4);
     }
   }
   // flanking two-storey niches
   for (const sx of [-1, 1]) {
     const cx = sx * 20.5;
-    archPanel(k, cx, PL + 1.2, -28.35, 7.0, 10.8, RECESS);
-    archPanel(k, cx, PL + 14.0, -28.35, 7.0, 10.8, RECESS);
+    niche(k, cx, PL + 1.2, -28.3);
+    niche(k, cx, PL + 14.0, -28.3);
     if (hi) {
       k.color(INLAY).box(cx, PL + 12.9, -28.33, 9.6, 0.4, 0.1);
       k.color(INLAY).box(cx, PL + 25.6, -28.33, 9.6, 0.4, 0.1);
@@ -75,10 +82,23 @@ function mainFace(k) {
   }
 }
 
+/** Recessed arched niche (1.2 m deep) in a shallow projecting frame on the wall plane z (facing -Z). */
+function niche(k, cx, y0, z) {
+  if (!k.hi) { archPanel(k, cx, y0, z - 0.05, 7.0, 10.8, RECESS); return; }
+  const zf = z - 1.2;
+  k.color(MARBLE).recessArch(cx, y0, zf, 7.0, 10.8, 1.15, 2, 5.6, {
+    frame: [cx - 4.2, cx + 4.2, y0 + 11.6], back: "glass", rk: 0.62,
+    col: { face: MARBLE, side: MARBLE_DK, back: RECESS },
+  });
+  for (const sx of [-1, 1]) k.quadN([cx + sx * 4.2, y0, zf], [cx + sx * 4.2, y0 + 11.6, zf], [cx + sx * 4.2, y0 + 11.6, z], [cx + sx * 4.2, y0, z], [sx, 0, 0]);
+  k.color(MARBLE_DK).quadN([cx - 4.2, y0 + 11.6, zf], [cx + 4.2, y0 + 11.6, zf], [cx + 4.2, y0 + 11.6, z], [cx - 4.2, y0 + 11.6, z], [0, 1, 0]);
+  k.quadN([cx - 4.2, y0, zf], [cx + 4.2, y0, zf], [cx + 4.2, y0, z], [cx - 4.2, y0, z], [0, -1, 0]);
+}
+
 function chamferFace(k) {
   // chamfer face centre is at distance d along the diagonal; built facing -Z in its own frame
-  archPanel(k, 0, PL + 1.2, -0.05, 7.0, 10.8, RECESS);
-  archPanel(k, 0, PL + 14.0, -0.05, 7.0, 10.8, RECESS);
+  niche(k, 0, PL + 1.2, 0);
+  niche(k, 0, PL + 14.0, 0);
 }
 
 function minaret(k, x, z) {

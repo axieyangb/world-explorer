@@ -12,6 +12,7 @@ const TAU = Math.PI * 2;
 const INTACT0 = (197 / 360) * TAU, INTACT1 = (327 / 360) * TAU;
 
 export const lodDist = 1500;
+export const fineDist = 320; // [lm-materials] columns, archivolts and the ambulatory only up close
 export const glowStrength = 2.2;
 export const colliders = [
   { x: 0, z: -40, hw: 70, hd: 30, h: 48 },
@@ -66,11 +67,14 @@ function arcadeBay(k, w, y0, y1, t, ped, opts = {}) {
   k.color(opts.col || TRAV);
   const { r, yb, spring } = arcFace(k, F, w, y0, y1, 0, ped, n);
   if (hi || opts.inner) { k.color(opts.colIn || TRAV_DK); arcFace(k, G, w, y0, y1, t, ped, n); }
-  // shadowed vault seen through the arch (warm-lit at night)
-  k.glow(true).color(HOLE);
-  F(k, -r, r, yb, spring + r, t * 0.45);
-  if (hi) G(k, -r, r, yb, spring + r, t * 0.55);
-  k.glow(false);
+  // shadowed vault seen through the arch (warm-lit at night); the outer ring's arches are open onto the
+  // ambulatory behind them (opts.open: corridor() builds its vault and floor)
+  if (!opts.open || !k.fine) {
+    k.glow(true).color(HOLE);
+    F(k, -r, r, yb, spring + r, t * 0.45);
+    if (hi) G(k, -r, r, yb, spring + r, t * 0.55);
+    k.glow(false);
+  }
   if (hi) {
     // jambs + soffit
     k.color(TRAV_SH);
@@ -85,11 +89,71 @@ function arcadeBay(k, w, y0, y1, t, ped, opts = {}) {
   if (opts.orders) {
     // engaged half-column at the bay boundary + entablature
     k.color(TRAV_DK);
-    if (hi) k.cyl(-w / 2, y0, -0.15, 0.5, 0.46, y1 - y0 - 1.5, 6);
+    if (k.fine) column(k, -w / 2, y0 + ped, y1 - 1.5, opts.orders);
+    else if (hi) k.cyl(-w / 2, y0, -0.15, 0.5, 0.46, y1 - y0 - 1.5, 6);
     else k.box(-w / 2, y0, -0.3, 0.9, y1 - y0 - 1.5, 0.6);
-    k.color(TRAV).box(0, y1 - 1.5, -0.45, w + 0.15, 1.5, 0.9);
-    if (hi && ped > 0) k.color(TRAV_DK).box(0, y0, -0.3, w, 0.6, 0.6);
+    if (k.fine) {
+      // architrave / frieze / projecting cornice
+      k.color(TRAV).box(0, y1 - 1.5, -0.5, w + 0.15, 0.5, 1.0);
+      k.color(TRAV_DK).box(0, y1 - 1.0, -0.4, w + 0.15, 0.6, 0.8);
+      k.color(TRAV).box(0, y1 - 0.4, -0.75, w + 0.15, 0.4, 1.5);
+      if (ped > 0) {
+        // pedestal course under the order + plinth under each column
+        k.color(TRAV_DK).box(0, y0, -0.3, w, ped, 0.6);
+        k.color(TRAV).box(0, y0 + ped - 0.25, -0.38, w, 0.25, 0.76);
+        k.color(TRAV_DK).box(-w / 2, y0, -0.55, 1.5, ped, 1.1);
+      }
+      // archivolt (moulded band round the arch), impost blocks and keystone
+      k.color(TRAV_SH);
+      const ra = r + 0.22, n2 = 8;
+      for (let j = 0; j < n2; j++) {
+        const a0 = Math.PI * (j / n2), a1 = Math.PI * ((j + 1) / n2);
+        k.strut([Math.cos(a0) * ra, spring + Math.sin(a0) * ra, -0.08], [Math.cos(a1) * ra, spring + Math.sin(a1) * ra, -0.08], 0.36);
+      }
+      k.color(TRAV_DK);
+      for (const sx of [-1, 1]) k.box(sx * (r + 0.3), spring - 0.35, -0.1, 0.75, 0.35, 0.2);
+      k.color(TRAV).taper(0, spring + ra - 0.35, -0.12, 0.5, 0.3, 0.75, 0.3, 0.75);
+    } else {
+      k.color(TRAV).box(0, y1 - 1.5, -0.45, w + 0.15, 1.5, 0.9);
+      if (hi && ped > 0) k.color(TRAV_DK).box(0, y0, -0.3, w, 0.6, 0.6);
+    }
   }
+}
+
+/** Engaged column on the bay boundary x: lathed base + shaft + order-specific capital ("tuscan" | "ionic" | "corinthian"). */
+function column(k, x, y0, y1, order) {
+  const h = y1 - y0, seg = 10, z = -0.05;
+  k.push().translate(x, y0, z);
+  const prof = [[0.72, 0], [0.72, 0.22], [0.6, 0.3], [0.64, 0.42], [0.54, 0.52], [0.52, 0.7], [0.45, h - 1.6], [0.5, h - 1.5]];
+  if (order === "tuscan") prof.push([0.5, h - 0.75], [0.66, h - 0.45], [0.7, h - 0.3], [0.7, h]);
+  else if (order === "ionic") prof.push([0.52, h - 0.8], [0.58, h - 0.5], [0.66, h - 0.42], [0.66, h]);
+  else prof.push([0.6, h - 0.75], [0.74, h - 0.35], [0.8, h - 0.3], [0.8, h]);
+  k.lathe(0, 0, 0, prof, seg, { caps: false });
+  if (order === "ionic") {
+    // volutes: a scroll either side of the capital
+    for (const sx of [-1, 1]) { k.push().translate(sx * 0.6, h - 0.55, -0.62).rotateX(Math.PI / 2); k.cyl(0, 0, 0, 0.22, 0.22, 0.4, 8); k.pop(); }
+  } else if (order === "corinthian") {
+    // acanthus: two rings of leaves round the bell
+    for (let i = 0; i < 6; i++) {
+      const a = -Math.PI * 0.05 - (i / 5) * Math.PI * 0.9;
+      const cx = Math.cos(a) * 0.56, cz = Math.sin(a) * 0.56;
+      k.box(cx, h - 1.45, cz, 0.22, 0.6, 0.18).box(cx * 1.08, h - 0.95, cz * 1.08, 0.2, 0.5, 0.16);
+    }
+  }
+  k.box(0, h, 0, 1.6, 0.18, 1.6); // abacus
+  k.pop();
+}
+
+/** Ambulatory between the outer ring (z = 0..t) and the second ring (z = d) in the bay frame: barrel vault + floor. */
+function corridor(k, w, y0, y1, t, d) {
+  const zc = (t + d) / 2, rv = (d - t) / 2, ys = y1 - 0.7 - rv, n = 6, x0 = -w / 2 - 0.02, x1 = w / 2 + 0.02;
+  k.color(TRAV_SH);
+  for (let j = 0; j < n; j++) {
+    const a0 = Math.PI * (j / n), a1 = Math.PI * ((j + 1) / n);
+    const z0 = zc + Math.cos(a0) * rv, q0 = ys + Math.sin(a0) * rv, z1 = zc + Math.cos(a1) * rv, q1 = ys + Math.sin(a1) * rv;
+    k.quad([x1, q0, z0], [x0, q0, z0], [x0, q1, z1], [x1, q1, z1]);
+  }
+  k.color(HYPO).quad([x0, y0 + 0.03, t], [x0, y0 + 0.03, d + 0.4], [x1, y0 + 0.03, d + 0.4], [x1, y0 + 0.03, t]);
 }
 
 function atticBay(k, w, t, i) {
@@ -97,12 +161,22 @@ function atticBay(k, w, t, i) {
   const y0 = Y[3], y1 = Y[4];
   k.color(TRAV).box(0, y0, t / 2, w + 0.05, y1 - y0, t);
   if (!hi) return;
-  // Corinthian pilaster, windows in alternate bays, corbels + cornice
-  k.color(TRAV_DK).box(-w / 2, y0, -0.15, 0.9, 12.4, 0.3);
-  if (i % 2 === 0) { k.glow(true).color(HOLE); F(k, -0.9, 0.9, y0 + 4.0, y0 + 6.6, -0.03); k.glow(false); }
+  // Corinthian pilaster (base, capital), windows in alternate bays, three corbels per bay for the velarium masts
+  // (with the sockets in the cornice above), stepped cornice
+  k.color(TRAV_DK).box(0, y0, -0.25, w + 0.1, 1.6, 0.5);
+  k.box(-w / 2, y0 + 1.6, -0.15, 0.9, 10.8, 0.3);
+  k.color(TRAV).box(-w / 2, y0 + 1.6, -0.25, 1.2, 0.35, 0.5).box(-w / 2, y0 + 11.3, -0.3, 1.25, 0.8, 0.6);
+  if (i % 2 === 0) {
+    k.glow(true).color(HOLE); F(k, -0.9, 0.9, y0 + 4.0, y0 + 6.6, -0.03); k.glow(false);
+    k.color(TRAV_SH).box(0, y0 + 3.85, -0.12, 2.2, 0.15, 0.24).box(0, y0 + 6.6, -0.12, 2.2, 0.15, 0.24);
+  }
   k.color(TRAV_SH);
-  for (const cx of [-w * 0.25, w * 0.25]) k.box(cx, y0 + 10.0, -0.25, 0.5, 0.6, 0.5);
-  k.color(TRAV_DK).box(0, y1 - 1.3, -0.35, w + 0.15, 1.3, 0.7);
+  for (const cx of [-w * 0.3, 0, w * 0.3]) k.taper(cx, y0 + 9.6, -0.3, 0.5, 0.6, 0.55, 0.75, 0.75, 0, -0.07);
+  k.color(TRAV_DK).box(0, y1 - 1.3, -0.35, w + 0.15, 0.7, 0.7);
+  k.color(TRAV).box(0, y1 - 0.6, -0.6, w + 0.15, 0.6, 1.2);
+  k.glow(true).color(HOLE);
+  for (const cx of [-w * 0.3, 0, w * 0.3]) k.box(cx, y1 - 0.02, -0.55, 0.35, 0.03, 0.35);
+  k.glow(false);
 }
 
 /** Brick buttress closing a broken end of the outer ring; from angle tb sweeping by dt (sign = direction). */
@@ -138,10 +212,11 @@ export function build(k) {
     // ---- outer ring (north side only)
     if (intact) {
       const w = bayFrame(k, t0, t1, 0);
-      arcadeBay(k, w, Y[0], Y[1], T1, 0, { orders: true });
-      arcadeBay(k, w, Y[1], Y[2], T1, 1.6, { orders: true });
-      arcadeBay(k, w, Y[2], Y[3], T1, 1.6, { orders: true });
+      arcadeBay(k, w, Y[0], Y[1], T1, 0, { orders: "tuscan", open: true });
+      arcadeBay(k, w, Y[1], Y[2], T1, 1.6, { orders: "ionic", open: true });
+      arcadeBay(k, w, Y[2], Y[3], T1, 1.6, { orders: "corinthian", open: true });
       atticBay(k, w, T1, i);
+      if (k.fine) for (let s = 0; s < 3; s++) corridor(k, w, Y[s], Y[s + 1], T1, OFF2 - 0.15);
       k.pop();
     }
     // ---- second ring (exposed where the outer ring fell)
@@ -150,8 +225,8 @@ export function build(k) {
       const exposed = !intact;
       const c = exposed ? TRAV_DK : TUFA;
       if (exposed || hi) {
-        arcadeBay(k, w, Y[0], Y[1], T2, 0, { col: c, colIn: TUFA, orders: exposed && hi });
-        arcadeBay(k, w, Y[1], Y[2], T2, 1.2, { col: c, colIn: TUFA, orders: exposed && hi });
+        arcadeBay(k, w, Y[0], Y[1], T2, 0, { col: c, colIn: TUFA, orders: exposed && hi && "tuscan" });
+        arcadeBay(k, w, Y[1], Y[2], T2, 1.2, { col: c, colIn: TUFA, orders: exposed && hi && "ionic" });
       } else {
         k.color(TUFA).box(0, 0, T2 / 2, w, Y[2], T2);
       }

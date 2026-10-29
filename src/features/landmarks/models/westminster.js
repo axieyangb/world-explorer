@@ -8,6 +8,7 @@ const GOLD = 0xd0a84e, SPIRE = 0x323e4a, DIAL = 0xfff9ea, HANDS = 0x18181a, FLAG
 const TAU = Math.PI * 2;
 
 export const lodDist = 1600;
+export const fineDist = 320; // [lm-materials] recessed window tracery only up close
 export const glowStrength = 0.9;
 
 export const colliders = [
@@ -34,15 +35,29 @@ function face(k, len, h, half, o) {
     k.box(x, 0, zf - 0.3, 0.8, h + 1.5, 0.6);
     if (o.pin !== false) k.pyramid(x, h + 1.5, zf - 0.3, 0.8, 0.8, 2.8);
   }
-  k.glow(false).color(WIN);
-  const zw = zf - 0.07, band = (h - 4) / rows;
-  for (let i = 0; i < n; i++) {
+  // [lm-materials] Perpendicular Gothic windows: recessed in moulded frames, two mullions, transoms; blind
+  // panelling (thin ribs) between the storeys
+  const band = (h - 4) / rows;
+  if (!k.fine) {
+    k.glow(false).color(WIN);
+    const zw = zf - 0.07;
+    for (let i = 0; i < n; i++) {
+      const xm = -len / 2 + (i + 0.5) * bay, ww = Math.min(bay * 0.44, 2.3);
+      for (let r = 0; r < rows; r++) {
+        const ya = 3 + r * band + band * 0.14, yb = ya + band * 0.56;
+        k.quad([xm + ww / 2, ya, zw], [xm - ww / 2, ya, zw], [xm - ww / 2, yb, zw], [xm + ww / 2, yb, zw]);
+        k.tri([xm + ww / 2, yb, zw], [xm - ww / 2, yb, zw], [xm, yb + ww * 0.5, zw]);
+      }
+    }
+  }
+  for (let i = 0; i < n && k.fine; i++) {
     const xm = -len / 2 + (i + 0.5) * bay, ww = Math.min(bay * 0.44, 2.3);
-    const xa = xm - ww / 2, xb = xm + ww / 2;
     for (let r = 0; r < rows; r++) {
-      const ya = 3 + r * band + band * 0.14, yb = ya + band * 0.56;
-      k.quad([xb, ya, zw], [xa, ya, zw], [xa, yb, zw], [xb, yb, zw]);
-      k.tri([xb, yb, zw], [xa, yb, zw], [xm, yb + ww * 0.5, zw]);
+      const ya = 3 + r * band + band * 0.14, hh = band * 0.56 + ww * 0.5;
+      k.glow(true).framedArch(xm, ya, zf, ww, hh, 0.35, 1, ww * 0.8, 0.22, { back: "glass", mullions: ww > 1.8 ? 2 : 1, rk: 0.7, col: { face: STONE, side: STONE_DK, back: WIN } });
+      k.color(STONE_DK);
+      const rib = band - hh - 0.5;
+      if (rib > 0.2) k.box(xm, ya + hh + 0.3, zf - 0.08, 0.12, rib, 0.16);
     }
   }
   k.glow(true).color(STONE).box(0, h, zf + 0.3, len, 1.1, 0.6); // parapet
@@ -94,26 +109,30 @@ function elizabeth(k, x, z) {
       k.glow(true).color(STONE_DK);
       for (let j = -2; j <= 2; j++) k.box(j * 2.3, 4, -6.12, 0.35, 47, 0.25);
       for (const y of [4, 15, 26, 37, 48]) k.box(0, y, -6.15, 12, 0.6, 0.3);
-      k.glow(false).color(WIN);
-      for (const y of [17, 28, 39]) for (const xm of [-1.15, 1.15]) lancet(k, xm, y, -6.2, 1.1, 5.2);
+      for (const y of [17, 28, 39]) for (const xm of [-1.15, 1.15]) {
+        if (!k.fine) { k.glow(false).color(WIN); lancet(k, xm, y, -6.2, 1.1, 5.2); continue; }
+        k.glow(true).framedArch(xm, y, -6.0, 1.1, 5.2, 0.4, 2, 0.75, 0.25, { back: "glass", mullions: 1, col: { face: STONE_DK, side: STONE, back: WIN } });
+      }
+      k.glow(false);
     }
     // clock stage
     k.glow(true).color(STONE).box(0, 52, 0, 13.4, 11, 13.4);
     k.glow(true).color(GOLD).box(0, 52.6, -6.75, 9.6, 9.8, 0.3);
     k.glow(true).color(DIAL);
-    disc(k, 0, 57.5, -6.95, 3.5, hi ? 32 : 12);
+    if (hi) k.roseWindow(0, 57.5, -7.22, 3.5, 0.3, 12, { frame: GOLD, glass: DIAL, tracery: HANDS }); // cast-iron dial tracery, opal glass
+    else disc(k, 0, 57.5, -6.95, 3.5, 12);
     if (hi) {
       k.glow(false).color(HANDS);
       // 10:08 — hour hand + minute hand + chapter ring dots
       const hand = (ang, len, wd) => {
         const dx = Math.sin(ang), dy = Math.cos(ang), px = -dy * wd, py = dx * wd;
-        k.quad2([px, 57.5 + py, -7.0], [-px, 57.5 - py, -7.0], [dx * len - px, 57.5 + dy * len - py, -7.0], [dx * len + px, 57.5 + dy * len + py, -7.0]);
+        k.quad2([px, 57.5 + py, -7.3], [-px, 57.5 - py, -7.3], [dx * len - px, 57.5 + dy * len - py, -7.3], [dx * len + px, 57.5 + dy * len + py, -7.3]);
       };
       hand(-((10 + 8 / 60) / 12) * TAU, 2.0, 0.14);
       hand(-(8 / 60) * TAU, 3.0, 0.09);
       for (let m = 0; m < 12; m++) {
         const a = (m / 12) * TAU;
-        k.box(Math.sin(a) * 3.15, 57.5 + Math.cos(a) * 3.15 - 0.2, -6.98, 0.18, 0.4, 0.05);
+        k.box(Math.sin(a) * 3.15, 57.5 + Math.cos(a) * 3.15 - 0.2, -7.3, 0.18, 0.4, 0.05);
       }
     }
     // belfry 63..72 with arcade
@@ -131,7 +150,8 @@ function elizabeth(k, x, z) {
   k.glow(true).color(GOLD);
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     k.cyl(x + sx * 6.6, 63, z + sz * 6.6, 0.75, 0.75, 8, hi ? 8 : 4);
-    k.cyl(x + sx * 6.6, 71, z + sz * 6.6, 0.95, 0, 5, hi ? 8 : 4);
+    if (hi) k.pinnacle(x + sx * 6.6, 71, z + sz * 6.6, 1.3, 5.5);
+    else k.cyl(x + sx * 6.6, 71, z + sz * 6.6, 0.95, 0, 5, 4);
   }
   // iron spire: steep pyramid, Ayrton lantern, upper spire, finial
   k.glow(false).color(SPIRE).taper(x, 72, z, 12.4, 12.4, 6.2, 6.2, 10);

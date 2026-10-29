@@ -90,17 +90,23 @@ function tower(k, tz) {
     k.box(0, y, tz - 7.6, 17, 0.6, 0.3); k.box(0, y, tz + 7.6, 17, 0.6, 0.3);
     k.box(-11.65, y, tz, 0.3, 0.6, 9); k.box(11.65, y, tz, 0.3, 0.6, 9);
   }
-  k.glow(false).color(WIN);
+  // [lm-materials] lancet windows set in moulded stone frames (recessed, glazed with leaded mullions)
+  const win = (xm, y, z, ww, hh) => k.glow(true).framedArch(xm, y, z, ww, hh, 0.45, 2, ww * 0.7, 0.35, {
+    back: "glass", mullions: 2, col: { face: STONE_DK, side: STONE, back: WIN },
+  });
   for (const a of [0, Math.PI]) {
     k.push().translate(0, 0, tz).rotateY(a);
-    for (const y of [29.5, 41.5]) for (const xm of [-4.5, -1.5, 1.5, 4.5]) lancet(k, xm, y, -7.56, 1.2, 4.2);
+    for (const y of [29.5, 41.5]) for (const xm of [-4.5, -1.5, 1.5, 4.5]) win(xm, y, -7.5, 1.3, 4.4);
     k.pop();
   }
   for (const a of [Math.PI / 2, -Math.PI / 2]) {
     k.push().translate(0, 0, tz).rotateY(a);
-    for (const y of [DECK + 3, 21, 29.5, 41.5]) for (const xm of [-2.2, 2.2]) lancet(k, xm, y, -11.56, 1.3, 4.6);
+    for (const y of [DECK + 3, 21, 29.5, 41.5]) for (const xm of [-2.2, 2.2]) win(xm, y, -11.5, 1.4, 4.8);
     k.pop();
   }
+  // pinnacles on the corners of the main roof cornice
+  k.glow(true).color(STONE_DK);
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) k.pinnacle(sx * 7.4, 51.2, tz + sz * 5.2, 0.9, 4.2);
   k.glow(false);
 }
 

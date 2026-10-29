@@ -34,37 +34,44 @@ function legLattice(k, sx, sz, y0, y1, levels, chord, diag) {
     const i = o - w;
     return [[sx * o, y, sz * o], [sx * i, y, sz * o], [sx * i, y, sz * i], [sx * o, y, sz * i]];
   };
+  lattice(k, ring, y0, y1, k.fine ? levels * 2 : levels, chord, diag);
+}
+
+function shaftLattice(k, y0, y1, levels) {
+  const ring = (y) => { const o = hw(y); return [[o, y, o], [-o, y, o], [-o, y, -o], [o, y, -o]]; };
+  lattice(k, ring, y0, y1, k.fine ? levels * 2 : levels, 1.25, 0.55);
+}
+
+const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+/**
+ * [lm-materials] Wrought-iron lattice between rings of 4 corners: each corner post is a laced box girder (four
+ * angle chords + zig-zag lacing), each face a double-X web with a centre post, horizontals at every level.
+ */
+function lattice(k, ring, y0, y1, levels, chord, diag) {
   let prev = ring(y0);
   for (let l = 1; l <= levels; l++) {
     const y = y0 + ((y1 - y0) * l) / levels;
     const cur = ring(y);
     const t = 1 - y / 330;
+    const ch = chord * (0.55 + 0.45 * t), dg = diag * (0.6 + 0.4 * t);
     for (let c = 0; c < 4; c++) {
       const n = (c + 1) % 4;
-      k.strut(prev[c], cur[c], chord * (0.55 + 0.45 * t));       // corner chords
-      if (k.hi) {
-        k.strut(prev[c], cur[n], diag * (0.6 + 0.4 * t));        // X bracing
-        k.strut(prev[n], cur[c], diag * (0.6 + 0.4 * t));
-        k.strut(cur[c], cur[n], diag * 0.8);                       // horizontals
-      }
-    }
-    prev = cur;
-  }
-}
-
-function shaftLattice(k, y0, y1, levels) {
-  const ring = (y) => { const o = hw(y); return [[o, y, o], [-o, y, o], [-o, y, -o], [o, y, -o]]; };
-  let prev = ring(y0);
-  for (let l = 1; l <= levels; l++) {
-    const y = y0 + ((y1 - y0) * l) / levels;
-    const cur = ring(y);
-    for (let c = 0; c < 4; c++) {
-      const n = (c + 1) % 4;
-      k.strut(prev[c], cur[c], 1.25);
-      if (k.hi) {
-        k.strut(prev[c], cur[n], 0.55);
-        k.strut(prev[n], cur[c], 0.55);
-        k.strut(cur[c], cur[n], 0.5);
+      if (k.fine) {
+        // corner girder: four angle chords round the corner line, laced on two faces
+        const o = ch * 0.38;
+        const off = [[o, o], [-o, o], [-o, -o], [o, -o]];
+        for (const [ox, oz] of off) k.strut([prev[c][0] + ox, prev[c][1], prev[c][2] + oz], [cur[c][0] + ox, cur[c][1], cur[c][2] + oz], ch * 0.3);
+        const sgn = l % 2 ? 1 : -1;
+        k.strut([prev[c][0] + o, prev[c][1], prev[c][2] - o * sgn], [cur[c][0] + o, cur[c][1], cur[c][2] + o * sgn], ch * 0.16);
+        k.strut([prev[c][0] - o * sgn, prev[c][1], prev[c][2] + o], [cur[c][0] + o * sgn, cur[c][1], cur[c][2] + o], ch * 0.16);
+        // face web: double X + centre post, and the level horizontal
+        const mp = mid(prev[c], prev[n]), mc = mid(cur[c], cur[n]);
+        k.strut(mp, mc, dg * 0.7);
+        k.strut(prev[c], mc, dg).strut(mp, cur[c], dg).strut(mp, cur[n], dg).strut(prev[n], mc, dg);
+        k.strut(cur[c], cur[n], dg * 0.8);
+      } else {
+        k.strut(prev[c], cur[c], ch);
+        if (k.hi) k.strut(prev[c], cur[n], dg).strut(prev[n], cur[c], dg).strut(cur[c], cur[n], dg * 0.8);
       }
     }
     prev = cur;
@@ -93,15 +100,25 @@ export function build(k) {
     // decorative arches on each face under the first platform
     for (let f = 0; f < 4; f++) {
       k.push().rotateY((f * Math.PI) / 2);
-      const pts = [];
-      for (let i = 0; i <= 16; i++) {
-        const t = i / 16;
+      // decorative arch: two curved booms 2.2 m apart laced by a zig-zag web, ornamental hangers up to the frieze
+      const pts = [], pin = [], N = k.fine ? 32 : 16;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
         const x = -37 + 74 * t;
         const y = 39 - 30 * Math.pow(Math.abs(2 * t - 1), 2.2);
         pts.push([x, y, -hw(y) + 1.0]);
+        pin.push([x, y + 2.2, -hw(y + 2.2) + 1.0]);
       }
-      k.tube(pts, 0.9, 5);
-      for (let i = 1; i < 16; i += 2) k.strut(pts[i], [pts[i][0], 55, -hw(55) + 1.0], 0.35);
+      k.tube(pts, 0.55, 6);
+      if (!k.fine) { for (let i = 1; i < N; i += 2) k.strut(pts[i], [pts[i][0], 55, -hw(55) + 1.0], 0.35); k.pop(); continue; }
+      k.tube(pin, 0.45, 6);
+      for (let i = 0; i < N; i++) k.strut(i % 2 ? pts[i] : pin[i], i % 2 ? pin[i + 1] : pts[i + 1], 0.22);
+      for (let i = 2; i < N - 1; i += 2) {
+        k.strut(pin[i], [pin[i][0], 55, -hw(55) + 1.0], 0.26);
+        if (i % 4 === 0) k.pipe([pin[i][0], (pin[i][1] + 55) / 2 - 0.6, -hw(48) + 0.9], [pin[i][0], (pin[i][1] + 55) / 2 + 0.6, -hw(48) + 0.9], 0.7, 8);
+      }
+      // the frieze girder under the first platform
+      k.strut([-37, 52, -hw(52) + 1.0], [37, 52, -hw(52) + 1.0], 1.1).strut([-37, 55, -hw(55) + 1.0], [37, 55, -hw(55) + 1.0], 0.8);
       k.pop();
     }
   } else {
@@ -154,7 +171,7 @@ export function build(k) {
 export function setup({ THREE, parts, group }) {
   const mains = parts("main");
   if (!mains.length) return null;
-  const host = mains[0]; // full-detail level
+  const host = group; // [lm-materials] on the LOD itself (not a level), so the bulbs twinkle at every distance
   const sets = [];
   const rnd = (() => { let s = 1234567; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
   for (let n = 0; n < 4; n++) {

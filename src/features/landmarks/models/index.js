@@ -2,6 +2,7 @@
 //   export function build(k: Kit)  -- required; model space metres, origin = ground centre, +Y up, front = -Z
 //   export const colliders = [{ x, z, hw, hd, h, rot? } | { x, z, r, h }]  -- local frame, h = metres above base
 //   export const lodDist = 1600; export const glowStrength = 2.2;  -- optional
+//   export const fineDist = 450;  -- optional [lm-materials]: range of the close-up level when build() reads k.fine
 //   export function setup({ THREE, group, parts, L, mats }) { return { update(dt, t, night, dist) {} } }  -- optional
 import * as m_liberty from "./liberty.js";
 import * as m_empire from "./empire.js";
