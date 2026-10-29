@@ -93,7 +93,8 @@ Touch controls appear automatically on touch devices; `?touch=1` or `?touch=0` f
 
 **URL options:** `?lat=…&lon=…&name=…` start location · `?time=0-24` time of day · `?weather=clear|cloudy|rain|fog` ·
 `?sea=calm|moderate|rough|storm` · `?aurora=0-1|off` · `?sats=off|starlink` (adds the full Starlink fleet) ·
-`?traffic=live|typical|off` (live feeds, the typical time-of-day pattern only, or the old uniform traffic)
+`?traffic=live|typical|off` (live feeds, the typical time-of-day pattern only, or the old uniform traffic) ·
+`?ships=sim|off` (simulated vessels only, or none)
 
 **Live traffic** lives in the time & weather menu (Live / Typical / Off). For live traffic outside New York, London and
 Hong Kong, paste a free [TomTom](https://developer.tomtom.com) API key there; it is kept only in your browser's local storage.
@@ -112,8 +113,20 @@ docker build -t world-explorer . && docker run -p 8098:8098 world-explorer
 ```
 
 No build step and no keys. `server.py` serves the files plus a small `/api/sky` proxy for live aircraft
-(ADS-B feeds don't allow direct browser calls). The page works from any static host and any sub-path too
+(ADS-B feeds don't allow direct browser calls) and an `/api/ships` relay for live vessels the browser can't
+reach directly (NYC Ferry and Brisbane ferry feeds). The page works from any static host and any sub-path too
 (the GitHub Pages demo is exactly that), with simulated air traffic instead of live aircraft.
+
+**Live ships.** Real vessels appear wherever a keyless live feed covers the water: every AIS ship in Finnish
+waters (Helsinki, Turku, Tallinn) from Digitraffic, Norwegian public ferries from Entur, and Washington State
+Ferries around Seattle. They move by dead reckoning between updates, use a model that matches their AIS ship
+type and real length and beam, and show their name up close. Everywhere else ships are simulated. For live AIS
+worldwide, get a free key at [aisstream.io](https://aisstream.io) and start the server with it (aisstream
+does not allow browser connections, so the key stays on the server):
+
+```bash
+AISSTREAM_API_KEY=your-key python3 server.py
+```
 
 **Single-file build.** `world_explorer.html` is the entire app in one self-contained file. Regenerate it after
 changing the source with `python3 tools/build_release.py`, and register any new module in its `MOD_ID_MAP`.
@@ -136,7 +149,9 @@ map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributor
 [OpenFreeMap](https://openfreemap.org) and Overpass · elevation from AWS Terrarium tiles (Mapzen) ·
 search by Photon, Nominatim and BigDataCloud · weather and sea state by [Open-Meteo](https://open-meteo.com) ·
 aurora nowcast from [NOAA SWPC](https://www.swpc.noaa.gov) · satellite orbits from [CelesTrak](https://celestrak.org) via satellite.js (MIT) ·
-aircraft from OpenSky, adsb.fi and adsb.lol · ships from Fintraffic Digitraffic (CC BY 4.0) ·
+aircraft from OpenSky, adsb.fi and adsb.lol · ships from Fintraffic Digitraffic (CC BY 4.0), Entur (NLOD) and
+WSDOT Washington State Ferries, plus NYC Ferry, TransLink and [aisstream.io](https://aisstream.io) through
+`server.py` ·
 road traffic from [NYC DOT](https://data.cityofnewyork.us/Transportation/DOT-Traffic-Speeds-NBE/i4gi-tjb9) real-time speeds,
 Powered by [TfL Open Data](https://tfl.gov.uk/info-for/open-data-users/) (contains OS data © Crown copyright and database rights),
 Hong Kong Transport Department detectors via [DATA.GOV.HK](https://data.gov.hk), and optionally © [TomTom](https://www.tomtom.com) with your own key ·
