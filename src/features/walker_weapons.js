@@ -690,6 +690,8 @@ export class WalkerWeaponsSystem {
         hitResult = { dist: bestDist, point: o.clone().addScaledVector(d, bestDist), kind: 'ship', ref: null };
       }
     }
+    const th = this.app.vegetation?.raycast?.(o, d, bestDist); // [tree-damage] trees stop bullets / rockets
+    if (th) hitResult = { dist: (bestDist = th.dist), point: o.clone().addScaledVector(d, th.dist), kind: 'tree', ref: null }; // [tree-damage]
 
     return hitResult;
   }
@@ -984,6 +986,7 @@ export class WalkerWeaponsSystem {
     if (this.app.maritime && typeof this.app.maritime.applyWeaponImpact === 'function') {
       this.app.maritime.applyWeaponImpact(hitPos, buildingUnits * 100);
     }
+    this.app.vegetation?.impact?.(hitPos, splashRadius, buildingUnits); // [tree-damage]
   }
 
   _spawnExplosion(pos, radius = 5.0, colorHex = 0xff6600) {

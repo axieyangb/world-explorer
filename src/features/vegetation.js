@@ -2,444 +2,50 @@
  * Vegetation & landcover — main thread.
  *
  * Pools the per-chunk tree/bush instance tables produced in the worker (src/features/vegetation_worker.js)
- * into ONE InstancedMesh per species per LOD (5 species x 2 LODs = max 10 draw calls for all vegetation):
- *   - near  (< NEAR_R): low-poly mesh, casts shadows, wind sway in the vertex shader
- *   - far   (< FAR_R) : crossed alpha-tested billboards from a procedural canvas atlas
- *   - beyond FAR_R    : culled
+ * into ONE InstancedMesh per species per LOD (14 species x 3 LODs; empty buckets are hidden):
+ *   - near (< NEAR_R): detailed tree (bark-textured tapered trunk + limbs, leaf-card clusters), casts shadows,
+ *                      wind sway + leaf flutter in the vertex shader                          [tree-detail]
+ *   - mid  (< MID_R) : same tree with fewer, larger cards and simpler limbs (same silhouette), casts shadows
+ *   - far  (< FAR_R) : crossed alpha-tested billboards; the atlas is an impostor render of the mid trees
+ *   - beyond FAR_R   : culled
  * Instance buffers are rebuilt only when the camera moves > REBUILD_DIST or the loaded chunk set changes.
+ * Per-instance lean / extra size jitter are derived from a position hash (deterministic, no worker change).
+ * Trees are destructible (src/features/tree_damage.js): hits, explosions, kaiju and ramming.  [tree-damage]
  *
  * Also owns `landcoverMat`, the material for the worker-built landcover ground mesh (subtle procedural texture).
  */
 import * as THREE from '../../vendor/three.module.js';
-import { INST_STRIDE } from './vegetation_worker.js';
+import { INST_STRIDE, floraMixU } from './vegetation_worker.js';
 import {
-  SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BANANA,
-  SP_DATEPALM, SP_BIRCH, SP_BAMBOO, SP_BARE, SPECIES_COUNT, SPECIES_NAMES,
+  SP_BROADLEAF, SP_TALL, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BIRCH, SP_BAMBOO, SPECIES_COUNT, SPECIES_NAMES,
   floraContext, pickFlora, floraLook, genericEntry, hash2,
 } from './flora_climate.js'; // [feature/climate-flora]
+import { buildTreeGeometry, getFloraAtlas, treeExtent, TREE_DIM } from './tree_models.js'; // [tree-detail]
+import { TreeDamage } from './tree_damage.js'; // [tree-damage]
 
-const NEAR_R = 150;
+const NEAR_R = 62;
+const MID_R = 190;
 const FAR_R = 600;
-const REBUILD_DIST = 20;
+const REBUILD_DIST = 14;
+const IMP_W = 128, IMP_H = 256; // impostor cell (px)
+const SHADOW_LAYER = 3; // [tree-detail] shadow-only proxies (sun shadow camera only)
 
-// Billboard sizes (width, height) per species — match the near meshes at scale 1
-const BB_SIZE = {
-  [SP_BROADLEAF]: [6.6, 8.6],
-  [SP_TALL]: [4.4, 10.4],
-  [SP_CONIFER]: [4.8, 10.6],
-  [SP_PALM]: [7.4, 9.6],
-  [SP_BUSH]: [2.0, 1.3],
-  // [feature/climate-flora]
-  [SP_COLUMN]: [2.6, 10.6],
-  [SP_UMBRELLA]: [8.0, 7.4],
-  [SP_EUCALYPT]: [6.4, 12.6],
-  [SP_CACTUS]: [2.8, 6.6],
-  [SP_BANANA]: [4.6, 3.2],
-  [SP_DATEPALM]: [7.2, 10.4],
-  [SP_BIRCH]: [3.6, 9.6],
-  [SP_BAMBOO]: [3.4, 8.6],
-  [SP_BARE]: [6.4, 8.4],
+// Lean (rad, max) per species: palms lean a lot, columns/cacti stand straight
+const LEAN = { [SP_PALM]: 0.13, [SP_BIRCH]: 0.06, [SP_COLUMN]: 0.012, [SP_CACTUS]: 0.02, [SP_BUSH]: 0, [SP_BAMBOO]: 0.05 };
+
+// Far cap quads: [height frac, half-size frac of width, v0, v1 of the impostor column]
+const CAP = {
+  [SP_BROADLEAF]: [0.66, 0.36, 0.45, 0.9], [SP_TALL]: [0.62, 0.34, 0.4, 0.9], [SP_BUSH]: [0.7, 0.36, 0.3, 0.95],
+  [SP_UMBRELLA]: [0.8, 0.38, 0.62, 0.95], [SP_BIRCH]: [0.66, 0.32, 0.45, 0.9], [SP_EUCALYPT]: [0.72, 0.32, 0.55, 0.92],
 };
 
 // ------------------------------------------------------------------------------------------------
-// Near-LOD geometry (merged low-poly primitives with baked vertex colors & fake canopy AO)
+// Far-LOD crossed billboards (UVs into the impostor atlas, one column per species)
 // ------------------------------------------------------------------------------------------------
-
-function hash3(x, y, z) {
-  const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
-  return s - Math.floor(s);
-}
-
-/** Converts any geometry to non-indexed position/color arrays with a vertical color gradient. */
-function part(geom, matrix, rgbBottom, rgbTop, jitter = 0) {
-  let g = geom.index ? geom.toNonIndexed() : geom;
-  g.applyMatrix4(matrix);
-  const p = g.attributes.position;
-  let minY = Infinity, maxY = -Infinity;
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-  }
-  if (jitter > 0) {
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-      const kx = Math.round(x * 50), ky = Math.round(y * 50), kz = Math.round(z * 50);
-      p.setXYZ(
-        i,
-        x + (hash3(kx, ky, kz) - 0.5) * jitter,
-        y + (hash3(ky, kz, kx) - 0.5) * jitter,
-        z + (hash3(kz, kx, ky) - 0.5) * jitter
-      );
-    }
-  }
-  const col = new Float32Array(p.count * 3);
-  for (let i = 0; i < p.count; i++) {
-    const t = maxY > minY ? (p.getY(i) - minY) / (maxY - minY) : 1;
-    col[i * 3] = rgbBottom[0] + (rgbTop[0] - rgbBottom[0]) * t;
-    col[i * 3 + 1] = rgbBottom[1] + (rgbTop[1] - rgbBottom[1]) * t;
-    col[i * 3 + 2] = rgbBottom[2] + (rgbTop[2] - rgbBottom[2]) * t;
-  }
-  return { pos: Array.from(p.array), col: Array.from(col) };
-}
-
-function mergeParts(parts, doubleSidedParts = [], sway = 1) {
-  const pos = [];
-  const col = [];
-  for (const pr of parts) {
-    pos.push(...pr.pos);
-    col.push(...pr.col);
-  }
-  // Double-sided parts (palm fronds): append reversed winding copy
-  for (const pr of doubleSidedParts) {
-    pos.push(...pr.pos);
-    col.push(...pr.col);
-    for (let i = 0; i < pr.pos.length; i += 9) {
-      pos.push(pr.pos[i], pr.pos[i + 1], pr.pos[i + 2], pr.pos[i + 6], pr.pos[i + 7], pr.pos[i + 8], pr.pos[i + 3], pr.pos[i + 4], pr.pos[i + 5]);
-      col.push(pr.col[i], pr.col[i + 1], pr.col[i + 2], pr.col[i + 6], pr.col[i + 7], pr.col[i + 8], pr.col[i + 3], pr.col[i + 4], pr.col[i + 5]);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  g.setAttribute('vegSway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3).fill(sway), 1)); // [feature/climate-flora]
-  g.computeVertexNormals(); // non-indexed => faceted low-poly shading
-  g.computeBoundingSphere();
-  return g;
-}
-
-const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0) =>
-  new THREE.Matrix4().compose(
-    new THREE.Vector3(x, y, z),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0)),
-    new THREE.Vector3(sx, sy, sz)
-  );
-
-const BARK = [0.30, 0.22, 0.16];
-const BARK_TOP = [0.40, 0.30, 0.22];
-
-// [feature/climate-flora] Oriented cylinder (branch) from (x,y,z): tilted `tilt` rad from vertical, then yawed. Returns end point.
-function branchPart(parts, len, r0, r1, x, y, z, tilt, yaw, cBot, cTop, seg = 5) {
-  const g = new THREE.CylinderGeometry(r1, r0, len, seg);
-  g.translate(0, len / 2, 0);
-  const m = new THREE.Matrix4().makeTranslation(x, y, z)
-    .multiply(new THREE.Matrix4().makeRotationY(yaw))
-    .multiply(new THREE.Matrix4().makeRotationZ(tilt));
-  parts.push(part(g, m, cBot, cTop));
-  const s = Math.sin(tilt);
-  return [x - s * Math.cos(yaw) * len, y + Math.cos(tilt) * len, z + s * Math.sin(yaw) * len];
-}
-
-/** Frond / leaf strip: profile y(t) = up*t - droop*t^2, width W*sin(pi t), along +X then yawed. */
-function frondGeom(L, W, up, droop, segs = 3) {
-  const pts = [];
-  for (let k = 0; k <= segs; k++) {
-    const t = k / segs;
-    pts.push([t * L, up * t - droop * t * t, W * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.06))]);
-  }
-  const pos = [];
-  for (let k = 0; k < segs; k++) {
-    const [a0, a1, aw] = pts[k];
-    const [b0, b1, bw] = pts[k + 1];
-    pos.push(a0, a1, -aw, b0, b1, -bw, b0, b1, bw, a0, a1, -aw, b0, b1, bw, a0, a1, aw);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  return g;
-}
-
-function buildClimateNearGeometry(sp) {
-  const parts = [];
-  const LEAF_D = [0.13, 0.27, 0.11], LEAF_L = [0.27, 0.44, 0.19];
-  if (sp === SP_COLUMN) {
-    parts.push(part(new THREE.CylinderGeometry(0.12, 0.18, 1.3, 6), M(0, 0.65, 0), BARK, BARK_TOP));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 5.4, 0, 1.15, 4.9, 1.15), [0.09, 0.22, 0.11], [0.17, 0.33, 0.16], 0.12));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(0, 9.7, 0, 0.5, 1.1, 0.5), [0.14, 0.29, 0.14], [0.19, 0.36, 0.18]));
-  } else if (sp === SP_UMBRELLA) {
-    parts.push(part(new THREE.CylinderGeometry(0.15, 0.26, 4.6, 6), M(0, 2.3, 0), BARK, BARK_TOP));
-    for (let k = 0; k < 3; k++) branchPart(parts, 2.3, 0.12, 0.06, 0, 3.9, 0, 0.85, k * 2.1 + 0.3, BARK, BARK_TOP);
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 6.0, 0, 3.7, 1.0, 3.7), LEAF_D, LEAF_L, 0.3));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(1.5, 6.35, 0.9, 2.0, 0.7, 2.0, 0.5), LEAF_D, LEAF_L, 0.2));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(-1.3, 6.3, -1.1, 2.1, 0.75, 2.1, 1.3), LEAF_D, LEAF_L, 0.2));
-  } else if (sp === SP_EUCALYPT) {
-    const PALE = [0.62, 0.57, 0.5], PALE_T = [0.8, 0.76, 0.68];
-    const GG = [0.27, 0.36, 0.26], GG_T = [0.46, 0.56, 0.42];
-    parts.push(part(new THREE.CylinderGeometry(0.13, 0.27, 7.6, 6), M(0, 3.8, 0), PALE, PALE_T));
-    const ends = [
-      branchPart(parts, 3.0, 0.11, 0.05, 0, 5.8, 0, 0.55, 0.4, PALE, PALE_T),
-      branchPart(parts, 2.7, 0.1, 0.05, 0, 6.6, 0, 0.62, 2.6, PALE, PALE_T),
-      branchPart(parts, 2.4, 0.1, 0.04, 0, 7.2, 0, 0.5, 4.6, PALE, PALE_T),
-    ];
-    for (const [x, y, z] of ends) parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(x, y + 0.5, z, 1.7, 1.25, 1.7, x), GG, GG_T, 0.3));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(0, 9.9, 0, 1.4, 1.7, 1.4), GG, GG_T, 0.3));
-  } else if (sp === SP_CACTUS) {
-    const C0 = [0.21, 0.37, 0.2], C1 = [0.33, 0.5, 0.28];
-    parts.push(part(new THREE.CylinderGeometry(0.32, 0.38, 6.2, 8), M(0, 3.1, 0), C0, C1));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 6.2, 0, 0.32, 0.22, 0.32), C1, C1));
-    // Two arms: short horizontal elbow + vertical limb
-    for (const [dir, y0, h] of [[1, 2.5, 2.2], [-1, 3.3, 1.8]]) {
-      parts.push(part(new THREE.CylinderGeometry(0.19, 0.21, 0.95, 7), M(dir * 0.55, y0, 0).multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2)), C0, C1));
-      parts.push(part(new THREE.CylinderGeometry(0.19, 0.21, h, 7), M(dir * 1.0, y0 + h / 2, 0), C0, C1));
-      parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(dir * 1.0, y0 + h, 0, 0.19, 0.14, 0.19), C1, C1));
-    }
-    return mergeParts(parts, [], 0);
-  } else if (sp === SP_BANANA) {
-    parts.push(part(new THREE.CylinderGeometry(0.13, 0.2, 2.4, 6), M(0, 1.2, 0), [0.4, 0.38, 0.22], [0.36, 0.44, 0.23]));
-    const leaves = [];
-    for (let f = 0; f < 7; f++) {
-      const g = frondGeom(2.3, 0.42, 1.5, 1.25, 3);
-      leaves.push(part(g, M(0, 2.3, 0, 1, 1, 1, (f / 7) * Math.PI * 2 + 0.4), [0.28, 0.52, 0.15], [0.45, 0.7, 0.25]));
-    }
-    return mergeParts(parts, leaves);
-  } else if (sp === SP_DATEPALM) {
-    parts.push(part(new THREE.CylinderGeometry(0.26, 0.33, 8.4, 7), M(0, 4.2, 0), [0.42, 0.33, 0.23], [0.52, 0.42, 0.3], 0.04));
-    const fronds = [];
-    for (let f = 0; f < 16; f++) {
-      const upper = f < 10;
-      const g = upper ? frondGeom(3.4, 0.3, 2.6, 1.9, 3) : frondGeom(3.5, 0.3, 0.6, 1.6, 3);
-      fronds.push(part(g, M(0, 8.35, 0, 1, 1, 1, (f / (upper ? 10 : 6)) * Math.PI * 2 + (upper ? 0 : 0.3)), [0.26, 0.37, 0.23], [0.42, 0.52, 0.32]));
-    }
-    parts.push(part(new THREE.IcosahedronGeometry(0.42, 0), M(0, 8.4, 0), [0.4, 0.33, 0.2], [0.34, 0.42, 0.22]));
-    return mergeParts(parts, fronds);
-  } else if (sp === SP_BIRCH) {
-    parts.push(part(new THREE.CylinderGeometry(0.09, 0.15, 6.2, 6), M(0, 3.1, 0), [0.8, 0.78, 0.72], [0.9, 0.88, 0.83]));
-    const B0 = [0.26, 0.46, 0.16], B1 = [0.44, 0.64, 0.26];
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 6.7, 0, 1.6, 2.6, 1.6), B0, B1, 0.3));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(0.6, 8.3, 0.3, 1.0, 1.3, 1.0, 0.4), B0, B1, 0.2));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(-0.5, 5.4, -0.4, 1.1, 1.2, 1.1, 1.1), B0, B1, 0.2));
-  } else if (sp === SP_BAMBOO) {
-    const S0 = [0.4, 0.5, 0.2], S1 = [0.5, 0.6, 0.26], T0 = [0.26, 0.46, 0.15], T1 = [0.4, 0.6, 0.22];
-    for (let k = 0; k < 7; k++) {
-      const a = k * 0.9 + 0.2, r = 0.22 + (k % 3) * 0.1;
-      const h = 6.4 + ((k * 37) % 5) * 0.5;
-      const [ex, ey, ez] = branchPart(parts, h, 0.075, 0.05, Math.cos(a) * r, 0, Math.sin(a) * r, 0.07 + (k % 3) * 0.03, Math.PI - a, S0, S1, 5);
-      parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(ex, ey - 0.6, ez, 0.85, 1.5, 0.85, a), T0, T1, 0.15));
-    }
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 5.6, 0, 1.4, 2.2, 1.4), T0, T1, 0.25));
-  } else if (sp === SP_BARE) {
-    const B0 = [0.28, 0.22, 0.17], B1 = [0.4, 0.33, 0.26];
-    parts.push(part(new THREE.CylinderGeometry(0.14, 0.24, 3.6, 6), M(0, 1.8, 0), B0, B1));
-    branchPart(parts, 3.0, 0.1, 0.04, 0, 3.4, 0, 0.12, 0, B0, B1);
-    for (let k = 0; k < 5; k++) {
-      const yaw = k * 1.256 + 0.3, tilt = 0.55 + (k % 3) * 0.12, len = 2.7 + (k % 2) * 0.5;
-      const y0 = 2.9 + (k % 3) * 0.3;
-      const s = Math.sin(tilt);
-      const mx = -s * Math.cos(yaw) * len * 0.6, my = y0 + Math.cos(tilt) * len * 0.6, mz = s * Math.sin(yaw) * len * 0.6;
-      branchPart(parts, len, 0.1, 0.035, 0, y0, 0, tilt, yaw, B0, B1, 4);
-      branchPart(parts, 1.4, 0.04, 0.015, mx, my, mz, tilt + 0.45, yaw + 0.6, B0, B1, 3);
-      branchPart(parts, 1.3, 0.04, 0.015, mx, my, mz, Math.max(0.1, tilt - 0.35), yaw - 0.5, B0, B1, 3);
-    }
-  }
-  return mergeParts(parts);
-}
-
-function buildNearGeometry(sp) {
-  if (sp >= SP_COLUMN) return buildClimateNearGeometry(sp); // [feature/climate-flora]
-  const parts = [];
-  if (sp === SP_BROADLEAF) {
-    parts.push(part(new THREE.CylinderGeometry(0.14, 0.22, 3.4, 6), M(0, 1.7, 0), BARK, BARK_TOP));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 5.3, 0, 3.0, 2.5, 3.0), [0.17, 0.33, 0.14], [0.36, 0.58, 0.25], 0.35));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(1.2, 6.6, 0.5, 1.7, 1.5, 1.7, 0.7), [0.22, 0.40, 0.17], [0.40, 0.62, 0.28], 0.25));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(-1.0, 6.2, -0.9, 1.6, 1.4, 1.6, 1.9), [0.20, 0.38, 0.16], [0.38, 0.60, 0.27], 0.25));
-  } else if (sp === SP_TALL) {
-    parts.push(part(new THREE.CylinderGeometry(0.12, 0.2, 3.2, 6), M(0, 1.6, 0), BARK, BARK_TOP));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 6.3, 0, 2.0, 4.0, 2.0), [0.20, 0.36, 0.15], [0.42, 0.62, 0.27], 0.3));
-  } else if (sp === SP_CONIFER) {
-    parts.push(part(new THREE.CylinderGeometry(0.12, 0.2, 2.4, 6), M(0, 1.2, 0), BARK, BARK_TOP));
-    parts.push(part(new THREE.ConeGeometry(2.4, 4.2, 8), M(0, 3.6, 0), [0.10, 0.22, 0.13], [0.16, 0.32, 0.18]));
-    parts.push(part(new THREE.ConeGeometry(1.9, 3.6, 8), M(0, 5.9, 0, 1, 1, 1, 0.4), [0.11, 0.24, 0.14], [0.18, 0.35, 0.20]));
-    parts.push(part(new THREE.ConeGeometry(1.3, 3.0, 8), M(0, 8.1, 0, 1, 1, 1, 0.8), [0.12, 0.26, 0.15], [0.21, 0.39, 0.22]));
-  } else if (sp === SP_PALM) {
-    // Curved, segmented trunk
-    let x = 0, y = 0;
-    for (let i = 0; i < 4; i++) {
-      const h = 2.1;
-      const lean = 0.1 + i * 0.06;
-      parts.push(part(new THREE.CylinderGeometry(0.17 - i * 0.015, 0.21 - i * 0.015, h, 6), M(x + Math.sin(lean) * h * 0.5, y + h * 0.5, 0, 1, 1, 1, 0, 0).multiply(new THREE.Matrix4().makeRotationZ(-lean)), [0.44, 0.36, 0.26], [0.52, 0.44, 0.32]));
-      x += Math.sin(lean) * h;
-      y += Math.cos(lean) * h;
-    }
-    const top = [x, y];
-    const fronds = [];
-    for (let f = 0; f < 8; f++) {
-      const ang = (f / 8) * Math.PI * 2 + 0.2;
-      const pos = [];
-      const L = 3.6, W = 0.55;
-      const pts = [];
-      for (let k = 0; k <= 3; k++) {
-        const t = k / 3;
-        pts.push([t * L, 0.5 * t - 1.6 * t * t, W * Math.sin(Math.PI * Math.min(1, t * 1.15 + 0.08))]);
-      }
-      for (let k = 0; k < 3; k++) {
-        const [a0, a1, aw] = pts[k];
-        const [b0, b1, bw] = pts[k + 1];
-        pos.push(a0, a1, -aw, b0, b1, -bw, b0, b1, bw, a0, a1, -aw, b0, b1, bw, a0, a1, aw);
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      fronds.push(part(g, M(top[0], top[1], 0, 1, 1, 1, ang), [0.18, 0.40, 0.14], [0.30, 0.52, 0.20]));
-    }
-    parts.push(part(new THREE.IcosahedronGeometry(0.35, 0), M(top[0], top[1], 0), [0.36, 0.30, 0.18], [0.30, 0.42, 0.16]));
-    return mergeParts(parts, fronds);
-  } else {
-    parts.push(part(new THREE.IcosahedronGeometry(1, 1), M(0, 0.45, 0, 0.95, 0.7, 0.95), [0.16, 0.30, 0.12], [0.34, 0.52, 0.22], 0.18));
-    parts.push(part(new THREE.IcosahedronGeometry(1, 0), M(0.45, 0.55, 0.25, 0.55, 0.5, 0.55, 0.6), [0.20, 0.36, 0.15], [0.38, 0.56, 0.25], 0.12));
-  }
-  return mergeParts(parts);
-}
-
-// ------------------------------------------------------------------------------------------------
-// Far-LOD crossed billboards (procedural canvas atlas, one column per species)
-// ------------------------------------------------------------------------------------------------
-
-function buildAtlas() {
-  const CW = 128, CH = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = CW * SPECIES_COUNT;
-  canvas.height = CH;
-  const ctx = canvas.getContext('2d');
-  let seed = 7;
-  const rnd = () => {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
-  };
-  const shade = (base, k) => `rgb(${Math.round(base[0] * k * 255)},${Math.round(base[1] * k * 255)},${Math.round(base[2] * k * 255)})`;
-  const blobCanopy = (ox, cxp, cyp, rx, ry, base, n) => {
-    for (let i = 0; i < n; i++) {
-      const a = rnd() * Math.PI * 2;
-      const rr = Math.sqrt(rnd());
-      const x = ox + cxp + Math.cos(a) * rx * rr * 0.8;
-      const y = cyp + Math.sin(a) * ry * rr * 0.8;
-      const light = 0.75 + 0.45 * (1 - (y - (cyp - ry)) / (2 * ry)) + (rnd() - 0.5) * 0.15;
-      ctx.fillStyle = shade(base, light);
-      ctx.beginPath();
-      ctx.arc(x, y, rx * (0.22 + rnd() * 0.16), 0, Math.PI * 2);
-      ctx.fill();
-    }
-  };
-  const trunk = (ox, w, y0, y1, col) => {
-    ctx.fillStyle = col;
-    ctx.fillRect(ox + CW / 2 - w / 2, y0, w, y1 - y0);
-  };
-  // Broadleaf
-  trunk(0, 7, 150, CH, '#5a4130');
-  blobCanopy(0, CW / 2, 96, 56, 70, [0.26, 0.46, 0.19], 70);
-  // Tall / oval
-  trunk(CW, 6, 170, CH, '#5a4130');
-  blobCanopy(CW, CW / 2, 104, 40, 92, [0.28, 0.48, 0.2], 70);
-  // Conifer
-  trunk(CW * 2, 6, 200, CH, '#4a3626');
-  for (let i = 0; i < 3; i++) {
-    const y0 = 20 + i * 52, y1 = 120 + i * 50, hw = 30 + i * 13;
-    ctx.fillStyle = shade([0.12, 0.27, 0.15], 1.25 - i * 0.12);
-    ctx.beginPath();
-    ctx.moveTo(CW * 2 + CW / 2, y0);
-    ctx.lineTo(CW * 2 + CW / 2 + hw, y1);
-    ctx.lineTo(CW * 2 + CW / 2 - hw, y1);
-    ctx.closePath();
-    ctx.fill();
-  }
-  // Palm
-  ctx.strokeStyle = '#7a6448';
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(CW * 3 + CW / 2, CH);
-  ctx.quadraticCurveTo(CW * 3 + CW / 2 + 4, 140, CW * 3 + CW / 2 + 14, 52);
-  ctx.stroke();
-  ctx.lineCap = 'round';
-  for (let f = 0; f < 9; f++) {
-    const a = -Math.PI + (f / 8) * Math.PI;
-    const ex = CW * 3 + CW / 2 + 14 + Math.cos(a) * 58;
-    const ey = 52 + Math.sin(a) * 26 + 40;
-    ctx.strokeStyle = shade([0.24, 0.46, 0.17], 0.9 + (f % 3) * 0.12);
-    ctx.lineWidth = 9;
-    ctx.beginPath();
-    ctx.moveTo(CW * 3 + CW / 2 + 14, 52);
-    ctx.quadraticCurveTo((CW * 3 + CW / 2 + 14 + ex) / 2, 30, ex, ey);
-    ctx.stroke();
-  }
-  // Bush
-  blobCanopy(CW * 4, CW / 2, 180, 58, 60, [0.24, 0.42, 0.17], 60);
-  // [feature/climate-flora] Extra species columns
-  const col = (sp) => CW * sp;
-  // Column cypress
-  trunk(col(SP_COLUMN), 6, 236, CH, '#4a3626');
-  blobCanopy(col(SP_COLUMN), CW / 2, 130, 26, 112, [0.11, 0.25, 0.13], 80);
-  // Umbrella pine / acacia
-  trunk(col(SP_UMBRELLA), 7, 110, CH, '#5a4130');
-  blobCanopy(col(SP_UMBRELLA), CW / 2, 78, 60, 26, [0.2, 0.36, 0.15], 70);
-  // Eucalyptus
-  trunk(col(SP_EUCALYPT), 7, 60, CH, '#b8ad98');
-  for (const [x, y] of [[40, 70], [90, 56], [64, 30]]) blobCanopy(col(SP_EUCALYPT), x, y, 24, 20, [0.34, 0.44, 0.32], 22);
-  // Saguaro
-  ctx.fillStyle = '#46703c';
-  const cx0 = col(SP_CACTUS) + CW / 2;
-  ctx.fillRect(cx0 - 9, 26, 18, CH - 26);
-  ctx.fillRect(cx0 + 9, 150, 22, 9);
-  ctx.fillRect(cx0 + 22, 92, 9, 64);
-  ctx.fillRect(cx0 - 31, 128, 22, 9);
-  ctx.fillRect(cx0 - 31, 80, 9, 54);
-  // Banana
-  trunk(col(SP_BANANA), 9, 120, CH, '#6b7a3a');
-  ctx.lineCap = 'round';
-  for (let f = 0; f < 7; f++) {
-    const a = -Math.PI + (f / 6) * Math.PI;
-    ctx.strokeStyle = shade([0.36, 0.62, 0.2], 0.85 + (f % 3) * 0.12);
-    ctx.lineWidth = 16;
-    ctx.beginPath();
-    ctx.moveTo(col(SP_BANANA) + CW / 2, 122);
-    ctx.quadraticCurveTo(col(SP_BANANA) + CW / 2 + Math.cos(a) * 30, 60, col(SP_BANANA) + CW / 2 + Math.cos(a) * 56, 90 + Math.abs(Math.sin(a)) * -30);
-    ctx.stroke();
-  }
-  // Date palm
-  trunk(col(SP_DATEPALM), 10, 56, CH, '#7a6248');
-  for (let f = 0; f < 13; f++) {
-    const a = -Math.PI * 1.05 + (f / 12) * Math.PI * 1.1;
-    ctx.strokeStyle = shade([0.33, 0.45, 0.28], 0.85 + (f % 3) * 0.12);
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(col(SP_DATEPALM) + CW / 2, 58);
-    ctx.quadraticCurveTo(col(SP_DATEPALM) + CW / 2 + Math.cos(a) * 36, 58 + Math.sin(a) * 40, col(SP_DATEPALM) + CW / 2 + Math.cos(a) * 60, 58 + Math.sin(a) * 18 + 22);
-    ctx.stroke();
-  }
-  // Birch
-  trunk(col(SP_BIRCH), 6, 110, CH, '#ddd8cc');
-  blobCanopy(col(SP_BIRCH), CW / 2, 92, 36, 72, [0.33, 0.55, 0.2], 60);
-  // Bamboo
-  ctx.strokeStyle = '#7d9a3c';
-  ctx.lineWidth = 4;
-  for (let k = 0; k < 7; k++) {
-    ctx.beginPath();
-    ctx.moveTo(col(SP_BAMBOO) + 44 + k * 7, CH);
-    ctx.lineTo(col(SP_BAMBOO) + 30 + k * 11, 36 + (k % 3) * 12);
-    ctx.stroke();
-  }
-  blobCanopy(col(SP_BAMBOO), CW / 2, 86, 40, 64, [0.3, 0.52, 0.17], 60);
-  // Bare deciduous
-  trunk(col(SP_BARE), 8, 128, CH, '#4e3b2c');
-  ctx.strokeStyle = '#5a4636';
-  const twig = (x, y, a, len, w, depth) => {
-    const ex = x + Math.cos(a) * len, ey = y + Math.sin(a) * len;
-    ctx.lineWidth = w;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(ex, ey);
-    ctx.stroke();
-    if (depth > 0) {
-      twig(ex, ey, a - 0.45, len * 0.7, Math.max(2, w * 0.65), depth - 1);
-      twig(ex, ey, a + 0.4, len * 0.68, Math.max(2, w * 0.65), depth - 1);
-    }
-  };
-  for (const a of [-2.35, -1.95, -1.57, -1.2, -0.8]) twig(col(SP_BARE) + CW / 2, 132, a, 38, 6, 2);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
-}
 
 function buildFarGeometry(sp) {
-  const [W, H] = BB_SIZE[sp];
-  const u0 = sp / SPECIES_COUNT, u1 = (sp + 1) / SPECIES_COUNT;
+  const [W, H] = treeExtent(sp);
+  const u0 = sp / SPECIES_COUNT + 0.5 / (IMP_W * SPECIES_COUNT), u1 = (sp + 1) / SPECIES_COUNT - 0.5 / (IMP_W * SPECIES_COUNT);
   const pos = [];
   const uv = [];
   const nrm = [];
@@ -449,10 +55,10 @@ function buildFarGeometry(sp) {
     uv.push(u0, 0, u1, 0, u1, 1, u0, 0, u1, 1, u0, 1);
     for (let i = 0; i < 6; i++) nrm.push(0, 1, 0);
   }
-  if (sp === SP_BROADLEAF || sp === SP_TALL || sp === SP_BUSH || sp === SP_UMBRELLA || sp === SP_BIRCH) {
-    // Horizontal canopy cap so crossed quads don't read as an "X" from above
-    const r = W * (sp === SP_UMBRELLA ? 0.4 : 0.42), y = H * (sp === SP_BUSH ? 0.75 : sp === SP_UMBRELLA ? 0.8 : 0.66);
-    const v0 = sp === SP_BUSH ? 0.55 : sp === SP_UMBRELLA ? 0.62 : 0.45, v1 = sp === SP_BUSH ? 0.95 : 0.9;
+  if (CAP[sp]) {
+    // Horizontal canopy cap (crown band of the impostor) so crossed quads don't read as an "X" from above
+    const [fy, fr, v0, v1] = CAP[sp];
+    const r = W * fr, y = H * fy;
     pos.push(-r, y, -r, -r, y, r, r, y, r, -r, y, -r, r, y, r, r, y, -r);
     uv.push(u0, v0, u0, v1, u1, v1, u0, v0, u1, v1, u1, v0);
     for (let i = 0; i < 6; i++) nrm.push(0, 1, 0);
@@ -463,6 +69,54 @@ function buildFarGeometry(sp) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('vegSway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3).fill(sp === SP_CACTUS ? 0 : 1), 1));
   return g;
+}
+
+/** Renders every species' mid-LOD tree side-on into one impostor atlas (albedo x soft light, alpha). [tree-detail] */
+function bakeImpostors(renderer, mat) {
+  const rt = new THREE.WebGLRenderTarget(IMP_W * SPECIES_COUNT, IMP_H, {
+    generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
+  });
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 2.5));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.3);
+  dl.position.set(0.3, 1, 0.8);
+  scene.add(dl);
+  const prevRT = renderer.getRenderTarget();
+  const prevClear = renderer.getClearColor(new THREE.Color());
+  const prevAlpha = renderer.getClearAlpha();
+  const prevAuto = renderer.autoClear;
+  const prevShadow = renderer.shadowMap.enabled;
+  renderer.shadowMap.enabled = false;
+  renderer.autoClear = false;
+  renderer.setRenderTarget(rt);
+  renderer.setClearColor(0x40552c, 0); // leafy fringe colour so mip edges don't go black
+  renderer.clear(true, true, true);
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, 0, 0.1, 100);
+  for (let sp = 0; sp < SPECIES_COUNT; sp++) {
+    const [W, H] = treeExtent(sp);
+    const mesh = new THREE.Mesh(buildTreeGeometry(sp, 1), mat);
+    scene.add(mesh);
+    cam.left = -W / 2;
+    cam.right = W / 2;
+    cam.top = H;
+    cam.bottom = 0;
+    cam.position.set(0, 0, 40);
+    cam.lookAt(0, 0, 0);
+    cam.updateProjectionMatrix();
+    rt.viewport.set(sp * IMP_W, 0, IMP_W, IMP_H);
+    rt.scissor.set(sp * IMP_W, 0, IMP_W, IMP_H);
+    rt.scissorTest = true;
+    renderer.setRenderTarget(rt);
+    renderer.render(scene, cam);
+    scene.remove(mesh);
+  }
+  rt.scissorTest = false;
+  rt.viewport.set(0, 0, IMP_W * SPECIES_COUNT, IMP_H);
+  renderer.setRenderTarget(prevRT);
+  renderer.setClearColor(prevClear, prevAlpha);
+  renderer.autoClear = prevAuto;
+  renderer.shadowMap.enabled = prevShadow;
+  return rt;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -512,25 +166,47 @@ function addWind(material, uniforms, far = false) {
         vec2 vegRoot = vec2(0.0);
         vVegUp = objectNormal.y;
       #endif
-      float vegH = max(position.y - 1.2, 0.0) * vegSway * uWindAmp;
+      float vegH = max(position.y - 1.2, 0.0) * min(vegSway, 1.0) * uWindAmp;
       float vegPh = uWindTime * 1.25 + vegRoot.x * 0.071 + vegRoot.y * 0.053;
       float vegGust = 0.55 + 0.45 * sin(uWindTime * 0.31 + vegRoot.x * 0.004);
       transformed.x += (sin(vegPh) * 0.022 + sin(uWindTime * 3.7 + position.y * 1.7 + vegRoot.y) * 0.006) * vegH * vegGust;
-      transformed.z += (cos(vegPh * 0.83 + 1.3) * 0.018) * vegH * vegGust;`
+      transformed.z += (cos(vegPh * 0.83 + 1.3) * 0.018) * vegH * vegGust;
+      // [tree-detail] leaf cards flutter (vegSway > 1.1)
+      float vegFl = step(1.1, vegSway) * uWindAmp * vegGust;
+      transformed += vec3(sin(uWindTime * 6.1 + position.x * 2.3 + position.y * 1.7 + vegRoot.x),
+                          sin(uWindTime * 5.3 + position.z * 2.9 + vegRoot.y) * 0.6,
+                          cos(uWindTime * 5.7 + position.y * 2.1 + position.x)) * 0.035 * vegFl;`
       );
+    // [tree-detail] double-sided leaf cards keep their canopy normal on both faces (no dark back faces)
+    if (!far) shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'));
     shader.fragmentShader = 'uniform float uVegSnow;\nvarying vec3 vVegTint;\nvarying float vVegUp;\n' + shader.fragmentShader.replace(
       '#include <color_fragment>',
       `#include <color_fragment>
       {
         float vegLeaf = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
         float vegTk = clamp(dot(vVegTint, vec3(0.3333)), 0.8, 1.12);
+        // [tree-detail] textured leaves are saturated green: for strong (autumn / blossom) tints pull them toward a
+        // pale yellow-green of the same luminance first, so the tint reads as red / orange / gold, not olive
+        float vegAu = clamp(length(vVegTint - vec3(1.0)) * 0.9, 0.0, 0.85) * vegLeaf;
+        float vegL = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vegL * vec3(0.95, 1.12, 0.62), vegAu);
         diffuseColor.rgb *= mix(vec3(vegTk), vVegTint, vegLeaf);
         float vegS = uVegSnow * ${far ? '0.5' : 'smoothstep(0.1, 0.65, vVegUp)'};
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.94, 0.97), clamp(vegS, 0.0, 0.9));
       }`
     );
   };
-  material.customProgramCacheKey = () => (far ? 'veg-flora-far' : 'veg-flora-near');
+  material.customProgramCacheKey = () => (far ? 'veg-flora-far-3' : 'veg-tree-near-3');
+}
+
+/** Shared material of the detailed (near/mid) trees, stumps and falling trees: one atlas, alpha-tested cards. [tree-detail] */
+export function createTreeMaterial(uniforms) {
+  const mat = new THREE.MeshStandardMaterial({
+    map: getFloraAtlas(), vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.82, metalness: 0.0,
+  });
+  mat.name = 'treeMat';
+  addWind(mat, uniforms);
+  return mat;
 }
 
 /**
@@ -703,24 +379,31 @@ export class VegetationSystem {
     this.root.name = 'vegetation';
     scene.add(this.root);
 
-    this.nearMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0.0, side: THREE.FrontSide });
-    addWind(this.nearMat, this.uniforms);
+    this.nearMat = createTreeMaterial(this.uniforms); // [tree-detail]
     this.farMat = new THREE.MeshStandardMaterial({
-      map: buildAtlas(),
+      map: getFloraAtlas(), // replaced by the impostor atlas on the first update with a renderer
       alphaTest: 0.5,
       side: THREE.DoubleSide,
       roughness: 0.9,
       metalness: 0.0,
     });
     addWind(this.farMat, this.uniforms, true);
+    this._impostorRT = null;
 
     this.buckets = [];
+    const farGeos = [];
+    for (let sp = 0; sp < SPECIES_COUNT; sp++) farGeos.push(buildFarGeometry(sp));
     for (let sp = 0; sp < SPECIES_COUNT; sp++) {
       this.buckets.push({
-        near: this._makeBucket(buildNearGeometry(sp), this.nearMat, 512, true),
-        far: this._makeBucket(buildFarGeometry(sp), this.farMat, 2048, false),
+        near: this._makeBucket(buildTreeGeometry(sp, 0), this.nearMat, 256, true),
+        // mid ring: detailed-ish trees in the colour pass, crossed impostor quads as their shadow caster [tree-detail]
+        mid: this._makeBucket(buildTreeGeometry(sp, 1), this.nearMat, 512, false, farGeos[sp]),
+        far: this._makeBucket(farGeos[sp], this.farMat, 2048, false),
       });
     }
+    this._camPos = new THREE.Vector3();
+    this.damage = new TreeDamage(this); // [tree-damage]
+    this._forceRebuild = false;
     this._known = new Set();
     this._lastX = Infinity;
     this._lastZ = Infinity;
@@ -729,8 +412,8 @@ export class VegetationSystem {
     this._stats = { near: 0, far: 0, total: 0, rebuildMs: 0 };
   }
 
-  _makeBucket(geom, mat, cap, near) {
-    const b = { geom, mat, cap: 0, mesh: null, near, count: 0 };
+  _makeBucket(geom, mat, cap, near, shadowGeom = null) {
+    const b = { geom, mat, cap: 0, mesh: null, near, count: 0, shadowGeom, shadow: null };
     this._allocBucket(b, cap);
     return b;
   }
@@ -751,11 +434,33 @@ export class VegetationSystem {
     this.root.add(mesh);
     b.mesh = mesh;
     b.cap = cap;
+    if (b.shadowGeom) {
+      // Shadow-only proxy sharing the bucket's instance buffers; lives on SHADOW_LAYER, which only the sun's
+      // shadow camera renders (enabled lazily in update()).
+      if (b.shadow) {
+        this.root.remove(b.shadow);
+        b.shadow.dispose();
+      }
+      const sh = new THREE.InstancedMesh(b.shadowGeom, this.farMat, cap);
+      sh.instanceMatrix = mesh.instanceMatrix;
+      sh.instanceColor = mesh.instanceColor;
+      sh.count = 0;
+      sh.frustumCulled = false;
+      sh.castShadow = true;
+      sh.layers.set(SHADOW_LAYER);
+      this.root.add(sh);
+      b.shadow = sh;
+    }
   }
 
   /** Per-frame hook. Cheap unless the camera moved far enough or chunks changed. */
   update(camera, loadedChunks, dt) {
     this._time += dt || 0;
+    this._camPos.copy(camera.position);
+    if (!this._impostorRT) this._bakeImpostors(); // [tree-detail]
+    const sun = typeof window !== 'undefined' && window.app ? window.app.sunLight : null;
+    if (sun && !sun.shadow.camera.layers.isEnabled(SHADOW_LAYER)) sun.shadow.camera.layers.enable(SHADOW_LAYER);
+    this.damage.update(dt || 0); // [tree-damage]
     this.uniforms.uWindTime.value = this._time;
     // [feature/climate-flora] live weather -> canopy/ground snow + sway amplitude (polled 1 Hz, eased)
     this._weatherT -= dt || 0;
@@ -783,6 +488,8 @@ export class VegetationSystem {
       changed = true;
     }
     const dx = cp.x - this._lastX, dz = cp.z - this._lastZ;
+    if (dx * dx + dz * dz > 4e6 && Number.isFinite(dx)) this.damage.clear(); // [tree-damage] teleport: drop falling trees
+    if (this._forceRebuild) (changed = true), (this._forceRebuild = false);
     if (!changed && dx * dx + dz * dz < REBUILD_DIST * REBUILD_DIST && Math.abs(cp.y - this._lastY) < 25) return;
     if (changed) {
       this._known.clear();
@@ -829,6 +536,54 @@ export class VegetationSystem {
     this._windAmpTarget = 0.6 + Math.min(1.8, ms / 6);
   }
 
+  _bakeImpostors() {
+    const renderer = typeof window !== 'undefined' && window.app ? window.app.renderer : null;
+    if (!renderer) return;
+    const mat = new THREE.MeshLambertMaterial({ map: getFloraAtlas(), vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide });
+    try {
+      this._impostorRT = bakeImpostors(renderer, mat);
+      this.farMat.map = this._impostorRT.texture;
+      this.farMat.needsUpdate = true;
+    } catch (e) {
+      this._impostorRT = { texture: null, dispose() {} }; // keep the leaf atlas; never retry every frame
+    }
+    mat.dispose();
+  }
+
+  /** Shared KaijuFx instance (fire / smoke / dust) via the vehicle damage system, if any. */
+  _fx() {
+    const app = typeof window !== 'undefined' ? window.app : null;
+    const vd = app && app.vehicleDamage;
+    try {
+      return vd && typeof vd._fx === 'function' ? vd._fx() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ---- [tree-damage] public damage API (hooks in walker_weapons / heli_flight / kaiju_destruction / main) ----
+  /** First tree along a ray within maxDist: { dist } or null. */
+  raycast(o, d, maxDist) {
+    return this.damage.raycast(o, d, maxDist);
+  }
+  /** Weapon impact at p ({x,y,z}); splash radius (m, 0 = bullet) and building-damage units. */
+  impact(p, splash = 0, units = 0.1, dir = null) {
+    return this.damage.impact(p, splash || 0, units || 0.05, dir);
+  }
+  damageSphere(x, y, z, r, amount, opts) {
+    return this.damage.damageSphere(x, y, z, r, amount, opts);
+  }
+  damageCone(o, dir, range, half, amount) {
+    return this.damage.damageCone(o, dir, range, half, amount);
+  }
+  /** Player vehicle ramming; returns a speed multiplier (1 = nothing hit). */
+  ram(pos, yaw, speed, spec, tank = false) {
+    if (Math.abs(speed) < 0.3) return 1;
+    const len = (spec && spec.length) || 4.4;
+    const mass = tank ? 9 : len > 8 ? 4 : len > 5.2 ? 2 : 1;
+    return this.damage.ram(pos, yaw, speed, len, mass);
+  }
+
   _updateClimate(cp, loadedChunks) {
     let best = null, bd = Infinity;
     for (const g of loadedChunks.values()) {
@@ -859,7 +614,7 @@ export class VegetationSystem {
       const s0 = t.species[i];
       const x = inst[o], z = inst[o + 2];
       let e = null;
-      if (ctx) e = s0 >= SPECIES_COUNT ? pickFlora(ctx, 0, hash2(x, z, 1)) : genericEntry(ctx, s0);
+      if (ctx) e = s0 >= SPECIES_COUNT ? pickFlora(ctx, 0, floraMixU(x, z, hash2(x, z, 1))) : genericEntry(ctx, s0); // [tree-placement] street-coherent mix
       const lk = e ? floraLook(ctx, e, hash2(x, z, 2), hash2(x, z, 3), 0) : null;
       const k = lk ? [lk.r, lk.g, lk.b] : [1, 1, 1];
       sp[i] = lk ? lk.sp : s0 >= SPECIES_COUNT ? SP_BROADLEAF : s0;
@@ -871,7 +626,7 @@ export class VegetationSystem {
     }
     this._sdLookKey = key;
     this._sdLookFor = t;
-    this._sdLookCache = { inst, species: sp, count: n, col, scl };
+    this._sdLookCache = { inst, species: sp, count: n, col, scl, src: t }; // [tree-damage] state keyed by the OSM table
     return this._sdLookCache;
   }
 
@@ -894,9 +649,10 @@ export class VegetationSystem {
   _rebuild(cp, loadedChunks) {
     const t0 = performance.now();
     this._updateClimate(cp, loadedChunks); // [feature/climate-flora]
-    const counts = new Array(SPECIES_COUNT * 2).fill(0);
+    const counts = new Array(SPECIES_COUNT * 3).fill(0);
     const far2 = FAR_R * FAR_R;
     const near2 = NEAR_R * NEAR_R;
+    const mid2 = MID_R * MID_R;
     const tables = [];
     for (const g of loadedChunks.values()) {
       const v = g.userData && g.userData.vegInstances;
@@ -910,91 +666,120 @@ export class VegetationSystem {
     const sd = this.streetDetail; // [feature/street-detail] real OSM trees + drop procedural street trees next to them
     if (sd && sd.trees) tables.push(this._sdLook(sd.trees)); // [feature/climate-flora] palette/season for real trees
     const treeSup = sd ? sd.treeSuppress : null;
-    // Pass 1: classify & count
+    const D = this.damage; // [tree-damage]
+    D.beginRebuild(cp.x, cp.z);
+    // Pass 1: classify & count (-1 culled / suppressed / destroyed)
     const cls = [];
     for (const v of tables) {
       const { inst, species, count } = v;
       const c = new Int8Array(count);
       const nStreet = treeSup ? v.streetCount || 0 : 0; // [feature/street-detail]
+      const st = D.state(v.src || v); // [tree-damage]
+      const dead = st && st.dead.size ? st.dead : null;
       for (let i = 0; i < count; i++) {
         const o = i * INST_STRIDE;
         const hx = inst[o] - cp.x, hz = inst[o + 2] - cp.z;
         const h2 = hx * hx + hz * hz;
-        if (h2 > far2 || (i < nStreet && treeSup.near(inst[o], inst[o + 2]))) {
+        if (h2 > far2 || species[i] >= SPECIES_COUNT || (i < nStreet && treeSup.near(inst[o], inst[o + 2]))) {
           c[i] = -1;
+          continue;
+        }
+        if (dead && dead.has(i)) {
+          c[i] = -1;
+          const hb = dead.get(i);
+          if (hb > 0 && h2 < mid2) D.addStump(inst[o], inst[o + 1], inst[o + 2], TREE_DIM[species[i]].tr * 1.05 * inst[o + 3], hb + 0.15, inst[o + 5]); // snapped: stump stays
           continue;
         }
         const hy = inst[o + 1] - cp.y;
-        const lod = h2 + hy * hy < near2 ? 0 : 1;
-        if (species[i] >= SPECIES_COUNT) {
-          c[i] = -1;
-          continue;
-        }
+        const d2 = h2 + hy * hy;
+        const lod = d2 < near2 ? 0 : d2 < mid2 ? 1 : 2;
         c[i] = lod;
-        counts[species[i] * 2 + lod]++;
+        counts[species[i] * 3 + lod]++;
       }
       cls.push(c);
     }
     // Grow buckets if needed
     for (let sp = 0; sp < SPECIES_COUNT; sp++) {
-      for (let lod = 0; lod < 2; lod++) {
-        const b = lod === 0 ? this.buckets[sp].near : this.buckets[sp].far;
-        const need = counts[sp * 2 + lod];
+      const B = this.buckets[sp];
+      for (let lod = 0; lod < 3; lod++) {
+        const b = lod === 0 ? B.near : lod === 1 ? B.mid : B.far;
+        const need = counts[sp * 3 + lod];
         if (need > b.cap) this._allocBucket(b, Math.max(need, b.cap * 2));
         b.count = 0;
       }
     }
-    // Pass 2: write matrices & colors
+    // Pass 2: write matrices & colors (+ deterministic per-tree lean / size jitter, scorch, damage registry)
     for (let t = 0; t < tables.length; t++) {
-      const { inst, species, count, col, scl } = tables[t];
+      const v = tables[t];
+      const { inst, species, count, col, scl } = v;
       const c = cls[t];
+      const st = D.state(v.src || v);
+      const scorch = st && st.scorch.size ? st.scorch : null;
+      const si = D.addSource(v.src || v);
       for (let i = 0; i < count; i++) {
         const lod = c[i];
         if (lod < 0) continue;
         const sp = species[i];
-        const b = lod === 0 ? this.buckets[sp].near : this.buckets[sp].far;
+        const B = this.buckets[sp];
+        const b = lod === 0 ? B.near : lod === 1 ? B.mid : B.far;
         const o = i * INST_STRIDE;
         const k = b.count++;
         const m = b.mesh.instanceMatrix.array;
         const mo = k * 16;
+        const x = inst[o], z = inst[o + 2];
         let s = inst[o + 3], sy = inst[o + 4];
         const r = inst[o + 5];
         if (scl) (s *= scl[i * 2]), (sy *= scl[i * 2 + 1]);
+        // [tree-detail] per-tree variation: crown width/height jitter and a small lean (hashed from position)
+        const h1 = hash2(x, z, 5), h2 = hash2(x, z, 6), h3 = hash2(x, z, 7);
+        s *= 0.92 + h1 * 0.16;
+        sy *= 0.94 + h2 * 0.12;
+        const lean = (LEAN[sp] ?? 0.035) * h3, la = h1 * 6.283;
+        const lx = Math.cos(la) * lean, lz = Math.sin(la) * lean;
         const cr = Math.cos(r) * s, sr = Math.sin(r) * s;
-        m[mo] = cr; m[mo + 1] = 0; m[mo + 2] = -sr; m[mo + 3] = 0;
-        m[mo + 4] = 0; m[mo + 5] = sy; m[mo + 6] = 0; m[mo + 7] = 0;
-        m[mo + 8] = sr; m[mo + 9] = 0; m[mo + 10] = cr; m[mo + 11] = 0;
-        m[mo + 12] = inst[o]; m[mo + 13] = inst[o + 1]; m[mo + 14] = inst[o + 2]; m[mo + 15] = 1;
+        // columns of R_y * S, then the small-angle lean rotation (x' = x - lz*y, y' = lz*x + y - lx*z, z' = lx*y + z)
+        m[mo] = cr; m[mo + 1] = lz * cr + lx * sr; m[mo + 2] = -sr; m[mo + 3] = 0;
+        m[mo + 4] = -lz * sy; m[mo + 5] = sy; m[mo + 6] = lx * sy; m[mo + 7] = 0;
+        m[mo + 8] = sr; m[mo + 9] = lz * sr - lx * cr; m[mo + 10] = cr; m[mo + 11] = 0;
+        m[mo + 12] = x; m[mo + 13] = inst[o + 1]; m[mo + 14] = z; m[mo + 15] = 1;
         const ca = b.mesh.instanceColor.array;
         const cs = col || inst, co = col ? i * 3 : o + 6;
-        ca[k * 3] = cs[co];
-        ca[k * 3 + 1] = cs[co + 1];
-        ca[k * 3 + 2] = cs[co + 2];
+        let r0 = cs[co], g0 = cs[co + 1], b0 = cs[co + 2];
+        const sc = scorch ? scorch.get(i) || 0 : 0;
+        const f = 1 - 0.72 * sc;
+        ca[k * 3] = r0 * f * (1 + 0.15 * sc);
+        ca[k * 3 + 1] = g0 * f * (1 - 0.25 * sc);
+        ca[k * 3 + 2] = b0 * f * (1 - 0.3 * sc);
+        D.add(si, i, sp, x, inst[o + 1], z, s, sy, r, lx, lz, r0, g0, b0, lod * SPECIES_COUNT + sp, k);
       }
     }
-    for (let sp = 0; sp < SPECIES_COUNT; sp++) this._hist[sp] = counts[sp * 2] + counts[sp * 2 + 1];
-    let near = 0, far = 0;
+    D.endRebuild();
+    for (let sp = 0; sp < SPECIES_COUNT; sp++) this._hist[sp] = counts[sp * 3] + counts[sp * 3 + 1] + counts[sp * 3 + 2];
+    let near = 0, mid = 0, far = 0;
     for (let sp = 0; sp < SPECIES_COUNT; sp++) {
-      for (const b of [this.buckets[sp].near, this.buckets[sp].far]) {
+      const B = this.buckets[sp];
+      for (const b of [B.near, B.mid, B.far]) {
         const mesh = b.mesh;
         mesh.count = b.count;
         mesh.visible = b.count > 0;
+        if (b.shadow) (b.shadow.count = b.count), (b.shadow.visible = b.count > 0);
         mesh.instanceMatrix.clearUpdateRanges();
         mesh.instanceMatrix.addUpdateRange(0, b.count * 16);
         mesh.instanceMatrix.needsUpdate = true;
         mesh.instanceColor.clearUpdateRanges();
         mesh.instanceColor.addUpdateRange(0, b.count * 3);
         mesh.instanceColor.needsUpdate = true;
-        if (b.near) near += b.count;
+        if (b === B.near) near += b.count;
+        else if (b === B.mid) mid += b.count;
         else far += b.count;
       }
     }
-    this._stats = { near, far, total: near + far, rebuildMs: +(performance.now() - t0).toFixed(2) };
+    this._stats = { near, mid, far, total: near + mid + far, rebuildMs: +(performance.now() - t0).toFixed(2) };
   }
 
   stats() {
     let drawCalls = 0;
-    for (const b of this.buckets) drawCalls += (b.near.mesh.visible ? 1 : 0) + (b.far.mesh.visible ? 1 : 0);
-    return { ...this._stats, drawCalls };
+    for (const b of this.buckets) drawCalls += (b.near.mesh.visible ? 1 : 0) + (b.mid.mesh.visible ? 1 : 0) + (b.far.mesh.visible ? 1 : 0);
+    return { ...this._stats, drawCalls, damage: { ...this.damage.stats } };
   }
 }

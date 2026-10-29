@@ -860,6 +860,8 @@ export class HeliFlight {
       const sd = sea.raycast(o, d, best);
       if (sd < best) { best = sd; hit.ref = null; hit.kind = 'vessel'; }
     }
+    const tv = this.app.vegetation?.raycast?.(o, d, best); // [tree-damage]
+    if (tv) { best = tv.dist; hit.ref = null; hit.kind = 'tree'; } // [tree-damage]
     hit.dist = best;
     return hit.kind ? best : Infinity;
   }
@@ -1108,6 +1110,7 @@ export class HeliFlight {
       this.weaponStats.trafficHits += hits;
     }
     if (this.app.maritime) this.app.maritime.impact(hit.x, hit.y, hit.z, isRocket); // [feature/ferries-ships]
+    this.app.vegetation?.impact?.(hit, isRocket ? ROCKET_SPLASH_R : 0, isRocket ? ROCKET_UNITS : CANNON_UNITS * 4); // [tree-damage]
   }
 
   _updateWeapons(dt) {

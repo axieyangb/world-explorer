@@ -1744,6 +1744,7 @@ class WorldExplorerApp {
         this.driveVelY = 0;
       }
     }
+    this.speed *= this.vegetation.ram(this.pos, this.yaw, this.speed, spec, this.isDrivingTank()); // [tree-damage] knock trees down
 
     const axleHalfSpan = Math.max(1.6, (spec.length || 4.6) * 0.38);
     const sinY = Math.sin(this.yaw);

@@ -72,6 +72,28 @@ function hashStr(str) {
   return h >>> 0;
 }
 
+// [tree-placement] integer hash -> [0,1) and smooth value noise in absolute metres (stable across chunk reloads)
+function ihash(ix, iz, k) {
+  let h = Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ Math.imul(k | 0, 1274126177);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, z, scale, k) {
+  const fx = x / scale, fz = z / scale;
+  const ix = Math.floor(fx), iz = Math.floor(fz);
+  let tx = fx - ix, tz = fz - iz;
+  tx = tx * tx * (3 - 2 * tx);
+  tz = tz * tz * (3 - 2 * tz);
+  const a = ihash(ix, iz, k), b = ihash(ix + 1, iz, k), c = ihash(ix, iz + 1, k), d = ihash(ix + 1, iz + 1, k);
+  return a + (b - a) * tx + (c - a) * tz + (a - b - c + d) * tx * tz;
+}
+
+/** [tree-placement] Species-mix coordinate for pickFlora at (x, z) metres: neighbourhood drift + grove coherence + rnd. */
+export function floraMixU(x, z, rnd) {
+  const u = vnoise(x, z, 700, 11) * 0.9 + vnoise(x, z, 260, 12) * 0.35 + vnoise(x, z, 45, 13) * 0.55 + rnd * 0.4;
+  return u - Math.floor(u);
+}
+
 function pointInRing(px, pz, flat) {
   let inside = false;
   for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
@@ -986,6 +1008,11 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   const dem = getBeijingDemState();
   const baseAsl = (dem && dem.baseAslM) || 0;
   const ctx = floraContext(latC, lonC, baseAsl);
+  // [tree-placement] absolute-metre frame (origin lat/lon + local) for position-seeded variation
+  const absX0 = lon0 * 111320 * Math.cos((lat0 * Math.PI) / 180) + ox, absZ0 = -lat0 * 111320 + oz;
+  // Species mix: low-frequency drift per neighbourhood (~700 m) + grove-scale coherence (~45 m) + per-tree randomness.
+  // Returns u in [0,1) for pickFlora; nearby trees often share a species, a street/patch mixes 2-4.
+  const mixU = (x, z, base, rnd) => floraMixU(absX0 + x, absZ0 + z, rnd);
 
   const inst = new Float32Array(MAX_CHUNK_INSTANCES * INST_STRIDE);
   const species = new Uint8Array(MAX_CHUNK_INSTANCES);
@@ -1138,7 +1165,9 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     return pushRaw(SP_BUSH, x, y, z, sXZ * lk.sx, sY * lk.sy, rng() * 6.283, lk.r, lk.g, lk.b);
   };
 
-  // --- 1. Street trees: rows on sidewalks, regular spacing per street, skipping junctions/driveways ---
+  // --- 1. Street trees: rows on sidewalks with irregular spacing / kerb offset / age, skipping junctions & driveways ---
+  // [tree-placement] each side of a street is its own row: spacing jitter +-35 %, lateral jitter, occasional gaps and
+  // close pairs, saplings among mature trees, and a 2-4 species mix drifting along the street.
   const STREET = { trunk: 2.2, primary: 2.2, secondary: 2.2, tertiary: 2.2, residential: 1.6, living_street: 1.6, unclassified: 1.6 };
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
@@ -1152,23 +1181,42 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (sr() < (s.cls === 'residential' ? 0.25 : 0.1)) continue;
     if (s.hw * 2 < 7 && sr() < 0.5) continue;
     const spacing = 8 + sr() * 4;
-    const streetEntry = pickFlora(ctx, 0, sr());
-    if (!streetEntry || sr() > ctx.streetDens) continue;
+    const mx = (s.x1 + s.x2) * 0.5, mz = (s.z1 + s.z2) * 0.5;
+    const uMain = mixU(mx, mz, null, sr()); // the street's dominant planting
+    const uAlt = (uMain + 0.3 + sr() * 0.45) % 1; // a second species (replacements, other side)
+    const pMain = 0.45 + sr() * 0.3;
+    if (!pickFlora(ctx, 0, uMain) || sr() > ctx.streetDens) continue;
     const baseScale = 0.82 + sr() * 0.22;
     const nx = -dz / len, nz = dx / len;
     const off = s.hw + sw * 0.55;
-    const rng = mulberry32(streetSeed ^ (i * 2654435761));
     const along0 = ((s.x1 + ox) * dx + (s.z1 + oz) * dz) / len;
-    let d = (spacing - (((along0 % spacing) + spacing) % spacing)) % spacing;
-    for (; d < len; d += spacing) {
-      const t = d / len;
-      const bx = s.x1 + dx * t, bz = s.z1 + dz * t;
-      for (let side = -1; side <= 1; side += 2) {
-        const x = bx + nx * off * side, z = bz + nz * off * side;
-        if (nearJunction(x, z, 11)) continue;
-        if (!groundOk(x, z, 0.5, 2.8, 2.5)) continue;
-        const sc = baseScale * (0.92 + rng() * 0.16);
-        if (!plantTree(streetEntry, x, z, sc, sc * (0.95 + rng() * 0.1), rng)) break;
+    for (let side = -1; side <= 1; side += 2) {
+      const rng = mulberry32(streetSeed ^ Math.imul(i + 1, 2654435761) ^ (side > 0 ? 0x5bd1e995 : 0));
+      const sideMain = side > 0 || rng() < 0.7 ? uMain : uAlt;
+      let d = (spacing - (((along0 % spacing) + spacing) % spacing)) % spacing;
+      d += (rng() - 0.5) * spacing * 0.5;
+      if (d < 0) d += spacing;
+      for (; d < len; d += spacing * (0.65 + rng() * 0.7)) {
+        if (rng() < 0.08) continue; // driveway / missing tree
+        const pair = rng() < 0.06 ? 2 : 1; // two planted close together
+        for (let q = 0; q < pair; q++) {
+          const dd = d + q * (1.6 + rng() * 1.2);
+          if (dd >= len) break;
+          const t = dd / len;
+          const lat = off + (rng() - 0.5) * Math.min(0.9, sw * 0.5);
+          const x = s.x1 + dx * t + nx * lat * side, z = s.z1 + dz * t + nz * lat * side;
+          if (nearJunction(x, z, 11)) continue;
+          if (!groundOk(x, z, 0.5, 2.8, 2.5)) continue;
+          const pick = rng();
+          const u = pick < pMain ? sideMain : pick < pMain + 0.3 ? uAlt : mixU(x, z, null, rng());
+          const e = pickFlora(ctx, 0, u);
+          if (!e) continue;
+          // age: saplings, young and mature trees mixed along one row
+          const age = rng();
+          const ageK = age < 0.12 ? 0.45 + rng() * 0.2 : age < 0.32 ? 0.68 + rng() * 0.18 : 0.88 + rng() * 0.3;
+          const sc = baseScale * ageK;
+          if (!plantTree(e, x, z, sc, sc * (0.92 + rng() * 0.16), rng)) break;
+        }
       }
     }
   }
@@ -1235,11 +1283,23 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     const layers = [];
     if (tD > 0) layers.push([Math.sqrt(1 / tD), false]);
     if (bD > 0) layers.push([Math.sqrt(1 / bD), true]);
-    for (const [cell, isBush] of layers) {
+    // [tree-placement] clumps & clearings: tree density follows mid-frequency noise (groves with open lawns between),
+    // sampled on a finer grid so the average density is unchanged; parks/woods get understorey shrubs under groves.
+    const clumpy = a.key === 'park' || a.key === LC_GRASS || a.key === LC_CEMETERY || a.key === LC_INSTITUTION || a.key === LC_WOOD || a.key === LC_RESIDENTIAL;
+    const clumpK = a.key === LC_WOOD ? 0.45 : 1;
+    const under = a.key === 'park' || a.key === LC_WOOD || a.key === LC_CEMETERY;
+    for (const [cell0, isBush] of layers) {
+      const cell = !isBush && clumpy ? cell0 * 0.72 : cell0;
       for (let gz = minZ; gz < maxZ; gz += cell) {
         for (let gx = minX; gx < maxX; gx += cell) {
           const x = gx + rng() * cell, z = gz + rng() * cell;
           if (x > maxX || z > maxZ || !inside(x, z)) continue;
+          if (!isBush && clumpy) {
+            const ax = absX0 + x, az = absZ0 + z;
+            const dn = vnoise(ax, az, 55, 21) * 0.75 + vnoise(ax, az, 18, 22) * 0.25;
+            const keep = Math.min(1, Math.max(0, (dn - 0.3) / 0.35));
+            if (rng() > 1 - clumpK + clumpK * keep * 1.15) continue;
+          }
           if (isBush) {
             if (!groundOk(x, z, 2.0, 1.2, 1.5)) continue;
             const n = 1 + Math.floor(rng() * 3);
@@ -1251,9 +1311,20 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
             }
           } else {
             if (!groundOk(x, z, 3.0, 2.5, 3)) continue;
-            const e = pickFlora(ctx, role, rng());
-            const sc = sMin + rng() * (sMax - sMin);
+            const e = pickFlora(ctx, role, mixU(x, z, null, rng()));
+            const age = rng();
+            const sc = (sMin + rng() * (sMax - sMin)) * (age < 0.15 ? 0.55 + rng() * 0.2 : 1);
             if (e) plantTree(e, x, z, sc, sc * (0.9 + rng() * 0.25), rng);
+            if (under && e && rng() < 0.3) {
+              const nb = 1 + Math.floor(rng() * 2);
+              for (let k = 0; k < nb; k++) {
+                const ang = rng() * 6.283, rr = 2.2 + rng() * 2.5;
+                const bx = x + Math.cos(ang) * rr, bz = z + Math.sin(ang) * rr;
+                if (!inside(bx, bz) || !groundOk(bx, bz, 2.0, 1.2, 1.5)) continue;
+                const bs = 0.7 + rng() * 0.7;
+                plantBush(bx, bz, bs, bs * (0.8 + rng() * 0.4), rng);
+              }
+            }
           }
           if (count >= MAX_CHUNK_INSTANCES) break;
         }
