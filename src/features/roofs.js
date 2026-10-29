@@ -265,7 +265,7 @@ export function planRoof(info) {
     if (shape === 'flat') return null;
   }
   const fid = String(info.facadeId || '');
-  const haussmann = region === 'paris' && rawH >= 11 && rawH <= 46 && !/glass|office_concrete|parking|industrial|retail/.test(fid);
+  const haussmann = region === 'paris' && rawH >= 14 && rawH <= 46 && !/glass|office_concrete|parking|industrial|retail/.test(fid);
   if (!shape) {
     if (haussmann) shape = 'mansard';
     else if (FLAT_TYPES.has(btype) && !(OLD_TOWN[region] && SOFT_FLAT.has(btype))) return null;
