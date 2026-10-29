@@ -384,6 +384,7 @@ export function computePlacesPayload(ctx) {
   for (const B of blds) {
     const b = B.e;
     if (b.isPart || (b.minHeight || 0) > 0.5 || B.hasHelipad) continue;
+    if (b.roofShape) continue; // [roofs] pitched / mansard roofs carry no flat-roof plant
     if (b.styleDisplay && String(b.styleDisplay).startsWith('40 Authentic')) continue;
     const rawH = b.height || 0;
     if (rawH < 7 || B.area < 60) continue;

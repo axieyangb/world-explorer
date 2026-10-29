@@ -21,6 +21,8 @@ const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalk
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { chunkGroundSampler } from './features/ground_cover.js'; // [ground]
 import { appendInfillBuilding } from './features/infill_buildings.js'; // [ground]
+import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod } from './features/roofs_chunk.js'; // [roofs]
+import { drawExtraFacadeLayers } from './features/facade_styles.js'; // [roofs]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
 setVenueTerrainSampler(getBeijingTerrainElevation); // [release-6-integ] breaks environment<->venues import cycle
@@ -328,8 +330,10 @@ export async function loadFacadeArrayTexture(mats) {
     ]);
 
     const S = 512;
-    const N = Math.max(1, Math.round(rgbImg.height / S));
-    const totalH = S * N;
+    const N0 = Math.max(1, Math.round(rgbImg.height / S));
+    const totalH = S * N0;
+    const extraLayers = N0 === 24 ? drawExtraFacadeLayers(S) : []; // [roofs] procedural regional layers 24..
+    const N = N0 + extraLayers.length;
 
     const cRgb = document.createElement('canvas');
     cRgb.width = S;
@@ -346,7 +350,11 @@ export async function loadFacadeArrayTexture(mats) {
     const maskBytes = ctxMask.getImageData(0, 0, S, totalH).data;
 
     const rgba = new Uint8Array(S * S * N * 4);
-    for (let layer = 0; layer < N; layer++) {
+    for (let e = 0; e < extraLayers.length; e++) { // [roofs] same vertical flip as the strip
+      const src = extraLayers[e], base = (N0 + e) * S * S * 4;
+      for (let r = 0; r < S; r++) rgba.set(src.subarray((S - 1 - r) * S * 4, (S - r) * S * 4), base + r * S * 4);
+    }
+    for (let layer = 0; layer < N0; layer++) {
       const layerDstBase = layer * S * S * 4;
       for (let r = 0; r < S; r++) {
         // Flip each 512x512 tile vertically so v=0 is bottom (ground) and v=1 is top (roof)
@@ -663,7 +671,7 @@ export function createSharedMaterials() {
       shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45 && vFacadeUv.x >= 23999.5) {
+        if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45 && vFacadeUv.x >= 23999.5 && vFacadeUv.x < 35999.5) { // [roofs] layers >= 24 live at 36000+
           float doorLayer = clamp(floor((vFacadeUv.x - 24000.0 + 0.5) / 1000.0), 0.0, 11.0);
           float uDoor = clamp(vFacadeUv.x - 24000.0 - doorLayer * 1000.0, 0.0, 1.0);
           float vDoor = clamp(vFacadeUv.y - 1.0, 0.0, 1.0);
@@ -700,8 +708,9 @@ export function createSharedMaterials() {
             totalEmissiveRadiance += glowCol * glassMask * nightLevel * (uNightEmissive * 0.46);
           }
         } else if (vFacadeUv.y >= 0.5 && abs(vWorldNorm.y) < 0.45) {
-          float texLayer = clamp(floor((vFacadeUv.x + 0.5) / 1000.0), 0.0, 23.0);
-          float uRep = max(0.0, vFacadeUv.x - texLayer * 1000.0);
+          float uvLayer = floor((vFacadeUv.x + 0.5) / 1000.0); // [roofs]
+          float texLayer = uvLayer > 35.5 ? min(uvLayer - 12.0, ${FACADE_CATALOG.length - 1}.0) : min(uvLayer, 23.0);
+          float uRep = max(0.0, vFacadeUv.x - uvLayer * 1000.0);
           float vRep = max(0.0, vFacadeUv.y - 1.0);
 
           vec4 texSample = texture(uFacadeArray, vec3(uRep, vRep, texLayer));
@@ -712,6 +721,11 @@ export function createSharedMaterials() {
 
           // Pure photographic AI facade albedo modulated by subtle per-building tint, vertical AO & analytical sky reflection on glass
           vec3 baseAlbedo = facadeRgb * diffuseColor.rgb * 1.08;
+          if (texLayer > 23.5) { // [roofs] regional layers: only paintable wall (A ~0.12) takes the paint tint
+            float paint = smoothstep(0.035, 0.09, rawAlpha) * (1.0 - smoothstep(0.2, 0.3, rawAlpha));
+            vec3 unpainted = facadeRgb * 1.08 * min(1.0, dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) * 1.18);
+            baseAlbedo = mix(unpainted, baseAlbedo, paint);
+          }
           vec3 skyRefl = mix(vec3(0.54, 0.68, 0.84), vec3(0.08, 0.13, 0.22), nightLevel);
           diffuseColor.rgb = mix(baseAlbedo, mix(baseAlbedo * 1.15, skyRefl, 0.24), winMask);
 
@@ -721,7 +735,7 @@ export function createSharedMaterials() {
           float dLy = clamp(dFdy(lum), -0.08, 0.08);
           float uvGrad = max(fwidth(uRep), fwidth(vRep));
           float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
-          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask)));
+          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask) * (texLayer > 23.5 ? 0.0 : 1.0))); // [roofs] crisp vector layers: no screen-space bump (jags on hard edges)
 
           // Keep metalness moderate so Three.js PBR without envMap never crushes shaded street-canyon glass to black
           float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;
@@ -758,6 +772,65 @@ export function createSharedMaterials() {
             vec3 interiorTex = roomCol * (0.18 + 0.82 * facadeRgb) * (0.64 + 0.36 * fract(hRoom * 7.3));
             totalEmissiveRadiance += interiorTex * winMask * cellEdge * isLit * (uNightEmissive * 0.38);
           }
+        } else if (vFacadeUv.y < -19.5) {
+          // [roofs] procedural roof coverings (features/roofs.js): uv = (mat * 1000 + 300 + s, -20 - t), s along the eave, t up the slope (m)
+          float rMat = floor((vFacadeUv.x + 0.5) / 1000.0);
+          float rs = vFacadeUv.x - rMat * 1000.0;
+          float rt = -20.0 - vFacadeUv.y;
+          float rfw = max(fwidth(rs), fwidth(rt));
+          float rFade = 1.0 - smoothstep(0.06, 0.3, rfw);
+          float pat = 1.0;
+          float rRough = 0.82, rMetal = 0.02;
+          if (rMat < 1.5 || abs(rMat - 6.0) < 0.5 || abs(rMat - 7.0) < 0.5) {
+            // clay: barrel (1) / flat interlocking (6) / glazed Japanese (7) tiles in courses
+            float course = rMat < 1.5 ? 0.36 : 0.32;
+            float row = floor(rt / course);
+            float ft = fract(rt / course);
+            float width = rMat < 1.5 ? 0.24 : 0.3;
+            float sc = rs / width + (rMat < 1.5 ? 0.0 : 0.5 * mod(row, 2.0));
+            float fs = fract(sc);
+            float hTile = fract(sin(dot(vec2(floor(sc), row), vec2(12.9898, 78.233))) * 43758.5453);
+            float crest = rMat < 1.5 ? sin(fs * 3.14159) : 1.0 - 0.5 * smoothstep(0.9, 1.0, fs) - 0.5 * smoothstep(0.1, 0.0, fs);
+            pat = (0.74 + 0.30 * crest) * (1.0 - 0.28 * smoothstep(0.72, 1.0, ft)) * (0.9 + 0.2 * hTile);
+            rRough = abs(rMat - 7.0) < 0.5 ? 0.45 : 0.8;
+            rMetal = abs(rMat - 7.0) < 0.5 ? 0.12 : 0.02;
+          } else if (abs(rMat - 2.0) < 0.5 || abs(rMat - 3.0) < 0.5) {
+            // slate (2) / asphalt shingles (3): staggered rectangles with dark gaps
+            float course = rMat < 2.5 ? 0.26 : 0.14;
+            float width = rMat < 2.5 ? 0.32 : 0.33;
+            float row = floor(rt / course);
+            float sc = rs / width + 0.5 * mod(row, 2.0) + 0.17 * fract(row * 0.37);
+            float fs = fract(sc), ft = fract(rt / course);
+            float hTile = fract(sin(dot(vec2(floor(sc), row), vec2(39.3468, 11.135))) * 43758.5453);
+            float gap = smoothstep(0.0, 0.05, fs) * smoothstep(1.0, 0.95, fs) * smoothstep(0.0, 0.12, ft);
+            pat = (0.72 + 0.28 * gap) * (0.88 + 0.24 * hTile) * (1.0 - 0.18 * smoothstep(0.6, 1.0, ft));
+            rRough = rMat < 2.5 ? 0.55 : 0.92;
+          } else if (abs(rMat - 4.0) < 0.5 || abs(rMat - 5.0) < 0.5) {
+            // standing-seam metal (4) / Paris zinc (5): seams down the slope, a little sheen
+            float seamW = rMat < 4.5 ? 0.52 : 0.46;
+            float fs = fract(rs / seamW);
+            float seam = smoothstep(0.0, 0.04, fs) * smoothstep(1.0, 0.94, fs);
+            pat = 0.78 + 0.26 * seam + 0.06 * sin(rs * 1.7 + rt * 0.3);
+            rRough = rMat < 4.5 ? 0.42 : 0.5;
+            rMetal = rMat < 4.5 ? 0.45 : 0.35;
+          } else if (abs(rMat - 10.0) < 0.5) {
+            // wooden privacy fence: vertical boards, darker gaps, weathered streaks
+            float fs = fract(rs / 0.14);
+            float hB = fract(sin(floor(rs / 0.14) * 91.7) * 43758.5453);
+            pat = (0.8 + 0.2 * smoothstep(0.0, 0.08, fs) * smoothstep(1.0, 0.9, fs)) * (0.86 + 0.24 * hB) * (0.94 + 0.08 * sin(rt * 9.0 + hB * 6.0));
+            rRough = 0.9;
+          } else if (abs(rMat - 9.0) < 0.5) {
+            // pool water: caustic ripples, glossy
+            float w1 = sin(rs * 5.1 + rt * 2.3 + sin(rt * 3.1) * 1.5);
+            float w2 = sin(rs * 2.7 - rt * 4.9 + sin(rs * 2.2) * 1.3);
+            pat = 0.92 + 0.14 * smoothstep(0.6, 1.0, w1 * w2);
+            rRough = 0.08; rMetal = 0.1;
+          }
+          diffuseColor.rgb *= mix(1.0, pat, rFade);
+          float pDx = clamp(dFdx(pat), -0.12, 0.12), pDy = clamp(dFdy(pat), -0.12, 0.12);
+          normal = normalize(normal + vec3(-pDx, -pDy, 0.0) * (1.6 * rFade));
+          roughnessFactor = rRough;
+          metalnessFactor = rMetal;
         }
         totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uNightEmissive;`
       );
@@ -877,6 +950,8 @@ function signedAreaXZ(pts) {
  */
 export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility, worldOrigin = null) {
   const regionTag = resolveRegionTag(worldOrigin);
+  const archRegion = archRegionFor(worldOrigin); // [roofs]
+  let groundSampler = null; // [roofs] shared with the roof inference (land-use flavour)
   const root = new THREE.Group();
   root.position.set(ox, 0, oz);
   root.name = `chunk_${cx}_${cz}`;
@@ -932,7 +1007,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         isPointInSunkenTrench = createSunkenTrenchChecker(data.roads || []);
 
         // 0. 3D Heightfield Terrain Mesh for this 1km x 1km chunk (with open-trench cutouts for sunken roads)
-        subGroups.terrain.add(buildChunkTerrainMesh(ox, oz, mats.terrainMat, isPointInSunkenTrench, null, chunkGroundSampler(data))); // [ground] land-use ground colour
+        subGroups.terrain.add(buildChunkTerrainMesh(ox, oz, mats.terrainMat, isPointInSunkenTrench, null, (groundSampler = chunkGroundSampler(data)))); // [roofs] sampler kept // [ground] land-use ground colour
 
         // 1. Parks & Landuse Plazas + Water Bodies (conforming to 3D terrain)
         buildParksAndWater(data, ox, oz, subGroups.terrain, mats, isPointInWater, isPointInSunkenTrench);
@@ -992,7 +1067,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           buildingColliders,
           roadSegments,
           buildingEntities,
-          regionTag
+          regionTag,
+          { arch: archRegion, ground: groundSampler, pools: poolRings(data), warm: (worldOrigin?.centerLat ?? 90) < 36 } // [roofs]
         );
         stage = 2;
         if (performance.now() - t0 >= budgetMs) {
@@ -2722,7 +2798,7 @@ function buildRailways(railways, ox, oz, railGroup, mats) {
   }
 }
 
-function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingColliders, roadSegments = [], entityTable = [], regionTag = 'beijing') {
+function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingColliders, roadSegments = [], entityTable = [], regionTag = 'beijing', roofOpts = null) {
   buildings = clearBridgeDeckBuildings(buildings, ox, oz, roadSegments, getBeijingTerrainElevation); // [release-6-integ] keep bridge carriageways clear
   const wfcPos = [];
   const wfcNorm = [];
@@ -2780,9 +2856,11 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
       tx: rdx / rlen,
       tz: rdz / rlen,
       isFootway: seg.cls === 'footway' || seg.cls === 'path' || seg.cls === 'steps',
+      hw: (seg.width || 8) * 0.5, // [roofs] yards: front setback from the carriageway
     });
   }
   const getEdgeGroundY = (lx, lz) => getBeijingTerrainElevation(ox + lx, oz + lz);
+  const roofCtx = createRoofContext(roofOpts, ox, oz, localRoads, getEdgeGroundY, buildings); // [roofs]
 
   // Pre-collect named road segment midpoints (sampled at >= 20m spacing per road name) so nearest-road lookup is fast
   const namedRoadPts = [];
@@ -2811,7 +2889,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const i = curIdx;
         curIdx++;
         if (b[13]) { // [ground] plain infill block past the detailed-build budget
-          appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders });
+          appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders, roof: roofCtx }); // [roofs] roof ctx
           continue;
         }
 
@@ -3044,6 +3122,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             localRoads,
             wallOutOffset,
             region: regionTag,
+            ...roofInfoFor(roofCtx, cx, cz, rawColour, b[8]), // [roofs] arch region, land-use flavour, roof tags, detail sink
           },
           wfcPos,
           wfcNorm,
@@ -3062,6 +3141,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           if (wfcMeta.topRoofFlat) entityRecord.topRoofFlat = wfcMeta.topRoofFlat;
           if (wfcMeta.topRoofHoles) entityRecord.topRoofHoles = wfcMeta.topRoofHoles;
           if (Number.isFinite(wfcMeta.topRoofY)) entityRecord.topY = wfcMeta.topRoofY;
+          if (wfcMeta.roofShape) noteRoofHouse(roofCtx, entityRecord, wfcMeta, normFlatOuter, cx, cz, osmId, buildingColliders); // [roofs]
         }
 
         // If this building is a stadium with an inner courtyard bowl (e.g. Workers' Stadium, Bird's Nest),
@@ -3089,6 +3169,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
 
       if (!finalized) {
         finalized = true;
+        finishRoofDetail(roofCtx, bldgGroup, mats, buildingColliders); // [roofs] yards + chimneys/dormers (near LOD meshes)
         if (wfcPos.length > 0) {
           const geom = new THREE.BufferGeometry();
           geom.setAttribute('position', new THREE.Float32BufferAttribute(wfcPos, 3));
@@ -3562,6 +3643,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
         uvArr,
         idxArr,
         kBidArr, // [kaiju]
+        roofLod: mesh.userData.roofLod || null, // [roofs] near-LOD detail mesh
       });
     }
   }
@@ -3646,7 +3728,7 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     mesh.receiveShadow = m.receiveShadow;
     if (m.kBidArr && mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
     if (subGroups[m.groupKey]) {
-      subGroups[m.groupKey].add(mesh);
+      subGroups[m.groupKey].add(m.roofLod ? wrapRoofLod(mesh, m.roofLod) : mesh); // [roofs]
     }
   }
 

@@ -13,6 +13,8 @@ import {
   resolveBeijingStyle24,
   applyPaletteMicroTint,
 } from './wfc_solver.js';
+import { EXTRA_FACADES, PAINT_PALETTES } from '../features/facade_styles.js'; // [roofs]
+import { planRoof, roofRise, emitRoof } from '../features/roofs.js'; // [roofs]
 
 /**
  * Pushes a 3D oriented box in local wall coordinates:
@@ -719,7 +721,35 @@ export const FACADE_CATALOG = [
   { id: 'us_suburban_siding', index: 21, floors: 2, bays: 3, metersPerFloor: 3.2, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.6183, 0.6566, 0.6779] },
   { id: 'retail_storefront_glass', index: 22, floors: 1, bays: 3, metersPerFloor: 4.2, metersPerBay: 4.4, isCurtainWall: true, avgColor: [0.4681, 0.4975, 0.5149] },
   { id: 'industrial_metal_cladding', index: 23, floors: 2, bays: 4, metersPerFloor: 4.5, metersPerBay: 4.5, isCurtainWall: false, avgColor: [0.2679, 0.2896, 0.3041] },
+  ...EXTRA_FACADES, // [roofs] procedural regional layers 24.. (features/facade_styles.js)
 ];
+
+/** [roofs] Facade atlas uv.x base of a layer: layers >= 24 skip the door range 24000..35999. */
+export function facadeUvBase(index) {
+  return (index >= 24 ? index + 12 : index) * 1000.0;
+}
+
+/** [roofs] Regional facade pools by architectural region (features/roofs.js archRegionFor); null = original pools. */
+function archFacadePool(arch, h, btype) {
+  const small = h <= 11.5;
+  switch (arch) {
+    case 'sf': return h >= 40 ? [0, 1, 4, 7, 3] : h >= 17 ? [7, 8, 4, 20, 16, 25] : [24, 24, 24, 25, 24, 6];
+    case 'la': return h >= 40 ? [0, 1, 2, 5, 4] : h >= 14 ? [25, 20, 3, 16, 4] : [25, 25, 25, 21, 21, 33];
+    case 'us':
+      if (h >= 40) return null;
+      if (h >= 14) return [8, 3, 4, 16, 20];
+      return small ? [21, 33, 21, 33, 21, 25] : [8, 6, 33, 21];
+    case 'uk': return h <= 16 ? [10, 10, 10, 8] : null;
+    case 'paris': return h >= 48 ? null : h >= 10 ? [9, 9, 9, 9, 4, 20] : [9, 11, 4];
+    case 'med': return h >= 45 ? [0, 4, 2] : [26, 26, 26, 11, 26, 11];
+    case 'nordic': return h <= 12 ? [29, 29, 29, 29, 11] : h <= 30 ? [20, 16, 11, 29] : [0, 1, 2, 20];
+    case 'latam': return h >= 45 ? [20, 0, 16, 1, 27, 20] : h >= 14 ? [27, 20, 16, 27, 11] : [27, 27, 27, 25];
+    case 'mideast': return h >= 60 ? [31, 0, 31, 1, 2, 31] : h >= 20 ? [28, 31, 16, 28, 20] : [28, 28, 25, 16];
+    case 'japan': return h >= 55 ? null : h >= 14 ? [12, 30, 13, 20, 12] : [32, 32, 30, 12];
+    case 'hk': return h >= 40 ? [14, 30, 0, 1, 14] : [30, 30, 12, 14];
+    default: return null;
+  }
+}
 
 export function resolveRegionTag(worldOrigin) {
   if (!worldOrigin || worldOrigin.isBeijing) return 'beijing';
@@ -830,7 +860,11 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   const rawStyle = String(bldgInfo.style || '').toLowerCase();
 
   let pool;
-  if (btype === 'parking' || btype === 'garages') {
+  const archPool = bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
+    ? archFacadePool(bldgInfo.arch, h, btype) : null; // [roofs]
+  if (archPool) {
+    pool = archPool;
+  } else if (btype === 'parking' || btype === 'garages') {
     pool = [18, 18, 23];
   } else if (btype === 'industrial' || btype === 'warehouse' || btype === 'manufacture') {
     pool = region === 'nyc' || region === 'london' ? [8, 23, 8, 18] : [23, 23, 18, 8];
@@ -922,6 +956,13 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     Math.max(0.88, Math.min(1.06, 0.97 + shift)),
     Math.max(0.88, Math.min(1.06, 0.97 + shift - warmShift)),
   ];
+
+  // [roofs] paintable regional layers: the wall tint is the house paint (trim keeps its own colour, see the shader)
+  const palette = PAINT_PALETTES[spec.id];
+  if (palette && !bldgInfo.colour) {
+    const pc = palette[((seed >>> 9) ^ (seed >>> 17)) % palette.length];
+    wallTint[0] = pc[0] * (wallTint[0] / 0.97); wallTint[1] = pc[1] * (wallTint[1] / 0.97); wallTint[2] = pc[2] * (wallTint[2] / 0.97);
+  }
 
   const avg = spec.avgColor;
   const clampC = (v) => Math.max(0.14, Math.min(0.92, v));
@@ -1181,6 +1222,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     localRoads = null,
     wallOutOffset = 0.0,
     region = 'beijing',
+    arch: archRegion = null, // [roofs]
   } = bldgInfo;
 
   if (!flatOuter || flatOuter.length < 6) return null;
@@ -1214,16 +1256,23 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   const retailSpec = FACADE_CATALOG[isBrickMasonry ? 17 : 22];
 
   const ccwOuter = ensureCCWFlatXZ(flatOuter);
+  // [roofs] pitched / mansard roof plan (null = the flat deck + parapet below)
+  const roofPlan = archRegion
+    ? planRoof({ flatOuter: ccwOuter, hasHoles: (flatHoles || []).some((h) => h.length >= 6), rawH, btype, region: archRegion, seed,
+      flav: bldgInfo.flav, isPart, minH: rawMinH, osm: bldgInfo.osmRoof || null, facadeId: upperSpec.id })
+    : null;
   // True sidewalk/surface ground elevation (distinct from buried foundation baseY)
   const surfY =
     Number.isFinite(groundY) && (rawMinH || 0) <= 0.5
       ? Math.max(baseY, Math.min(topY - 2.6, groundY))
       : baseY;
   const totalSpan = Math.max(3.2, topY - surfY);
+  // [roofs] walls stop at the eaves; the roof takes the top of the OSM height (raised where that leaves < 1 storey)
+  const yEave = roofPlan ? Math.max(surfY + Math.max(2.7, totalSpan * 0.45), topY - roofRise(roofPlan)) : topY;
 
   // Use clean 1-3 tier architectural setbacks for tall full buildings; 1 tier for normal buildings
   let tiers;
-  if (!isPart && (rawMinH || 0) <= 0.5 && totalSpan >= 38.0 && ccwOuter.length <= 24) {
+  if (!roofPlan && !isPart && (rawMinH || 0) <= 0.5 && totalSpan >= 38.0 && ccwOuter.length <= 24) {
     const rng = createSeededRNG(seed ^ 0x9e3779b9);
     const rawTiers = collapseVerticalMassingWFC(ccwOuter, flatHoles, totalSpan, arch, rng, false).slice(0, 3);
     tiers = rawTiers.map((t) => ({
@@ -1237,7 +1286,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         tierIndex: 0,
         role: 'main_shaft',
         y0: surfY,
-        y1: topY,
+        y1: yEave, // [roofs] = topY without a pitched roof
         flatOuter: ccwOuter,
         flatHoles: flatHoles || [],
       },
@@ -1273,13 +1322,14 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   const uBayShift = ((seed >>> 7) % upperSpec.bays) / upperSpec.bays;
   const primaryDoorIdx = selectDoorForBuilding(bldgInfo, upperSpec, seed, region);
 
+  let roofDone = null; // [roofs]
   for (let tIdx = 0; tIdx < tiers.length; tIdx++) {
     const tier = tiers[tIdx];
     const isTopTier = tIdx === tiers.length - 1;
     const tierSpan = tier.y1 - tier.y0;
     if (tierSpan < 0.4) continue;
 
-    const parapetH = isTopTier ? Math.min(0.85, Math.max(0.35, tierSpan * 0.04)) : 0.42;
+    const parapetH = roofPlan ? (roofPlan.shape === 'mansard' ? 0.45 : 0.0) : isTopTier ? Math.min(0.85, Math.max(0.35, tierSpan * 0.04)) : 0.42; // [roofs]
     const shaftY1 = Math.max(tier.y0 + 0.2, tier.y1 - parapetH);
     const shaftSpan = shaftY1 - tier.y0;
 
@@ -1470,8 +1520,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         );
         if (triEntity) triEntity.push(entityIdx, entityIdx);
 
-        const u0 = upperSpec.index * 1000.0 + uStart;
-        const u1 = upperSpec.index * 1000.0 + uEnd;
+        const u0 = facadeUvBase(upperSpec.index) + uStart; // [roofs]
+        const u1 = facadeUvBase(upperSpec.index) + uEnd;
         pushUvQuad(u0, 1.0, u1, 1.0 + upperV1);
         uAccumMeters += len;
 
@@ -1648,6 +1698,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // 2. Architectural Parapet / Cornice Band at top of tier (solid stone/metal, uv = -10)
+        if (parapetH <= 0.0) continue; // [roofs] pitched roof: the eaves cover the wall top
         const pr = Math.min(1, pCol[0] * dirShade * 1.03);
         const pg = Math.min(1, pCol[1] * dirShade * 1.03);
         const pb = Math.min(1, pCol[2] * dirShade * 1.03);
@@ -1677,6 +1728,22 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     emitRing(tier.flatOuter, false);
     for (const h of tier.flatHoles || []) {
       if (h.length >= 6) emitRing(ensureCCWFlatXZ(h), true);
+    }
+
+    // [roofs] pitched / mansard roof instead of the flat deck
+    if (roofPlan && isTopTier) {
+      if (uv) while (uv.length < (pos.length / 3) * 2) uv.push(-10.0, -10.0);
+      const av = upperSpec.avgColor, wt = facadeSel.wallTint;
+      const r = emitRoof({ pos, norm, col, uv }, tier.flatOuter, tier.flatHoles || [], roofPlan, tier.y1, {
+        wallRgb: [Math.min(1, av[0] * wt[0] * 1.15), Math.min(1, av[1] * wt[1] * 1.15), Math.min(1, av[2] * wt[2] * 1.15)],
+        detail: bldgInfo.roofDetail || null, seed, lod: 'full',
+        chimneyRgb: archRegion === 'nordic' || archRegion === 'la' ? [0.82, 0.8, 0.76] : [0.5, 0.29, 0.23],
+      });
+      if (r) {
+        roofDone = { shape: roofPlan.shape, ridgeY: r.ridgeY };
+        if (triEntity) while (triEntity.length < pos.length / 9) triEntity.push(entityIdx);
+        continue;
+      }
     }
 
     // 3. Roof Deck Cap
@@ -1754,7 +1821,9 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     doorIndex: primaryDoorIdx,
     topRoofFlat: topTier ? topTier.flatOuter : ccwOuter,
     topRoofHoles: topTier ? (topTier.flatHoles || []) : (flatHoles || []),
-    topRoofY: topTier ? topTier.y1 : topY,
+    topRoofY: roofDone ? Math.max(topTier.y1, roofDone.ridgeY) : topTier ? topTier.y1 : topY,
+    roofShape: roofDone ? roofDone.shape : null, // [roofs]
+    eaveY: roofDone ? topTier.y1 : null, // [roofs]
   };
 }
 

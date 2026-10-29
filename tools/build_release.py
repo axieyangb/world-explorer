@@ -42,6 +42,9 @@ MOD_ID_MAP = {
     'src/features/vegetation_extract.js': '__MOD_vegetation_extract',
     'src/features/ground_cover.js': '__MOD_ground_cover',  # [ground]
     'src/features/infill_buildings.js': '__MOD_infill_buildings',  # [ground]
+    'src/features/roofs.js': '__MOD_roofs',  # [roofs]
+    'src/features/roofs_chunk.js': '__MOD_roofs_chunk',  # [roofs]
+    'src/features/facade_styles.js': '__MOD_facade_styles',  # [roofs]
     'src/features/places_extract.js': '__MOD_places_extract',
     'src/features/signals.js': '__MOD_signals',
     'src/features/traffic_graph.js': '__MOD_traffic_graph',

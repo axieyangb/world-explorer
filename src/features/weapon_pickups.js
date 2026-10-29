@@ -308,7 +308,7 @@ export class WeaponPickups {
         const b = blds[Math.floor(rng() * blds.length)];
         const cx = (b.minX + b.maxX) * 0.5, cz = (b.minZ + b.maxZ) * 0.5;
         const w = Math.min(b.maxX - b.minX, b.maxZ - b.minZ);
-        if (w < 7 || !inChunk(cx, cz) || !free(cx, cz)) continue;
+        if (w < 7 || b.pitched || !inChunk(cx, cz) || !free(cx, cz)) continue; // [roofs] b.pitched: no flat roof
         const rel = b.h - getBeijingTerrainElevation(cx, cz);
         if (rel < 2.6 || rel > 4.6) continue;
         if (b.flatOuter && b.flatOuter.length >= 6 && !pointInRing2D(cx - b.ox, cz - b.oz, b.flatOuter)) continue;
