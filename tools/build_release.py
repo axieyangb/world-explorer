@@ -79,6 +79,8 @@ MOD_ID_MAP = {
     'src/features/live_sky.js': '__MOD_live_sky',  # [live-sky-weather]
     'src/features/live_weather.js': '__MOD_live_weather',  # [live-sky-weather]
     'src/features/aurora.js': '__MOD_aurora',  # [aurora]
+    'src/features/hero_vehicles.js': '__MOD_hero_vehicles',  # [hero-vehicles]
+    'src/features/reflection_probe.js': '__MOD_reflection_probe',  # [hero-vehicles]
     'src/features/sea_state.js': '__MOD_sea_state',  # [sea-state]
     'src/features/satellites.js': '__MOD_satellites',  # [satellites]
     'src/navigation.js': '__MOD_navigation',

@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { personParts, PART, MAT, OPT, bit, HIP_Y, SHOULDER_Y } from './features/person_model.js'; // [feature/people]
 import { NEW_VEHICLE_SPECS, isCustomFleetVehicle, buildFleetVehicleModel, applyVehiclePaint, updateVehicleEffects } from './features/vehicles.js';
+import { HERO_VEHICLE_IDS, buildHeroVehicle } from './features/hero_vehicles.js'; // [hero-vehicles]
 
 export const VEHICLE_SPECS = [
   {
@@ -152,6 +153,7 @@ function createSpeedTrailRibbon(width, length, hexColor, opacity = 0.72) {
  * Local forward is +Z, right is +X, up is +Y.
  */
 export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
+  if (options.hero && HERO_VEHICLE_IDS.has(typeId)) return createHeroVehicleModel(typeId, options);
   if (isCustomFleetVehicle(typeId)) {
     return buildFleetVehicleModel(typeId, options);
   }
@@ -679,6 +681,44 @@ export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
   if (options.paintColor != null) {
     applyVehiclePaint(group, options.paintColor);
   }
+  return group;
+}
+
+// [hero-vehicles] Detailed body for the player's own car, with the same userData contract and nitro VFX.
+function createHeroVehicleModel(typeId, options) {
+  const hero = buildHeroVehicle(typeId, options);
+  const { group, chassis } = hero;
+  const nitroVfx = new THREE.Group();
+  nitroVfx.visible = false;
+  chassis.add(nitroVfx);
+  const vfxParts = { plumes: [], shockCones: [], rings: [], trails: [], aeroFlaps: [] };
+  const flameOuter = typeId === 'supercar' ? 0xff4d00 : 0x3a86ff;
+  const trailCol = typeId === 'supercar' ? 0xff0055 : 0x00e5ff;
+  for (const [x, y, z] of hero.exhausts) {
+    const plume = createThrusterFlameCone(hero.exhausts.length > 2 ? 0.14 : 0.22, 3.8, 0xffffff, flameOuter);
+    plume.position.set(x, y, z);
+    nitroVfx.add(plume);
+    vfxParts.plumes.push(plume);
+  }
+  for (const x of [-0.66, 0.66]) {
+    const trail = createSpeedTrailRibbon(0.14, 9.5, trailCol, 0.72);
+    trail.position.set(x, 0.85, -VEHICLE_SPECS.find((s) => s.id === typeId).length / 2 - 0.05);
+    nitroVfx.add(trail);
+    vfxParts.trails.push(trail);
+  }
+  group.userData = {
+    typeId,
+    hero: true,
+    chassis,
+    wheels: hero.wheels,
+    frontSteerPivots: hero.frontSteerPivots,
+    nitroVfx,
+    vfxParts,
+    paintMeshes: hero.paintMeshes,
+    sirenActive: false,
+  };
+  if (hero.lightbarParts) group.userData.lightbarParts = hero.lightbarParts;
+  if (options.paintColor != null) applyVehiclePaint(group, options.paintColor);
   return group;
 }
 

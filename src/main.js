@@ -83,6 +83,7 @@ import { initLiveWeather } from "./features/live_weather.js"; // [live-sky-weath
 import { initAurora } from "./features/aurora.js"; // [aurora]
 import { initSeaState } from "./features/sea_state.js"; // [sea-state]
 import { initSatellites } from "./features/satellites.js"; // [satellites]
+import { ReflectionProbe } from "./features/reflection_probe.js"; // [hero-vehicles]
 import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
 import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
@@ -277,7 +278,7 @@ class WorldExplorerApp {
     this.nitroActive = false;
     this.vfxTime = 0;
 
-    this.vehicleMesh = createVehicleModel(VEHICLE_SPECS[this.vehicleIdx].id);
+    this.vehicleMesh = createVehicleModel(VEHICLE_SPECS[this.vehicleIdx].id, { hero: true });
     this.vehicleMesh.visible = true;
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
@@ -509,6 +510,7 @@ class WorldExplorerApp {
     this.aurora = initAurora(this); // [aurora] live NOAA aurora nowcast -> night sky
     this.seaState = initSeaState(this); // [sea-state] live waves/swell -> water shader + ship motion
     this.satellites = initSatellites(this); // [satellites] real satellites + ISS in the night sky
+    this.reflections = new ReflectionProbe(this.renderer, this.skyDome); // [hero-vehicles] live-sky reflections on the player's car
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
     this.placesInfo = new PlacesInfo(this); // places-info
     this._animate();
@@ -2399,8 +2401,14 @@ class WorldExplorerApp {
     this.sirenActive = false;
     this.vehicleIdx = ((idx % VEHICLE_SPECS.length) + VEHICLE_SPECS.length) % VEHICLE_SPECS.length;
     this.scene.remove(this.vehicleMesh);
+    // [hero-vehicles] free the old car's GPU buffers; detailed bodies are several MB each
+    this.vehicleMesh.traverse((o) => {
+      if (!o.isMesh) return;
+      o.geometry.dispose();
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) m.dispose();
+    });
     const spec = VEHICLE_SPECS[this.vehicleIdx];
-    this.vehicleMesh = createVehicleModel(spec.id, options);
+    this.vehicleMesh = createVehicleModel(spec.id, { ...options, hero: true });
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
     if (this.mode !== "drive") {
@@ -2867,6 +2875,7 @@ class WorldExplorerApp {
     if (this.aurora) this.aurora.update(dt); // [aurora]
     if (this.seaState) this.seaState.update(dt); // [sea-state] after live weather (reads its wind)
     if (this.satellites) this.satellites.update(dt); // [satellites]
+    if (this.reflections) this.reflections.update(dt, [this.vehicleMesh, this.avatarMesh, this.heliMesh]); // [hero-vehicles]
     if (this.venueRides) this.venueRides.update(dt, this.camera, this.loadedChunks); // [venues]
     if (this.placesInfo) this.placesInfo.update(dt); // places-info
     if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
