@@ -69,7 +69,7 @@ const C = {
 // Generic (unbranded) colour schemes: [primary, secondary, accent]
 const FUEL_SCHEMES = [
   [[0.62, 0.04, 0.03], [0.86, 0.86, 0.84], [0.95, 0.62, 0.02]],
-  [[0.02, 0.32, 0.12], [0.85, 0.75, 0.05], [0.86, 0.86, 0.84]],
+  [[0.02, 0.32, 0.12], [0.86, 0.86, 0.84], [0.35, 0.7, 0.1]],
   [[0.03, 0.12, 0.5], [0.86, 0.86, 0.84], [0.78, 0.04, 0.04]],
   [[0.86, 0.36, 0.02], [0.86, 0.86, 0.84], [0.1, 0.1, 0.12]],
   [[0.04, 0.38, 0.42], [0.92, 0.9, 0.86], [0.05, 0.6, 0.25]],
@@ -93,6 +93,46 @@ const PRODUCT = [
 const CAR_PAINT = [0xf2f2f0, 0x1c1d20, 0x8c9096, 0xb8bcc2, 0x7a1e22, 0x1f3a66, 0x2f4f3a, 0xc9c1a8, 0x4a4f57, 0xd8d8d8, 0x9a2a1a, 0x22457a];
 const toHex = (c) => (Math.round(Math.min(1, c[0]) * 255) << 16) | (Math.round(Math.min(1, c[1]) * 255) << 8) | Math.round(Math.min(1, c[2]) * 255);
 const mul = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
+
+// ------------------------------------------------------------------ unbranded signage
+// Signs never show real brands: chain names (known list, or a name repeated across the chunk's POIs) are replaced
+// by generic wording; an independent shop keeps its OSM name on generic-style signage. OSM brand / operator tags
+// are not read at all (the tiles do not carry them).
+const CHAINS = new RegExp([
+  // fuel
+  'shell', 'chevron', 'texaco', 'exxon', 'mobil', '\\bbp\\b', 'arco', '\\b76\\b', 'phillips', 'conoco', 'sunoco', 'valero', 'citgo', 'marathon',
+  'speedway', 'sinclair', 'gulf', 'circle ?k', 'wawa', 'sheetz', 'racetrac', 'quiktrip', 'qt\\b', 'casey', 'pilot', 'flying j', 'love.?s',
+  'total', 'esso', 'agip', '\\beni\\b', 'repsol', 'cepsa', 'aral', 'jet\\b', 'avia', 'q8', 'lukoil', 'rosneft', 'gazprom', 'petrobras', 'posto br',
+  '\\bbr\\b', 'ipiranga', 'pemex', 'petronas', 'caltex', 'ampol', 'petro', 'eneos', 'idemitsu', 'apollostation', 'cosmo', 'sinopec', '中石化', '中石油',
+  'petrochina', 'cnpc', 'irving', 'husky', 'ultramar', 'speedy', 'murphy', 'kwik', 'gas ?n ?go',
+  // convenience / grocery
+  '7-?eleven', 'seven', 'セブン', 'family ?mart', 'ファミリーマート', 'lawson', 'ローソン', 'ministop', 'ミニストップ', 'daily ?yamazaki', 'newdays',
+  'tesco', "sainsbury", 'co-?op', 'spar\\b', 'londis', 'costcutter', 'premier', 'one stop', 'nisa', 'budgens', 'carrefour', 'monoprix', 'franprix',
+  'casino', 'intermarch', 'leclerc', 'auchan', 'lidl', 'aldi', 'rewe', 'edeka', 'netto', 'penny', 'kaufland', 'albert heijn', 'jumbo', 'mercadona',
+  'kroger', 'safeway', 'albertsons', 'vons', 'pavilions', 'ralphs', 'publix', 'walmart', 'target', 'costco', 'whole foods', 'trader joe', 'h-?e-?b',
+  'randalls', 'fiesta', 'h ?mart', 'sprouts', 'food ?4 ?less', 'smart ?& ?final', 'wegmans', 'meijer', 'giant', 'stop ?& ?shop', 'winn', 'dollar',
+  'waitrose', 'morrisons', 'asda', 'iceland', 'm&s', 'marks', 'woolworths', 'coles', 'イオン', 'aeon', 'ito-?yokado', 'seiyu', '永辉', '华润', '物美',
+  // fast food / pharmacy / banks
+  'mcdonald', 'マクドナルド', 'burger king', 'wendy', 'kfc', 'kentucky', 'subway', 'taco bell', 'chipotle', 'starbucks', 'domino', 'pizza hut',
+  'popeyes', 'chick-?fil', 'sonic', 'jack in the box', 'in-?n-?out', 'five guys', 'shake shack', 'arby', 'dunkin', 'tim horton', 'panda express',
+  'pret', 'greggs', 'nando', 'quick\\b', 'mos burger', 'モス', 'yoshinoya', '吉野家', 'sukiya', 'すき家', 'matsuya', '松屋', 'lotteria', '麦当劳', '肯德基',
+  'cvs', 'walgreens', 'rite aid', 'boots', 'superdrug', 'lloyds', 'matsumoto', 'マツモト', 'welcia', 'ウエルシア', 'sundrug', 'tsuruha',
+  'chase', 'wells fargo', 'bank of america', 'citi', 'hsbc', 'barclays', 'natwest', 'santander', 'bnp', 'soci[eé]t[eé] g', 'cr[eé]dit', 'deutsche',
+  'mufg', 'mizuho', 'smbc', 'ゆうちょ', 'icbc', '工商银行', '建设银行', '中国银行', '农业银行', 'capital one', 'us bank', 'td bank', 'pnc',
+].join('|'), 'i');
+const GENERIC = {
+  fuel: [['加油站', 'GAS'], ['加油站', 'FUEL'], ['24小时加油', 'GAS 24/7'], ['加油站', 'FUEL STOP']],
+  conv: [['便利店', 'MART 24'], ['便利店', '24/7 MARKET'], ['便利店', 'CORNER MART'], ['便利店', 'QUICK MART']],
+  super: [['超市', 'SUPERMARKET'], ['超市', 'FRESH MARKET'], ['超市', 'FOOD MARKET']],
+  fast: [['快餐', 'BURGERS'], ['快餐', 'FAST FOOD'], ['快餐', 'DRIVE-IN']],
+  pharmacy: [['药店', 'PHARMACY']], bank: [['银行', 'BANK']],
+};
+export function signNames(kind, name, nameEn, repeated, rnd) {
+  const nm = String(name || ''), en = String(nameEn || '');
+  if ((nm || en) && !repeated && !CHAINS.test(nm) && !CHAINS.test(en)) return [nm || en, en || nm];
+  const g = GENERIC[kind];
+  return g[(rnd() * g.length) | 0];
+}
 
 // ------------------------------------------------------------------ geometry accumulator
 // Triangles with flat normals; `em` doubles the normal length (wfcBldgMat reads |n| > 1.5 as "glows at night").
@@ -452,7 +492,7 @@ export function buildPoiVenues(ctx) {
     // plinth + interior shell
     box(bld, F, 0, 0.16, D / 2, W, 0.32, D, C.granite, false, 'b');
     flat(bld, F, -W / 2 + 0.2, W / 2 - 0.2, 0.05, D - 0.08, 0.33, C.tile);
-    face(bld, F, -W / 2 + 0.2, W / 2 - 0.2, 0.32, GH, 0.03, o.interior || C.interior, true);
+    face(bld, F, -W / 2 + 0.2, W / 2 - 0.2, 0.32, GH, 0.2, o.interior || C.interior, true);
     // ceiling with light strips
     A_ceiling(F, W, D, GH);
     // shelving
@@ -1070,11 +1110,19 @@ export function buildPoiVenues(ctx) {
     for (const s of [-1, 1]) box(bld, F, s * (cw / 2 - 0.5), cy / 2, res.D + cd - 0.5, 0.4, cy, 0.4, C.aluDk, false, 'b');
     for (let i = 0; i < 4; i++) box(bld, F, -cw / 2 + cw * (i + 0.5) / 4, cy - 0.04, res.D + cd / 2, 1.2, 0.02, 0.4, C.light, true);
     // big sign on a raised parapet panel above the entrance
-    const sTop = Math.max(hostTop + 1.6, GH + 3.5);
     const sw = Math.min(fr.W + 1, Math.max(8, (nameEn || name || 'SUPERMARKET').length * 0.9 + 2));
-    box(bld, F, 0, (sTop + hostTop - 1.5) / 2, 0.2, sw + 0.6, sTop - hostTop + 1.5, 0.5, [0.86, 0.86, 0.84], false, 'b');
-    box(bld, F, 0, sTop - 0.06, 0.2, sw + 0.7, 0.12, 0.6, scheme[0]);
-    sign(F, 0, (sTop + hostTop - 1.5) / 2 + 0.05, 0.47, sw, Math.min(1.6, sTop - hostTop + 0.9), 5, name || '超市', nameEn || name || 'SUPERMARKET', 0xf2f2ee, toHex(scheme[0]));
+    if (hostTop <= 10) {
+      // big-box store: sign tower rising above the roofline
+      const sTop = Math.max(hostTop + 1.6, GH + 3.5);
+      box(bld, F, 0, (sTop + hostTop - 1.5) / 2, 0.2, sw + 0.6, sTop - hostTop + 1.5, 0.5, [0.86, 0.86, 0.84], false, 'b');
+      box(bld, F, 0, sTop - 0.06, 0.2, sw + 0.7, 0.12, 0.6, scheme[0]);
+      sign(F, 0, (sTop + hostTop - 1.5) / 2 + 0.05, 0.47, sw, Math.min(1.6, sTop - hostTop + 0.9), 5, name || '超市', nameEn || name || 'SUPERMARKET', 0xf2f2ee, toHex(scheme[0]));
+    } else {
+      // supermarket in the base of a taller building: lit panel on the facade above the entrance canopy
+      const y0 = cy + 0.9, h = 1.5;
+      box(bld, F, 0, y0 + h / 2, 0.15, sw + 0.5, h + 0.3, 0.3, [0.86, 0.86, 0.84], 'f', 'b');
+      sign(F, 0, y0 + h / 2, 0.31, sw, h - 0.4, 5, name || '超市', nameEn || name || 'SUPERMARKET', 0xf2f2ee, toHex(scheme[0]));
+    }
     pool(F.wx(0, res.D + cd / 2), F.wz(0, res.D + cd / 2), cw * 0.55, C.lightWarm, 0.5, 0.1, cd * 0.9, F.rotY());
     // cart corral beside the doors
     const ccx = fr.W / 2 + 2.6 <= E.len / 2 ? fr.W / 2 + 1.6 : -fr.W / 2 + 1.6;
@@ -1314,6 +1362,10 @@ export function buildPoiVenues(ctx) {
     return 2;
   };
   const list = pois.slice().sort((a, b) => order(a) - order(b));
+  const nameCount = new Map(); // a name seen twice in one chunk is a chain
+  for (const q of pois) { const k = String(q[5] || q[4] || '').toLowerCase().trim(); if (k) nameCount.set(k, (nameCount.get(k) || 0) + 1); }
+  const repeated = (q) => (nameCount.get(String(q[5] || q[4] || '').toLowerCase().trim()) || 0) > 1;
+  const safeQ = (q, kind, rnd) => { const c = q.slice(); [c[4], c[5]] = signNames(kind, q[4], q[5], repeated(q), rnd); return c; };
   let nStores = 0;
   for (const q of list) {
     const [px, pz, cls, sub, name, nameEn] = q;
@@ -1323,7 +1375,7 @@ export function buildPoiVenues(ctx) {
     const isWash = /car ?wash|洗車|洗车|lavage|waschanlage/i.test(`${name} ${nameEn}`);
     if (isFuel || isWash) {
       if (near(px, pz, 40, 'fuel')) { q.venue = 1; continue; }
-      if (isFuel ? gasStation(q, rnd) : false) { q.venue = 1; done.push([px, pz, 'fuel']); }
+      if (isFuel ? gasStation(safeQ(q, 'fuel', rng32(hashXZ(ox + px, oz + pz, 6))), rnd) : false) { q.venue = 1; done.push([px, pz, 'fuel']); }
       continue;
     }
     const conv = (cls === 'shop' && (sub === 'convenience' || sub === 'kiosk')) || (cls === 'grocery' && sub === 'convenience');
@@ -1337,7 +1389,7 @@ export function buildPoiVenues(ctx) {
     if (!B) continue;
     if (B.used) continue;
     if (supm && B.area >= 500) { // big box with a car park; small urban supermarkets just get a shop front
-      if (supermarket(q, rnd, B)) { B.used = true; q.venue = 1; nStores++; }
+      if (supermarket(safeQ(q, 'super', rng32(hashXZ(ox + px, oz + pz, 6))), rnd, B)) { B.used = true; q.venue = 1; nStores++; }
       continue;
     }
     // pick the street face nearest the POI
@@ -1358,8 +1410,9 @@ export function buildPoiVenues(ctx) {
     const scheme = SHOP_SCHEMES[(rnd() * SHOP_SCHEMES.length) | 0];
     const kind = conv || supm ? 'conv' : fast ? 'fast' : pharm ? 'pharmacy' : 'bank';
     const sch = pharm ? [[0.94, 0.95, 0.94], [0.03, 0.5, 0.2], [0.03, 0.5, 0.2]] : fast ? [[0.75, 0.06, 0.04], [0.98, 0.8, 0.1], [0.98, 0.8, 0.1]] : scheme;
+    const [sZh, sEn] = signNames(supm ? 'super' : kind, name, nameEn, repeated(q), rng32(hashXZ(ox + px, oz + pz, 6)));
     A_store(fr, kind, rnd, {
-      name, nameEn, scheme: sch,
+      name: sZh, nameEn: sEn, scheme: sch,
       awning: conv && rnd() < 0.5 ? [sch[1], sch[0]] : null,
       kinds: conv ? (rnd() < 0.6 ? ['atm', 'freezer', 'news'] : ['freezer', 'news', 'bin']) : null,
     });

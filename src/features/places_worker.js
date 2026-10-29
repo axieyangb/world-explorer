@@ -626,7 +626,7 @@ export function computePlacesPayload(ctx) {
       const nmZh = '⛽ ' + (name || '加油站');
       const nmEn = '⛽ ' + (nameEn || name || 'Gas Station');
       geo.push([ox + cx, gy, oz + cz, 'fuel', 'fuel', nmZh, nmEn, ox + rqx, oz + rqz]);
-      if (labels.length < 360) labels.push([ox + cx, gy + 6.5, oz + cz, nmZh, nmEn, 1]);
+      if (labels.length < 360 && !q.venue) labels.push([ox + cx, gy + 6.5, oz + cz, nmZh, nmEn, 1]); // [venues-poi] no floating brand label
       continue;
     }
 
