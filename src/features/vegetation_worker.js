@@ -642,49 +642,30 @@ function pushRingPerimeterCurb(buf, outer, ox, oz, yOffTop, curbRise, width, rgb
   }
 }
 
-/** Emits a planted floral clump at `(x, y, z)`: an irregular leafy dome with small blossoms scattered over it. */
+/** Emits a planted floral clump at `(x, y, z)`: a low uneven cone whose facets alternate leaf green and
+ *  blossom colour, plus three tiny blossoms on top. About 11 triangles: flowerbeds include every mapped
+ *  garden, so this runs tens of thousands of times per city. */
 function pushFlowerCluster3D(buf, x, y, z, r, h, flowerRgb, pat, kind, rng) {
-  // Leafy dome: 7-sided, uneven radius, two rings so it reads as a soft cushion rather than a pyramid
-  const N = 7, rings = [[1.0, 0.3], [0.62, 0.78]];
-  const leafA = [0.16 + rng() * 0.06, 0.40 + rng() * 0.12, 0.16 + rng() * 0.05];
-  const leafB = [leafA[0] * 0.75, leafA[1] * 0.78, leafA[2] * 0.7];
-  const rr = [];
-  for (let i = 0; i < N; i++) rr.push(r * (0.82 + rng() * 0.36));
-  const ringPt = (ri, i) => {
-    const a = (i / N) * Math.PI * 2, [f, hy] = rings[ri];
-    return [x + Math.cos(a) * rr[i] * f, y + h * hy, z + Math.sin(a) * rr[i] * f];
-  };
-  const top = [x, y + h * 0.98, z];
-  for (let i = 0; i < N; i++) {
-    const j = (i + 1) % N;
-    const o0 = ringPt(0, i), o1 = ringPt(0, j), i0 = ringPt(1, i), i1 = ringPt(1, j);
-    const a = ((i + 0.5) / N) * Math.PI * 2, nx = Math.cos(a), nz = Math.sin(a);
-    pushTri(buf, o0[0], y, o0[2], o1[0], y, o1[2], o1[0], o1[1], o1[2], nx * 0.9, 0.3, nz * 0.9, leafB, pat, kind);
-    pushTri(buf, o0[0], y, o0[2], o1[0], o1[1], o1[2], o0[0], o0[1], o0[2], nx * 0.9, 0.3, nz * 0.9, leafB, pat, kind);
-    pushTri(buf, o0[0], o0[1], o0[2], o1[0], o1[1], o1[2], i1[0], i1[1], i1[2], nx * 0.7, 0.7, nz * 0.7, leafA, pat, kind);
-    pushTri(buf, o0[0], o0[1], o0[2], i1[0], i1[1], i1[2], i0[0], i0[1], i0[2], nx * 0.7, 0.7, nz * 0.7, leafA, pat, kind);
-    pushTri(buf, i0[0], i0[1], i0[2], i1[0], i1[1], i1[2], top[0], top[1], top[2], nx * 0.3, 0.95, nz * 0.3, leafA, pat, kind);
-  }
-  // Blossoms: small four-petal crosses sitting just above the dome, mostly the bed colour with a few
-  // paler or deeper ones, so a bed reads as many flowers instead of one coloured block
-  const count = 20 + Math.floor(rng() * 10);
-  for (let k = 0; k < count; k++) {
-    const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * r * 0.85;
-    const bx = x + Math.cos(a) * d, bz = z + Math.sin(a) * d;
-    const by = y + h * (0.98 - 0.62 * (d / r) * (d / r)) + 0.03;
-    const t = rng();
-    const tint = t < 0.15 ? 1.25 : t > 0.85 ? 0.72 : 0.95 + rng() * 0.1;
-    const c = [Math.min(1, flowerRgb[0] * tint), Math.min(1, flowerRgb[1] * tint), Math.min(1, flowerRgb[2] * tint)];
-    const ps = 0.07 + rng() * 0.05, rot = rng() * Math.PI;
-    for (let q = 0; q < 4; q++) {
-      const pa = rot + (q * Math.PI) / 2, pb = pa + 0.5, pc = pa - 0.5;
-      pushTri(buf, bx, by + 0.012, bz,
-        bx + Math.cos(pb) * ps * 0.55, by, bz + Math.sin(pb) * ps * 0.55,
-        bx + Math.cos(pa) * ps, by - 0.01, bz + Math.sin(pa) * ps, 0, 1, 0, c, pat, kind);
-      pushTri(buf, bx, by + 0.012, bz,
-        bx + Math.cos(pa) * ps, by - 0.01, bz + Math.sin(pa) * ps,
-        bx + Math.cos(pc) * ps * 0.55, by, bz + Math.sin(pc) * ps * 0.55, 0, 1, 0, c, pat, kind);
+  const N = 6;
+  const leaf = [0.16 + rng() * 0.06, 0.40 + rng() * 0.12, 0.16 + rng() * 0.05];
+  const tx = x + (rng() - 0.5) * r * 0.3, tz = z + (rng() - 0.5) * r * 0.3, ty = y + h;
+  const a0 = rng() * Math.PI * 2;
+  let px = 0, pz = 0;
+  for (let i = 0; i <= N; i++) {
+    const a = a0 + (i / N) * Math.PI * 2, rr = r * (0.85 + rng() * 0.3);
+    const cx = x + Math.cos(a) * rr, cz = z + Math.sin(a) * rr;
+    if (i > 0) {
+      const ma = a - Math.PI / N, nx = Math.cos(ma) * 0.6, nz = Math.sin(ma) * 0.6;
+      const t = 0.85 + rng() * 0.3;
+      const c = i % 2 ? leaf : [Math.min(1, flowerRgb[0] * t), Math.min(1, flowerRgb[1] * t), Math.min(1, flowerRgb[2] * t)];
+      pushTri(buf, cx, y, cz, px, y, pz, tx, ty, tz, nx, 0.8, nz, c, pat, kind);
     }
+    px = cx; pz = cz;
+  }
+  for (let k = 0; k < 3; k++) {
+    const a = rng() * Math.PI * 2, d = rng() * r * 0.45, ps = 0.09 + rng() * 0.05;
+    const bx = tx + Math.cos(a) * d, bz = tz + Math.sin(a) * d, by = ty - d * 0.4 + 0.02;
+    pushTri(buf, bx - ps, by, bz - ps * 0.6, bx + ps, by, bz - ps * 0.6, bx, by, bz + ps, 0, 1, 0, flowerRgb, pat, kind);
   }
 }
 
