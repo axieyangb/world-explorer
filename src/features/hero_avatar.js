@@ -1508,29 +1508,6 @@ function makePoser(R) {
     }
   };
 
-  // Two-bone IK in the body frame: shoulder S, target T, elbow towards pole. Writes the upper-arm
-  // orientation to _qa and the elbow bend to _ik.a1 (no allocations).
-  function solveBody(arm, S, T, pole) {
-    const a = UPPER, b = FORE + GRIP;
-    _D.subVectors(T, S);
-    let d = _D.length();
-    _U.copy(_D).divideScalar(d || 1);
-    d = Math.max(0.15, Math.min(d, (a + b) * 0.995));
-    const cosA = (a * a + d * d - b * b) / (2 * a * d), sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
-    _V.copy(pole).addScaledVector(_U, -pole.dot(_U));
-    if (_V.lengthSq() < 1e-6) _V.set(0, 0, -1);
-    _V.normalize();
-    _E.copy(S).addScaledVector(_U, a * cosA).addScaledVector(_V, a * sinA);
-    _Y.subVectors(S, _E).divideScalar(a);
-    _F.copy(S).addScaledVector(_U, d).sub(_E).normalize();
-    _ik.a1 = Math.acos(Math.max(-1, Math.min(1, -_Y.dot(_F))));
-    _Z.copy(_F).addScaledVector(_Y, -_F.dot(_Y));
-    if (_Z.lengthSq() < 1e-8) _Z.copy(_V).negate();
-    _Z.normalize();
-    _X.crossVectors(_Y, _Z);
-    _M.makeBasis(_X, _Y, _Z);
-    _qa.setFromRotationMatrix(_M);
-  }
 }
 
 // CPU pose for a skirt mesh: vertices below the waist turn about the hip axis with their side's thigh.
@@ -1554,9 +1531,92 @@ function makeSkirtPoser(mesh) {
   };
 }
 
+// Two-bone IK in the body frame: shoulder S, target T, elbow towards pole. Writes the upper-arm
+// orientation to _qa and the elbow bend to _ik.a1 (no allocations).
+function solveBody(arm, S, T, pole) {
+  const a = UPPER, b = FORE + GRIP;
+  _D.subVectors(T, S);
+  let d = _D.length();
+  _U.copy(_D).divideScalar(d || 1);
+  d = Math.max(0.15, Math.min(d, (a + b) * 0.995));
+  const cosA = (a * a + d * d - b * b) / (2 * a * d), sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  _V.copy(pole).addScaledVector(_U, -pole.dot(_U));
+  if (_V.lengthSq() < 1e-6) _V.set(0, 0, -1);
+  _V.normalize();
+  _E.copy(S).addScaledVector(_U, a * cosA).addScaledVector(_V, a * sinA);
+  _Y.subVectors(S, _E).divideScalar(a);
+  _F.copy(S).addScaledVector(_U, d).sub(_E).normalize();
+  _ik.a1 = Math.acos(Math.max(-1, Math.min(1, -_Y.dot(_F))));
+  _Z.copy(_F).addScaledVector(_Y, -_F.dot(_Y));
+  if (_Z.lengthSq() < 1e-8) _Z.copy(_V).negate();
+  _Z.normalize();
+  _X.crossVectors(_Y, _Z);
+  _M.makeBasis(_X, _Y, _Z);
+  _qa.setFromRotationMatrix(_M);
+}
+
+
+// [drivers] Seated pose (driver / pilot): body still in the seat, reclined chest, head to the road with a
+// glance into turns, legs to the pedals, both hands on the wheel rim turning with the steering (or on the
+// cyclic and collective). Reads root.userData.seat = { wheel, r, tilt, steer, foot, hands?, recline, seen };
+// hidden unless the game wrote `seen` within the last 0.3 s (parked or wrecked vehicles stay empty).
+const _wx = new THREE.Vector3(), _wy = new THREE.Vector3();
+function makeSeatPoser(R) {
+  const { root, body, pelvis, chest, neck, legs, armL, armR } = R;
+  const st = { t: 0, steer: 0, clock: Math.random() * 10 };
+  const sh = [new THREE.Vector3(), new THREE.Vector3()], T = new THREE.Vector3();
+  const pole = [new THREE.Vector3(-0.9, -1, -0.15).normalize(), new THREE.Vector3(0.9, -1, -0.15).normalize()];
+  return function pose() {
+    const S = root.userData.seat;
+    const now = performance.now();
+    root.visible = !!S && now - (S.seen || -1e9) < 300;
+    if (!S || !root.visible) return;
+    let dt = (now - st.t) / 1000;
+    if (st.t && dt < 0.002) return;
+    st.t = now;
+    dt = Math.min(dt, 0.1);
+    st.clock += dt;
+    st.steer += ((S.steer || 0) - st.steer) * Math.min(1, dt * 12);
+    const turn = clamp(st.steer * 2.4, -1.1, 1.1); // wheel rotation (rad), + = left
+    const rec = S.recline ?? 0.2;
+    body.position.set(0, 0, 0);
+    body.rotation.set(0, 0, 0);
+    pelvis.rotation.set(-rec * 0.5, 0, 0);
+    chest.rotation.set(-rec, 0.04 * turn, 0.03 * turn, 'YXZ');
+    neck.rotation.set(rec * 0.85 + 0.02 * Math.sin(st.clock * 0.7), 0.22 * turn + 0.06 * Math.sin(st.clock * 0.31), 0, 'YXZ');
+    for (let i = 0; i < 2; i++) {
+      const leg = legs[i], s = i === 0 ? -1 : 1;
+      const fz = S.foot ? S.foot[0] : 0.72, fy = S.foot ? S.foot[1] : -0.3;
+      legIK(0, HIP_H, fz, HIP_H + fy, _ik);
+      leg.thigh.rotation.set(-_ik.a1 - leg.pivot.rotation.x, 0, s * 0.06);
+      leg.shin.rotation.set(_ik.a1 - _ik.a2, 0, 0);
+      leg.foot.rotation.set(_ik.a2 + 0.25, 0, 0);
+    }
+    if (R.skirt) R.skirt(legs[0].thigh.rotation.x * -1, legs[1].thigh.rotation.x * -1);
+    chest.updateMatrix();
+    _wx.set(1, 0, 0);
+    _wy.set(0, Math.cos(S.tilt || 0), -Math.sin(S.tilt || 0));
+    for (let i = 0; i < 2; i++) {
+      const s = i === 0 ? -1 : 1, arm = i === 0 ? armL : armR;
+      sh[i].set(s * (armR.shX || SHOULDER_X), SHOULDER_H - WAIST_Y + (armR.shY || 0), 0).applyMatrix4(chest.matrix);
+      if (S.hands) T.copy(S.hands[i]);
+      else {
+        // hands at ten to two on the rim (arm 0 on the -X side), turned with the wheel
+        const a = (i === 0 ? Math.PI - 0.55 : 0.55) - turn;
+        T.copy(S.wheel).addScaledVector(_wx, Math.cos(a) * S.r).addScaledVector(_wy, Math.sin(a) * S.r);
+      }
+      // the fist centre sits just behind the rim
+      T.z -= 0.02;
+      solveBody(arm, sh[i], T, pole[i]);
+      setArmBody(arm, _qa, sh[i], _ik.a1);
+      arm.hand.rotation.set(0.2, 0, -s * 0.5);
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------------------------------
 
-export function buildHeroAvatar({ seed } = {}) {
+export function buildHeroAvatar({ seed, seated = false } = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
@@ -1576,7 +1636,8 @@ export function buildHeroAvatar({ seed } = {}) {
   const R = { root, body, pelvis, chest, neck, rightArm, leftArm, own: new Set(), legs: null, armL: null, armR: null, skirt: null };
   let built = { meshes: [], groups: [], mats: null };
 
-  const build = (look) => {
+  const build = (look0) => {
+    const look = seated && look0.bag === 'backpack' ? { ...look0, bag: 'none' } : look0; // [drivers] no backpack in a seat
     // Dispose the previous person (geometry, materials, segment groups) but keep the pivots.
     for (const m of built.meshes) { m.parent && m.parent.remove(m); m.geometry.dispose(); }
     for (const g of built.groups) g.parent && g.parent.remove(g);
@@ -1616,7 +1677,7 @@ export function buildHeroAvatar({ seed } = {}) {
     if (skirtMesh) { M.skirt.side = THREE.DoubleSide; M.skirt.shadowSide = THREE.BackSide; R.skirt = makeSkirtPoser(skirtMesh); } else R.skirt = null;
     built = { meshes, groups, mats: M };
     root.userData.look = L;
-    R.pose = makePoser(R);
+    R.pose = seated ? makeSeatPoser(R) : makePoser(R); // [drivers]
   };
 
   // Kept for API compatibility with updateEntityNitroVfx (no sci-fi effects on a person).

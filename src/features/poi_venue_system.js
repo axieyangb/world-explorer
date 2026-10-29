@@ -9,7 +9,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { getLang } from '../i18n.js';
 import { getPoiVenueModel } from './poi_venue_models.js';
-import { createCarMaterial, CAR_TYPES } from './traffic_models.js';
+import { createCarMaterial, CAR_TYPES, attachCarGlass } from './traffic_models.js'; // [drivers] +glass
 import { showVehicleToast } from './vehicles.js';
 import { getWeaponSfx } from './weapon_sfx.js';
 
@@ -158,14 +158,14 @@ export class PoiVenueSystem {
     const T = this.app.traffic;
     if (!T || !T.carMeshes) return null;
     this.carUniforms = { uLights: { value: 0 } };
-    this.carMat = createCarMaterial(this.carUniforms);
+    this.carMat = createCarMaterial(this.carUniforms, { parked: true }); // [drivers] empty cabins
     this.carPools = CAR_TYPES.map((t, i) => (T.carMeshes[i] ? this._makeCarPool(i, 48) : null));
     return this.carPools;
   }
   _makeCarPool(typeIdx, cap) {
     const src = this.app.traffic.carMeshes[typeIdx].mesh.geometry;
     const geo = new THREE.BufferGeometry();
-    for (const k of ['position', 'normal', 'color', 'aPaint', 'aEmit']) if (src.attributes[k]) geo.setAttribute(k, src.attributes[k]);
+    for (const k of ['position', 'normal', 'color', 'aPaint', 'aEmit', 'aKind', 'aSeat']) if (src.attributes[k]) geo.setAttribute(k, src.attributes[k]); // [drivers] +kind/seat
     if (src.index) geo.setIndex(src.index);
     geo.boundingSphere = src.boundingSphere;
     const iPaint = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
@@ -181,6 +181,7 @@ export class PoiVenueSystem {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.root.add(mesh);
+    attachCarGlass(mesh, this.app.traffic.carMeshes[typeIdx].glassGeo, iBrake, this.carUniforms); // [drivers]
     return { mesh, cap, iPaint, isCar: true, typeIdx, src: [] };
   }
 

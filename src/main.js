@@ -54,6 +54,7 @@ import { RailTransit } from "./features/rail_transit.js"; // [feature/rail-trans
 import { initWalkerWeapons } from "./features/walker_weapons.js";
 import { initWeaponPickups } from "./features/weapon_pickups.js"; // [weapon-pickups]
 import { ParkedCars, findDriveSpawn, findHeliSpawn } from "./features/parked_cars.js"; // [parked-cars]
+import { updateVehicleDriver } from "./features/drivers.js"; // [drivers]
 import {
   getLang,
   setLang,
@@ -1539,6 +1540,7 @@ class WorldExplorerApp {
 
     if (this.mode === "helicopter") {
       this._ensureHeli().update(dt, { boost: shiftPressed }); // feature/heli-gta: GTA-style flight model
+      updateVehicleDriver(this.heliMesh, this.avatarMesh, 0); // [drivers] pilot
       updateEntityNitroVfx(this.heliMesh, this.nitroActive, this.speed, this.vfxTime);
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
       updateEntityNitroVfx(this.avatarMesh, false, 0, this.vfxTime);
@@ -1823,6 +1825,7 @@ class WorldExplorerApp {
     for (const w of wheels) {
       w.rotation.x += (this.speed * dt) / 0.36;
     }
+    updateVehicleDriver(this.vehicleMesh, this.avatarMesh, this.steerAngle); // [drivers]
 
     updateEntityNitroVfx(this.vehicleMesh, isNitro && Math.abs(this.speed) > 1.5, this.speed, this.vfxTime);
     updateEntityNitroVfx(this.avatarMesh, false, 0, this.vfxTime);

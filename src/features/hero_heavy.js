@@ -9,6 +9,7 @@
 // options.lod builds the low-detail traffic version: the helpers below drop their tessellation while LOD is
 // set, the Kit leaves out interior and tiny parts, and liveries are baked into a vertex colour attribute.
 import * as THREE from '../../vendor/three.module.js';
+import { addLodCabin } from './occupants.js'; // [drivers]
 import { materials } from './hero_vehicles.js';
 
 // True only while a low-detail build runs (builds are synchronous).
@@ -435,6 +436,7 @@ function heavyMaterials(spec) {
     tread: new THREE.MeshStandardMaterial({ color: 0x2b2a28, metalness: 0.6, roughness: 0.7 }),
   });
   M.rim = envd(new THREE.MeshStandardMaterial({ color: 0xb9bdc2, metalness: 0.75, roughness: 0.32 }));
+  M.rim.userData.lodKind = 3; // [drivers]
   M.glass.side = THREE.DoubleSide;
   return M;
 }
@@ -531,7 +533,9 @@ SPECS.bus = {
       red = max(red, band(y, 2.86, 2.93));
       col = mix(alt, base, red);`, 0xf3f4f2);
     M.glass = envd(new THREE.MeshPhysicalMaterial({ color: 0x15232b, metalness: 0.1, roughness: 0.04, transparent: true, opacity: 0.5, clearcoat: 1, clearcoatRoughness: 0.02, side: THREE.DoubleSide, depthWrite: false }));
+    M.glass.userData.lodKind = 1; // [drivers]
     M.screen = envd(new THREE.MeshPhysicalMaterial({ color: 0x0b1218, metalness: 0.2, roughness: 0.03, transparent: true, opacity: 0.86, clearcoat: 1 }));
+    M.screen.userData.lodKind = 1; // [drivers] see-through in traffic
     M.sign = new THREE.MeshBasicMaterial({ map: ledTexture('42  CENTRAL') });
     M.sideSign = new THREE.MeshBasicMaterial({ map: ledTexture('42', 40) });
     M.sign.userData.lodColor = M.sideSign.userData.lodColor = 0xd99a24; // flat LED colour in traffic
@@ -818,6 +822,7 @@ SPECS.cybertruck = {
     rough.repeat.set(0.7, 0.7);
     M.paint = envd(new THREE.MeshPhysicalMaterial({ color: 0xc9cdd1, metalness: 0.82, roughness: 0.5, roughnessMap: rough, anisotropy: 0.8, envMapIntensity: 0.75 }));
     M.glass = envd(new THREE.MeshPhysicalMaterial({ color: 0x07090c, metalness: 0.3, roughness: 0.03, clearcoat: 1, clearcoatRoughness: 0.02 }));
+    M.glass.userData.lodKind = 1; // [drivers]
     M.tonneau = new THREE.MeshStandardMaterial({ color: 0x2a2c2f, metalness: 0.5, roughness: 0.5 });
     M.plastic = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.82 });
     M.hub = M.plastic;
@@ -894,7 +899,7 @@ SPECS.cybertruck = {
       K.add('seat', xf(rbox(1.5, 0.6, 0.12, 0.05, 2), [0, 1.14, -0.82], [-0.25, 0, 0]));
       K.add('black', xf(rbox(1.8, 0.12, 0.45, 0.04, 2), [0, 1.18, 1.05], [0.25, 0, 0]));
       K.add('lamp', xf(rbox(0.42, 0.25, 0.012, 0.01, 1), [0, 1.33, 0.98], [-0.35, 0, 0]));
-      K.add('black', xf(rbox(0.34, 0.2, 0.03, 0.03, 2), [-0.42, 1.24, 0.85], [-0.35, 0, 0]));
+      K.add('black', xf(rbox(0.34, 0.2, 0.03, 0.03, 2), [0.42, 1.24, 0.85], [-0.35, 0, 0])); // [drivers] yoke on the driver's (left) side
     }
     // One long windscreen wiper parked at the base of the glass
     K.add('black', xf(rbox(1.55, 0.018, 0.03, 0.008, 1), [-0.05, 1.32, 1.26], [-0.42, 0, 0.02]));
@@ -1588,6 +1593,46 @@ function bakeLivery(geo, liv, base, alt) {
   return outGeo;
 }
 
+// [drivers] Cabins: driver's hip joint and wheel (the player's seated avatar, entities.js) and the cheap
+// traffic interior + occupants (occupants.js). Seat roles: 0 driver, 1 front passenger, 2 rear, 3 bus passenger.
+// +X is the driver's left: cars and trucks are left-hand drive (parked_cars exits on +X in right-hand traffic);
+// the bus keeps its own layout (doors on +X, driver opposite).
+SPECS.bus.cabin = {
+  hip: [-0.7, 1.0, 4.15], wheel: [-0.7, 1.42, 4.68], tilt: 1.0, r: 0.23,
+  tub: { hw: 1.2, y0: 0.42, y1: 2.92, z0: -5.0, z1: 4.9, tone: 0x8a8f95, seatTone: 0x2b3b63 },
+  seats: [[0.98, 1.38], [-0.98, -1.9], [0.98, -1.08], [-0.98, -3.54], [0.52, -2.72], [-0.52, 2.2]].map(([x, z]) => ({ x, y: 1.0, z: z + 0.04, seat: 3 })),
+};
+SPECS.bus.cabin.backs = [[-0.7, 4.15, 0.44], ...SPECS.bus.cabin.seats.map((p) => [p.x, p.z, 0.44])];
+SPECS.cybertruck.cabin = {
+  hip: [0.42, 0.95, 0.5], wheel: [0.42, 1.24, 0.86], tilt: 0.35, r: 0.17,
+  tub: { hw: 0.92, y0: 0.56, y1: 1.44, z0: -0.98, z1: 1.28 },
+  seats: [{ x: -0.42, y: 0.95, z: 0.5, seat: 1 }, { x: -0.4, y: 0.95, z: -0.5, seat: 2 }],
+  backs: [[-0.42, 0.5, 0.52], [0.42, 0.5, 0.52], [0, -0.5, 1.4]],
+};
+SPECS.ambulance.cabin = {
+  hip: [0.45, 1.34, 1.25], wheel: [0.45, 1.62, 1.76], tilt: 0.5, r: 0.18,
+  tub: { hw: 0.94, y0: 1.12, y1: 2.18, z0: 0.82, z1: 2.08 },
+  seats: [{ x: -0.45, y: 1.34, z: 1.25, seat: 4 }],
+  backs: [[-0.45, 1.25, 0.5], [0.45, 1.25, 0.5]],
+};
+SPECS.tow_truck.cabin = {
+  hip: [0.45, 1.68, 0.72], wheel: [0.45, 1.98, 1.22], tilt: 0.55, r: 0.19,
+  tub: { hw: 0.98, y0: 1.54, y1: 2.42, z0: 0.37, z1: 1.58 },
+  seats: [{ x: -0.45, y: 1.68, z: 0.72, seat: 1 }],
+  backs: [[-0.45, 0.72, 0.5], [0.45, 0.72, 0.5]],
+};
+
+function addCabin(spec, chassis, lod) {
+  const C = spec.cabin;
+  if (!C) return;
+  chassis.userData.driverSeat = { hip: C.hip, wheel: C.wheel, tilt: C.tilt, r: C.r };
+  if (!lod) return;
+  const [hx, hy, hz] = C.hip;
+  const seats = [{ x: hx, y: hy, z: hz, seat: 0, wheel: true, hand: [C.wheel[1] - hy, C.wheel[2] - hz] }, ...C.seats];
+  const backs = (C.backs || []).map(([x, z, w]) => ({ x, y: hy - 0.1, z: z - 0.2, w, h: 0.72 }));
+  addLodCabin(chassis, { ...C.tub, backs, seats });
+}
+
 export const HEAVY_VEHICLE_IDS = new Set(Object.keys(SPECS));
 const REC_CACHE = new Map();
 
@@ -1620,6 +1665,7 @@ export function buildHeavyVehicle(typeId, options = {}) {
   }
   if (options.paintColor != null) M.paint.color.set(options.paintColor);
   const out = instantiate(rec, M, typeId);
+  addCabin(spec, out.chassis, lod); // [drivers]
   const userData = spec.userData ? spec.userData(out) : undefined;
   const hasBar = rec.singles.some((s) => s.phase);
   return {
