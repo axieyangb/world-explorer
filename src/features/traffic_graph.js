@@ -19,7 +19,107 @@ export function trafficClassCode(cls) {
   return 6;
 }
 
+// [traffic-fix] Vector-tile roads are resampled, so two streets that cross often share no vertex and the graph
+// had no junction there (no signal, no yielding: traffic drove straight through each other). Split both
+// segments at every at-grade crossing, and snap a dangling way end onto a road it stops just short of
+// (T-junction), the way street_worker finds intersections. Returns a new list; the input is not modified.
+function splitCrossings(segs) {
+  const car = [];
+  for (const s of segs) {
+    const code = trafficClassCode(s.cls);
+    if (code === 0 || code >= 8 || s.tunnel) continue;
+    car.push(s);
+  }
+  if (car.length < 2) return segs;
+  const ek = (x, z) => Math.round(x * 2) * 100003 + Math.round(z * 2);
+  const ends = new Map();
+  for (const s of car) {
+    const a = ek(s.x1, s.z1), b = ek(s.x2, s.z2);
+    ends.set(a, (ends.get(a) || 0) + 1);
+    ends.set(b, (ends.get(b) || 0) + 1);
+  }
+  const G = 16, EXT = 1.5;
+  const grid = new Map();
+  for (let i = 0; i < car.length; i++) {
+    const s = car[i];
+    const x0 = Math.floor((Math.min(s.x1, s.x2) - EXT) / G), x1 = Math.floor((Math.max(s.x1, s.x2) + EXT) / G);
+    const z0 = Math.floor((Math.min(s.z1, s.z2) - EXT) / G), z1 = Math.floor((Math.max(s.z1, s.z2) + EXT) / G);
+    for (let gx = x0; gx <= x1; gx++) {
+      for (let gz = z0; gz <= z1; gz++) {
+        const k = (gx + 50000) * 100000 + (gz + 50000);
+        const l = grid.get(k);
+        if (l) l.push(i); else grid.set(k, [i]);
+      }
+    }
+  }
+  const cuts = new Map(); // car index -> [{ t, x, z }]  (t < 0 / t > 1: move that end onto the point)
+  const addCut = (i, t, x, z) => {
+    const l = cuts.get(i);
+    if (l) l.push({ t, x, z }); else cuts.set(i, [{ t, x, z }]);
+  };
+  for (const [k, l] of grid) {
+    if (l.length < 2) continue;
+    const gx = Math.floor(k / 100000) - 50000, gz = (k % 100000) - 50000;
+    for (let p = 0; p < l.length; p++) {
+      const a = car[l[p]];
+      const rX = a.x2 - a.x1, rZ = a.z2 - a.z1, la = Math.hypot(rX, rZ);
+      if (la < 0.05) continue;
+      const openA1 = ends.get(ek(a.x1, a.z1)) === 1, openA2 = ends.get(ek(a.x2, a.z2)) === 1;
+      for (let q = p + 1; q < l.length; q++) {
+        const b = car[l[q]];
+        if (b.id === a.id) continue;
+        const sX = b.x2 - b.x1, sZ = b.z2 - b.z1, lb = Math.hypot(sX, sZ);
+        if (lb < 0.05) continue;
+        const den = rX * sZ - rZ * sX;
+        if (Math.abs(den) / (la * lb) < 0.26) continue; // near-parallel (dual carriageways, merges)
+        const qx = b.x1 - a.x1, qz = b.z1 - a.z1;
+        const t = (qx * sZ - qz * sX) / den, u = (qx * rZ - qz * rX) / den;
+        const eA = EXT / la, eB = EXT / lb;
+        if (t < (openA1 ? -eA : 0) || t > 1 + (openA2 ? eA : 0)) continue;
+        const openB1 = ends.get(ek(b.x1, b.z1)) === 1, openB2 = ends.get(ek(b.x2, b.z2)) === 1;
+        if (u < (openB1 ? -eB : 0) || u > 1 + (openB2 ? eB : 0)) continue;
+        const x = a.x1 + rX * t, z = a.z1 + rZ * t;
+        if (Math.floor(x / G) !== gx || Math.floor(z / G) !== gz) continue; // test each pair in one cell only
+        const tA = Math.max(0, Math.min(1, t)), tB = Math.max(0, Math.min(1, u));
+        const ya = a.y1 + (a.y2 - a.y1) * tA, yb = b.y1 + (b.y2 - b.y1) * tB;
+        if (Math.abs(ya - yb) > 2.5 || (Boolean(a.bridge) !== Boolean(b.bridge) && Math.abs(ya - yb) > 1)) continue; // over/under pass
+        const endA = t * la < 0.3 || (1 - t) * la < 0.3, endB = u * lb < 0.3 || (1 - u) * lb < 0.3;
+        if (endA && endB) continue; // already a shared vertex
+        addCut(l[p], t, x, z);
+        addCut(l[q], u, x, z);
+      }
+    }
+  }
+  if (!cuts.size) return segs;
+  const out = [];
+  const idx = new Map();
+  for (let i = 0; i < car.length; i++) idx.set(car[i], i);
+  for (const s of segs) {
+    const i = idx.get(s);
+    const l = i === undefined ? null : cuts.get(i);
+    if (!l) { out.push(s); continue; }
+    const len = Math.hypot(s.x2 - s.x1, s.z2 - s.z1) || 1;
+    let x1 = s.x1, z1 = s.z1, x2 = s.x2, z2 = s.z2;
+    const mid = [];
+    for (const c of l) {
+      if (c.t * len < 0.3) { if (ends.get(ek(s.x1, s.z1)) === 1) { x1 = c.x; z1 = c.z; } } // snap a dangling end onto the crossing
+      else if ((1 - c.t) * len < 0.3) { if (ends.get(ek(s.x2, s.z2)) === 1) { x2 = c.x; z2 = c.z; } }
+      else mid.push(c);
+    }
+    mid.sort((p, q) => p.t - q.t);
+    let px = x1, pz = z1, py = s.y1;
+    for (const c of mid) {
+      const y = s.y1 + (s.y2 - s.y1) * c.t;
+      out.push({ ...s, x1: px, y1: py, z1: pz, x2: c.x, y2: y, z2: c.z });
+      px = c.x; pz = c.z; py = y;
+    }
+    out.push({ ...s, x1: px, y1: py, z1: pz, x2, y2: s.y2, z2 });
+  }
+  return out;
+}
+
 export function buildTrafficGraph(segs, signalNodes, ox = 0, oz = 0) {
+  segs = splitCrossings(segs || []); // [traffic-fix]
   const nx = [], ny = [], nz = [];
   const cell = new Map();
   const nodeSegs = [];
