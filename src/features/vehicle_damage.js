@@ -12,7 +12,7 @@ import { getWeaponSfx } from './weapon_sfx.js';
 
 // By CAR_TYPES index: sedan, taxi, coupe, police, bus, tesla, cybertruck, ambulance, tow_truck
 const CAR_HP = [4, 4, 4, 4.5, 10, 4.5, 8, 8, 10];
-const CAR_H = [1.45, 1.45, 1.25, 1.5, 3.1, 1.45, 1.9, 2.6, 2.6];
+const CAR_H = [1.45, 1.45, 1.25, 1.5, 3.1, 1.45, 1.8, 2.7, 2.6]; // roof height (upside-down wreck lift), from the traffic bodies
 const BIG = [0, 0, 0, 0, 1, 0, 0, 1, 1];
 export const DAMAGE_BY_SOURCE = { cannon: 1, missile: 6, stomp: 30, tail: 30, breath: 30, kaijuBody: 30, train: 30, rocket: 6, heliCannon: 1, carExplosion: 3.5, ram: 2 };
 const SMOKE_FRAC = 0.7, BURN_FRAC = 0.4;
