@@ -362,6 +362,19 @@ export function buildPoiVenues(ctx) {
       glow.c.push(c[0], c[1], c[2], 0, 0, 0, 0, 0, 0);
     }
   };
+  // Rectangular light pool: uniform inside (hl x hw), fading to black over `fade` metres outside
+  const poolRect = (F, hl, hw, fade, rgb, k = 1, yOff = 0.105) => {
+    const c = [rgb[0] * k, rgb[1] * k, rgb[2] * k], z0 = [0, 0, 0];
+    const xs = [-hl - fade, -hl, hl, hl + fade], zs = [-hw - fade, -hw, hw, hw + fade];
+    const P = (i, j) => { const x = F.wx(xs[i], zs[j]), z = F.wz(xs[i], zs[j]); return [x, ground(x, z) + yOff, z]; };
+    const col = (i, j) => (i === 0 || i === 3 || j === 0 || j === 3 ? z0 : c);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      const q = [[i, j + 1], [i + 1, j + 1], [i + 1, j], [i, j]];
+      for (const t of [[0, 1, 2], [0, 2, 3]]) {
+        for (const v of t) { const [a, b] = q[v]; const p = P(a, b); glow.p.push(p[0], p[1], p[2]); glow.n.push(0, 1, 0); glow.b.push(0); const cc = col(a, b); glow.c.push(cc[0], cc[1], cc[2]); }
+      }
+    }
+  };
   const addCollider = (F, x0, x1, z0, z1, h, id) => {
     if (!colliders) return;
     const pts = [F.p(x0, 0, z0), F.p(x1, 0, z0), F.p(x1, 0, z1), F.p(x0, 0, z1)];
@@ -666,7 +679,7 @@ export function buildPoiVenues(ctx) {
       const lx = -hl + ((2 * hl) * (i + 0.5)) / nLx, lz = -hw + ((2 * hw) * (j + 0.5)) / nLz;
       bld.quad(F.p(lx - 0.55, Hc - 0.025, lz - 0.32), F.p(lx + 0.55, Hc - 0.025, lz - 0.32), F.p(lx + 0.55, Hc - 0.025, lz + 0.32), F.p(lx - 0.55, Hc - 0.025, lz + 0.32), C.light, true);
       const [gx, , gz] = F.p(lx, 0, lz);
-      pool(gx, gz, 3.4, C.lightCool, 0.42, 0.11);
+      pool(gx, gz, 3.0, C.lightCool, 0.35, 0.115);
     }
     // pillars: clad square columns with a brand-coloured base wrap
     for (const [x, z] of pillars) {
@@ -674,12 +687,16 @@ export function buildPoiVenues(ctx) {
       box(bld, F, x, 0.24 + 0.6, z, 0.46, 1.2, 0.46, scheme[0], false, 'tb');
       box(bld, F, x, 0.24 + 1.23, z, 0.47, 0.06, 0.47, scheme[2], false, 'tb');
     }
-    // canopy name on the two long sides
+    // canopy name on all four fascia sides
     const nm = name || '';
+    const txtW = Math.max(3.2, (nameEn || nm || 'GAS').length * 0.55 + 1.2);
     for (const s of [1, -1]) {
       const G = new Frame(F.x0, F.y0, F.z0, F.bx * s, F.bz * s);
-      sign(G, 0, Hc + Th * 0.52, hw + 0.03, Math.min(2 * hl - 2, Math.max(4, (nameEn || nm || 'GAS').length * 0.5 + 1.5)), Th * 0.36 - 0.04, 2, nm || '加油站', nameEn || nm || 'GAS', toHex(scheme[0]), 0xffffff);
+      sign(G, 0, Hc + Th * 0.52, hw + 0.03, Math.min(2 * hl - 2, txtW), Th * 0.36 - 0.04, 2, nm || '加油站', nameEn || nm || 'GAS', toHex(scheme[0]), 0xffffff);
+      const E = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
+      sign(E, 0, Hc + Th * 0.52, hl + 0.03, Math.min(2 * hw - 1.5, txtW), Th * 0.36 - 0.04, 2, nm || '加油站', nameEn || nm || 'GAS', toHex(scheme[0]), 0xffffff);
     }
+    poolRect(F, hl, hw, 3.5, C.lightCool, 0.75);
     zones.fuel.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, hl, hw]);
     for (const p of pumpIds) zones.pumps.push(p);
     // --- price sign pylon by the road
@@ -802,6 +819,11 @@ export function buildPoiVenues(ctx) {
     box(bld, K, 0, H + 0.25, 0, W + 0.3, 0.5, D + 0.3, wall, false, '');
     flat(bld, K, -W / 2, W / 2, -D / 2, D / 2, 0.02, C.tile);
     box(bld, K, W * 0.2, H + 0.95, -D * 0.15, 1.6, 0.9, 1.2, [0.7, 0.71, 0.72]); // rooftop HVAC
+    box(bld, K, 0, H + 0.2, 0, W + 0.34, 0.22, D + 0.34, scheme[0], false, 'tb'); // brand band round the parapet
+    for (const s of [-1, 1]) {
+      box(bld, K, s * (W / 2 + 0.01), 1.05, -D * 0.2, 0.04, 2.1, 1.0, C.aluDk); // service door
+      box(bld, K, s * (W / 2 + 0.02), 2.3, -D * 0.2, 0.06, 0.16, 0.3, C.lightWarm, true);
+    }
     // glazed front (storefront set into the opening, flush with the side walls)
     const front = new Frame(K.p(0, 0, D / 2 - 1.0)[0], K.y0, K.p(0, 0, D / 2 - 1.0)[2], K.bx, K.bz);
     const fr = { F: front, W: W - 0.6, B: null };

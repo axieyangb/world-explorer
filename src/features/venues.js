@@ -420,8 +420,9 @@ export function extractVenues(tiles, toLocalXZ, buildings) {
       }
     }
   }
-  if (!stadiums.length && !rides.length) return null;
-  return { stadiums, rides, paths, poi: extractPoiVenueSites(tiles, toLocalXZ, buildings) }; // [venues-poi] fuel canopies + car parks
+  const poi = extractPoiVenueSites(tiles, toLocalXZ, buildings); // [venues-poi] fuel canopies + car parks
+  if (!stadiums.length && !rides.length) return poi.canopies.length || poi.garages.length ? { stadiums, rides, paths, poi } : null; // [venues-poi]
+  return { stadiums, rides, paths, poi }; // [venues-poi]
 }
 
 // ------------------------------------------------------------------ mesh accumulation

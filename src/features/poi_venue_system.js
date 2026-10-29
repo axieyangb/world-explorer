@@ -8,7 +8,7 @@
 // Hooked from main.js: construct once, `update(dt)` per frame; the drive loop asks `nitroEmpty` before boosting.
 import * as THREE from '../../vendor/three.module.js';
 import { getLang } from '../i18n.js';
-import { buildPoiVenueModels } from './poi_venue_models.js';
+import { getPoiVenueModel } from './poi_venue_models.js';
 import { createCarMaterial, CAR_TYPES } from './traffic_models.js';
 import { showVehicleToast } from './vehicles.js';
 import { getWeaponSfx } from './weapon_sfx.js';
@@ -35,7 +35,7 @@ const KINDS = {
   greenCross: ['greenCross', 260, null, 0, 48, false],
   trailer: ['trailer', 280, 'trailerFar', 750, 16, true],
 };
-const CAR_NEAR = 160, CAR_FAR = 520;
+const CAR_NEAR = 110, CAR_FAR = 520, CAR_NEAR_MAX = 40;
 const SIGN_MAX = 64, SIGN_RANGE = 260;
 const CELL_W = 512, CELL_H = 128, COLS = 4, ROWS = SIGN_MAX / COLS;
 const NITRO_DRAIN = 1 / 11, NITRO_REGEN = 1 / 120, NITRO_FILL = 0.55;
@@ -88,13 +88,13 @@ export class PoiVenueSystem {
     this.U = { uPvNight: { value: 0 }, uPvTime: { value: 0 } };
     this.mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.2 });
     patchVenueMaterial(this.mat, this.U);
-    this.models = buildPoiVenueModels();
-    this.pools = {}; // model name -> { mesh, cap, src: [] }
+    // model name -> { mesh, cap, src: [] }; created on first use so a city without venues pays nothing
+    this.pools = {};
+    this.poolCfg = { carFar: [128, false] };
     for (const [, [nearM, , farM, , cap, shadow]] of Object.entries(KINDS)) {
-      if (!this.pools[nearM]) this.pools[nearM] = this._makePool(nearM, cap, shadow);
-      if (farM && !this.pools[farM]) this.pools[farM] = this._makePool(farM, cap, false);
+      this.poolCfg[nearM] = [cap, shadow];
+      if (farM) this.poolCfg[farM] = [cap, false];
     }
-    this.pools.carFar = this._makePool('carFar', 128, false);
     this.carPools = null; // lazily from the traffic geometry
     this._initSigns();
     this._initHud();
@@ -122,7 +122,7 @@ export class PoiVenueSystem {
   }
 
   _makePool(model, cap, shadow) {
-    const geo = this.models[model].clone();
+    const geo = getPoiVenueModel(model).clone();
     const tint = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
     tint.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('iTint', tint);
@@ -135,6 +135,11 @@ export class PoiVenueSystem {
     mesh.receiveShadow = true;
     this.root.add(mesh);
     return { mesh, cap, tint, model, shadow, src: [] };
+  }
+  _pool(model) {
+    let p = this.pools[model];
+    if (!p) { const [cap, sh] = this.poolCfg[model]; p = this.pools[model] = this._makePool(model, cap, sh); }
+    return p;
   }
   _grow(pool, need) {
     let cap = pool.cap;
@@ -335,6 +340,7 @@ export class PoiVenueSystem {
     const cars = this._ensureCarPools();
     if (cars) for (const p of cars) if (p) p.src.length = 0;
     const maxFar = 750;
+    const nearCars = [];
     for (const g of this.tracked) {
       const pv = g.userData && g.userData.poiVenues;
       if (!pv || !pv.inst) continue;
@@ -344,8 +350,8 @@ export class PoiVenueSystem {
         if (kind === 'car') {
           for (let i = 0; i < a.length; i += STRIDE) {
             const d2 = (a[i] - px) ** 2 + (a[i + 2] - pz) ** 2;
-            if (d2 < CAR_NEAR * CAR_NEAR && cars && cars[a[i + 4] | 0]) cars[a[i + 4] | 0].src.push(a, i);
-            else if (d2 < CAR_FAR * CAR_FAR) this.pools.carFar.src.push(a, i);
+            if (d2 < CAR_NEAR * CAR_NEAR && cars && cars[a[i + 4] | 0]) nearCars.push([d2, a, i]);
+            else if (d2 < CAR_FAR * CAR_FAR) this._pool('carFar').src.push(a, i);
           }
           continue;
         }
@@ -358,10 +364,17 @@ export class PoiVenueSystem {
           if (isPump && this.exploded.has(this._key(a[i], a[i + 2]))) continue;
           if (kind === 'islandBin' && this.exploded.size && this._nearBoom(a[i], a[i + 2], 2.5)) continue;
           const d2 = (a[i] - px) ** 2 + (a[i + 2] - pz) ** 2;
-          if (d2 < nd2) this.pools[nearM].src.push(a, i);
-          else if (farM && d2 < fd2) this.pools[farM].src.push(a, i);
+          if (d2 < nd2) this._pool(nearM).src.push(a, i);
+          else if (farM && d2 < fd2) this._pool(farM).src.push(a, i);
         }
       }
+    }
+    // full traffic-model cars only for the nearest few (a multi-storey car park holds hundreds); the rest are boxes
+    nearCars.sort((u, v) => u[0] - v[0]);
+    for (let k = 0; k < nearCars.length; k++) {
+      const [, a, i] = nearCars[k];
+      if (k < CAR_NEAR_MAX) cars[a[i + 4] | 0].src.push(a, i);
+      else this._pool('carFar').src.push(a, i);
     }
     for (const p of Object.values(this.pools)) this._writePool(p);
     if (cars) for (const p of cars) if (p) this._writePool(p);
@@ -644,6 +657,7 @@ export class PoiVenueSystem {
     this.spinA = (this.spinA || 0) + dt * this.washSpin * 9;
     for (const [name, axis] of [['brushV', 'y'], ['brushH', 'z']]) {
       const p = this.pools[name];
+      if (!p) continue;
       const mArr = p.mesh.instanceMatrix.array;
       let touched = false;
       for (let k = 0; k < p.mesh.count; k++) {

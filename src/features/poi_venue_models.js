@@ -241,7 +241,8 @@ function payKiosk() {
   const P = [];
   P.push(rslab(0.9, 1.1, 0.2, 0.12, S.yellow, { y: 0.1, rx: Math.PI / 2 }));
   P.push(box(0.36, 1.05, 0.32, S.steelDk, { y: 0.72 }));
-  P.push(rslab(0.62, 0.62, 0.38, 0.05, S.tint, { y: 1.5, z: 0.04, rx: -0.12 }));
+  P.push(rslab(0.62, 0.62, 0.38, 0.05, S.paintG, { y: 1.5, z: 0.04, rx: -0.12 }));
+  P.push(box(0.64, 0.08, 0.4, S.tint, { y: 1.2, z: 0.04 }));
   P.push(box(0.4, 0.26, 0.02, S.black, { y: 1.58, z: 0.25, rx: -0.12 }));
   P.push(box(0.34, 0.2, 0.022, S.screen, { y: 1.58, z: 0.255, rx: -0.12 }));
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) P.push(box(0.035, 0.03, 0.012, S.steel, { x: -0.06 + j * 0.05, y: 1.37 - i * 0.04, z: 0.24 }));
@@ -430,9 +431,15 @@ function carFar() {
 
 const BUILDERS = { pump, pumpFar, bollard, islandBin, iceChest, airPump, vacuum, payKiosk, brushV, brushH, atm, newsRack, shopBin, cart, lotLamp, lotLampFar, cartReturn, menuBoard, greenCross, trailer, trailerFar, carFar };
 
-/** Builds every model once (main thread). */
+const CACHE = new Map();
+/** Builds (once) and returns one model geometry; models are built lazily, on the first venue that needs them. */
+export function getPoiVenueModel(name) {
+  if (!CACHE.has(name)) CACHE.set(name, BUILDERS[name]());
+  return CACHE.get(name);
+}
+/** Builds every model (tests). */
 export function buildPoiVenueModels() {
   const out = {};
-  for (const [k, fn] of Object.entries(BUILDERS)) out[k] = fn();
+  for (const k of Object.keys(BUILDERS)) out[k] = getPoiVenueModel(k);
   return out;
 }
