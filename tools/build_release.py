@@ -131,6 +131,7 @@ MOD_ID_MAP = {
     'src/features/landmarks/registry.js': '__MOD_landmarks_registry',  # [release-6]
     'src/features/bridge_deck_buildings.js': '__MOD_bridge_deck_buildings',  # [release-6]
     'src/features/landmarks/landmark_system.js': '__MOD_landmarks_landmark_system',  # [release-6]
+    'src/features/landmarks/landmark_damage.js': '__MOD_landmarks_landmark_damage',  # [landmark-damage]
     'src/features/landmarks/models/index.js': '__MOD_landmarks_models_index',  # [release-6]
     'src/features/landmarks/models/liberty.js': '__MOD_landmarks_models_liberty',  # [release-6]
     'src/features/landmarks/kit.js': '__MOD_landmarks_kit',  # [release-6]

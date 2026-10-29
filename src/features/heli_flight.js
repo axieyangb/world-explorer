@@ -840,6 +840,8 @@ export class HeliFlight {
       const bh = D.raycast(o, d, best);
       if (bh && bh.dist < best) { best = bh.dist; hit.ref = bh.ref; hit.kind = 'building'; }
     }
+    const lh = this.app.landmarks?.damage?.raycast(o, d, best); // [landmark-damage]
+    if (lh) { best = lh.dist; hit.ref = lh.ref; hit.kind = 'landmark'; } // [landmark-damage]
     const td = this._terrainRay(o, d, best);
     if (td < best) { best = td; hit.ref = null; hit.kind = 'ground'; }
     const cars = this.app.traffic && this.app.traffic.cars;
@@ -1078,6 +1080,7 @@ export class HeliFlight {
     this._sfxP.set(hit.x, hit.y, hit.z);
     this._sfx.play(isRocket ? 'explosion' : 'spark', { pos: this._sfxP, gain: isRocket ? 0.7 : hit.kind === 'building' ? 0.55 : 0.35 });
     // Buildings: same destruction system as Kaiju Defense (HP scaled by building size).
+    this.app.landmarks?.damage?.impact(this._fxP.set(hit.x, hit.y, hit.z), hit, isRocket ? ROCKET_UNITS : CANNON_UNITS, isRocket ? ROCKET_SPLASH_R : 0); // [landmark-damage]
     const D = this._destruction();
     if (D && typeof D.applyHeliHit === 'function') {
       const before = D.stats.destroyed;

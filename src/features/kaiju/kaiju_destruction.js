@@ -789,6 +789,7 @@ export class KaijuDestruction {
 
   damageSphere(x, y, z, r, amount, opts) {
     this.app?.vegetation?.damageSphere?.(x, y, z, r, amount, opts); // [tree-damage]
+    this.app?.landmarks?.damage?.kaijuSphere(x, y, z, r, amount, opts); // [landmark-damage]
     const fire = Boolean(opts && opts.fire);
     if (!(r > 0) || !(amount > 0)) return 0;
     let destroyed = 0;
@@ -822,6 +823,7 @@ export class KaijuDestruction {
 
   damageCone(origin, dir, range, halfAngleRad, amount, opts) {
     this.app?.vegetation?.damageCone?.(origin, dir, range, halfAngleRad, amount); // [tree-damage]
+    this.app?.landmarks?.damage?.kaijuCone(origin, dir, range, halfAngleRad, amount); // [landmark-damage]
     const fire = opts && opts.fire === false ? false : true;
     if (!(range > 0) || !(amount > 0)) return 0;
     const ox = origin.x, oy = origin.y, oz = origin.z;
