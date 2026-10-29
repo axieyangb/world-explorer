@@ -100,7 +100,7 @@ export const LANDMARKS = [
   { id: "googlebayview", name: "Google Bay View Campus", nameZh: "谷歌湾景园区（Bay View）", lat: 37.4184, lon: -122.0575, heading: 0, height: 25, supp: { hw: 175, hd: 115 }, on: true },
   { id: "nvidiahq", name: "NVIDIA HQ (Endeavor & Voyager)", nameZh: "英伟达总部（NVIDIA HQ）", lat: 37.3707, lon: -121.9642, heading: 0, height: 28, supp: { hw: 160, hd: 125 }, on: true, chip: true },
   { id: "metahq", name: "Meta HQ (1 Hacker Way)", nameZh: "Meta 总部（1 Hacker Way）", lat: 37.4845, lon: -122.1477, heading: 0, height: 24, supp: { hw: 145, hd: 80 }, on: true, chip: true },
-  { id: "hollywoodsign", name: "The Hollywood Sign", nameZh: "好莱坞标志（Hollywood Sign）", lat: 34.1341, lon: -118.3215, heading: 180, height: 42, supp: { hw: 75, hd: 48 }, ele: 478, on: true, chip: true },
+  { id: "hollywoodsign", name: "The Hollywood Sign", nameZh: "好莱坞标志（Hollywood Sign）", lat: 34.1341, lon: -118.3215, heading: 180, height: 42, supp: { hw: 75, hd: 48 }, on: true, chip: true },
   { id: "griffith", name: "Griffith Observatory", nameZh: "格里菲斯天文台", lat: 34.1184, lon: -118.3004, heading: 180, height: 27, supp: { hw: 55, hd: 50 }, ele: 346, on: true },
   { id: "whitehouse", name: "The White House", nameZh: "白宫", lat: 38.8977, lon: -77.0365, heading: 0, height: 22, supp: { hw: 90, hd: 64 }, on: true, chip: true },
   { id: "pentagon", name: "The Pentagon", nameZh: "五角大楼", lat: 38.8719, lon: -77.0563, heading: 32, height: 22, supp: { r: 255 }, on: true, chip: true },

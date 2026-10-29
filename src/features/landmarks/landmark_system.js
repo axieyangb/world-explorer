@@ -9,7 +9,7 @@
  * - Optional per-model animation hooks (London Eye wheel, Eiffel sparkle) and night glow.
  */
 import * as THREE from "../../../vendor/three.module.js";
-import { getChunkTerrainMeshElevation } from "../../environment.js";
+import { getChunkTerrainMeshElevation, getBeijingDemState } from "../../environment.js";
 import { LANDMARKS, landmarkWorldXZ } from "./registry.js";
 import { MODELS } from "./models/index.js";
 import { Kit } from "./kit.js";
@@ -111,13 +111,55 @@ export class LandmarkSystem {
 
   _groundY(it) {
     const s = it.L.supp || { r: 20 };
+    const centerY = getChunkTerrainMeshElevation(it.x, it.z);
+
+    // Special multi-point ridge clearance for the 110m-wide Hollywood Sign on Mount Lee:
+    // sample across every letter's world (wx, wz) and place baseY above the highest ridge point
+    // so 100% of all 9 letters sit above the slope on their steel support towers.
+    if (it.L.id === "hollywoodsign") {
+      let maxSignY = Number.isFinite(centerY) ? centerY : 0;
+      let minSignY = maxSignY;
+      for (let lx = -56; lx <= 56; lx += 14) {
+        for (const lz of [-4, 0, 6]) {
+          const [wx, wz] = this._toWorld(it, lx, lz);
+          const gy = getChunkTerrainMeshElevation(wx, wz);
+          if (Number.isFinite(gy)) {
+            if (gy > maxSignY) maxSignY = gy;
+            if (gy < minSignY) minSignY = gy;
+          }
+        }
+      }
+      it.minGroundY = minSignY;
+      it.maxGroundY = maxSignY;
+      return maxSignY + 2.0;
+    }
+
     const r = it.L.groundR ?? Math.min(40, (s.r || Math.min(s.hw, s.hd)) * 0.5); // groundR: opt-in wider ground sampling
-    let y = getChunkTerrainMeshElevation(it.x, it.z);
+    let minY = Number.isFinite(centerY) ? centerY : 0;
+    let maxY = minY;
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
-      y = Math.min(y, getChunkTerrainMeshElevation(it.x + Math.cos(a) * r, it.z + Math.sin(a) * r));
+      const gy = getChunkTerrainMeshElevation(it.x + Math.cos(a) * r, it.z + Math.sin(a) * r);
+      if (Number.isFinite(gy)) {
+        if (gy < minY) minY = gy;
+        if (gy > maxY) maxY = gy;
+      }
     }
-    return Number.isFinite(y) ? y : 0;
+    it.minGroundY = minY;
+    it.maxGroundY = maxY;
+
+    // Bridges (it.L.deck) or explicit wide-base desert pyramids (it.L.groundR) stay anchored at minY
+    if (it.L.deck || it.L.groundR != null) {
+      return Number.isFinite(minY) ? minY : 0;
+    }
+
+    // On hillside/mountain slopes (maxY - minY > 1.2m), place baseY near the upper/center slope
+    // so the uphill side of the landmark is NEVER buried inside the mountain, and let _build()
+    // extend a stone foundation plinth down to minY on the downhill side!
+    if (maxY - minY > 1.2 && centerY > 1.5) {
+      return Math.max(centerY, maxY - 0.6);
+    }
+    return Number.isFinite(minY) ? minY : 0;
   }
 
   /** local (model) xz -> world xz */
@@ -201,6 +243,21 @@ export class LandmarkSystem {
       k.matMap = spec.map;
       k.matStone = spec.stone;
       M.build(k);
+      // Automatic downhill foundation skirt on sloped terrain so hillside landmarks never float on the downhill side
+      const slopeDrop = (it.baseY || 0) - (it.minGroundY ?? (it.baseY || 0));
+      if (slopeDrop > 0.45 && !it.L.deck && it.L.id !== "hollywoodsign" && it.L.id !== "christ") {
+        const s = it.L.supp || { r: 18 };
+        const skirtH = slopeDrop + 1.8;
+        k.glow(false).color(0x9a958b);
+        if (s.r) {
+          const rad = Math.min(s.r * 0.78, 42);
+          k.cyl(0, -skirtH, 0, rad + 0.8, rad, skirtH + 0.05, P.lod === 0 ? 20 : 10);
+        } else {
+          const hw = Math.min((s.hw || 24) * 0.82, 54);
+          const hd = Math.min((s.hd || 24) * 0.82, 54);
+          k.box(0, -skirtH, 0, hw * 2, skirtH + 0.05, hd * 2);
+        }
+      }
       if (li === 0) {
         tris = k.tris;
         if (k.usedFine) plan.push({ lod: 0, fine: false, dist: M.fineDist || 450 });
@@ -257,7 +314,9 @@ export class LandmarkSystem {
     const app = this.app;
     if (app.isTeleporting) return;
     const o = app.worldOrigin;
-    const key = o ? `${o.centerLat.toFixed(6)},${o.centerLon.toFixed(6)}` : "";
+    const dem = getBeijingDemState();
+    const demTag = dem ? `${dem.centerLat || 0}_${dem.centerLon || 0}_${dem.baseAslM || 0}` : "0";
+    const key = o ? `${o.centerLat.toFixed(6)},${o.centerLon.toFixed(6)}|${demTag}` : "";
     if (key !== this.originKey) {
       this.originKey = key;
       this._rebuildForOrigin();

@@ -92,18 +92,20 @@ export function buildAllLandmarksGeometryArrays(getElevationAt = null) {
   const b = new LandmarkGeometryBuilder();
   for (let i = 0; i < LANDMARKS_40.length; i++) {
     const lm = LANDMARKS_40[i];
-    const y0 = elevFn ? elevFn(lm.cx, lm.cz) : 0;
+    let y0 = elevFn ? elevFn(lm.cx, lm.cz) : 0;
     if (elevFn && y0 > 1.5) {
       const r = Math.min((lm.exclR || 40) * 0.45, 22);
-      const minSlopeY = Math.min(
-        y0,
-        elevFn(lm.cx - r, lm.cz - r),
-        elevFn(lm.cx + r, lm.cz - r),
-        elevFn(lm.cx - r, lm.cz + r),
-        elevFn(lm.cx + r, lm.cz + r),
-        elevFn(lm.cx, lm.cz + r),
-        elevFn(lm.cx, lm.cz - r)
-      );
+      const s0 = elevFn(lm.cx - r, lm.cz - r);
+      const s1 = elevFn(lm.cx + r, lm.cz - r);
+      const s2 = elevFn(lm.cx - r, lm.cz + r);
+      const s3 = elevFn(lm.cx + r, lm.cz + r);
+      const s4 = elevFn(lm.cx, lm.cz + r);
+      const s5 = elevFn(lm.cx, lm.cz - r);
+      const minSlopeY = Math.min(y0, s0, s1, s2, s3, s4, s5);
+      const maxSlopeY = Math.max(y0, s0, s1, s2, s3, s4, s5);
+      if (maxSlopeY - minSlopeY > 1.0) {
+        y0 = Math.max(y0, maxSlopeY - 0.4);
+      }
       if (y0 - minSlopeY > 0.35) {
         const subH = y0 - minSlopeY + 2.2;
         b.addFrustumBox(lm.cx, y0 - subH, lm.cz, r * 2.1, r * 2.1, r * 1.85, r * 1.85, subH + 0.05, [132, 136, 142], false, 0, 0);

@@ -39,9 +39,12 @@ export function appendInfillBuilding(b, ox, oz, getY, region, out) {
 
   const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
   const gC = getY(cx, cz);
-  const gLow = Math.min(gC, getY(minX, minZ), getY(maxX, minZ), getY(minX, maxZ), getY(maxX, maxZ));
-  const y0 = (rawMinH || 0) > 0.5 ? gC + rawMinH : gLow - 0.6;
-  let yTop = gC + Math.max(3.2, rawH);
+  const g00 = getY(minX, minZ), g10 = getY(maxX, minZ), g01 = getY(minX, maxZ), g11 = getY(maxX, maxZ);
+  const gLow = Math.min(gC, g00, g10, g01, g11);
+  const gHigh = Math.max(gC, g00, g10, g01, g11);
+  const gTopBase = gHigh > gC + 0.35 ? gHigh : gC;
+  const y0 = (rawMinH || 0) > 0.5 ? gTopBase + rawMinH : gLow - 1.2;
+  let yTop = gTopBase + Math.max(3.2, rawH);
   const rc = out.roof || null; // [roofs]
 
   const wx = ox + cx, wz = oz + cz;

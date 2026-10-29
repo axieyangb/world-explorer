@@ -3219,11 +3219,14 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const wz = oz + cz;
         const terrainY = getBeijingTerrainElevation(wx, wz);
         // Sample the 4 footprint bbox corners so buildings on mountain slopes extend their foundation below the lowest downhill corner
+        // AND raise their roof above the highest uphill corner (`maxCornerY`) so no building is ever buried inside a mountain slope
         const c00 = getBeijingTerrainElevation(ox + minX, oz + minZ);
         const c10 = getBeijingTerrainElevation(ox + maxX, oz + minZ);
         const c01 = getBeijingTerrainElevation(ox + minX, oz + maxZ);
         const c11 = getBeijingTerrainElevation(ox + maxX, oz + maxZ);
         const minCornerY = Math.min(terrainY, c00, c10, c01, c11);
+        const maxCornerY = Math.max(terrainY, c00, c10, c01, c11);
+        const topTerrainY = maxCornerY > terrainY + 0.35 ? maxCornerY : terrainY;
         // Deterministic per-building/part micro-offsets prevent coplanar Z-fighting between parent `building` and nested `building:part`
         const bHash = (((osmId * 2654435761) ^ (i * 1597334677)) >>> 0);
         const hMicroOffset = (isPart ? 0.22 : 0.0) + ((bHash % 509) / 509.0) * 0.24;
@@ -3231,11 +3234,11 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         // Extend foundation below the lowest downhill footprint corner on hills so sloped buildings never float
         const minH =
           rawMinH > 0
-            ? terrainY + rawMinH + (isPart ? 0.05 : 0.0)
+            ? topTerrainY + rawMinH + (isPart ? 0.05 : 0.0)
             : minCornerY < terrainY - 0.15
               ? minCornerY - 1.5
               : terrainY - (terrainY > 1.5 ? 2.2 : 0.05);
-        const h = terrainY + rawH + hMicroOffset;
+        const h = topTerrainY + rawH + hMicroOffset;
 
         // 1. Inherit parent building name / architectural role (`btype`) / OSM `colour` for enclosed parts
         let resolvedBldgName = name;
@@ -3392,7 +3395,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             wz,
             baseY: minH,
             topY: h,
-            groundY: terrainY,
+            groundY: topTerrainY,
             getEdgeGroundY,
             localRoads,
             wallOutOffset,

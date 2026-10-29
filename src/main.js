@@ -96,7 +96,7 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r3"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r4"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
@@ -767,7 +767,21 @@ class WorldExplorerApp {
         }
       }
     }
-    if (bestS) {
+    // If teleporting directly to the Hollywood Sign on Mount Lee, position on the south viewing ridge facing North
+    // at the front of the sign (since Mt Lee Dr is behind the ridge on the north side).
+    const isHollywoodSignJump = Math.hypot(numLat - 34.1341, numLon - -118.3215) < 0.0025;
+    if (isHollywoodSignJump && this.mode !== "helicopter") {
+      const vx = targetX;
+      const vz = targetZ + 118.0;
+      const vy = getBeijingTerrainElevation(vx, vz) + 0.35;
+      this.pos.set(vx, vy, vz);
+      this.yaw = Math.PI;
+      this.camYaw = Math.PI;
+      this.camPitch = 0.08;
+      this.camPivot.copy(this.pos);
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.position.copy(this.pos);
+      this.avatarMesh.position.copy(this.pos);
+    } else if (bestS) {
       this.currentRoadName = streetName || bestS.name || this.currentRoadName;
       this._noteRoadZh(bestS);
       if (this.mode !== "helicopter") {
@@ -776,7 +790,10 @@ class WorldExplorerApp {
           (bestS.y1 + bestS.y2) * 0.5 + 0.2,
           (bestS.z1 + bestS.z2) * 0.5
         );
-        this.yaw = Math.atan2(bestS.x2 - bestS.x1, bestS.z2 - bestS.z1);
+        const distToTarget = Math.hypot(targetX - this.pos.x, targetZ - this.pos.z);
+        this.yaw = distToTarget > 8.0
+          ? Math.atan2(targetX - this.pos.x, targetZ - this.pos.z)
+          : Math.atan2(bestS.x2 - bestS.x1, bestS.z2 - bestS.z1);
         this.camYaw = this.yaw;
         this.camPivot.copy(this.pos);
         if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.position.copy(this.pos); // [parked-cars]
@@ -2875,30 +2892,9 @@ class WorldExplorerApp {
   }
 
   _renderQuickDestinationChips() {
-    const chipsContainer = document.getElementById("location-chips");
-    if (!chipsContainer) return;
-    chipsContainer.innerHTML = "";
-    const panel = document.getElementById("location-search-panel");
-    for (const dest of QUICK_WORLD_DESTINATIONS) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "loc-chip";
-      btn.dataset.id = dest.id;
-      btn.dataset.lat = String(dest.lat);
-      btn.dataset.lon = String(dest.lon);
-      btn.textContent = getLang() === "zh" ? dest.nameZh || dest.name : dest.name;
-      btn.addEventListener("click", () => {
-        if (panel) panel.classList.add("hidden");
-        this.teleportToLocation(
-          dest.lat,
-          dest.lon,
-          getLang() === "zh" ? dest.cityZh || dest.city : dest.city,
-          dest.street
-        );
-      });
-      chipsContainer.appendChild(btn);
-    }
-    this._updateActiveQuickChip(this.worldOrigin.centerLat, this.worldOrigin.centerLon);
+    // Hardcoded destination suggestion chips intentionally removed so users type searches directly.
+    const chipsSec = document.getElementById("location-chips-section");
+    if (chipsSec) chipsSec.classList.add("hidden");
   }
 
   _updateActiveQuickChip(lat, lon) {
@@ -2940,11 +2936,13 @@ class WorldExplorerApp {
       });
     }
 
+    const locDropdown = document.getElementById("location-dropdown");
     const renderSearchResults = (items) => {
       lastResults = items || [];
       if (!resultsSec || !resultsEl) return;
       if (!items || items.length === 0) {
         resultsSec.classList.add("hidden");
+        if (locDropdown) locDropdown.classList.add("hidden");
         resultsEl.innerHTML = "";
         return;
       }
@@ -2965,6 +2963,7 @@ class WorldExplorerApp {
         resultsEl.appendChild(btn);
       });
       resultsSec.classList.remove("hidden");
+      if (locDropdown) locDropdown.classList.remove("hidden");
     };
 
     if (locInput) {

@@ -694,6 +694,15 @@ function loadImageCrossOrigin(src) {
   });
 }
 
+function signedRingArea2(ring) {
+  let area2 = 0;
+  const n = ring.length;
+  for (let i = 0, j = n - 2; i < n; j = i, i += 2) {
+    area2 += ring[j] * ring[i + 1] - ring[i] * ring[j + 1];
+  }
+  return area2;
+}
+
 function normalizeFootprintRing(ringPts, cx, cz) {
   const pts = [];
   if (Array.isArray(ringPts) && ringPts.length >= 6) {
@@ -719,7 +728,15 @@ function normalizeFootprintRing(ringPts, cx, cz) {
   if (pts.length < 6) {
     const hw = 12;
     const hd = 12;
-    return [-hw, -hd, hw, -hd, hw, hd, -hw, hd];
+    return [-hw, -hd, -hw, hd, hw, hd, hw, -hd];
+  }
+  // Ensure consistent counter-clockwise winding around +Y (signedRingArea2 <= 0)
+  if (signedRingArea2(pts) > 0) {
+    const rev = [];
+    for (let i = pts.length - 2; i >= 0; i -= 2) {
+      rev.push(pts[i], pts[i + 1]);
+    }
+    return rev;
   }
   return pts;
 }
@@ -736,15 +753,15 @@ function buildReconstructedParcelGroup(targetProfile, analysis) {
   group.name = `reconstructed_parcel:${targetProfile.id}`;
   group.position.set(cx, baseY, cz);
 
-  const expandedRing = offsetPolygonRingOutward(localRing, 0.24);
-  const plinthRing = offsetPolygonRingOutward(localRing, 0.42);
-  const corniceRing = offsetPolygonRingOutward(localRing, 0.56);
+  const expandedRing = offsetPolygonRingOutward(localRing, 0.08);
+  const plinthRing = offsetPolygonRingOutward(localRing, 0.16);
+  const corniceRing = offsetPolygonRingOutward(localRing, 0.24);
 
-  const plinthH = Math.min(4.2, Math.max(1.6, height * 0.12));
+  const plinthH = Math.min(4.0, Math.max(1.5, height * 0.12));
   const mainWallBottomY = plinthH;
   const mainWallTopY = height;
 
-  // 1. Textured & Normal-Mapped Main Facade Wall Perimeter
+  // 1. Solid Double-Sided Textured & Normal-Mapped Main Facade Wall Perimeter (never backface-culled)
   const wallGeom = buildExtrudedPerimeterGeometry(expandedRing, mainWallBottomY, mainWallTopY, 18.0);
   const wallMat = new THREE.MeshStandardMaterial({
     map: analysis.albedoTex,
@@ -752,6 +769,9 @@ function buildReconstructedParcelGroup(targetProfile, analysis) {
     normalScale: new THREE.Vector2(0.85, 0.85),
     roughness: Math.max(0.28, 0.68 - analysis.glazingRatio * 0.45),
     metalness: Math.min(0.65, 0.12 + analysis.glazingRatio * 0.55),
+    side: THREE.DoubleSide,
+    transparent: false,
+    depthWrite: true,
   });
   const wallMesh = new THREE.Mesh(wallGeom, wallMat);
   wallMesh.castShadow = true;
@@ -763,19 +783,22 @@ function buildReconstructedParcelGroup(targetProfile, analysis) {
     color: analysis.plinthColor,
     roughness: 0.72,
     metalness: 0.15,
+    side: THREE.DoubleSide,
+    transparent: false,
+    depthWrite: true,
   });
-  const plinthGeom = buildExtrudedPerimeterGeometry(plinthRing, -0.4, plinthH, 12.0);
+  const plinthGeom = buildExtrudedPerimeterGeometry(plinthRing, -1.2, plinthH, 12.0);
   const plinthMesh = new THREE.Mesh(plinthGeom, trimMat);
   plinthMesh.castShadow = true;
   plinthMesh.receiveShadow = true;
   group.add(plinthMesh);
 
-  const corniceHeights = [plinthH, height - 0.35];
+  const corniceHeights = [plinthH, height - 0.3];
   if (floors >= 5) {
     corniceHeights.push(plinthH + (height - plinthH) * 0.5);
   }
   for (const cy of corniceHeights) {
-    const bandGeom = buildExtrudedPerimeterGeometry(corniceRing, cy - 0.22, cy + 0.26, 10.0);
+    const bandGeom = buildExtrudedPerimeterGeometry(corniceRing, cy - 0.18, cy + 0.22, 10.0);
     const bandMesh = new THREE.Mesh(bandGeom, trimMat);
     bandMesh.castShadow = true;
     group.add(bandMesh);
@@ -783,7 +806,7 @@ function buildReconstructedParcelGroup(targetProfile, analysis) {
 
   const n = expandedRing.length;
   const pilasterH = height - plinthH;
-  const pilasterGeom = new THREE.BoxGeometry(0.48, pilasterH, 0.48);
+  const pilasterGeom = new THREE.BoxGeometry(0.36, pilasterH, 0.36);
   for (let i = 0; i < n; i += 2) {
     const px = expandedRing[i];
     const pz = expandedRing[i + 1];
@@ -793,28 +816,31 @@ function buildReconstructedParcelGroup(targetProfile, analysis) {
     group.add(pilaster);
   }
 
-  // 3. Roof Cap + Architectural Roof Structure
+  // 3. Solid Opaque Roof Cap + Architectural Roof Structure
   const roofMat = new THREE.MeshStandardMaterial({
     color: analysis.roofColor,
     roughness: 0.62,
     metalness: 0.18,
+    side: THREE.DoubleSide,
+    transparent: false,
+    depthWrite: true,
   });
 
   if (floors <= 4 && height <= 20) {
-    const pitchH = Math.min(5.2, Math.max(2.2, Math.sqrt(targetProfile.areaM2 || 160) * 0.22));
+    const pitchH = Math.min(4.8, Math.max(2.0, Math.sqrt(targetProfile.areaM2 || 160) * 0.2));
     const pitchedGeom = buildPitchedRoofGeometry(corniceRing, height, height + pitchH);
     const pitchedMesh = new THREE.Mesh(pitchedGeom, roofMat);
     pitchedMesh.castShadow = true;
     pitchedMesh.receiveShadow = true;
     group.add(pitchedMesh);
   } else {
-    const capGeom = buildPitchedRoofGeometry(corniceRing, height + 0.15, height + 0.25);
+    const capGeom = buildPitchedRoofGeometry(corniceRing, height, height + 0.35);
     const capMesh = new THREE.Mesh(capGeom, roofMat);
     capMesh.receiveShadow = true;
     group.add(capMesh);
 
     const setbackRing = scalePolygonRing(localRing, 0.56);
-    const pentH = Math.min(5.5, Math.max(2.4, height * 0.08));
+    const pentH = Math.min(5.2, Math.max(2.2, height * 0.08));
     const pentWallGeom = buildExtrudedPerimeterGeometry(setbackRing, height, height + pentH, 10.0);
     const pentMesh = new THREE.Mesh(pentWallGeom, wallMat);
     pentMesh.castShadow = true;
@@ -833,11 +859,8 @@ function offsetPolygonRingOutward(ring, offsetM) {
   const n = ring.length;
   if (n < 6) return ring.slice();
 
-  let area2 = 0;
-  for (let i = 0, j = n - 2; i < n; j = i, i += 2) {
-    area2 += ring[j] * ring[i + 1] - ring[i] * ring[j + 1];
-  }
-  const sign = area2 >= 0 ? 1 : -1;
+  const area2 = signedRingArea2(ring);
+  const outSign = area2 <= 0 ? 1 : -1;
 
   const out = new Array(n);
   for (let i = 0; i < n; i += 2) {
@@ -847,14 +870,14 @@ function offsetPolygonRingOutward(ring, offsetM) {
     const dx1 = ring[i] - ring[prev];
     const dz1 = ring[i + 1] - ring[prev + 1];
     const l1 = Math.max(1e-4, Math.hypot(dx1, dz1));
-    const nx1 = (dz1 / l1) * sign;
-    const nz1 = (-dx1 / l1) * sign;
+    const nx1 = (-dz1 / l1) * outSign;
+    const nz1 = (dx1 / l1) * outSign;
 
     const dx2 = ring[next] - ring[i];
     const dz2 = ring[next + 1] - ring[i + 1];
     const l2 = Math.max(1e-4, Math.hypot(dx2, dz2));
-    const nx2 = (dz2 / l2) * sign;
-    const nz2 = (-dx2 / l2) * sign;
+    const nx2 = (-dz2 / l2) * outSign;
+    const nz2 = (dx2 / l2) * outSign;
 
     let bx = nx1 + nx2;
     let bz = nz1 + nz2;
@@ -867,13 +890,11 @@ function offsetPolygonRingOutward(ring, offsetM) {
       bz = nz1;
     }
 
-    if (bx * ring[i] + bz * ring[i + 1] < 0) {
-      bx = -bx;
-      bz = -bz;
-    }
+    const dot = Math.max(0.45, bx * nx1 + bz * nz1);
+    const miter = Math.min(1.45, 1.0 / dot) * offsetM;
 
-    out[i] = ring[i] + bx * offsetM;
-    out[i + 1] = ring[i + 1] + bz * offsetM;
+    out[i] = ring[i] + bx * miter;
+    out[i + 1] = ring[i + 1] + bz * miter;
   }
   return out;
 }
@@ -891,6 +912,8 @@ function buildExtrudedPerimeterGeometry(ring, bottomY, topY, tileWidthM = 16.0) 
   const positions = [];
   const normals = [];
   const uvs = [];
+  const area2 = signedRingArea2(ring);
+  const outSign = area2 <= 0 ? 1 : -1;
 
   let accumU = 0;
   for (let i = 0; i < n; i += 2) {
@@ -900,45 +923,57 @@ function buildExtrudedPerimeterGeometry(ring, bottomY, topY, tileWidthM = 16.0) 
     const x1 = ring[next];
     const z1 = ring[next + 1];
 
-    const segLen = Math.hypot(x1 - x0, z1 - z0);
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const segLen = Math.hypot(dx, dz);
     if (segLen < 0.05) continue;
 
-    let nx = z1 - z0;
-    let nz = -(x1 - x0);
-    const nl = Math.hypot(nx, nz) || 1;
-    nx /= nl;
-    nz /= nl;
-
-    const midX = (x0 + x1) * 0.5;
-    const midZ = (z0 + z1) * 0.5;
-    if (nx * midX + nz * midZ < 0) {
-      nx = -nx;
-      nz = -nz;
-    }
+    let nx = (-dz / segLen) * outSign;
+    let nz = (dx / segLen) * outSign;
 
     const u0 = accumU / tileWidthM;
     const u1 = (accumU + segLen) / tileWidthM;
     accumU += segLen;
 
-    positions.push(
-      x0, bottomY, z0,
-      x1, bottomY, z1,
-      x1, topY, z1,
-      x0, bottomY, z0,
-      x1, topY, z1,
-      x0, topY, z0
-    );
+    const crossDot = -dz * nx + dx * nz;
+    if (crossDot >= 0) {
+      positions.push(
+        x0, bottomY, z0,
+        x1, bottomY, z1,
+        x1, topY, z1,
+        x0, bottomY, z0,
+        x1, topY, z1,
+        x0, topY, z0
+      );
+      uvs.push(
+        u0, 0,
+        u1, 0,
+        u1, 1,
+        u0, 0,
+        u1, 1,
+        u0, 1
+      );
+    } else {
+      positions.push(
+        x1, bottomY, z1,
+        x0, bottomY, z0,
+        x0, topY, z0,
+        x1, bottomY, z1,
+        x0, topY, z0,
+        x1, topY, z1
+      );
+      uvs.push(
+        u1, 0,
+        u0, 0,
+        u0, 1,
+        u1, 0,
+        u0, 1,
+        u1, 1
+      );
+    }
     for (let k = 0; k < 6; k++) {
       normals.push(nx, 0, nz);
     }
-    uvs.push(
-      u0, 0,
-      u1, 0,
-      u1, 1,
-      u0, 0,
-      u1, 1,
-      u0, 1
-    );
   }
 
   const geom = new THREE.BufferGeometry();
@@ -953,6 +988,7 @@ function buildPitchedRoofGeometry(ring, eaveY, peakY) {
   const n = ring.length;
   const positions = [];
   const uvs = [];
+  const area2 = signedRingArea2(ring);
 
   for (let i = 0; i < n; i += 2) {
     const next = (i + 2) % n;
@@ -961,12 +997,21 @@ function buildPitchedRoofGeometry(ring, eaveY, peakY) {
     const x1 = ring[next];
     const z1 = ring[next + 1];
 
-    positions.push(
-      x0, eaveY, z0,
-      x1, eaveY, z1,
-      0, peakY, 0
-    );
-    uvs.push(0, 0, 1, 0, 0.5, 1);
+    if (area2 <= 0) {
+      positions.push(
+        x0, eaveY, z0,
+        x1, eaveY, z1,
+        0, peakY, 0
+      );
+      uvs.push(0, 0, 1, 0, 0.5, 1);
+    } else {
+      positions.push(
+        x1, eaveY, z1,
+        x0, eaveY, z0,
+        0, peakY, 0
+      );
+      uvs.push(1, 0, 0, 0, 0.5, 1);
+    }
   }
 
   const geom = new THREE.BufferGeometry();
@@ -1146,8 +1191,79 @@ export class RealEstateWorldModel {
     return this.activeMeshes.get(this.getParcelKey(profile))?.meta || null;
   }
 
+  _findSceneLandmarkEntry(targetProfile) {
+    const items = this.app?.landmarks?.items;
+    if (!Array.isArray(items) || !targetProfile) return null;
+    if (targetProfile.id) {
+      const byId = items.find((it) => it.L && it.L.id === targetProfile.id);
+      if (byId) return byId;
+    }
+    if (Number.isFinite(targetProfile.cx) && Number.isFinite(targetProfile.cz)) {
+      let best = null;
+      let bestD = 160;
+      for (const it of items) {
+        const d = Math.hypot(it.x - targetProfile.cx, it.z - targetProfile.cz);
+        if (d < bestD) {
+          bestD = d;
+          best = it;
+        }
+      }
+      return best;
+    }
+    return null;
+  }
+
+  _applyLandmarkPhotoMaterialTint(lmItem, analysis) {
+    if (!lmItem || !lmItem.group) return;
+    const tint = new THREE.Color(0xffffff).lerp(analysis.wallColor, 0.42);
+    const rough = Math.max(0.26, 0.66 - analysis.glazingRatio * 0.4);
+    const metal = Math.min(0.62, 0.1 + analysis.glazingRatio * 0.48);
+
+    lmItem.group.traverse((obj) => {
+      if (!obj.isMesh || !obj.material) return;
+      if (!obj.userData.__origLmMat) {
+        obj.userData.__origLmMat = obj.material;
+        obj.userData.__origLmColorHex = obj.material.color ? obj.material.color.getHex() : 0xffffff;
+        obj.userData.__origLmRoughness = obj.material.roughness;
+        obj.userData.__origLmMetalness = obj.material.metalness;
+      }
+      if (obj.material.color) {
+        obj.material.color.copy(tint);
+      }
+      if (typeof obj.material.roughness === "number") {
+        obj.material.roughness = rough;
+      }
+      if (typeof obj.material.metalness === "number") {
+        obj.material.metalness = metal;
+      }
+      obj.material.needsUpdate = true;
+    });
+  }
+
+  _restoreLandmarkOriginalMaterial(lmItem) {
+    if (!lmItem || !lmItem.group) return;
+    lmItem.group.traverse((obj) => {
+      if (!obj.isMesh || !obj.userData.__origLmMat) return;
+      obj.material = obj.userData.__origLmMat;
+      if (obj.material.color && obj.userData.__origLmColorHex !== undefined) {
+        obj.material.color.setHex(obj.userData.__origLmColorHex);
+      }
+      if (typeof obj.userData.__origLmRoughness === "number") {
+        obj.material.roughness = obj.userData.__origLmRoughness;
+      }
+      if (typeof obj.userData.__origLmMetalness === "number") {
+        obj.material.metalness = obj.userData.__origLmMetalness;
+      }
+      obj.material.needsUpdate = true;
+      delete obj.userData.__origLmMat;
+    });
+  }
+
   /**
    * Reconstructs the target building in the live 3D scene from a real-world photograph or listing image.
+   * For bespoke 3D landmarks (`targetProfile.isLandmark` or matched landmark in `app.landmarks`),
+   * applies the photo-extracted architectural surface palette directly onto the landmark's 3D meshes
+   * with zero surrounding box walls.
    */
   async reconstructParcelFromImage(targetProfile, imgSource, options = {}) {
     if (!targetProfile || !this.app) return null;
@@ -1157,6 +1273,31 @@ export class RealEstateWorldModel {
       imgSource,
       targetProfile.floors || Math.max(1, Math.round((targetProfile.height || 14) / 3.6))
     );
+
+    const lmItem = targetProfile.isLandmark ? this._findSceneLandmarkEntry(targetProfile) : null;
+    if (targetProfile.isLandmark || lmItem) {
+      if (lmItem) {
+        this._applyLandmarkPhotoMaterialTint(lmItem, analysis);
+      }
+      const markerGroup = new THREE.Group();
+      markerGroup.name = `reconstructed_landmark:${targetProfile.id}`;
+      markerGroup.position.set(targetProfile.cx || 0, targetProfile.baseY || 0, targetProfile.cz || 0);
+      this._mountParcelGroup(key, markerGroup, {
+        type: "photo3d",
+        isLandmark: true,
+        landmarkId: lmItem?.L?.id || targetProfile.id,
+        imgSource,
+        wallHex: analysis.wallHex,
+        trimHex: analysis.trimHex,
+        roofHex: analysis.roofHex,
+        glazingRatio: Math.round(analysis.glazingRatio * 100),
+        updatedAt: Date.now(),
+      });
+      if (options.persist !== false) {
+        this._saveParcelToStorage(key, targetProfile, imgSource);
+      }
+      return this.activeMeshes.get(key)?.meta;
+    }
 
     const meshGroup = buildReconstructedParcelGroup(targetProfile, analysis);
     this._mountParcelGroup(key, meshGroup, {
@@ -1225,6 +1366,10 @@ export class RealEstateWorldModel {
     const key = this.getParcelKey(targetProfile);
     const existing = this.activeMeshes.get(key);
     if (existing) {
+      if (existing.meta?.isLandmark || targetProfile?.isLandmark) {
+        const lmItem = this._findSceneLandmarkEntry(targetProfile);
+        if (lmItem) this._restoreLandmarkOriginalMaterial(lmItem);
+      }
       this.rootGroup.remove(existing.group);
       this._disposeGroup(existing.group);
       this.activeMeshes.delete(key);
@@ -1267,6 +1412,7 @@ export class RealEstateWorldModel {
     }
     saved[key] = {
       id: profile.id,
+      isLandmark: Boolean(profile.isLandmark),
       lat: profile.lat,
       lon: profile.lon,
       height: profile.height,
@@ -1306,6 +1452,7 @@ export class RealEstateWorldModel {
       this.reconstructParcelFromImage(
         {
           id: item.id,
+          isLandmark: Boolean(item.isLandmark),
           lat: item.lat,
           lon: item.lon,
           cx: wx,

@@ -963,7 +963,8 @@ export class PropertyInspector {
     if (bestLm) {
       const xz = landmarkWorldXZ(bestLm, app.worldOrigin);
       if (xz) {
-        const baseY = getBeijingTerrainElevation(xz[0], xz[1]);
+        const lmItem = app.landmarks?.items?.find((it) => it.L && it.L.id === bestLm.id);
+        const baseY = lmItem && Number.isFinite(lmItem.baseY) ? lmItem.baseY : getBeijingTerrainElevation(xz[0], xz[1]);
         const topY = baseY + (bestLm.height || 36);
         const profile = this._buildLandmarkProfile(bestLm, xz[0], xz[1], baseY, topY);
         this.selectProfile(profile);
