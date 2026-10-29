@@ -7,7 +7,7 @@
 import * as THREE from '../../vendor/three.module.js';
 
 // Monotone cubic through [z, value] keys (no overshoot between keys).
-function curve(keys) {
+export function curve(keys) {
   const n = keys.length;
   const xs = keys.map((k) => k[0]), ys = keys.map((k) => k[1]);
   const d = [], m = new Array(n);
@@ -31,7 +31,7 @@ function curve(keys) {
 
 // Uniform Catmull-Rom through 2D control points, `k` samples per span; mirrored phantom ends keep the
 // tangent horizontal at the centreline so the two halves join smoothly.
-function crPath(pts, k) {
+export function crPath(pts, k) {
   const ext = [[-pts[1][0], pts[1][1]], ...pts, [-pts[pts.length - 2][0], pts[pts.length - 2][1]]];
   const out = [];
   for (let i = 1; i < ext.length - 2; i++) {
@@ -46,9 +46,9 @@ function crPath(pts, k) {
   return out;
 }
 
-const SPAN = 6;
+export const SPAN = 6;
 
-function makeBody(spec) {
+export function makeBody(spec) {
   const L = spec.length, hl = L / 2;
   const sill = curve(spec.sill), belt = curve(spec.belt), roofK = curve(spec.roof);
   const hip = spec.hip ? curve(spec.hip) : () => 1;
@@ -152,7 +152,7 @@ function makeBody(spec) {
 
 // Split the lofted body into one geometry per material. Classification is per grid quad (centre point,
 // summed face normal) so material borders run along grid lines instead of zig-zagging across diagonals.
-function splitByMaterial(body, classify) {
+export function splitByMaterial(body, classify) {
   const geo = body.geometry();
   const P = geo.attributes.position.array, N = geo.attributes.normal.array, I = geo.index.array;
   const buckets = new Map();
@@ -190,7 +190,7 @@ function splitByMaterial(body, classify) {
 
 // A lamp lens: superellipse outline in the (x, y) plane wrapped onto the nose or tail surface, standing
 // `lift` metres proud of the paint. `slant` tilts the outline (y offset per metre of x).
-function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 0.006 } = {}) {
+export function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 0.006 } = {}) {
   const RAD = 6, ANG = 40, pos = [], idx = [];
   pos.push(cx, cy, 0);
   for (let r = 1; r <= RAD; r++) {
@@ -221,7 +221,7 @@ function lampPatch(body, end, cx, cy, ax, ay, { p = 4, slant = 0, lift = 0.006 }
 }
 
 // Lamp geometries (mirrored pairs) from a car's lamp list: [end, cx, cy, ax, ay, matKey, opts]
-function lampGeometries(spec, body) {
+export function lampGeometries(spec, body) {
   const out = [];
   for (const [end, cx, cy, ax, ay, key, opts] of spec.lamps) {
     for (const s of cx === 0 ? [1] : [-1, 1]) {
@@ -233,9 +233,9 @@ function lampGeometries(spec, body) {
 }
 
 // Superellipse test in the (|x|, y) plane: a lamp/grille outline that follows the curved surface.
-const blob = (x, y, cx, cy, ax, ay, p = 4) => Math.pow(Math.abs(x - cx) / ax, p) + Math.pow(Math.abs(y - cy) / ay, p) < 1;
+export const blob = (x, y, cx, cy, ax, ay, p = 4) => Math.pow(Math.abs(x - cx) / ax, p) + Math.pow(Math.abs(y - cy) / ay, p) < 1;
 
-function materials(spec) {
+export function materials(spec) {
   const envd = (m) => { m.userData.envProbe = true; return m; };
   return {
     paint: envd(new THREE.MeshPhysicalMaterial({ color: spec.paint, metalness: spec.paintMetal ?? 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.06 })),
@@ -259,7 +259,7 @@ function materials(spec) {
 }
 
 // Tyre (lathed sidewalls + tread), spoked rim, brake disc; the caliper stays on the steering pivot.
-function buildWheel(spec, M, side) {
+export function buildWheel(spec, M, side) {
   const { R, tw } = spec.wheel;
   const rr = R * spec.wheel.rimFrac;
   const pivot = new THREE.Group();
@@ -326,7 +326,7 @@ function buildWheel(spec, M, side) {
   return { pivot, wheelMesh };
 }
 
-function addMesh(parent, geo, mat, x = 0, y = 0, z = 0) {
+export function addMesh(parent, geo, mat, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
   parent.add(m);
@@ -334,7 +334,7 @@ function addMesh(parent, geo, mat, x = 0, y = 0, z = 0) {
 }
 
 // Side mirrors, door handles, a simple cabin (dashboard, seats, wheel) behind the tinted glass.
-function addCommonDetails(spec, body, M, chassis) {
+export function addCommonDetails(spec, body, M, chassis) {
   const ws = spec.windshieldBase;
   const yt = body.belt(ws - 0.12);
   const wx = body.halfW(ws - 0.12) * spec.glass.base;

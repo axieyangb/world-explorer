@@ -81,6 +81,9 @@ MOD_ID_MAP = {
     'src/features/aurora.js': '__MOD_aurora',  # [aurora]
     'src/features/hero_vehicles.js': '__MOD_hero_vehicles',  # [hero-vehicles]
     'src/features/reflection_probe.js': '__MOD_reflection_probe',  # [hero-vehicles]
+    'src/features/hero_heavy.js': '__MOD_hero_heavy',  # [hero-vehicles]
+    'src/features/hero_avatar.js': '__MOD_hero_avatar',  # [hero-vehicles]
+    'src/features/hero_heli.js': '__MOD_hero_heli',  # [hero-vehicles]
     'src/features/sea_state.js': '__MOD_sea_state',  # [sea-state]
     'src/features/satellites.js': '__MOD_satellites',  # [satellites]
     'src/navigation.js': '__MOD_navigation',

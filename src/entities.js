@@ -2,6 +2,9 @@ import * as THREE from '../vendor/three.module.js';
 import { personParts, PART, MAT, OPT, bit, HIP_Y, SHOULDER_Y } from './features/person_model.js'; // [feature/people]
 import { NEW_VEHICLE_SPECS, isCustomFleetVehicle, buildFleetVehicleModel, applyVehiclePaint, updateVehicleEffects } from './features/vehicles.js';
 import { HERO_VEHICLE_IDS, buildHeroVehicle } from './features/hero_vehicles.js'; // [hero-vehicles]
+import { HEAVY_VEHICLE_IDS, buildHeavyVehicle } from './features/hero_heavy.js'; // [hero-vehicles] bus, trucks, tank
+import { buildHeroAvatar } from './features/hero_avatar.js'; // [hero-vehicles] player character
+import { buildHeroHelicopter } from './features/hero_heli.js'; // [hero-vehicles] player helicopter
 
 export const VEHICLE_SPECS = [
   {
@@ -153,7 +156,7 @@ function createSpeedTrailRibbon(width, length, hexColor, opacity = 0.72) {
  * Local forward is +Z, right is +X, up is +Y.
  */
 export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
-  if (options.hero && HERO_VEHICLE_IDS.has(typeId)) return createHeroVehicleModel(typeId, options);
+  if (options.hero && (HERO_VEHICLE_IDS.has(typeId) || HEAVY_VEHICLE_IDS.has(typeId))) return createHeroVehicleModel(typeId, options);
   if (isCustomFleetVehicle(typeId)) {
     return buildFleetVehicleModel(typeId, options);
   }
@@ -685,8 +688,10 @@ export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
 }
 
 // [hero-vehicles] Detailed body for the player's own car, with the same userData contract and nitro VFX.
+// Builders return { group, chassis, wheels, frontSteerPivots, paintMeshes, lightbarParts, exhausts,
+// trails?: [[x, y, z]], userData?: {...extra keys such as isTank/turret/barrel/muzzlePoint} }.
 function createHeroVehicleModel(typeId, options) {
-  const hero = buildHeroVehicle(typeId, options);
+  const hero = HEAVY_VEHICLE_IDS.has(typeId) ? buildHeavyVehicle(typeId, options) : buildHeroVehicle(typeId, options);
   const { group, chassis } = hero;
   const nitroVfx = new THREE.Group();
   nitroVfx.visible = false;
@@ -700,13 +705,15 @@ function createHeroVehicleModel(typeId, options) {
     nitroVfx.add(plume);
     vfxParts.plumes.push(plume);
   }
-  for (const x of [-0.66, 0.66]) {
+  const tailZ = -VEHICLE_SPECS.find((s) => s.id === typeId).length / 2 - 0.05;
+  for (const [x, y, z] of hero.trails || [[-0.66, 0.85, tailZ], [0.66, 0.85, tailZ]]) {
     const trail = createSpeedTrailRibbon(0.14, 9.5, trailCol, 0.72);
-    trail.position.set(x, 0.85, -VEHICLE_SPECS.find((s) => s.id === typeId).length / 2 - 0.05);
+    trail.position.set(x, y, z);
     nitroVfx.add(trail);
     vfxParts.trails.push(trail);
   }
   group.userData = {
+    ...(hero.userData || {}),
     typeId,
     hero: true,
     chassis,
@@ -744,6 +751,8 @@ function buildWheelAssembly(radius, width, tireMat, rimMat) {
  * Builds an articulated 3D pedestrian/player character model with Cyber-Sprint Nitro VFX (`nitroVfx`).
  */
 export function createPlayerAvatarModel() {
+  const hero = buildHeroAvatar(); // [hero-vehicles] detailed character when available
+  if (hero) return hero;
   // [feature/people] Normal-looking person built from the shared person model (face on the front, hair at
   // the back, toes forward, jacket zipper, backpack). Same userData contract as before for main.js.
   const root = new THREE.Group();
@@ -830,6 +839,8 @@ export function createPlayerAvatarModel() {
  * Local forward is +Z, right is +X, up is +Y. Skids rest on y = 0.
  */
 export function createHelicopterModel() {
+  const hero = buildHeroHelicopter(); // [hero-vehicles] detailed helicopter when available
+  if (hero) return hero;
   const root = new THREE.Group();
   const fuselage = new THREE.Group();
   root.add(fuselage);
