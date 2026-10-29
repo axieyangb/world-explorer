@@ -51,7 +51,7 @@ Try it:
 | :-- | :-- |
 | 🚁 **Fly, drive, walk** | An arcade helicopter with auto-land and rooftop landings, a garage of 11 vehicles from taxis and buses to a Mach-1 hypercar and a tank, and on foot. |
 | 🏙️ **Living cities** | AI traffic and pedestrians on the real road network, driving on the correct side for each country. Traffic lights, signs, street lamps, trees, trains and ferries. |
-| ✈️ **Live data** | The real local time and weather wherever you are, the real sea state on the water, the northern lights when they're out, real satellites and the ISS crossing the night sky, live trains and ships where open feeds exist, and real aircraft overhead when served by `server.py`. |
+| ✈️ **Live data** | The real local time and weather wherever you are, the real sea state on the water, the northern lights when they're out, real satellites and the ISS crossing the night sky, live trains and ships where open feeds exist, live road traffic in New York, London and Hong Kong (and anywhere with your own TomTom key; elsewhere a realistic rush-hour / night pattern), and real aircraft overhead when served by `server.py`. |
 | 🌅 **Sky and climate** | Sun, moon and stars in the right place for the real time, rain, fog, snow and cloud, and vegetation chosen for each region's climate zone. Pick dawn, noon, dusk or night any time; *Now* goes back to live. |
 | 🗼 **Landmarks** | 73 hand-modelled icons at their real coordinates: the Golden Gate Bridge, Eiffel Tower, Sagrada Família, Hagia Sophia, Burj Khalifa, Taipei 101, Angkor Wat, the Pyramids, Taj Mahal, Sydney Opera House, the US Capitol and more. |
 | 🪧 **Sense of place** | Storefront signs, a *Welcome to…* banner when you cross a border, and a Wikipedia card for whatever landmark you're looking at, with a one-tap *Edit map* link to fix that spot on OpenStreetMap. |
@@ -92,7 +92,12 @@ Drag the view to look around, pinch to zoom, tap the mode button at the top to s
 Touch controls appear automatically on touch devices; `?touch=1` or `?touch=0` forces them on or off.
 
 **URL options:** `?lat=…&lon=…&name=…` start location · `?time=0-24` time of day · `?weather=clear|cloudy|rain|fog` ·
-`?sea=calm|moderate|rough|storm` · `?aurora=0-1|off` · `?sats=off|starlink` (adds the full Starlink fleet)
+`?sea=calm|moderate|rough|storm` · `?aurora=0-1|off` · `?sats=off|starlink` (adds the full Starlink fleet) ·
+`?traffic=live|typical|off` (live feeds, the typical time-of-day pattern only, or the old uniform traffic)
+
+**Live traffic** lives in the time & weather menu (Live / Typical / Off). For live traffic outside New York, London and
+Hong Kong, paste a free [TomTom](https://developer.tomtom.com) API key there; it is kept only in your browser's local storage.
+The congestion overlay (green / amber / red) is the traffic-light button on the world map, and shows on the minimap too.
 
 ## Run it yourself
 
@@ -132,6 +137,9 @@ map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributor
 search by Photon, Nominatim and BigDataCloud · weather and sea state by [Open-Meteo](https://open-meteo.com) ·
 aurora nowcast from [NOAA SWPC](https://www.swpc.noaa.gov) · satellite orbits from [CelesTrak](https://celestrak.org) via satellite.js (MIT) ·
 aircraft from OpenSky, adsb.fi and adsb.lol · ships from Fintraffic Digitraffic (CC BY 4.0) ·
+road traffic from [NYC DOT](https://data.cityofnewyork.us/Transportation/DOT-Traffic-Speeds-NBE/i4gi-tjb9) real-time speeds,
+Powered by [TfL Open Data](https://tfl.gov.uk/info-for/open-data-users/) (contains OS data © Crown copyright and database rights),
+Hong Kong Transport Department detectors via [DATA.GOV.HK](https://data.gov.hk), and optionally © [TomTom](https://www.tomtom.com) with your own key ·
 trains from the BART API · climate zones from Köppen–Geiger (Kottek et al. 2006) ·
 buildings enriched with [Overture Maps](https://overturemaps.org) · rendering by [Three.js](https://threejs.org).
 

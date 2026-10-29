@@ -24,6 +24,7 @@ import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehi
 import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.js'; // [feature/people]
 import { PeopleAgents } from './people_agents.js'; // [people-agents]
 import { VehicleDamage, DAMAGE_BY_SOURCE } from './vehicle_damage.js'; // [car-explosions]
+import { LiveTraffic } from './live_traffic.js'; // [live-traffic]
 
 const UMBRELLA_BIT = bit(OPT.UMBRELLA);
 // [human-motion] pedestrians closer than this (and at most this many) use the detailed figure.
@@ -35,7 +36,8 @@ const DEFAULT_LOOK = {
   hair: { r: 0.1, g: 0.08, b: 0.06 }, acc: { r: 0.2, g: 0.2, b: 0.2 },
 };
 
-const MAX_CARS = 110;
+const MAX_CARS = 140; // [live-traffic] 110 normally; jams may add up to 30 (queues need bumper-to-bumper cars)
+const CARS_BASE = 110;
 const MAX_PEDS = 72;
 const MAX_PEDS_CAP = 420; // [kaiju] instanced capacity for the panic density boost
 const WRECK_PAINT = new THREE.Color(0x14120f); // [kaiju] burned wreck tint
@@ -198,6 +200,8 @@ export class CityTraffic {
     this.stats = { cars: 0, peds: 0, ragdolls: 0, lying: 0, hits: 0, edges: 0, nodes: 0 };
     this.damage = new VehicleDamage(app, this); // [car-explosions] HP, explosions, wrecks
     app.vehicleDamage = this.damage;
+    this.live = new LiveTraffic(app, this); // [live-traffic] congestion layer: speed ratio + density per lane direction
+    this._ltT = 0;
     if (typeof window !== 'undefined') window.__cityTraffic = this; // debug/test handle
   }
 
@@ -308,6 +312,11 @@ export class CityTraffic {
       rec.edges.push(e);
       this.stats.edges++;
     }
+    // [live-traffic] how urban this chunk is (km of drivable road per km2) -> rush-hour jam strength
+    let carLen = 0;
+    for (const e of rec.edges) if (e.car) carLen += e.len;
+    const urb = clamp((carLen / 1000 - 6) / 24, 0.1, 1);
+    for (const e of rec.edges) e.urb = urb;
     this.candTimer = 0;
   }
 
@@ -396,8 +405,9 @@ export class CityTraffic {
   _refreshCandidates(p) {
     this.carCand.length = 0; this.carCum.length = 0;
     this.pedCand.length = 0; this.pedCum.length = 0;
-    let cw = 0, pw = 0;
+    let cw = 0, pw = 0, cwT = 0, cwSlow = 0;
     const R = CAR_R, PR = PED_R;
+    const ltOn = this.live.mode !== 'off'; // [live-traffic]
     const kj = this._kaijuCreature();
     const kx = kj ? kj.position.x : 0, kz = kj ? kj.position.z : 0;
     const kPR = 190;
@@ -408,9 +418,14 @@ export class CityTraffic {
         const nearPedK = kj && !(e.minX > kx + kPR || e.maxX < kx - kPR || e.minZ > kz + kPR || e.maxZ < kz - kPR);
         if (e.car && nearCarP) {
           const w = CAR_W[e.cls] * e.len;
+          // [live-traffic] density by time of day + jams; picks lean toward the player so a queue reads as a queue
+          const prox = ltOn ? 0.35 + 0.65 * clamp(1 - Math.hypot((e.minX + e.maxX) * 0.5 - p.x, (e.minZ + e.maxZ) * 0.5 - p.z) / R, 0, 1) : 1;
           for (const d of e.dirs) {
             if (!d) continue;
-            cw += w * (0.6 + 0.4 * d.nLanes);
+            const wd = w * (0.6 + 0.4 * d.nLanes) * this.live.density(d);
+            cwT += wd;
+            if (ltOn && this.live.ratio(d) < 0.45) cwSlow += wd;
+            cw += wd * prox;
             this.carCand.push(d); this.carCum.push(cw);
           }
         }
@@ -421,7 +436,7 @@ export class CityTraffic {
         }
       }
     }
-    this.carTarget = Math.min(MAX_CARS, Math.round(cw / 110));
+    this.carTarget = Math.min(CARS_BASE + Math.round(30 * clamp((cwSlow / (cwT || 1)) * 2.5, 0, 1)), Math.round(cwT / 110));
     const basePed = Math.min(this.pedCap, Math.round((pw / 28) * this.pedMult));
     this.pedBaseTarget = basePed;
     this.pedTarget = Math.min(this.pedCap, Math.round(basePed * this._pedTimeFactor()));
@@ -527,11 +542,12 @@ export class CityTraffic {
       c.s = Math.random() * de.e.len;
       c.hint = 0;
       c.lane = (Math.random() * de.nLanes) | 0;
+      if (de.ltWork && de.ltWork.lane === c.lane) c.lane = Math.max(0, c.lane - 1); // [live-traffic] coned-off lane
       this._carPose(c);
       const d = Math.hypot(c.x - p.x, c.z - p.z);
       if (d > CAR_R || d < (initial ? 25 : 60)) continue;
       if (!initial && d < 220 && this._visible(c.x, c.y, c.z)) continue;
-      if (this._nearObstacle(c.x, c.z, 11)) continue;
+      if (this.live.ratio(de) < 0.45 ? this._nearInLane(c) : this._nearObstacle(c.x, c.z, 11)) continue; // [live-traffic] jams pack tighter
       const cls = de.e.cls;
       const r = Math.random();
       let type = 0;
@@ -547,7 +563,8 @@ export class CityTraffic {
       const spec = CAR_TYPES[type];
       c.len = spec.length; c.wid = spec.width;
       c.drv = (0.85 + Math.random() * 0.3) * (type === 4 ? 0.8 : type === 7 ? 1.15 : type === 5 ? 1.1 : 1);
-      c.v = CAR_SPEED[cls] * c.drv * 0.8;
+      c.v = CAR_SPEED[cls] * c.drv * 0.8 * this.live.ratio(de); // [live-traffic]
+      c.vCap = c.v * 1.25;
       c.paint = type === 1 ? this.taxiPaint : type === 5 ? pick(TESLA_PAINTS) : type === 8 ? pick(TOW_TRUCK_PAINTS) : type === 0 || type === 2 ? pick(PAINTS) : null;
       c.next = this._chooseNext(de);
       c.brake = 0; c.blockedT = 0; c.ignoreT = 0; c.bumpT = 0; c.stuckT = 0;
@@ -567,6 +584,22 @@ export class CityTraffic {
         const l = this.cells.get(hashKey(x + i * HASH, z + j * HASH));
         if (!l) continue;
         for (const k of l) if (Math.abs(o.x[k] - x) < r && Math.abs(o.z[k] - z) < r) return true;
+      }
+    }
+    return false;
+  }
+
+  // [live-traffic] spawn spacing on a jammed road: only the same lane, ~one car length plus a gap
+  _nearInLane(c) {
+    const o = this.obs;
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const l = this.cells.get(hashKey(c.x + i * HASH, c.z + j * HASH));
+        if (!l) continue;
+        for (const k of l) {
+          const dx = o.x[k] - c.x, dz = o.z[k] - c.z;
+          if (Math.abs(dx * c.ux + dz * c.uz) < 7.5 && Math.abs(dx * c.uz - dz * c.ux) < 1.8) return true;
+        }
       }
     }
     return false;
@@ -656,7 +689,22 @@ export class CityTraffic {
       }
     }
 
-    const v0 = CAR_SPEED[e.cls] * c.drv;
+    let v0 = CAR_SPEED[e.cls] * c.drv;
+    const lt = this.live;
+    if (lt.mode !== 'off') { // [live-traffic] congestion: slower target, stop-and-go waves, ease into slow stretches
+      const r = lt.ratio(de);
+      let cap = v0 * r;
+      if (r < 0.4) {
+        const w = 0.5 + 0.5 * Math.sin(this._ltT * 0.33 + c.s * 0.05 + (e.minX + e.minZ) * 0.01); // waves run upstream
+        cap *= 1 - ((0.4 - r) / 0.4) * 0.85 * (1 - w);
+      }
+      c.vCap = Number.isFinite(c.vCap) ? c.vCap + (cap - c.vCap) * Math.min(1, dt * 0.6) : cap;
+      v0 = c.vCap;
+      if (c.next && rem < 70) {
+        const vn = CAR_SPEED[c.next.e.cls] * c.drv * lt.ratio(c.next);
+        if (vn < v0) v0 = Math.min(v0, vn + rem * 0.22);
+      }
+    }
     let vT = v0;
     if (gap < Infinity) vT = Math.min(vT, Math.max(0, leadV + (gap - 2.5 - leadV * 1.1) * 0.6));
     if (c.next && rem < 30) {
@@ -694,6 +742,7 @@ export class CityTraffic {
       c.de = nx;
       c.hint = nx.fwd ? 0 : nx.e.n - 2;
       c.lane = Math.min(c.lane, nx.nLanes - 1);
+      if (nx.ltWork && nx.ltWork.lane === c.lane) c.lane = Math.max(0, c.lane - 1); // [live-traffic] merge past works
       c.next = this._chooseNext(nx);
     }
     this._carPose(c);
@@ -1884,6 +1933,8 @@ export class CityTraffic {
   }
 
   update(dt, playerPos, loadedChunks, impactSources = null) {
+    this._ltT += dt;
+    this.live.update(dt); // [live-traffic]
     if (!this.group.visible) return;
     const app = this.app;
     if (this._hitSoundCooldown > 0) this._hitSoundCooldown = Math.max(0, this._hitSoundCooldown - dt);
