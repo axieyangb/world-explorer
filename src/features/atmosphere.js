@@ -4,6 +4,7 @@ import { createSkyMaterial } from './sky.js';
 import { createRain } from './rain.js';
 import { SURFACE_UNIFORMS, installSurfaceShaders } from './surfaces.js';
 import { _setDaylightState } from './daylight.js';
+import { initNightLights, NIGHT_LIGHT_UNIFORMS } from './night_lights.js'; // [night]
 
 /**
  * Atmosphere system: continuous day/night cycle (real solar position at the current lat/lon,
@@ -34,10 +35,12 @@ const KF = {
     hemiSky: 0xf0c0a4, hemiGround: 0x5a5060, hemiInt: 0.92, ambCol: 0xc0a0a0, ambInt: 0.45,
     cloudLit: 0xf6b48a, cloudDark: 0x6a5664,
   },
+  // [night] a real night: dim blue moonlight + sky fill instead of an evenly lit blue-grey day; streets get
+  // their light from lamps, shops and headlights (night_lights.js), the horizon from the city glow below
   night: {
-    zenith: 0x091326, horizon: 0x1c2f4f, ground: 0x182234, fog: 0.00013, sunCol: 0x9cb8ff, sunInt: 1.08,
-    hemiSky: 0x7498dc, hemiGround: 0x445372, hemiInt: 1.25, ambCol: 0x6882b8, ambInt: 0.92,
-    cloudLit: 0x56627a, cloudDark: 0x2c3548,
+    zenith: 0x040a1a, horizon: 0x15233f, ground: 0x0e1420, fog: 0.00013, sunCol: 0x8aa6e8, sunInt: 0.42,
+    hemiSky: 0x3e5a96, hemiGround: 0x1c2232, hemiInt: 0.62, ambCol: 0x3a4c76, ambInt: 0.34,
+    cloudLit: 0x3a4660, cloudDark: 0x1c2333,
   },
   overcast: {
     zenith: 0x7c8b99, horizon: 0xb8c4cf, ground: 0x5c646b, fog: 0.00028, sunCol: 0xe2e8f0, sunInt: 0.85,
@@ -52,6 +55,14 @@ for (const [name, kf] of Object.entries(KF)) {
   for (const k of COLOR_KEYS) KFC[name][k] = new THREE.Color(kf[k]);
 }
 const NIGHT_OVERCAST_TINT = new THREE.Color(0x1d232c);
+// [night] sodium / LED sky glow over a lit city (horizon, fog and cloud bases) and share of rooms lit by local hour
+const CITY_GLOW = new THREE.Color(0.55, 0.36, 0.2);
+const LIT_BY_HOUR = [0.3, 0.22, 0.15, 0.11, 0.1, 0.13, 0.24, 0.32, 0.3, 0.26, 0.26, 0.26, 0.26, 0.26, 0.26, 0.28, 0.36,
+  0.48, 0.6, 0.66, 0.64, 0.58, 0.5, 0.4];
+function litFraction(h) {
+  const i = Math.floor(h) % 24, f = h - Math.floor(h);
+  return LIT_BY_HOUR[i] + (LIT_BY_HOUR[(i + 1) % 24] - LIT_BY_HOUR[i]) * f;
+}
 const FOG_GREY = new THREE.Color(0xa9b2ba);
 
 const WEATHER = {
@@ -149,6 +160,8 @@ class AtmosphereSystem {
     app.scene.add(this.rainFx.mesh);
 
     installSurfaceShaders(app.mats);
+    this.nightLights = initNightLights(app); // [night] lamp / shop / headlight pools on the ground
+    this._glowCol = new THREE.Color();
 
     this._buildUi();
     this.update(0);
@@ -367,6 +380,14 @@ class AtmosphereSystem {
       this._fogGrey.copy(FOG_GREY).multiplyScalar(0.12 + 0.88 * rawDaylight),
       Math.min(1, fog + 0.4 * rain)
     );
+    // [night] urban light pollution: grows with how many street lamps are around (rural places stay dark),
+    // brighter under cloud / in fog where the light scatters back down
+    const lampOn = 1 - smooth(0.15, 0.6, this.daylight);
+    const nl = this.nightLights;
+    const urban = nl ? smooth(30, 700, nl.lampCount()) : 0;
+    this._urban = this._urban === undefined ? urban : lerp(this._urban, urban, 1 - Math.exp(-dt / 4));
+    const cityGlow = lampOn * nightW * (0.25 + 0.75 * this._urban) * (1 + 0.8 * ovc + 0.6 * fog);
+    if (cityGlow > 0.001) fogCol.add(this._glowCol.copy(CITY_GLOW).multiplyScalar(0.06 * cityGlow));
 
     // Apply lights
     if (app.sunLight) {
@@ -396,12 +417,15 @@ class AtmosphereSystem {
       for (const m of Object.values(mats.buildingMats)) m.emissiveIntensity = em;
     }
     if (mats && mats.wfcBldgMat && mats.wfcBldgMat.userData.nightUniforms) {
-      mats.wfcBldgMat.userData.nightUniforms.uNightEmissive.value = 0.04 + (1.85 - 0.04) * dark2;
+      const nu = mats.wfcBldgMat.userData.nightUniforms;
+      nu.uNightEmissive.value = 0.04 + (1.85 - 0.04) * dark2;
+      if (nu.uLitFrac) nu.uLitFrac.value = litFraction(this.hour); // [night]
+      if (nu.uNightClock) nu.uNightClock.value = this.time;
     }
     const lodU = app.skylineInstanced?.material?.userData?.lodNightUniforms;
     if (lodU) lodU.uLodNightEmissive.value = 1.25 * dark2;
     if (app.playerLight) {
-      app.playerLight.intensity = 14.0 * dark2;
+      app.playerLight.intensity = 4.0 * dark2; // [night] was 14: it flood-lit the whole street; headlights / lamps do that now
       app.playerLight.distance = 65;
     }
 
@@ -419,6 +443,7 @@ class AtmosphereSystem {
     u.uStars.value = nightW * (1 - ovc) * (1 - fog);
     u.uStarRot.value.copy(this.starRot);
     u.uGlow.value = setW * (1 - 0.8 * ovc) * (1 - fog) * 0.6;
+    if (u.uCityGlow) u.uCityGlow.value = cityGlow; // [night]
     u.uCloudCover.value = this.cloud;
     u.uCloudLit.value.copy(c.cloudLit);
     u.uCloudDark.value.copy(c.cloudDark);
@@ -437,6 +462,10 @@ class AtmosphereSystem {
     SURFACE_UNIFORMS.uSkyHorizon.value.copy(c.horizon).lerp(fogCol, fog * 0.8);
     SURFACE_UNIFORMS.uLightLevel.value = 0.12 + 0.88 * this.daylight;
     SURFACE_UNIFORMS.uNightGlow.value = dark2;
+    if (nl) { // [night]
+      NIGHT_LIGHT_UNIFORMS.uNightRoadGlow.value.setRGB(0.9, 0.58, 0.3).multiplyScalar(0.4 + 0.6 * this._urban);
+      nl.update(lampOn);
+    }
 
     // Rain particles
     const rf = this.rainFx;

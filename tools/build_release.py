@@ -86,6 +86,7 @@ MOD_ID_MAP = {
     'src/features/vegetation.js': '__MOD_vegetation',
     'src/features/places.js': '__MOD_places',
     'src/features/sky.js': '__MOD_sky',
+    'src/features/night_lights.js': '__MOD_night_lights',  # [night]
     'src/features/rain.js': '__MOD_rain',
     'src/features/surfaces.js': '__MOD_surfaces',
     'src/features/atmosphere.js': '__MOD_atmosphere',
@@ -402,7 +403,7 @@ def build_world_explorer_html():
   sd_path = ROOT / 'data/street_detail_sf.json'  # [street-detail] precomputed OSM street nodes for the SF start
   b64_sd = gz_b64(sd_path.read_bytes()) if sd_path.exists() else ''
   b64_fstrip = base64.b64encode((ROOT / 'assets/facades/facade_strip.jpg').read_bytes()).decode('ascii')
-  b64_fmask = base64.b64encode((ROOT / 'assets/facades/facade_mask_strip.jpg').read_bytes()).decode('ascii')
+  b64_fmask = base64.b64encode((ROOT / 'assets/facades/facade_mask_strip.png').read_bytes()).decode('ascii')
   b64_dstrip = base64.b64encode((ROOT / 'assets/doors/door_strip.jpg').read_bytes()).decode('ascii')
   b64_dmask = base64.b64encode((ROOT / 'assets/doors/door_mask_strip.jpg').read_bytes()).decode('ascii')
 
@@ -554,7 +555,7 @@ await (async function bootstrapWorldExplorer() {
   <script type="application/octet-stream" id="b64-street-detail">{b64_sd}</script>
   <script>
   window.__EMBEDDED_FACADE_STRIP__ = "data:image/jpeg;base64,{b64_fstrip}";
-  window.__EMBEDDED_FACADE_MASK_STRIP__ = "data:image/jpeg;base64,{b64_fmask}";
+  window.__EMBEDDED_FACADE_MASK_STRIP__ = "data:image/png;base64,{b64_fmask}";
   window.__EMBEDDED_DOOR_STRIP__ = "data:image/jpeg;base64,{b64_dstrip}";
   window.__EMBEDDED_DOOR_MASK_STRIP__ = "data:image/jpeg;base64,{b64_dmask}";
   </script>
