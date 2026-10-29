@@ -656,6 +656,9 @@ export class WalkerWeaponsSystem {
       }
     }
 
+    const lh = this.app.landmarks?.damage?.raycast(o, d, bestDist); // [landmark-damage]
+    if (lh) { bestDist = lh.dist; hitResult = { dist: bestDist, point: lh.point.clone(), kind: 'landmark', ref: lh.ref }; } // [landmark-damage]
+
     // 3. Terrain Raycast
     const terrDist = this._raycastTerrain(o, d, bestDist);
     if (terrDist < bestDist) {
@@ -951,6 +954,8 @@ export class WalkerWeaponsSystem {
         D.heliSplash(hitPos.x, hitPos.y, hitPos.z, splashRadius, buildingUnits, hit?.ref);
       }
     }
+
+    this.app.landmarks?.damage?.impact(hitPos, hit, buildingUnits, splashRadius); // [landmark-damage]
 
     if (hit && hit.kind === 'car' && hit.car) {
       if (this.app.vehicleDamage && typeof this.app.vehicleDamage.hit === 'function') {

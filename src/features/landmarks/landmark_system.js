@@ -4,8 +4,8 @@
  * - Builds each enabled landmark inside the current 40 km world lazily (one per frame), as a THREE.LOD
  *   (full model near, cheap impostor far), two shared-shader materials (lit solid + night glow).
  * - Adds simple prism colliders into the owning chunks' `buildingColliders` (clipped per chunk), so the
- *   car / walker / heli collide and land on them. They are not in the destruction entity table, so
- *   landmarks are indestructible.
+ *   car / walker / heli collide and land on them. They are not in the city destruction entity table;
+ *   weapons and the Kaiju damage them through landmark_damage.js (`this.damage`).
  * - Optional per-model animation hooks (London Eye wheel, Eiffel sparkle) and night glow.
  */
 import * as THREE from "../../../vendor/three.module.js";
@@ -13,6 +13,7 @@ import { getChunkTerrainMeshElevation } from "../../environment.js";
 import { LANDMARKS, landmarkWorldXZ } from "./registry.js";
 import { MODELS } from "./models/index.js";
 import { Kit } from "./kit.js";
+import { LandmarkDamage } from "./landmark_damage.js";
 
 const DEG = Math.PI / 180;
 const SHOW_DIST = 17000;
@@ -71,11 +72,13 @@ export class LandmarkSystem {
     this.time = 0;
     this._colTimer = 0;
     this.photo = null;
+    this.damage = new LandmarkDamage(this);
     this._installDebug();
   }
 
   // ---------------------------------------------------------------- lifecycle
   _clear() {
+    this.damage.reset();
     for (const it of this.items) {
       if (it.group) {
         this.root.remove(it.group);
@@ -223,6 +226,7 @@ export class LandmarkSystem {
         console.warn("[landmarks] setup failed", it.L.id, e);
       }
     }
+    this.damage.register(it);
   }
 
   _nightFactor() {
@@ -242,6 +246,7 @@ export class LandmarkSystem {
       this.originKey = key;
       this._rebuildForOrigin();
     }
+    this.damage.update(dt);
     if (!this.items.length) return;
     this.time += dt;
     const cam = app.camera.position;
