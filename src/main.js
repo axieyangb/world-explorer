@@ -155,15 +155,77 @@ class SkylineTiles extends THREE.Group {
   computeTileBounds() { for (const m of this.tiles) m.computeBoundingSphere(); }
 }
 
+function _createRendererWithFallback(initialCanvas) {
+  let canvas = initialCanvas;
+  const attempts = [
+    {
+      name: "high-performance",
+      getOpts: () => ({
+        canvas,
+        antialias: QUALITY.tier !== "low",
+        logarithmicDepthBuffer: false,
+        powerPreference: "high-performance",
+      }),
+    },
+    {
+      name: "default",
+      getOpts: () => ({
+        canvas,
+        antialias: false,
+        logarithmicDepthBuffer: false,
+        powerPreference: "default",
+        failIfMajorPerformanceCaveat: false,
+      }),
+    },
+    {
+      name: "low-power",
+      getOpts: () => ({
+        canvas,
+        antialias: false,
+        depth: true,
+        stencil: false,
+        alpha: false,
+        powerPreference: "low-power",
+        failIfMajorPerformanceCaveat: false,
+      }),
+    },
+    {
+      name: "minimal",
+      getOpts: () => ({
+        canvas,
+      }),
+    },
+  ];
+
+  let lastError = null;
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i];
+    if (i > 0) {
+      const fresh = canvas.cloneNode(false);
+      canvas.parentNode?.replaceChild(fresh, canvas);
+      canvas = fresh;
+    }
+    try {
+      const renderer = new THREE.WebGLRenderer(attempt.getOpts());
+      canvas.addEventListener("webglcontextlost", (e) => {
+        e.preventDefault();
+        console.warn("[WebGL] Context lost; prevented default");
+      }, false);
+      return { renderer, canvas };
+    } catch (err) {
+      lastError = err;
+      console.warn(`[WebGL] Fallback attempt ${i + 1} (${attempt.name}) failed:`, err);
+    }
+  }
+  throw lastError || new Error("Error creating WebGL context.");
+}
+
 class WorldExplorerApp {
   constructor() {
-    this.canvas = document.getElementById("webgl-canvas");
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvas,
-      antialias: true,
-      logarithmicDepthBuffer: false,
-      powerPreference: "high-performance",
-    });
+    const initialCanvas = document.getElementById("webgl-canvas");
+    const { renderer, canvas } = _createRendererWithFallback(initialCanvas);
+    this.canvas = canvas;
+    this.renderer = renderer;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUALITY.dprCap)); // [ui-mobile] cap per tier (QualityManager owns it after this)
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;

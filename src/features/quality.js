@@ -36,7 +36,12 @@ function savedChoice() {
   } catch (e) { return null; }
 }
 
+const WEAK_GPU_RE = /swiftshader|llvmpipe|software|mali-[gt]?\d{2,3}\b|adreno[^0-9]*[1-5]\d\d\b|powervr|intel.*(hd|uhd) graphics( \d{3})?\b/i;
+
 // What the device can take, before any frame has been measured.
+// NOTE: We do NOT create a throwaway WebGL context here at module import time,
+// as allocating and losing a context right before Three.js starts causes WebGL creation
+// failures on macOS Safari/Chrome under context limits. Weak GPU is checked post-init.
 function detectTier() {
   if (typeof window === 'undefined') return 'high';
   const touch = isTouchDevice();
@@ -44,19 +49,8 @@ function detectTier() {
   const cores = navigator.hardwareConcurrency || 8;
   const scr = window.screen || { width: 1920, height: 1080 };
   const phone = touch && Math.min(scr.width, scr.height) < 600;
-  let gpu = '';
-  try {
-    const gl = document.createElement('canvas').getContext('webgl2');
-    if (gl) {
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      gpu = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
-      const lose = gl.getExtension('WEBGL_lose_context');
-      if (lose) lose.loseContext();
-    }
-  } catch (e) { /* no GPU info: decide from the rest */ }
-  const weakGpu = /swiftshader|llvmpipe|software|mali-[gt]?\d{2,3}\b|adreno[^0-9]*[1-5]\d\d\b|powervr|intel.*(hd|uhd) graphics( \d{3})?\b/i.test(gpu);
   if (phone || mem <= 2) return 'low';
-  if (touch || mem <= 4 || cores <= 4 || weakGpu) return 'medium';
+  if (touch || mem <= 4 || cores <= 4) return 'medium';
   return 'high';
 }
 
@@ -97,6 +91,22 @@ export class QualityManager {
     this._hzShown = true;
     this.applyPixelRatio();
     this._bindMenu();
+
+    // Inspect the already-created WebGL context for weak GPUs without creating a throwaway context
+    try {
+      const gl = app.renderer && app.renderer.getContext && app.renderer.getContext();
+      if (gl) {
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        const gpu = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+        if (WEAK_GPU_RE.test(gpu) && QUALITY.deviceTier === 'high') {
+          QUALITY.deviceTier = 'medium';
+          if (QUALITY.mode === 'auto') {
+            QUALITY.baseTier = 'medium';
+            this._setTier('medium');
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
   }
 
   describe() {
