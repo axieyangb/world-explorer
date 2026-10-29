@@ -11,6 +11,7 @@
   <meta name="theme-color" content="#0a1220" />
   <title>World Explorer</title>
   <meta name="description" content="World Explorer — Real-Time 3D Open-World Earth Exploration, Driving & Flight Simulator." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌍</text></svg>" />
   <link rel="stylesheet" href="styles.css?v=20261029_r2" />
   <style id="loading-styles">
     /* Loading screen: inline so it paints before styles.css and the app modules arrive. */
@@ -167,8 +168,13 @@
         },
         fail: function (msg) {
           if (done) return;
-          status.textContent = msg;
-          showProblem('Something went wrong.');
+          if (/Error creating WebGL context/i.test(msg)) {
+            status.textContent = 'WebGL is unavailable in this browser session. Hardware acceleration may be disabled or the GPU helper needs a restart.';
+            showProblem('Please enable "Use graphics acceleration when available" in Chrome Settings (chrome://settings/system) or restart your browser.');
+          } else {
+            status.textContent = msg;
+            showProblem('Something went wrong.');
+          }
         },
         done: function () {
           if (done) return;
