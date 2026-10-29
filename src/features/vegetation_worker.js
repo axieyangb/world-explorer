@@ -642,30 +642,37 @@ function pushRingPerimeterCurb(buf, outer, ox, oz, yOffTop, curbRise, width, rgb
   }
 }
 
-/** Emits a planted floral clump at `(x, y, z)`: a low uneven cone whose facets alternate leaf green and
- *  blossom colour, plus three tiny blossoms on top. About 11 triangles: flowerbeds include every mapped
- *  garden, so this runs tens of thousands of times per city. */
+/** Emits a planted floral clump at `(x, y, z)`: a low, uneven leafy cushion dotted with small blossoms.
+ *  About 15 triangles: flowerbeds include every mapped garden, so this runs tens of thousands of times
+ *  per city. */
 function pushFlowerCluster3D(buf, x, y, z, r, h, flowerRgb, pat, kind, rng) {
-  const N = 6;
-  const leaf = [0.16 + rng() * 0.06, 0.40 + rng() * 0.12, 0.16 + rng() * 0.05];
-  const tx = x + (rng() - 0.5) * r * 0.3, tz = z + (rng() - 0.5) * r * 0.3, ty = y + h;
+  const N = 7;
+  const hh = h * 0.55;
+  const g = 0.85 + rng() * 0.25;
+  const tx = x + (rng() - 0.5) * r * 0.25, tz = z + (rng() - 0.5) * r * 0.25, ty = y + hh;
   const a0 = rng() * Math.PI * 2;
-  let px = 0, pz = 0;
+  let px = 0, py = 0, pz = 0;
   for (let i = 0; i <= N; i++) {
-    const a = a0 + (i / N) * Math.PI * 2, rr = r * (0.85 + rng() * 0.3);
-    const cx = x + Math.cos(a) * rr, cz = z + Math.sin(a) * rr;
+    const a = a0 + (i / N) * Math.PI * 2, rr = r * (0.8 + rng() * 0.4);
+    const cx = x + Math.cos(a) * rr, cz = z + Math.sin(a) * rr, cy = y + hh * (0.15 + rng() * 0.2);
     if (i > 0) {
-      const ma = a - Math.PI / N, nx = Math.cos(ma) * 0.6, nz = Math.sin(ma) * 0.6;
-      const t = 0.85 + rng() * 0.3;
-      const c = i % 2 ? leaf : [Math.min(1, flowerRgb[0] * t), Math.min(1, flowerRgb[1] * t), Math.min(1, flowerRgb[2] * t)];
-      pushTri(buf, cx, y, cz, px, y, pz, tx, ty, tz, nx, 0.8, nz, c, pat, kind);
+      const ma = a - Math.PI / N, s = 0.82 + rng() * 0.3;
+      const c = [0.17 * g * s, 0.44 * g * s, 0.17 * g * s];
+      pushTri(buf, cx, cy, cz, px, py, pz, tx, ty, tz, Math.cos(ma) * 0.45, 0.9, Math.sin(ma) * 0.45, c, pat, kind);
     }
-    px = cx; pz = cz;
+    px = cx; py = cy; pz = cz;
   }
-  for (let k = 0; k < 3; k++) {
-    const a = rng() * Math.PI * 2, d = rng() * r * 0.45, ps = 0.09 + rng() * 0.05;
-    const bx = tx + Math.cos(a) * d, bz = tz + Math.sin(a) * d, by = ty - d * 0.4 + 0.02;
-    pushTri(buf, bx - ps, by, bz - ps * 0.6, bx + ps, by, bz - ps * 0.6, bx, by, bz + ps, 0, 1, 0, flowerRgb, pat, kind);
+  // Blossoms: small single-triangle flowers scattered over the cushion, mostly the bed colour
+  for (let k = 0; k < 8; k++) {
+    const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * r * 0.75, ps = 0.09 + rng() * 0.06;
+    const bx = tx + Math.cos(a) * d, bz = tz + Math.sin(a) * d;
+    const by = ty - (d / r) * hh * 0.75 + 0.025;
+    const t = rng(), m = t < 0.12 ? 1.25 : t > 0.9 ? 0.75 : 0.92 + rng() * 0.16;
+    const c = [Math.min(1, flowerRgb[0] * m), Math.min(1, flowerRgb[1] * m), Math.min(1, flowerRgb[2] * m)];
+    const rot = rng() * Math.PI * 2;
+    pushTri(buf, bx + Math.cos(rot) * ps, by, bz + Math.sin(rot) * ps,
+      bx + Math.cos(rot + 4.2) * ps, by, bz + Math.sin(rot + 4.2) * ps,
+      bx + Math.cos(rot + 2.1) * ps, by, bz + Math.sin(rot + 2.1) * ps, 0, 1, 0, c, pat, kind);
   }
 }
 
