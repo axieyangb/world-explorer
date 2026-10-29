@@ -52,7 +52,7 @@ const PLAN = wingPlan();
 
 export function build(k) {
   const hi = k.hi;
-  const nose = hi ? 6 : 3;
+  const nose = hi ? 10 : 3;
   // podium / entrance base
   k.color(PODIUM).extrude(Kit.ngon(6, 52, Math.PI / 6), 0, hi ? 8 : 6);
 
@@ -61,13 +61,13 @@ export function build(k) {
     const t = y0 / (NT * TIER);
     const w = 30 - 10 * t;               // wing width tapers slightly
     const core = 17 - 5 * t;
-    k.color(i % 2 ? GLASS : GLASS_DK);
+    k.color(GLASS);
     k.extrude(Kit.ngon(6, core, 0), y0, h);
     for (let a = 0; a < 3; a++) {
       const L = PLAN[i][a];
       if (L < core + 2) continue;
       const pts = rot(wingPts(L, Math.min(w, L * 0.9), nose), WING_ANG[a]);
-      k.color(i % 2 ? GLASS : GLASS_DK).extrude(pts, y0, h);
+      k.color(GLASS).extrude(pts, y0, h);
       // mechanical band/parapet at each setback roof
       if (hi) k.color(FIN).extrude(rot(wingPts(L + 0.3, Math.min(w, L * 0.9) + 0.6, nose), WING_ANG[a]), y0 + h - 1.2, 1.2);
       if (hi) {
@@ -87,6 +87,23 @@ export function build(k) {
         const nx = (L + 0.25) * c, nz = (L + 0.25) * s;
         k.box(nx, y0, nz, 0.9, h - 1.2, 0.9);
         k.glow(false);
+        // [lm-materials] the dense stainless fin rhythm: a fin every 3.2 m along both flanks and round the nose
+        if (!k.fine) continue;
+        k.color(FIN);
+        const ww = Math.min(w, L * 0.9), r = ww / 2, cx = Math.max(r, L - r);
+        for (let d = core + 1.6; d < cx; d += 3.2) {
+          for (const side of [-1, 1]) {
+            k.push().translate(d * c - side * (r + 0.3) * s, y0, d * s + side * (r + 0.3) * c).rotateY(-WING_ANG[a]);
+            k.box(0, 0, 0, 0.32, h - 1.2, 0.6);
+            k.pop();
+          }
+        }
+        for (let q = 1; q < 6; q++) {
+          const an = -Math.PI / 2 + (q / 6) * Math.PI, fx = cx + Math.cos(an) * (r + 0.3), fz = Math.sin(an) * (r + 0.3);
+          k.push().translate(fx * c - fz * s, y0, fx * s + fz * c).rotateY(-WING_ANG[a] - an);
+          k.box(0, 0, 0, 0.6, h - 1.2, 0.32);
+          k.pop();
+        }
       }
     }
   }

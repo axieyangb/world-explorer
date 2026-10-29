@@ -5,7 +5,7 @@
 // famous long flying buttresses, the octagonal oak-and-lead spire at the crossing, the sacristy on the south side.
 // Floodlit at night. Local: axis = Z, front -Z = west facade (heading 296.4), +X = north side, +Z = apse (east).
 const STONE = 0xd9cfb6, STONE_DK = 0xc1b597, STONE_SH = 0xa99d80, LEAD = 0x5b6670, LEAD_DK = 0x48525b, HOLE = 0x2f2c29;
-const ROSE = 0x3c4a6a, GOLD = 0xc9a24a;
+const ROSE = 0x3c4a6a, GOLD = 0xc9a24a, DOOR = 0x3b2a20, PATINA = 0x6aa996;
 const TAU = Math.PI * 2;
 const ZF = -64, ZT = 14, ZA = 44;      // west front, transept (crossing) centre, apse centre
 const NW = 6.2, AW = 20;               // nave half-width (clerestory), aisle half-width
@@ -31,33 +31,15 @@ function lancet(k, x, y0, z, w, h) {
   k.tri([b, ys, z], [a, ys, z], [x, y0 + h, z]);
 }
 
-// round rose window facing -Z at plane z: dark glass, tracery spokes and rings
-function rose(k, x, y, z, r) {
-  const hi = k.hi, n = hi ? 24 : 12;
-  k.glow(false).color(ROSE);
-  for (let i = 0; i < n; i++) {
-    const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU;
-    k.tri([x, y, z], [x + Math.cos(a1) * r, y + Math.sin(a1) * r, z], [x + Math.cos(a0) * r, y + Math.sin(a0) * r, z]);
-  }
-  k.glow(true).color(STONE_DK);
-  if (hi) {
-    for (let i = 0; i < 12; i++) { const a = (i / 12) * TAU; k.strut([x + Math.cos(a) * r * 0.25, y + Math.sin(a) * r * 0.25, z - 0.1], [x + Math.cos(a) * r, y + Math.sin(a) * r, z - 0.1], 0.25); }
-    for (const rr of [r * 0.25, r * 0.62, r]) for (let i = 0; i < 16; i++) {
-      const a0 = (i / 16) * TAU, a1 = ((i + 1) / 16) * TAU;
-      k.strut([x + Math.cos(a0) * rr, y + Math.sin(a0) * rr, z - 0.1], [x + Math.cos(a1) * rr, y + Math.sin(a1) * rr, z - 0.1], 0.3);
-    }
-  }
-}
-
 function westFront(k) {
-  const hi = k.hi, z = ZF, zf = z - 0.05, D = 12;
+  const hi = k.hi, z = ZF, zf = z - 0.05, D = 12, PD = 3.2, zp = z - PD;
   k.glow(true).color(STONE).box(0, 0, z + D / 2, 41, 43, D);
   for (const sx of [-1, 1]) {
     // towers: buttresses on the corners, two tall louvred lancets per face, flat top with a balustrade
     const tx = sx * 12.75;
     k.color(STONE).box(tx, 43, z + D / 2, 15.5, 26, D);
     k.color(STONE_DK).box(tx, 69, z + D / 2, 16.3, 0.9, D + 0.8);
-    for (const bx of [-1, 1]) k.box(tx + bx * 7.2, 0, z - 0.8, 1.8, 66, 1.6);
+    for (const bx of [-1, 1]) k.box(tx + bx * 7.2, 0, z - PD / 2 - 0.4, 2.2, 66, PD + 0.8);
     k.glow(false).color(HOLE);
     for (const lx of [-3.2, 3.2]) {
       lancet(k, tx + lx, 46, zf, 2.6, 18);
@@ -65,35 +47,58 @@ function westFront(k) {
       k.push().translate(tx, 0, z + D / 2).rotateY(sx > 0 ? -Math.PI / 2 : Math.PI / 2);
       lancet(k, lx * 1.4, 46, -D / 2 - 0.05, 2.4, 18);
       k.pop();
+      if (k.fine) {
+        // belfry louvres: lead slats across the lancet
+        k.color(LEAD_DK);
+        for (let y = 47; y < 62; y += 0.9) k.box(tx + lx, y, zf - 0.1, 2.5, 0.12, 0.3);
+        k.color(HOLE);
+      }
     }
     if (hi) {
       lancet(k, tx, 26, zf, 3.0, 9);
       k.glow(true).color(STONE_DK);
-      for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) k.cyl(tx + cx * 7.2, 69.9, z + D / 2 + cz * 5.4, 0.6, 0.1, 3.2, 6);
+      for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) k.pinnacle(tx + cx * 7.2, 69.9, z + D / 2 + cz * 5.4, 1.3, 4.5);
+      // balustrade on the tower top
+      if (k.fine) for (let q = -7; q <= 7; q += 0.7) k.box(tx + q, 69.9, z - 0.2, 0.18, 1.1, 0.18);
     }
     k.glow(true);
   }
-  // three portals (deep pointed arches) and the trumeau statues
-  k.glow(false).color(HOLE);
-  for (const [px, w, h] of [[-12.75, 7, 13], [0, 8.5, 15], [12.75, 7, 13]]) lancet(k, px, 0, zf - 0.6, w, h);
-  k.glow(true).color(STONE_DK);
-  for (const [px, w, h] of [[-12.75, 7, 13], [0, 8.5, 15], [12.75, 7, 13]]) {
-    k.box(px - w / 2 - 1.0, 0, z - 0.3, 2.0, h, 1.2); k.box(px + w / 2 + 1.0, 0, z - 0.3, 2.0, h, 1.2); // jambs
-    k.taper(px, h, z - 0.3, w + 4, 1.2, 0.8, 1.2, 4.0);                                                 // gable
+  // porch: three deep portals (stepped pointed orders with column figures, door + tympanum relief) cut into a
+  // 3.2 m deep porch mass under the Gallery of Kings
+  k.glow(true).color(STONE);
+  const portals = [[-12.75, 9.6, 15.5, [-20.5, -6.4]], [0, 11.2, 17.2, [-6.4, 6.4]], [12.75, 9.6, 15.5, [6.4, 20.5]]];
+  for (const [px, W, H, [fl, fr]] of portals) {
+    k.recessArch(px, 0, zp, W, H, PD - 0.2, hi ? 5 : 2, W * 0.42, {
+      frame: [fl, fr, 18.6], back: "door", statues: true,
+      col: { face: STONE, side: STONE_DK, back: DOOR, tymp: STONE_DK, fig: STONE_SH },
+    });
   }
-  // Gallery of Kings: band of 28 niches
-  k.color(STONE_SH).box(0, 19.5, z - 0.2, 41, 0.8, 0.6);
+  k.color(STONE_DK).quadN([-20.5, 18.6, zp], [20.5, 18.6, zp], [20.5, 18.6, z], [-20.5, 18.6, z], [0, 1, 0]);
+  for (const sx of [-1, 1]) k.quadN([sx * 20.5, 0, zp], [sx * 20.5, 18.6, zp], [sx * 20.5, 18.6, z], [sx * 20.5, 0, z], [sx, 0, 0]);
+  // Gallery of Kings: band of 28 niches, each with a crowned king
+  k.color(STONE_SH).box(0, 18.6, z - 0.6, 41, 0.9, 1.2);
   if (hi) {
     k.glow(false).color(HOLE);
-    for (let i = 0; i < 28; i++) { const x = -19 + i * (38 / 27); lancet(k, x, 20.6, zf - 0.25, 0.9, 3.0); }
-    k.glow(true).color(STONE_DK);
+    for (let i = 0; i < 28; i++) { const x = -19 + i * (38 / 27); lancet(k, x, 20.0, zf - 0.25, 1.15, 3.8); }
+    k.glow(true).color(STONE_SH);
+    if (k.fine) for (let i = 0; i < 28; i++) {
+      const x = -19 + i * (38 / 27);
+      k.cyl(x, 20.05, zf - 0.55, 0.32, 0.24, 2.35, 6).sphere(x, 22.65, zf - 0.55, 0.2, 6, 3).cyl(x, 22.8, zf - 0.55, 0.19, 0.22, 0.22, 6);
+    }
+    k.color(STONE_DK);
+    for (let i = 0; i <= 28; i++) k.box(-19.7 + i * (38 / 27), 20.0, zf - 0.35, 0.22, 3.6, 0.3);
   }
-  k.box(0, 24.2, z - 0.2, 41, 0.7, 0.6);
-  // west rose in its square frame, Grand Gallery (open arcade) above
-  rose(k, 0, 31, zf - 0.1, 4.8);
-  k.color(STONE_SH).box(0, 36.3, z - 0.2, 41, 0.7, 0.6);
+  k.glow(true).color(STONE_DK).box(0, 24.2, z - 0.35, 41, 0.7, 0.9);
+  // west rose in its square frame (projecting panel), Grand Gallery (open arcade) above
+  k.roseWindow(0, 30.5, z - 1.25, 4.8, 1.0, 24, { frame: STONE_DK, glass: ROSE, tracery: STONE_DK, square: 5.9 });
+  if (hi) for (const sx of [-1, 1]) lancet(k, sx * 12.75, 26.5, zf, 3.6, 8.5);
+  k.color(STONE_SH).box(0, 36.3, z - 0.4, 41, 0.7, 0.8);
   k.glow(false).color(HOLE);
   for (let i = 0; i < 14; i++) lancet(k, -19.5 + 1.5 + i * (36 / 13), 37.2, zf - 0.15, 1.6, 5.2);
+  if (hi) {
+    k.glow(true).color(STONE_DK);
+    for (let i = 0; i <= 14; i++) k.cyl(-19.5 + 0.7 + i * (36 / 13) - 0.04, 37.0, zf - 0.35, 0.16, 0.16, 5.4, 6);
+  }
   k.glow(true).color(STONE_DK).box(0, 43, z - 0.3, 41.6, 0.8, 1.0);
 }
 
@@ -101,12 +106,26 @@ function westFront(k) {
 function flyer(k, px, pz, wx, wz) {
   const hi = k.hi;
   k.glow(true).color(STONE).box(px, 0, pz, 2.4, 22, 2.8);
-  if (hi) k.color(STONE_DK).cyl(px, 22, pz, 1.0, 0.1, 6, 6);
-  k.color(STONE);
-  const mid = [(px + wx) / 2, 27.5, (pz + wz) / 2];
-  k.strut([px, 19.5, pz], mid, 1.0);
-  k.strut(mid, [wx, 28.5, wz], 1.0);
-  if (hi) k.strut([px, 22, pz], [wx, 30.5, wz], 0.6);
+  if (hi) {
+    k.color(STONE_DK).pinnacle(px, 22, pz, 1.7, 8.5);
+    k.color(STONE);
+    // the flyer: a quarter arch under a straight sloping coping
+    const n = 6, y0 = 15.5, y1 = 28.5;
+    let prev = [px, y0, pz];
+    for (let i = 1; i <= n; i++) {
+      const t = i / n, a = (t * Math.PI) / 2;
+      const f = 1 - Math.cos(a), g = Math.sin(a);
+      const p = [px + (wx - px) * f, y0 + (y1 - y0) * g, pz + (wz - pz) * f];
+      k.strut(prev, p, 0.9);
+      prev = p;
+    }
+    k.strut([px, 21.5, pz], [wx, 30.2, wz], 0.75);
+  } else {
+    k.color(STONE);
+    const mid = [(px + wx) / 2, 27.5, (pz + wz) / 2];
+    k.strut([px, 19.5, pz], mid, 1.0);
+    k.strut(mid, [wx, 28.5, wz], 1.0);
+  }
 }
 
 export function build(k) {
@@ -126,7 +145,7 @@ export function build(k) {
     const xc = sx * ZT, zg = -24.02;
     k.push().rotateY(-sx * Math.PI / 2);
     k.glow(true).color(STONE).tri([xc + 7, CLER, zg], [xc - 7, CLER, zg], [xc, RIDGE, zg]);
-    rose(k, xc, 22, zg - 0.1, 6.5);
+    k.roseWindow(xc, 22, zg - 1.1, 6.5, 1.0, 24, { frame: STONE_DK, glass: ROSE, tracery: STONE_DK, square: 7.4 });
     k.glow(false).color(HOLE);
     lancet(k, xc, 0, zg - 0.1, 5, 11);
     k.glow(true).color(STONE_DK);
@@ -138,9 +157,9 @@ export function build(k) {
   k.lathe(0, AISLE, ZA, [[NW + 1, 0], [NW + 1, CLER - AISLE]], hi ? 16 : 8, { caps: false });
   k.glow(false).color(LEAD).lathe(0, AISLE, ZA, [[AW + 0.3, 0], [NW + 1.5, 4.5]], hi ? 24 : 12, { caps: false });
   k.color(LEAD).lathe(0, CLER, ZA, [[NW + 1.5, 0], [0.2, RIDGE - CLER]], hi ? 16 : 8, { caps: false });
-  // clerestory + aisle windows
+  // clerestory + aisle windows (stained glass, lit from inside at night)
   if (hi) {
-    k.glow(false).color(HOLE);
+    k.glow(false).color(ROSE);
     for (let z = z0 + 4; z < z1; z += 6.5) {
       if (Math.abs(z - ZT) < 9) continue;
       for (const sx of [-1, 1]) {
@@ -170,6 +189,19 @@ export function build(k) {
     for (let i = 0; i < 8; i++) { k.push().translate(0, 0, ZT).rotateY((i / 8) * TAU + Math.PI / 8); lancet(k, 0, RIDGE, -3.95, 1.2, 6); k.pop(); }
     k.glow(true).color(LEAD_DK);
     for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU; k.cyl(Math.cos(a) * 4.6, RIDGE - 4, ZT + Math.sin(a) * 4.6, 0.5, 0.1, 22, 4); }
+  }
+  if (k.fine) {
+    // crockets up the eight arrises of the spire, and the twelve copper apostles round its foot
+    k.glow(false).color(LEAD_DK);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * TAU + Math.PI / 8;
+      for (let t = 0.08; t < 0.92; t += 0.07) { const r = 3.6 * (1 - t) + 0.15 * t + 0.15; k.box(Math.cos(a) * r, RIDGE + 14 + 37 * t, ZT + Math.sin(a) * r, 0.35, 0.3, 0.35); }
+    }
+    k.glow(true).color(PATINA);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * TAU, r = 6.2 + (i % 3) * 1.6, y = RIDGE - 1.5 - (i % 3) * 1.8;
+      k.cyl(Math.cos(a) * r, y, ZT + Math.sin(a) * r, 0.32, 0.22, 2.2, 6).sphere(Math.cos(a) * r, y + 2.4, ZT + Math.sin(a) * r, 0.2, 6, 3);
+    }
   }
   k.glow(true).color(GOLD).box(0, 94, ZT, 0.3, 1.2, 0.3).box(0, 94.8, ZT, 1.0, 0.2, 0.2).sphere(0, 95.6, ZT, 0.35, 6, 4);
   // sacristy on the south side of the choir

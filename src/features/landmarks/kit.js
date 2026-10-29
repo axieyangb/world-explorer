@@ -6,12 +6,17 @@
  * named animated parts. Model space: metres, origin at the ground centre, +Y up, front faces -Z.
  *
  *   const k = new Kit(lod);           // lod 0 = full detail, 1 = far impostor (skip small details: if (k.hi) ...)
+ *                                     // [lm-materials] k.fine: close-up-only detail (a third, nearest LOD level)
  *   k.color(0x6fae9c).box(x, y0, z, w, h, d);
  *   k.push().translate(0, 40, 0).rotateZ(0.07); ... k.pop();
  *   k.glow(true); ...; k.glow(false);
  *   k.part("wheel", px, py, pz); ... k.part("main");   // separate mesh pivoting at (px,py,pz)
+ *   k.color(0xd6c9ae, "travertine");   // [lm-materials] explicit library material for this colour
+ *   k.mat("glass"); ...; k.mat(null);   // [lm-materials] sticky material override
+ * Colours without an explicit material are mapped through `k.matMap` (material_map.js) or the colour heuristic.
  */
 import * as THREE from "../../../vendor/three.module.js";
+import { MAT, classifyColor } from "./materials.js";
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
 const _na = new THREE.Vector3(), _nb = new THREE.Vector3(), _nc = new THREE.Vector3();
@@ -20,9 +25,10 @@ const _col = new THREE.Color();
 const TAU = Math.PI * 2;
 
 export class Kit {
-  constructor(lod = 0) {
+  constructor(lod = 0, fine = lod === 0) {
     this.lod = lod;
     this.hi = lod === 0;
+    this._fine = lod === 0 && fine; // [lm-materials] close-up detail level (see `fine`)
     this._m = new THREE.Matrix4();
     this._nm = new THREE.Matrix3();
     this._stack = [];
@@ -31,10 +37,47 @@ export class Kit {
     this._parts = new Map();
     this._cur = this._newPart("main", 0, 0, 0);
     this.tris = 0;
+    // [lm-materials] library material per triangle
+    this._hex = 0xffffff;
+    this._cmat = -1;          // material given with the current colour
+    this._mat = -1;           // sticky override (k.mat)
+    this._mid = -1;           // resolved id for the current state (-1 = resolve on next emit)
+    this.matMap = null;       // { hex: name } for this model (set by LandmarkSystem)
+    this.matStone = "limestone";
+    this._resolved = new Map();
+  }
+
+  /**
+   * [lm-materials] true only in the close-up level: heavy detail (statues, girder lacing, window recesses...) goes
+   * under `if (k.fine)`. A model that reads it gets three LOD levels: fine (< fineDist), hi (< lodDist), far.
+   */
+  get fine() { this.usedFine = true; return this._fine; }
+
+  /** [lm-materials] Sticky library material (name from materials.js MAT), null = back to colour mapping. */
+  mat(name) {
+    this._mat = name == null ? -1 : MAT[name] ?? -1;
+    this._mid = -1;
+    return this;
+  }
+
+  _matId() {
+    if (this._mid >= 0) return this._mid;
+    let id = this._mat >= 0 ? this._mat : this._cmat;
+    if (id < 0) {
+      const key = this._hex * 2 + (this._glow ? 1 : 0);
+      id = this._resolved.get(key);
+      if (id === undefined) {
+        const m = this.matMap && this.matMap[this._hex];
+        id = m != null ? MAT[m] ?? 0 : classifyColor(this._hex, this.matStone, this._glow);
+        this._resolved.set(key, id);
+      }
+    }
+    this._mid = id;
+    return id;
   }
 
   _newPart(name, px, py, pz) {
-    const p = { name, pivot: [px, py, pz], solid: { p: [], n: [], c: [] }, glow: { p: [], n: [], c: [] } };
+    const p = { name, pivot: [px, py, pz], solid: { p: [], n: [], c: [], m: [] }, glow: { p: [], n: [], c: [], m: [] } };
     this._parts.set(name, p);
     return p;
   }
@@ -45,13 +88,16 @@ export class Kit {
     return this;
   }
 
-  color(hex) {
+  color(hex, mat) {
     _col.setHex(hex);
     this._rgb = [_col.r, _col.g, _col.b];
+    this._hex = hex;
+    this._cmat = mat ? MAT[mat] ?? -1 : -1;
+    this._mid = -1;
     return this;
   }
 
-  glow(on = true) { this._glow = !!on; return this; }
+  glow(on = true) { if (this._glow !== !!on) this._mid = -1; this._glow = !!on; return this; }
 
   // ------------------------------------------------------------ transform stack
   push() { this._stack.push(this._m.clone()); return this; }
@@ -84,6 +130,7 @@ export class Kit {
     B.n.push(_na.x, _na.y, _na.z, _nb.x, _nb.y, _nb.z, _nc.x, _nc.y, _nc.z);
     const [r, g, bl] = this._rgb;
     B.c.push(r, g, bl, r, g, bl, r, g, bl);
+    B.m.push(this._mid >= 0 ? this._mid : this._matId());
     this.tris++;
   }
 
@@ -265,6 +312,204 @@ export class Kit {
     return out;
   }
 
+  // ------------------------------------------------------------ [lm-materials] architectural helpers
+  /** Quad a-b-c-d wound so its face normal points along `want` (local coords). */
+  quadN(a, b, c, d, want) {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    if (nx * want[0] + ny * want[1] + nz * want[2] >= 0) this.quad(a, b, c, d); else this.quad(d, c, b, a);
+    return this;
+  }
+
+  /**
+   * Gothic recessed opening (portal / window) facing -Z in the current frame: `n` concentric pointed orders stepping
+   * from the outer width W at plane z to the inner width wIn at z + depth (each order: intrados strip + front ring),
+   * door / glass + tympanum at the back. Outer height H from y0 to the apex. opts:
+   *   frame: [xLeft, xRight, yTop] fill the wall face around the outer arch at plane z (else the caller's wall does)
+   *   back: "door" (door + tympanum with relief) | "glass" (one pane) | null;  statues: jamb figures on each order
+   *   col: { face, side, back, tymp, fig }  colours (default = current colour)
+   */
+  recessArch(cx, y0, z, W, H, depth, n, wIn, opts = {}) {
+    const hi = this.hi, m = hi && W > 3.5 ? 7 : hi && W > 1.6 ? 4 : 3;
+    const cur = this._hex, C = opts.col || {};
+    const col = (h) => this.color(h ?? cur);
+    const R0 = W * (opts.rk || 1);
+    const rise = Math.sqrt(Math.max(0, R0 * R0 - (R0 - W / 2) ** 2));
+    const ys = y0 + H - rise;
+    const s = (W - wIn) / (2 * n), dz = depth / n;
+    const xcL = cx - W / 2 + R0, xcR = cx + W / 2 - R0;
+    const outline = (i) => {
+      const R = R0 - i * s, pts = [[cx - W / 2 + i * s, y0], [cx - W / 2 + i * s, ys]];
+      const ta = Math.acos(Math.max(-1, Math.min(1, (cx - xcL) / R)));
+      for (let j = 1; j <= m; j++) { const t = Math.PI + (ta - Math.PI) * (j / m); pts.push([xcL + Math.cos(t) * R, ys + Math.sin(t) * R]); }
+      for (let j = m - 1; j >= 0; j--) { const t = Math.PI + (ta - Math.PI) * (j / m); pts.push([xcR - Math.cos(t) * R, ys + Math.sin(t) * R]); }
+      pts.push([cx + W / 2 - i * s, ys], [cx + W / 2 - i * s, y0]);
+      return pts;
+    };
+    const inward = (x, y) => (y <= ys + 1e-3 ? [cx - x, 0, 0] : x < cx ? [xcL - x, ys - y, 0] : [xcR - x, ys - y, 0]);
+    let P = outline(0);
+    if (opts.frame) {
+      const [fl, fr, ft] = opts.frame;
+      col(C.face);
+      for (let j = 0; j < P.length - 1; j++) {
+        const a = P[j], b = P[j + 1];
+        const q = (p) => (p[1] <= ys + 1e-3 ? [p[0] < cx ? fl : fr, p[1]] : [p[0], ft]);
+        const qa = q(a), qb = q(b);
+        this.quadN([a[0], a[1], z], [b[0], b[1], z], [qb[0], qb[1], z], [qa[0], qa[1], z], [0, 0, -1]);
+        if (a[1] <= ys + 1e-3 && b[1] > ys + 1e-3) this.quadN([qa[0], qa[1], z], [qb[0], qb[1], z], [qa[0], ft, z], [qa[0], ft, z], [0, 0, -1]);
+        if (b[1] <= ys + 1e-3 && a[1] > ys + 1e-3) this.quadN([qa[0], qa[1], z], [qb[0], qb[1], z], [qb[0], ft, z], [qb[0], ft, z], [0, 0, -1]);
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const Q = outline(i + 1), za = z + i * dz, zb = za + dz;
+      col(C.side);
+      for (let j = 0; j < P.length - 1; j++) {
+        const a = P[j], b = P[j + 1];
+        this.quadN([a[0], a[1], za], [b[0], b[1], za], [b[0], b[1], zb], [a[0], a[1], zb], inward((a[0] + b[0]) / 2, (a[1] + b[1]) / 2));
+      }
+      col(C.face);
+      for (let j = 0; j < P.length - 1; j++) this.quadN([P[j][0], P[j][1], zb], [P[j + 1][0], P[j + 1][1], zb], [Q[j + 1][0], Q[j + 1][1], zb], [Q[j][0], Q[j][1], zb], [0, 0, -1]);
+      if (this.fine && opts.statues && H > 5) {
+        // a column figure on each jamb step, small voussoir figures up the arch
+        col(C.fig);
+        for (const sx of [-1, 1]) {
+          const fx = cx + sx * (W / 2 - (i + 0.5) * s);
+          this.cyl(fx, y0 + 1.4, zb - 0.22, 0.2, 0.15, 1.9, 6).sphere(fx, y0 + 3.45, zb - 0.22, 0.16, 6, 3);
+          this.box(fx, y0, zb - 0.22, s * 0.8, 1.4, 0.4);
+        }
+        for (let j = 3; j < P.length - 3; j += 2) {
+          const fx = (P[j][0] + Q[j][0]) / 2, fy = (P[j][1] + Q[j][1]) / 2;
+          this.box(fx, fy - 0.3, zb - 0.15, s * 0.55, 0.6, 0.3);
+        }
+      }
+      P = Q;
+    }
+    // back: door + tympanum, or a pane
+    const zb = z + depth - 0.02, xl = P[0][0], xr = P[P.length - 1][0];
+    if (opts.back === "door") {
+      const yd = Math.min(ys, y0 + Math.max(2.5, (ys - y0) * 0.9));
+      col(C.back).quadN([xl, y0, zb], [xr, y0, zb], [xr, yd, zb], [xl, yd, zb], [0, 0, -1]);
+      if (hi) { col(C.side).box(cx, y0, zb - 0.2, 0.7, yd - y0, 0.4); } // trumeau
+      col(C.tymp).quadN([xl, yd, zb], [xr, yd, zb], [xr, ys, zb], [xl, ys, zb], [0, 0, -1]);
+      for (let j = 1; j < P.length - 2; j++) this.quadN([cx, ys, zb], [P[j][0], P[j][1], zb], [P[j + 1][0], P[j + 1][1], zb], [cx, ys, zb], [0, 0, -1]);
+      if (this.fine) {
+        // tympanum relief: three registers of small figures
+        col(C.fig);
+        const ap = P[(P.length / 2) | 0][1];
+        for (let r = 0; r < 3; r++) {
+          const yr = yd + 0.2 + r * (ap - yd) * 0.3, hw = (xr - xl) / 2 * (1 - r * 0.33) - 0.4, nf = Math.max(1, Math.round(hw * 2.2));
+          for (let q = 0; q < nf; q++) this.box(cx - hw + ((q + 0.5) / nf) * hw * 2, yr, zb - 0.12, hw * 1.4 / nf, (ap - yd) * 0.22, 0.24);
+        }
+      }
+    } else if (opts.back === "glass") {
+      col(C.back);
+      this.quadN([xl, y0, zb], [xr, y0, zb], [xr, ys, zb], [xl, ys, zb], [0, 0, -1]);
+      for (let j = 1; j < P.length - 2; j++) this.quadN([cx, ys, zb], [P[j][0], P[j][1], zb], [P[j + 1][0], P[j + 1][1], zb], [cx, ys, zb], [0, 0, -1]);
+      if (this.fine && opts.mullions) {
+        col(C.side);
+        const nm = opts.mullions;
+        for (let q = 1; q < nm; q++) this.box(xl + ((xr - xl) * q) / nm, y0, zb - 0.12, 0.18, ys - y0 + (P[(P.length / 2) | 0][1] - ys) * 0.5, 0.2);
+        if (W > 2.5) for (let yy = y0 + 2.5; yy < ys; yy += 2.5) this.box(cx, yy, zb - 0.1, xr - xl, 0.1, 0.16);
+      }
+    }
+    col(cur);
+    return this;
+  }
+
+  /**
+   * recessArch() set in a block that projects `depth` from the wall plane z (facing -Z): frame margin m round the
+   * opening, the block's sides, top and sill closed. For windows / niches on walls that can't be cut.
+   */
+  framedArch(cx, y0, z, W, H, depth, n, wIn, m, opts = {}) {
+    const zf = z - depth, xl = cx - W / 2 - m, xr = cx + W / 2 + m, yt = y0 + H + m;
+    this.recessArch(cx, y0, zf, W, H, depth - 0.02, n, wIn, { ...opts, frame: [xl, xr, yt] });
+    const C = opts.col || {};
+    if (C.face != null) this.color(C.face);
+    for (const [x, sx] of [[xl, -1], [xr, 1]]) this.quadN([x, y0, zf], [x, yt, zf], [x, yt, z], [x, y0, z], [sx, 0, 0]);
+    this.quadN([xl, yt, zf], [xr, yt, zf], [xr, yt, z], [xl, yt, z], [0, 1, 0]);
+    this.quadN([xl, y0, zf], [xr, y0, zf], [xr, y0, z], [xl, y0, z], [0, -1, 0]);
+    return this;
+  }
+
+  /** Gothic pinnacle on (x, y, z): square shaft with gablets, crocketed spirelet, corner spirelets, finial. */
+  pinnacle(x, y, z, w, h) {
+    const hi = this.hi, hs = h * 0.35;
+    this.box(x, y, z, w, hs, w);
+    if (hi) {
+      for (let i = 0; i < 4; i++) {
+        this.push().translate(x, y + hs, z).rotateY((i * Math.PI) / 2);
+        this.tri([w / 2, 0, -w / 2 - 0.02], [-w / 2, 0, -w / 2 - 0.02], [0, w * 0.7, -w / 2 - 0.02]);
+        this.pop();
+      }
+      for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) this.taper(x + sx * w * 0.42, y + hs, z + sz * w * 0.42, w * 0.22, w * 0.22, 0, 0, h * 0.25);
+    }
+    this.taper(x, y + hs, z, w * 0.8, w * 0.8, 0, 0, h - hs);
+    if (this.fine) {
+      for (let q = 1; q < 5; q++) {
+        const t = q / 5, yy = y + hs + (h - hs) * t, o = w * 0.4 * (1 - t) + 0.05;
+        for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) this.box(x + sx * o, yy, z + sz * o, w * 0.12, w * 0.12, w * 0.12);
+      }
+      this.sphere(x, y + h + w * 0.08, z, w * 0.12, 6, 3);
+    }
+    return this;
+  }
+
+  /**
+   * Rose window facing -Z centred (x, y) on the wall plane z: splayed circular embrasure (depth d), stained-glass
+   * disc, tracery (rings, n spokes, a circle of lobes in the outer band). col = { frame, glass, tracery, square }
+   * (square = half-size of a square wall panel filled around the window on its face plane).
+   */
+  roseWindow(x, y, z, r, d = 0.9, n = 24, col = {}) {
+    const hi = this.hi, seg = hi ? 48 : 16, cur = this._hex;
+    const P = (rr, a, zz) => [x + Math.cos(a) * rr, y + Math.sin(a) * rr, zz];
+    this.color(col.frame ?? cur);
+    for (let i = 0; i < seg; i++) {
+      const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+      // splay (wider at the face) and outer moulding ring
+      this.quadN(P(r + 0.5, a0, z), P(r + 0.5, a1, z), P(r, a1, z + d), P(r, a0, z + d), [-Math.cos((a0 + a1) / 2), -Math.sin((a0 + a1) / 2), -0.6]);
+      if (hi) this.quadN(P(r + 0.9, a0, z - 0.25), P(r + 0.9, a1, z - 0.25), P(r + 0.5, a1, z), P(r + 0.5, a0, z), [0, 0, -1]);
+    }
+    if (col.square) {
+      // square panel of half-size col.square around the window, its face on plane z - 0.25 (with the moulding)
+      const S = col.square, zz = hi ? z - 0.25 : z, ro = hi ? r + 0.9 : r + 0.5;
+      const sq = (a) => { const c = Math.cos(a), s2 = Math.sin(a), k = S / Math.max(Math.abs(c), Math.abs(s2)); return [x + c * k, y + s2 * k, zz]; };
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const qa = sq(a0), qb = sq(a1);
+        this.quadN(P(ro, a0, zz), P(ro, a1, zz), qb, qa, [0, 0, -1]);
+        for (let c = 0; c < 4; c++) {
+          const ac = Math.PI / 4 + (c * Math.PI) / 2;
+          if (a0 < ac && a1 > ac) this.quadN(qa, qb, [x + Math.sign(Math.cos(ac)) * S, y + Math.sign(Math.sin(ac)) * S, zz], [x + Math.sign(Math.cos(ac)) * S, y + Math.sign(Math.sin(ac)) * S, zz], [0, 0, -1]);
+        }
+      }
+    }
+    this.color(col.glass ?? cur);
+    for (let i = 0; i < seg; i++) {
+      const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+      this.quadN([x, y, z + d], P(r, a0, z + d), P(r, a1, z + d), [x, y, z + d], [0, 0, -1]);
+    }
+    if (!hi) { this.color(cur); return this; }
+    this.color(col.tracery ?? cur);
+    const zt = z + d - 0.12, th = Math.max(0.14, r * 0.03);
+    const ring = (cx, cy, rr, k) => {
+      for (let i = 0; i < k; i++) {
+        const a0 = (i / k) * Math.PI * 2, a1 = ((i + 1) / k) * Math.PI * 2;
+        this.strut([cx + Math.cos(a0) * rr, cy + Math.sin(a0) * rr, zt], [cx + Math.cos(a1) * rr, cy + Math.sin(a1) * rr, zt], th);
+      }
+    };
+    ring(x, y, r * 0.2, 16); ring(x, y, r * 0.5, 32); ring(x, y, r * 0.98, 48);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      this.strut(P(r * 0.2, a, zt), P(r * 0.98, a, zt), th * (i % 2 ? 0.7 : 1));
+      const am = a + Math.PI / n;
+      ring(x + Math.cos(am) * r * 0.74, y + Math.sin(am) * r * 0.74, r * 0.13, 10);
+      if (i % 2 === 0) ring(x + Math.cos(am) * r * 0.35, y + Math.sin(am) * r * 0.35, r * 0.08, 8);
+    }
+    this.color(cur);
+    return this;
+  }
+
   // ------------------------------------------------------------ output
   /** -> [{ name, pivot, solid: BufferGeometry|null, glow: BufferGeometry|null }] */
   build() {
@@ -279,6 +524,10 @@ export class Kit {
         g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
         g.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(B.n), 3));
         g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(B.c), 3));
+        const nv = pos.length / 3, A = new Float32Array(nv * 3);
+        // [lm-materials] x = library material, y = AO, z = under-ledge (y/z baked later by materials.occlusionJob)
+        for (let v = 0; v < nv; v++) { A[v * 3] = B.m[(v / 3) | 0]; A[v * 3 + 1] = 1; A[v * 3 + 2] = 0; }
+        g.setAttribute("lmA", new THREE.BufferAttribute(A, 3));
         g.computeBoundingSphere();
         g.computeBoundingBox();
         return g;

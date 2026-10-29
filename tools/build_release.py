@@ -148,6 +148,8 @@ MOD_ID_MAP = {
     'src/features/landmarks/models/index.js': '__MOD_landmarks_models_index',  # [release-6]
     'src/features/landmarks/models/liberty.js': '__MOD_landmarks_models_liberty',  # [release-6]
     'src/features/landmarks/kit.js': '__MOD_landmarks_kit',  # [release-6]
+    'src/features/landmarks/materials.js': '__MOD_landmarks_materials',  # [lm-materials]
+    'src/features/landmarks/material_map.js': '__MOD_landmarks_material_map',  # [lm-materials]
     'src/features/landmarks/cn_arch.js': '__MOD_landmarks_cn_arch',  # [beijing-landmarks]
     'src/features/landmarks/models/empire.js': '__MOD_landmarks_models_empire',  # [release-6]
     'src/features/landmarks/models/chrysler.js': '__MOD_landmarks_models_chrysler',  # [release-6]

@@ -14,20 +14,18 @@ import { LANDMARKS, landmarkWorldXZ } from "./registry.js";
 import { MODELS } from "./models/index.js";
 import { Kit } from "./kit.js";
 import { LandmarkDamage } from "./landmark_damage.js";
+import { patchLandmarkMaterial, landmarkUniforms, occlusionJob } from "./materials.js"; // [lm-materials]
+import { materialSpec } from "./material_map.js"; // [lm-materials]
 
 const DEG = Math.PI / 180;
 const SHOW_DIST = 17000;
 
-function makeMaterials(glowStrength = 2.2) {
+/** Lit solid + night-glow materials, both textured by the procedural library (materials.js); U = shared uniforms. */
+function makeMaterials(glowStrength = 2.2, U) {
   const solid = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.74, metalness: 0.06 });
   const glow = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.0, emissive: 0xffffff, emissiveIntensity: 0 });
-  glow.onBeforeCompile = (sh) => {
-    sh.fragmentShader = sh.fragmentShader.replace(
-      "vec3 totalEmissiveRadiance = emissive;",
-      "vec3 totalEmissiveRadiance = emissive * vColor.rgb;"
-    );
-  };
-  glow.customProgramCacheKey = () => "landmark-glow";
+  patchLandmarkMaterial(solid, U, false);
+  patchLandmarkMaterial(glow, U, true);
   glow.userData.strength = glowStrength;
   return { solid, glow };
 }
@@ -185,14 +183,30 @@ export class LandmarkSystem {
 
   _build(it) {
     const M = it.M;
-    it.mats = makeMaterials(M.glowStrength || 2.2);
+    const t0 = performance.now();
+    const spec = materialSpec(it.L.id);
+    it.U = landmarkUniforms(spec.night, it.baseY);
+    it.mats = makeMaterials(M.glowStrength || 2.2, it.U);
+    if (spec.night.glow != null) it.mats.glow.emissive.setHex(spec.night.glow); // [lm-materials] floodlight tint of the glow bucket
     const lod = new THREE.LOD();
     const partObjs = new Map();
-    let tris = 0, maxY = 0;
-    for (const level of [0, 1]) {
-      const k = new Kit(level);
+    let tris = 0, maxY = 0, trisMid = 0, trisFar = 0;
+    const aoEntries = [];
+    // [lm-materials] levels: full detail; if the model has close-up-only detail (k.fine) that full level is shown
+    // within fineDist and a level without it out to lodDist; then the far impostor
+    const plan = [{ lod: 0, fine: true, dist: 0 }];
+    for (let li = 0; li < plan.length; li++) {
+      const P = plan[li];
+      const k = new Kit(P.lod, P.fine);
+      k.matMap = spec.map;
+      k.matStone = spec.stone;
       M.build(k);
-      tris += level === 0 ? k.tris : 0;
+      if (li === 0) {
+        tris = k.tris;
+        if (k.usedFine) plan.push({ lod: 0, fine: false, dist: M.fineDist || 450 });
+        plan.push({ lod: 1, fine: false, dist: M.lodDist || 1600 });
+      } else if (P.lod === 0) trisMid = k.tris;
+      else trisFar = k.tris;
       const g = new THREE.Group();
       for (const part of k.build()) {
         const holder = new THREE.Group();
@@ -201,16 +215,17 @@ export class LandmarkSystem {
         for (const [geo, mat] of [[part.solid, it.mats.solid], [part.glow, it.mats.glow]]) {
           if (!geo) continue;
           const mesh = new THREE.Mesh(geo, mat);
-          mesh.castShadow = level === 0;
-          mesh.receiveShadow = level === 0;
+          aoEntries.push({ attr: geo.attributes.lmA, pos: geo.attributes.position.array, nrm: geo.attributes.normal.array, px: part.pivot[0], py: part.pivot[1], pz: part.pivot[2], level: li });
+          mesh.castShadow = P.lod === 0;
+          mesh.receiveShadow = P.lod === 0;
           holder.add(mesh);
-          if (level === 0 && geo.boundingBox) maxY = Math.max(maxY, geo.boundingBox.max.y + part.pivot[1]);
+          if (li === 0 && geo.boundingBox) maxY = Math.max(maxY, geo.boundingBox.max.y + part.pivot[1]);
         }
         g.add(holder);
         if (!partObjs.has(part.name)) partObjs.set(part.name, []);
         partObjs.get(part.name).push(holder);
       }
-      lod.addLevel(g, level === 0 ? 0 : (M.lodDist || 1600));
+      lod.addLevel(g, P.dist);
     }
     lod.name = "landmark:" + it.L.id;
     lod.position.set(it.x, it.baseY, it.z);
@@ -218,7 +233,7 @@ export class LandmarkSystem {
     lod.userData.landmark = it.L.id;
     this.root.add(lod);
     it.group = lod;
-    it.stats = { tris, modelHeight: Math.round(maxY * 10) / 10 };
+    it.stats = { tris, trisMid, trisFar, buildMs: Math.round(performance.now() - t0), modelHeight: Math.round(maxY * 10) / 10 };
     if (typeof M.setup === "function") {
       try {
         it.anim = M.setup({ THREE, group: lod, parts: (name) => partObjs.get(name) || [], L: it.L, mats: it.mats }) || null;
@@ -227,6 +242,7 @@ export class LandmarkSystem {
       }
     }
     this.damage.register(it);
+    it.aoJob = occlusionJob(aoEntries); // [lm-materials] baked AO, spread over the next frames
   }
 
   _nightFactor() {
@@ -251,7 +267,17 @@ export class LandmarkSystem {
     this.time += dt;
     const cam = app.camera.position;
     this.night = this._nightFactor();
+    const env = app.reflections ? app.reflections.texture : null; // [lm-materials] sky reflections on glass / metal
     let built = false;
+    // [lm-materials] one landmark's occlusion bake at a time, ~2.5 ms per frame
+    const job = this.items.find((i) => i.aoJob);
+    if (job) {
+      const t0 = performance.now();
+      try {
+        while (performance.now() - t0 < 2.5) if (job.aoJob.next().done) { job.aoJob = null; break; }
+      } catch (e) { console.warn("[landmarks] occlusion bake failed", job.L.id, e); job.aoJob = null; }
+      if (job.stats) job.stats.aoMs = Math.round((job.stats.aoMs || 0) + performance.now() - t0);
+    }
     for (const it of this.items) {
       const d = Math.hypot(it.x - cam.x, it.z - cam.z);
       if (!it.group) {
@@ -264,6 +290,10 @@ export class LandmarkSystem {
       it.group.visible = d < SHOW_DIST;
       if (!it.group.visible) continue;
       it.mats.glow.emissiveIntensity = this.night * it.mats.glow.userData.strength;
+      it.U.uLmNight.value = this.night;
+      if (env && it.mats.solid.envMap !== env) {
+        for (const m of [it.mats.solid, it.mats.glow]) { if (!m.envMap) m.needsUpdate = true; m.envMap = env; }
+      }
       if (it.anim && it.anim.update) it.anim.update(dt, this.time, this.night, d);
     }
     this._colTimer -= dt;

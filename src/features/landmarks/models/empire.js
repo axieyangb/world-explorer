@@ -41,7 +41,7 @@ function notched(w, d, n) {
 }
 
 /** Window columns: single quads just proud of the four faces of a w x d block. */
-function strips(k, w, d, y0, h, sp, sw, inset = 0) {
+function strips(k, w, d, y0, h, sp, sw, inset = 0, piers = null) {
   for (let f = 0; f < 4; f++) {
     const W = (f % 2 ? d : w) - 2 * inset, D = f % 2 ? w : d;
     const n = Math.max(1, Math.round((W * 0.94) / sp));
@@ -50,6 +50,16 @@ function strips(k, w, d, y0, h, sp, sw, inset = 0) {
     for (let i = 0; i < n; i++) {
       const x = -W * 0.47 + (i + 0.5) * ((W * 0.94) / n);
       k.quad([x + sw / 2, y0, z], [x - sw / 2, y0, z], [x - sw / 2, y0 + h, z], [x + sw / 2, y0 + h, z]);
+    }
+    if (piers != null) {
+      // [lm-materials] limestone piers standing proud between the window columns (the deco vertical relief)
+      const g = k._glow, hex = k._hex;
+      k.glow(false).color(piers);
+      for (let i = 0; i <= n; i++) {
+        const x = -W * 0.47 + i * ((W * 0.94) / n), pw = Math.max(0.3, (W * 0.94) / n - sw);
+        k.box(x, y0, z + 0.05, pw, h, 0.5);
+      }
+      k.glow(g).color(hex);
     }
     k.pop();
   }
@@ -80,10 +90,11 @@ function tower(k) {
       if (n) k.box(0, y1 - 0.6, 0, w + 0.6, 0.9, d - 2 * n + 0.6);
       // window columns, with thin aluminium spandrel mullions between (strong vertical rhythm)
       k.glow(true).color(WIN);
+      const pc = k.fine ? (i % 2 ? LIME : LIME2) : null;
       if (n) {
-        strips(k, w - 2 * n, d, y0 + 0.5, h - 1.6, 3.1, 1.5);
-        strips(k, w, d - 2 * n, y0 + 0.5, h - 1.6, 3.1, 1.5, 0);
-      } else strips(k, w, d, y0 + 0.5, h - 1.6, 3.1, 1.5);
+        strips(k, w - 2 * n, d, y0 + 0.5, h - 1.6, 3.1, 1.5, 0, pc);
+        strips(k, w, d - 2 * n, y0 + 0.5, h - 1.6, 3.1, 1.5, 0, pc);
+      } else strips(k, w, d, y0 + 0.5, h - 1.6, 3.1, 1.5, 0, pc);
       k.glow(false);
     }
   });

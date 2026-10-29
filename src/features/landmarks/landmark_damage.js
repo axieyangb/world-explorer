@@ -600,6 +600,8 @@ export class LandmarkDamage {
     g.setAttribute("position", new THREE.BufferAttribute(P, 3));
     g.setAttribute("normal", new THREE.BufferAttribute(N, 3));
     g.setAttribute("color", new THREE.BufferAttribute(C, 3));
+    const la = rec.geo.attributes.lmA; // [lm-materials] library material id / baked AO travel with the debris
+    if (la) { const A = new Float32Array(n * 9), sa = la.array; let q = 0; for (const t of tris) { A.set(sa.subarray(t * 9, t * 9 + 9), q); q += 9; } g.setAttribute("lmA", new THREE.BufferAttribute(A, 3)); }
     g.computeBoundingSphere();
     return g;
   }
