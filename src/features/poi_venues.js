@@ -258,6 +258,12 @@ export function buildPoiVenues(ctx) {
   const sites = (data && data.venues && data.venues.poi) || { canopies: [], garages: [] };
   if (!pois.length && !sites.garages.length) return null;
   const lat = (data.places && data.places.lat) || 0, lon = (data.places && data.places.lon) || 0;
+  // Seeds come from absolute lat/lon (1e-5 deg grid), so a venue looks the same whichever spawn point set the origin
+  const latR = (lat * Math.PI) / 180;
+  const nearBj = Math.hypot((lat - 39.9087) * 111.0, (lon - 116.3975) * 85.4) < 30.0; // same rule as computeWorldOrigin
+  const mLat = nearBj ? 111033.0 : 111132.92 - 559.82 * Math.cos(2 * latR) + 1.175 * Math.cos(4 * latR);
+  const mLon = nearBj ? 85387.0 : 111412.84 * Math.cos(latR) - 93.5 * Math.cos(3 * latR);
+  const hashAbs = (x, z, salt) => hashXZ((lon + (ox + x) / mLon) * 5e4, (lat - (oz + z) / mLat) * 5e4, salt);
 
   const bld = new Acc(), glass = new Acc(), glow = new Acc();
   const inst = {};
@@ -269,7 +275,7 @@ export function buildPoiVenues(ctx) {
     const [px, py, pz] = F.p(x, y, z);
     signs.push([ox + px, py, oz + pz, F.rotY(), w, h, style, text || '', textEn || text || '', bg, fg]);
   };
-  const zones = { fuel: [], wash: [], pumps: [], shops: [] }; // shops: test / camera hook
+  const zones = { fuel: [], wash: [], pumps: [], shops: [], garages: [] }; // shops / garages: test + camera hooks
   const dbg = [];
   // Road surfaces sit on the DEM; the terrain mesh is 0.35 m under it. Slabs follow the DEM so they cover lots and
   // forecourts that OSM maps as paved service areas; props stand on the slab top (groundTop).
@@ -650,7 +656,7 @@ export function buildPoiVenues(ctx) {
     }
     if (taken(F.x0, F.z0, hl)) return false;
     claim(F.x0, F.z0, hl + 4);
-    const seed = hashXZ(ox + F.x0, oz + F.z0, 11);
+    const seed = hashAbs(F.x0, F.z0, 11);
     const R = rng32(seed);
     const Hc = 4.9, Th = 0.95;
     // --- forecourt slab: canopy + margin, trimmed where it would run onto buildings / roads
@@ -1346,6 +1352,7 @@ export function buildPoiVenues(ctx) {
     const [ex, , ez] = F.p(-hl + 3, 0, -hw - 0.5);
     push('payKiosk', ex, groundTop(ex, ez), ez, F.rotY(), 1, 1, 1, 0x1f4fbf);
     addCollider(F, -hl, hl, -hw, hw, levels * LH, `poi-garage-${G0.seed}`);
+    zones.garages.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, hl, hw]);
     return true;
   }
   function gdeck(F, x, y, z0, z1) {
@@ -1370,12 +1377,12 @@ export function buildPoiVenues(ctx) {
   for (const q of list) {
     const [px, pz, cls, sub, name, nameEn] = q;
     if (Math.abs(px) > HALF || Math.abs(pz) > HALF || inWater(px, pz)) continue;
-    const rnd = rng32(hashXZ(ox + px, oz + pz, 5));
+    const rnd = rng32(hashAbs(px, pz, 5));
     const isFuel = cls === 'fuel' && sub !== 'charging_station';
     const isWash = /car ?wash|洗車|洗车|lavage|waschanlage/i.test(`${name} ${nameEn}`);
     if (isFuel || isWash) {
       if (near(px, pz, 40, 'fuel')) { q.venue = 1; continue; }
-      if (isFuel ? gasStation(safeQ(q, 'fuel', rng32(hashXZ(ox + px, oz + pz, 6))), rnd) : false) { q.venue = 1; done.push([px, pz, 'fuel']); }
+      if (isFuel ? gasStation(safeQ(q, 'fuel', rng32(hashAbs(px, pz, 6))), rnd) : false) { q.venue = 1; done.push([px, pz, 'fuel']); }
       continue;
     }
     const conv = (cls === 'shop' && (sub === 'convenience' || sub === 'kiosk')) || (cls === 'grocery' && sub === 'convenience');
@@ -1389,7 +1396,7 @@ export function buildPoiVenues(ctx) {
     if (!B) continue;
     if (B.used) continue;
     if (supm && B.area >= 500) { // big box with a car park; small urban supermarkets just get a shop front
-      if (supermarket(safeQ(q, 'super', rng32(hashXZ(ox + px, oz + pz, 6))), rnd, B)) { B.used = true; q.venue = 1; nStores++; }
+      if (supermarket(safeQ(q, 'super', rng32(hashAbs(px, pz, 6))), rnd, B)) { B.used = true; q.venue = 1; nStores++; }
       continue;
     }
     // pick the street face nearest the POI
@@ -1410,7 +1417,7 @@ export function buildPoiVenues(ctx) {
     const scheme = SHOP_SCHEMES[(rnd() * SHOP_SCHEMES.length) | 0];
     const kind = conv || supm ? 'conv' : fast ? 'fast' : pharm ? 'pharmacy' : 'bank';
     const sch = pharm ? [[0.94, 0.95, 0.94], [0.03, 0.5, 0.2], [0.03, 0.5, 0.2]] : fast ? [[0.75, 0.06, 0.04], [0.98, 0.8, 0.1], [0.98, 0.8, 0.1]] : scheme;
-    const [sZh, sEn] = signNames(supm ? 'super' : kind, name, nameEn, repeated(q), rng32(hashXZ(ox + px, oz + pz, 6)));
+    const [sZh, sEn] = signNames(supm ? 'super' : kind, name, nameEn, repeated(q), rng32(hashAbs(px, pz, 6)));
     A_store(fr, kind, rnd, {
       name: sZh, nameEn: sEn, scheme: sch,
       awning: conv && rnd() < 0.5 ? [sch[1], sch[0]] : null,
