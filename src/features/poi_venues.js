@@ -326,7 +326,7 @@ export function buildPoiVenues(ctx) {
     const ax = s.x1 - ox, az = s.z1 - oz, bx = s.x2 - ox, bz = s.z2 - oz;
     if (Math.max(ax, bx) < -HALF - 80 || Math.min(ax, bx) > HALF + 80 || Math.max(az, bz) < -HALF - 80 || Math.min(az, bz) > HALF + 80) continue;
     const cls = s.cls || '';
-    segs.push([ax, az, bx, bz, (s.width || 6) * 0.5, /service|track|path|footway|cycleway|steps|pedestrian/.test(cls) ? 1 : 0]);
+    segs.push([ax, az, bx, bz, (s.width || 6) * 0.5, /service|track|path|footway|cycleway|steps/.test(cls) ? 1 : 0]);
   }
   for (const sg of segs) addGrid(sGrid, Math.min(sg[0], sg[2]) - sg[4] - 2, Math.max(sg[0], sg[2]) + sg[4] + 2, Math.min(sg[1], sg[3]) - sg[4] - 2, Math.max(sg[1], sg[3]) + sg[4] + 2, sg);
   const segsNear = (x, z, r) => {
@@ -993,9 +993,12 @@ export function buildPoiVenues(ctx) {
     } else if (kind === 'bank') {
       const GH = Math.min(3.0, hostTop - 1.05);
       res = storefront(F, W, {
-        rnd, scheme: [[0.1, 0.12, 0.16], [0.75, 0.6, 0.25], null], hostTop, glassH: GH, fasciaH: 0.85, depth: 0.7, shelves: false, interior: [0.82, 0.8, 0.76],
+        rnd, scheme: [[0.1, 0.12, 0.16], [0.75, 0.6, 0.25], null], hostTop, glassH: GH, fasciaH: 0.85, depth: 0.9, shelves: false, interior: [0.5, 0.44, 0.36],
         signText: o.name || '银行', signTextEn: o.nameEn || o.name || 'BANK', signBg: 0x1a1f29, signFg: 0xd8b25a, signStyle: 4, frame: [0.12, 0.12, 0.13],
       });
+      box(bld, F, 0, 0.85, 0.42, W - 1.6, 1.05, 0.35, [0.24, 0.17, 0.12]); // teller counter
+      box(bld, F, 0, 1.4, 0.42, W - 1.6, 0.05, 0.4, [0.62, 0.6, 0.55]);
+      face(bld, F, -W / 2 + 0.5, W / 2 - 0.5, 1.9, 2.4, 0.22, [0.75, 0.6, 0.25], true);
       for (const s of [-1, 1]) {
         if (W + 2.2 > (fr.E ? fr.E.len : 0)) break;
         const [ax, , az] = F.p(s * (W / 2 + 0.6), 0, 0.3);
@@ -1155,7 +1158,7 @@ export function buildPoiVenues(ctx) {
     cartCorral(F, ccx, res.D + 1.7, 7, rnd);
     bld.bid = glass.bid = 0;
     // parking lot in front
-    if (free >= 18) parkingLot(F, fr.W, res.D + cd + 3, Math.min(free - 2, 60), E, rnd, scheme);
+    if (free >= 18 && hostTop <= 12) parkingLot(F, fr.W, res.D + cd + 3, Math.min(free - 2, 60), E, rnd, scheme);
     // loading dock on the back wall
     loadingDock(B, E, rnd);
     return true;
