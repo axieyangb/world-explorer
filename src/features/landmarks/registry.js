@@ -93,6 +93,32 @@ export const LANDMARKS = [
   { id: "watercube", name: "National Aquatics Center (Water Cube)", nameZh: "国家游泳中心（水立方）", lat: 39.991576, lon: 116.384172, heading: 0, height: 31, supp: { hw: 89, hd: 89 }, replaces: ["water_cube"], on: true },
   { id: "cctv", name: "CCTV Headquarters", nameZh: "中央电视台总部大楼", lat: 39.913816, lon: 116.457966, heading: 0, height: 234, supp: { hw: 85, hd: 85 }, replaces: ["cctv_headquarters"], on: true },
   { id: "chinazun", name: "CITIC Tower (China Zun)", nameZh: "中信大厦（中国尊）", lat: 39.911501, lon: 116.460238, heading: 0, height: 528, supp: { hw: 40, hd: 40 }, replaces: ["china_zun"], on: true },
+  // --- Tech HQ Campuses, Civic & Hollywood Landmarks (feature/cluster4-landmarks)
+  { id: "sfcityhall", name: "San Francisco City Hall", nameZh: "旧金山市政厅", lat: 37.7793, lon: -122.4193, heading: 90, height: 94, supp: { hw: 68, hd: 54 }, on: true, chip: true },
+  { id: "applepark", name: "Apple Park", nameZh: "苹果园区（Apple Park）", lat: 37.3349, lon: -122.0090, heading: 0, height: 22, supp: { r: 270 }, on: true, chip: true },
+  { id: "googleplex", name: "Googleplex", nameZh: "谷歌总部（Googleplex）", lat: 37.4220, lon: -122.0841, heading: 0, height: 18, supp: { hw: 130, hd: 90 }, on: true, chip: true },
+  { id: "googlebayview", name: "Google Bay View Campus", nameZh: "谷歌湾景园区（Bay View）", lat: 37.4184, lon: -122.0575, heading: 0, height: 25, supp: { hw: 175, hd: 115 }, on: true },
+  { id: "nvidiahq", name: "NVIDIA HQ (Endeavor & Voyager)", nameZh: "英伟达总部（NVIDIA HQ）", lat: 37.3707, lon: -121.9642, heading: 0, height: 28, supp: { hw: 160, hd: 125 }, on: true, chip: true },
+  { id: "metahq", name: "Meta HQ (1 Hacker Way)", nameZh: "Meta 总部（1 Hacker Way）", lat: 37.4845, lon: -122.1477, heading: 0, height: 24, supp: { hw: 145, hd: 80 }, on: true, chip: true },
+  { id: "hollywoodsign", name: "The Hollywood Sign", nameZh: "好莱坞标志（Hollywood Sign）", lat: 34.1341, lon: -118.3215, heading: 180, height: 42, supp: { hw: 75, hd: 48 }, ele: 478, on: true, chip: true },
+  { id: "griffith", name: "Griffith Observatory", nameZh: "格里菲斯天文台", lat: 34.1184, lon: -118.3004, heading: 180, height: 27, supp: { hw: 55, hd: 50 }, ele: 346, on: true },
+  { id: "whitehouse", name: "The White House", nameZh: "白宫", lat: 38.8977, lon: -77.0365, heading: 0, height: 22, supp: { hw: 90, hd: 64 }, on: true, chip: true },
+  { id: "pentagon", name: "The Pentagon", nameZh: "五角大楼", lat: 38.8719, lon: -77.0563, heading: 32, height: 22, supp: { r: 255 }, on: true, chip: true },
+  // --- Global Famous Companies, Research Universities & World Landmarks (feature/global-companies)
+  { id: "amazon_spheres", name: "Amazon Spheres & Doppler HQ", nameZh: "亚马逊球体生态园与总部大厦（Amazon Spheres）", lat: 47.6156, lon: -122.3395, heading: 0, height: 160, supp: { hw: 65, hd: 68 }, on: true, chip: true },
+  { id: "microsoft_hq", name: "Microsoft Redmond Campus & Commons", nameZh: "微软雷德蒙德总部园区（Microsoft HQ）", lat: 47.6423, lon: -122.1369, heading: 0, height: 22, supp: { hw: 138, hd: 108 }, on: true, chip: true },
+  { id: "openai_hq", name: "OpenAI HQ (Mission Bay Campus)", nameZh: "OpenAI 旧金山总部园区", lat: 37.7685, lon: -122.3905, heading: 0, height: 28, supp: { hw: 74, hd: 58 }, on: true, chip: true },
+  { id: "salesforce_park", name: "Salesforce Park & Transit Center", nameZh: "旧金山 Salesforce 空中花园与交通中心", lat: 37.7897, lon: -122.3960, heading: 45, height: 26, supp: { hw: 152, hd: 30 }, on: true },
+  { id: "stanford_campus", name: "Stanford University (Main Quad & Hoover Tower)", nameZh: "斯坦福大学（主方院与胡佛塔）", lat: 37.4275, lon: -122.1697, heading: 18, height: 87, supp: { hw: 125, hd: 90 }, on: true, chip: true },
+  { id: "mit_dome", name: "MIT Great Dome & Killian Court", nameZh: "麻省理工学院大圆顶（MIT Great Dome）", lat: 42.3598, lon: -71.0921, heading: 332, height: 46, supp: { hw: 84, hd: 70 }, on: true, chip: true },
+  { id: "nyse", name: "New York Stock Exchange & Federal Hall", nameZh: "纽约证券交易所与联邦大厅（NYSE）", lat: 40.7069, lon: -74.0113, heading: 30, height: 42, supp: { hw: 52, hd: 44 }, on: true, chip: true },
+  { id: "tesla_giga", name: "Tesla Gigafactory Texas", nameZh: "特斯拉得州超级工厂（Giga Texas）", lat: 30.2223, lon: -97.6171, heading: 18, height: 24, supp: { hw: 168, hd: 72 }, on: true, chip: true },
+  { id: "spacex_starbase", name: "SpaceX Starbase & Mechazilla Launch Tower", nameZh: "SpaceX 星舰基地与发射塔（Starbase）", lat: 25.9968, lon: -97.1545, heading: 0, height: 146, supp: { hw: 102, hd: 72 }, on: true, chip: true },
+  { id: "tsmc_hq", name: "TSMC Global R&D & Fab 12 Campus", nameZh: "台积电全球研发中心与十二厂总部（TSMC HQ）", lat: 24.7738, lon: 121.0118, heading: 0, height: 50, supp: { hw: 112, hd: 84 }, on: true, chip: true },
+  { id: "tencent_hq", name: "Tencent Seafront Towers (Binhai HQ)", nameZh: "腾讯滨海大厦（深圳总部）", lat: 22.5229, lon: 113.9353, heading: 0, height: 248, supp: { hw: 78, hd: 64 }, on: true, chip: true },
+  { id: "samsung_hq", name: "Samsung Town / Digital City HQ", nameZh: "三星瑞草总部大厦（Samsung Town）", lat: 37.4967, lon: 127.0266, heading: 22, height: 203, supp: { hw: 84, hd: 72 }, on: true, chip: true },
+  { id: "cern_globe", name: "CERN Science Gateway & Globe of Science", nameZh: "欧洲核子研究中心科学之球与科学门户（CERN）", lat: 46.2330, lon: 6.0557, heading: 35, height: 27, supp: { hw: 94, hd: 54 }, on: true, chip: true },
+  { id: "louvre", name: "Louvre Pyramid & Palace", nameZh: "卢浮宫金字塔与宫殿（Musée du Louvre）", lat: 48.8610, lon: 2.3358, heading: 110, height: 29, supp: { hw: 105, hd: 88 }, on: true, chip: true },
 ];
 
 const _byId = new Map(LANDMARKS.map((l) => [l.id, l]));

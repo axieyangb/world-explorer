@@ -15,6 +15,7 @@ import {
 } from './wfc_solver.js';
 import { EXTRA_FACADES, PAINT_PALETTES } from '../features/facade_styles.js'; // [roofs]
 import { planRoof, roofRise, emitRoof } from '../features/roofs.js'; // [roofs]
+import { classifyFamousBuilding } from '../features/company_building_styles.js';
 
 /**
  * Pushes a 3D oriented box in local wall coordinates:
@@ -859,16 +860,34 @@ export function parseOsmBuildingColour(raw) {
   return null;
 }
 
+const TECH_CAMPUS_RE = /\b(google|alphabet|youtube|apple|nvidia|meta|facebook|microsoft|amazon|openai|anthropic|salesforce)\b/i;
+const CIVIC_GOV_RE = /\b(city hall|capitol|courthouse|parliament|ministry|embassy|federal|municipal|supreme court)\b/i;
+
 export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   const h = Number(bldgInfo.height) || 18;
   const btype = String(bldgInfo.btype || '').toLowerCase();
   const name = String(bldgInfo.name || '').toLowerCase();
   const rawStyle = String(bldgInfo.style || '').toLowerCase();
 
+  const famousInfo = classifyFamousBuilding(bldgInfo.name || '', btype, h, 24);
+  const techMatch = name.match(TECH_CAMPUS_RE);
+  const isTechCampus = Boolean(techMatch) || Boolean(famousInfo && famousInfo.archFeatures.skyGardenAtrium);
+  const techBrand = techMatch ? techMatch[1].toLowerCase() : (famousInfo ? famousInfo.brandName.toLowerCase() : null);
+  const isCivicBuilding =
+    !isTechCampus &&
+    (Boolean(famousInfo && famousInfo.archFeatures.colonnadePortico) ||
+      btype === 'government' || btype === 'civic' || btype === 'public' || CIVIC_GOV_RE.test(name));
+
   let pool;
-  const archPool = bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
+  const archPool = !famousInfo && !isTechCampus && !isCivicBuilding && bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
     ? archFacadePool(bldgInfo.arch, h, btype) : null; // [roofs]
-  if (archPool) {
+  if (famousInfo && famousInfo.facadeLayers && famousInfo.facadeLayers.length > 0) {
+    pool = famousInfo.facadeLayers;
+  } else if (isTechCampus) {
+    pool = (techBrand === 'apple' || techBrand === 'nvidia') ? [1, 13, 0, 2] : [0, 2, 1, 13];
+  } else if (isCivicBuilding) {
+    pool = [7, 4, 9];
+  } else if (archPool) {
     pool = archPool;
   } else if (btype === 'parking' || btype === 'garages') {
     pool = [18, 18, 23];
@@ -998,6 +1017,37 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     roofDeck[2] = clampC(roofDeck[2] * 0.70 + cb * 0.75 * 0.30);
   }
 
+  let parapetAccent = null;
+  if (famousInfo) {
+    if (famousInfo.secondaryAccentRgb && (seed & 1)) {
+      parapetAccent = famousInfo.secondaryAccentRgb;
+    } else {
+      parapetAccent = famousInfo.accentRgb;
+    }
+    if (!osmRgb && famousInfo.primaryRgb) {
+      const [pr, pg, pb] = famousInfo.primaryRgb;
+      wallTint[0] = Math.max(0.84, Math.min(1.06, pr));
+      wallTint[1] = Math.max(0.84, Math.min(1.06, pg));
+      wallTint[2] = Math.max(0.84, Math.min(1.06, pb));
+    }
+  } else if (isTechCampus) {
+    if (techBrand === 'google' || techBrand === 'alphabet' || techBrand === 'youtube') {
+      parapetAccent = (seed & 1) ? [0.26, 0.52, 0.96] : [0.20, 0.66, 0.33]; // #4285f4 / #34a853
+    } else if (techBrand === 'nvidia') {
+      parapetAccent = [0.46, 0.73, 0.00]; // #76b900
+    } else if (techBrand === 'meta' || techBrand === 'facebook') {
+      parapetAccent = [0.02, 0.41, 0.88]; // #0668E1
+    } else if (techBrand === 'apple') {
+      parapetAccent = [0.88, 0.90, 0.93]; // sleek silver-white
+      wallSecondary[0] = 0.82; wallSecondary[1] = 0.84; wallSecondary[2] = 0.86;
+    } else {
+      parapetAccent = [0.18, 0.62, 0.88];
+    }
+  } else if (isCivicBuilding && !osmRgb) {
+    wallTint[0] = 1.02; wallTint[1] = 1.00; wallTint[2] = 0.95;
+    wallSecondary[0] = 0.80; wallSecondary[1] = 0.77; wallSecondary[2] = 0.71;
+  }
+
   return {
     spec,
     texIdx: spec.index,
@@ -1005,6 +1055,11 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     wallSecondary,
     roofDeck,
     osmColour: bldgInfo.colour || null,
+    isTechCampus,
+    techBrand,
+    parapetAccent,
+    isCivicBuilding,
+    famousInfo,
   };
 }
 
@@ -1262,8 +1317,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   const retailSpec = FACADE_CATALOG[isBrickMasonry ? 17 : 22];
 
   const ccwOuter = ensureCCWFlatXZ(flatOuter);
-  // [roofs] pitched / mansard roof plan (null = the flat deck + parapet below)
-  const roofPlan = archRegion
+  // [roofs] pitched / mansard roof plan (null = the flat deck + parapet below; tech campuses & civic buildings keep flat / domed roof)
+  const roofPlan = (archRegion && !facadeSel.isTechCampus && !facadeSel.isCivicBuilding)
     ? planRoof({ flatOuter: ccwOuter, hasHoles: (flatHoles || []).some((h) => h.length >= 6), rawH, btype, region: archRegion, seed,
       flav: bldgInfo.flav, isPart, minH: rawMinH, osm: bldgInfo.osmRoof || null, facadeId: upperSpec.id })
     : null;
@@ -1323,6 +1378,56 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     pushWallBox(pos, norm, col, x1, y0, z1, tx, tz, nx, nz, u0, u1, v0, v1, n0, n1, rgb, triEntity, entityIdx, emissive);
     const addedVerts = (pos.length - before) / 3;
     pushRoofUv(addedVerts);
+  };
+
+  // Near-LOD detail sink routing (0 triangles on distant chunks; merged into the 4 quadrant LOD meshes nearby)
+  const detailSink = bldgInfo.roofDetail && bldgInfo.roofDetail.pos ? bldgInfo.roofDetail : null;
+  const pushDetailWallBox = (x1, y0, z1, tx, tz, nx, nz, u0, u1, v0, v1, n0, n1, rgb, emissive = false) => {
+    if (detailSink) {
+      const before = detailSink.pos.length;
+      pushWallBox(detailSink.pos, detailSink.norm, detailSink.col, x1, y0, z1, tx, tz, nx, nz, u0, u1, v0, v1, n0, n1, rgb, null, 0, emissive);
+      const added = (detailSink.pos.length - before) / 3;
+      for (let k = 0; k < added; k++) detailSink.uv.push(-10.0, -10.0);
+    } else {
+      pushBoxWithRoofUv(x1, y0, z1, tx, tz, nx, nz, u0, u1, v0, v1, n0, n1, rgb, emissive);
+    }
+  };
+  const pushDetailWallQuad = (
+    ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz,
+    qnx, qny, qnz, rgb, u0 = -10.0, v0 = -10.0, u1 = -10.0, v1 = -10.0
+  ) => {
+    const tPos = detailSink ? detailSink.pos : pos;
+    const tNorm = detailSink ? detailSink.norm : norm;
+    const tCol = detailSink ? detailSink.col : col;
+    const tUv = detailSink ? detailSink.uv : uv;
+    tPos.push(
+      ax, ay, az, bx, by, bz, cx, cy, cz,
+      ax, ay, az, cx, cy, cz, dx, dy, dz
+    );
+    for (let k = 0; k < 6; k++) {
+      tNorm.push(qnx, qny, qnz);
+      tCol.push(rgb[0], rgb[1], rgb[2]);
+    }
+    if (!detailSink && triEntity) triEntity.push(entityIdx, entityIdx);
+    if (tUv) {
+      tUv.push(
+        u0, v0, u0, v1, u1, v1,
+        u0, v0, u1, v1, u1, v0
+      );
+    }
+  };
+  const pushDetailWorldBox = (cx, minY, cz, w, h, d, rgb, emissive = false) => {
+    if (detailSink) {
+      const before = detailSink.pos.length;
+      pushWorldBox(detailSink.pos, detailSink.norm, detailSink.col, cx, minY, cz, w, h, d, rgb, null, 0, emissive);
+      const added = (detailSink.pos.length - before) / 3;
+      for (let k = 0; k < added; k++) detailSink.uv.push(-10.0, -10.0);
+    } else {
+      const before = pos.length;
+      pushWorldBox(pos, norm, col, cx, minY, cz, w, h, d, rgb, triEntity, entityIdx, emissive);
+      const added = (pos.length - before) / 3;
+      pushRoofUv(added);
+    }
   };
 
   const uBayShift = ((seed >>> 7) % upperSpec.bays) / upperSpec.bays;
@@ -1703,6 +1808,215 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           }
         }
 
+        // 1d. Near-LOD 3D Facade Articulation: Inter-story Cornice String Courses, Balconies & Split-AC Units
+        if (!isHole && !upperSpec.isCurtainWall && totalSpan >= 9.0 && totalSpan <= 42.0 && len >= 5.2 && upperFloors >= 2) {
+          const floorH = upperSpan / upperFloors;
+          const ledgeCol = [
+            Math.min(1, pCol[0] * dirShade * 0.96),
+            Math.min(1, pCol[1] * dirShade * 0.96),
+            Math.min(1, pCol[2] * dirShade * 0.97),
+          ];
+          // Inter-story horizontal stone string-course / cornice ledges every 2-3 floors
+          const ledgeStep = upperFloors >= 6 ? 3 : 2;
+          for (let fl = ledgeStep; fl < upperFloors; fl += ledgeStep) {
+            const lv0 = fl * floorH - 0.09;
+            const lv1 = fl * floorH + 0.08;
+            pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.0, len, lv0, lv1, 0.01, 0.13, ledgeCol, false);
+          }
+
+          // Deterministic Juliette / cantilevered balconies and external split-AC condenser boxes on select bays
+          const nWallBays = Math.max(1, Math.round(len / upperSpec.metersPerBay));
+          const wBayW = len / nWallBays;
+          const maxDetailFloors = Math.min(upperFloors, 8);
+          const isResOrApt = !hasRetailPodium && (
+            btype === 'apartments' || btype === 'residential' || btype === 'hotel' || btype === 'dormitory' ||
+            upperSpec.index >= 6
+          );
+          if (isResOrApt && wBayW >= 2.3 && nWallBays >= 2) {
+            const ironCol = [0.16, 0.17, 0.19];
+            const acBodyCol = [0.82, 0.81, 0.78];
+            const acGrilleCol = [0.22, 0.24, 0.26];
+            const edgeSeed = (seed ^ Math.imul(i + 1, 2654435761) ^ Math.imul(tIdx + 1, 1597334677)) >>> 0;
+            const hasBalconies = (edgeSeed % 5) < 3;
+            const hasAcUnits = ((edgeSeed >>> 4) % 4) < 2;
+            const balStride = nWallBays >= 4 ? 2 : 1;
+            const balOffset = (edgeSeed >>> 8) % balStride;
+
+            for (let fl = 1; fl < maxDetailFloors; fl++) {
+              const fy0 = fl * floorH;
+              if (hasBalconies && (fl % 2 === 1 || upperFloors <= 4)) {
+                for (let b = balOffset; b < nWallBays; b += balStride) {
+                  const bh = ((edgeSeed ^ Math.imul(fl * 13 + b, 73856093)) >>> 0) % 100;
+                  if (bh >= 62) continue;
+                  const bu0 = (b + 0.15) * wBayW;
+                  const bu1 = (b + 0.85) * wBayW;
+                  if (bu1 - bu0 < 1.2) continue;
+                  // Cantilevered balcony deck slab + dark balustrade railing
+                  pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, bu0, bu1, fy0 - 0.07, fy0 + 0.08, 0.02, 0.68, ledgeCol, false);
+                  pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, bu0 + 0.03, bu1 - 0.03, fy0 + 0.08, fy0 + 0.86, 0.58, 0.68, ironCol, false);
+                }
+              }
+              if (hasAcUnits && wBayW >= 2.5) {
+                const acBay = (fl * 3 + (edgeSeed >>> 12)) % nWallBays;
+                const ah = ((edgeSeed ^ Math.imul(fl * 19 + acBay, 19349663)) >>> 0) % 100;
+                if (ah < 48) {
+                  const au0 = (acBay + 0.68) * wBayW;
+                  const au1 = Math.min(len - 0.14, au0 + 0.74);
+                  if (au1 - au0 >= 0.52) {
+                    const av0 = fy0 + 0.28;
+                    const av1 = av0 + 0.52;
+                    pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, au0, au1, av0, av1, 0.02, 0.31, acBodyCol, false);
+                    pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, au0 + 0.08, au0 + 0.44, av0 + 0.08, av1 - 0.08, 0.31, 0.34, acGrilleCol, false);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 1e. SF Victorian / Edwardian 3-Sided Projecting Bay Windows & Front Entrance Porch Stoops (Near-LOD detailSink)
+        if (
+          !isHole &&
+          tIdx === 0 &&
+          !upperSpec.isCurtainWall &&
+          !hasRetailPodium &&
+          !facadeSel.isTechCampus &&
+          !facadeSel.isCivicBuilding &&
+          totalSpan >= 7.0 &&
+          totalSpan <= 20.0 &&
+          len >= 5.5 &&
+          edgeSpan >= 5.5
+        ) {
+          const isVictorianOrRes =
+            archRegion === 'sf' ||
+            archRegion === 'uk' ||
+            archRegion === 'us' ||
+            archRegion === 'nyc' ||
+            btype === 'residential' ||
+            btype === 'apartments' ||
+            btype === 'house' ||
+            btype === 'terrace' ||
+            upperSpec.index >= 6;
+          if (isVictorianOrRes) {
+            const edgeDoors = entranceMap && entranceMap.has(i) ? entranceMap.get(i) : null;
+            const baySeed = (seed ^ Math.imul(i + 1, 3266489917)) >>> 0;
+            const trimRgb = [
+              Math.min(1, pCol[0] * dirShade * 1.06),
+              Math.min(1, pCol[1] * dirShade * 1.06),
+              Math.min(1, pCol[2] * dirShade * 1.04),
+            ];
+            const bayWallRgb = [rM, gM, bM];
+            const stoopStoneRgb = [
+              Math.min(1, (pCol[0] * 0.75 + 0.22) * dirShade),
+              Math.min(1, (pCol[1] * 0.75 + 0.21) * dirShade),
+              Math.min(1, (pCol[2] * 0.75 + 0.19) * dirShade),
+            ];
+
+            // Emit Front Entrance Porch Stoop (3 stepped stone stairs + low side cheek walls + cantilevered porch canopy hood)
+            if (edgeDoors && edgeDoors.length > 0) {
+              for (let dIdx = 0; dIdx < edgeDoors.length; dIdx++) {
+                const { uCenter, doorIdx } = edgeDoors[dIdx];
+                const dSpec = DOOR_CATALOG[doorIdx] || DOOR_CATALOG[0];
+                if (dSpec.hasStoop) continue; // NYC brownstone already emitted 4-step stoop in 1c
+                const stW = Math.min(2.1, len * 0.34);
+                const su0 = Math.max(0.25, uCenter - stW * 0.5);
+                const su1 = Math.min(len - 0.25, uCenter + stW * 0.5);
+                if (su1 - su0 < 1.1) continue;
+                const stoopH = 0.45;
+                for (let st = 0; st < 3; st++) {
+                  const sv0 = (st / 3) * stoopH;
+                  const sv1 = ((st + 1) / 3) * stoopH;
+                  const sn1 = 1.08 - st * 0.26;
+                  pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su0, su1, sv0, sv1, 0.02, sn1, stoopStoneRgb, false);
+                }
+                // Low side cheek walls flanking the stoop steps
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.16, su0, 0.0, stoopH + 0.24, 0.02, 1.12, stoopStoneRgb, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su1, su1 + 0.16, 0.0, stoopH + 0.24, 0.02, 1.12, stoopStoneRgb, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.19, su0 + 0.02, stoopH + 0.24, stoopH + 0.31, 0.02, 1.16, trimRgb, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su1 - 0.02, su1 + 0.19, stoopH + 0.24, stoopH + 0.31, 0.02, 1.16, trimRgb, false);
+                // Cantilevered porch canopy hood + decorative side corbel brackets above entrance door
+                const hoodY0 = Math.min(edgeSpan - 0.45, Math.max(2.65, dSpec.height - 0.05));
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.18, su1 + 0.18, hoodY0, hoodY0 + 0.18, 0.02, 0.92, trimRgb, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su0 - 0.12, su0 + 0.06, hoodY0 - 0.32, hoodY0, 0.02, 0.68, stoopStoneRgb, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, su1 - 0.06, su1 + 0.12, hoodY0 - 0.32, hoodY0, 0.02, 0.68, stoopStoneRgb, false);
+              }
+            }
+
+            // Emit 3-Sided Projecting Bay Windows (central front quad + two 45-deg side quads + cornice cap)
+            const wantBay = archRegion === 'sf' ? (baySeed % 5) < 4 : (baySeed % 3) !== 0;
+            if (wantBay && (edgeDoors || (baySeed % 2) === 0)) {
+              const nBayStacks = len >= 13.5 ? 2 : 1;
+              const segSpan = len / nBayStacks;
+              const bayW = Math.min(2.65, Math.max(2.05, segSpan * 0.38));
+              const bayDepth = 0.65;
+              const chamfer = Math.min(0.54, bayW * 0.25);
+              const invSqrt2 = 0.70710678;
+              const lnx = (nx - tx) * invSqrt2, lnz = (nz - tz) * invSqrt2;
+              const rnx = (nx + tx) * invSqrt2, rnz = (nz + tz) * invSqrt2;
+              const bayU0 = facadeUvBase(upperSpec.index);
+              const bayU1 = facadeUvBase(upperSpec.index) + 1.0 / upperSpec.bays;
+
+              for (let bIdx = 0; bIdx < nBayStacks; bIdx++) {
+                let uMid = (bIdx + 0.5) * segSpan;
+                // If an entrance door sits near uMid, shift the bay window beside the door or start it on the second floor
+                let overDoor = false;
+                if (edgeDoors) {
+                  for (let dIdx = 0; dIdx < edgeDoors.length; dIdx++) {
+                    const dc = edgeDoors[dIdx].uCenter;
+                    if (Math.abs(uMid - dc) < bayW * 0.78) {
+                      const shiftSide = dc < len * 0.5 ? 1.0 : -1.0;
+                      const candMid = dc + shiftSide * (bayW * 0.85 + 0.85);
+                      if (candMid - bayW * 0.5 >= 0.45 && candMid + bayW * 0.5 <= len - 0.45) {
+                        uMid = candMid;
+                      } else {
+                        overDoor = true;
+                      }
+                    }
+                  }
+                }
+                const bu0 = uMid - bayW * 0.5;
+                const bu1 = uMid + bayW * 0.5;
+                if (bu0 < 0.35 || bu1 > len - 0.35) continue;
+
+                const by0 = overDoor ? edgeSurfY + Math.min(3.5, edgeSpan * 0.42) : edgeSurfY + 0.80;
+                const by1 = shaftY1 - 0.45;
+                if (by1 - by0 < 2.4) continue;
+
+                const fu0 = bu0 + chamfer;
+                const fu1 = bu1 - chamfer;
+                const wOff = 0.04;
+                const lx0 = x1 + bu0 * tx + nx * wOff, lz0 = z1 + bu0 * tz + nz * wOff;
+                const rx0 = x1 + bu1 * tx + nx * wOff, rz0 = z1 + bu1 * tz + nz * wOff;
+                const flx = x1 + fu0 * tx + nx * bayDepth, flz = z1 + fu0 * tz + nz * bayDepth;
+                const frx = x1 + fu1 * tx + nx * bayDepth, frz = z1 + fu1 * tz + nz * bayDepth;
+
+                const bayFloors = Math.max(1.0, Math.round((by1 - by0) / upperSpec.floorHeight));
+                const bayV0 = facadeV(upperSpec.index, 1.0);
+                const bayV1 = facadeV(upperSpec.index, 1.0 + bayFloors / upperSpec.floors);
+
+                // Left 45-degree angled window quad
+                pushDetailWallQuad(
+                  lx0, by0, lz0, lx0, by1, lz0, flx, by1, flz, flx, by0, flz,
+                  lnx, 0, lnz, bayWallRgb, bayU0, bayV0, bayU1, bayV1
+                );
+                // Central projecting front window quad
+                pushDetailWallQuad(
+                  flx, by0, flz, flx, by1, flz, frx, by1, frz, frx, by0, frz,
+                  nx, 0, nz, bayWallRgb, bayU0, bayV0, bayU1, bayV1
+                );
+                // Right 45-degree angled window quad
+                pushDetailWallQuad(
+                  frx, by0, frz, frx, by1, frz, rx0, by1, rz0, rx0, by0, rz0,
+                  rnx, 0, rnz, bayWallRgb, bayU0, bayV0, bayU1, bayV1
+                );
+                // Molded bottom apron base + decorative top cornice crown cap
+                pushDetailWallBox(x1, by0, z1, tx, tz, nx, nz, bu0 - 0.04, bu1 + 0.04, -0.22, 0.04, 0.02, bayDepth + 0.05, trimRgb, false);
+                pushDetailWallBox(x1, by1, z1, tx, tz, nx, nz, bu0 - 0.08, bu1 + 0.08, -0.04, 0.22, 0.02, bayDepth + 0.14, trimRgb, false);
+              }
+            }
+          }
+        }
+
         // 2. Architectural Parapet / Cornice Band at top of tier (solid stone/metal, uv = -10)
         if (parapetH <= 0.0) continue; // [roofs] pitched roof: the eaves cover the wall top
         const pr = Math.min(1, pCol[0] * dirShade * 1.03);
@@ -1728,6 +2042,71 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           triEntity.push(entityIdx, entityIdx);
         }
         pushRoofUv(6);
+
+        // Near-LOD perimeter parapet coping stone cap on flat roofs (or brand-colored accent trim on Tech Campuses)
+        if (!isHole && isTopTier && (totalSpan >= 12.0 || facadeSel.parapetAccent) && len >= 3.0) {
+          const acc = facadeSel.parapetAccent;
+          const capCol = acc
+            ? [Math.min(1, acc[0] * dirShade), Math.min(1, acc[1] * dirShade), Math.min(1, acc[2] * dirShade)]
+            : [Math.min(1, pr * 1.08), Math.min(1, pg * 1.08), Math.min(1, pb * 1.08)];
+          pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, 0.0, len, -0.05, 0.14, -0.22, cOff + 0.10, capCol, false);
+        }
+
+        // Neoclassical Front Portico Entrance Colonnade & Triangular Pediment on Government / Civic buildings
+        if (!isHole && tIdx === 0 && facadeSel.isCivicBuilding && entranceMap && entranceMap.has(i) && len >= 12.0 && edgeSpan >= 6.0) {
+          const portW = Math.min(14.0, Math.max(7.2, len * 0.42));
+          const pu0 = (len - portW) * 0.5;
+          const pu1 = pu0 + portW;
+          const portD = 1.65;
+          const colH = Math.min(edgeSpan * 0.72, 9.5);
+          const stoneCol = [Math.min(1, 0.86 * dirShade), Math.min(1, 0.83 * dirShade), Math.min(1, 0.77 * dirShade)];
+          const shadowStone = [stoneCol[0] * 0.9, stoneCol[1] * 0.9, stoneCol[2] * 0.9];
+          // Ceremonial stepped stylobate base
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, pu0 - 0.4, pu1 + 0.4, 0.0, 0.42, 0.02, portD + 0.45, shadowStone, false);
+          // 4 to 6 neoclassical columns along the portico front
+          const nCols = portW >= 10.5 ? 6 : 4;
+          for (let cIdx = 0; cIdx < nCols; cIdx++) {
+            const cu = pu0 + 0.35 + (cIdx / (nCols - 1)) * (portW - 0.70);
+            pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, cu - 0.24, cu + 0.24, 0.42, 0.42 + colH, portD - 0.42, portD, stoneCol, false);
+          }
+          // Entablature frieze beam + stepped triangular pediment crown
+          const entY0 = 0.42 + colH;
+          const entY1 = entY0 + 0.68;
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, pu0 - 0.2, pu1 + 0.2, entY0, entY1, 0.02, portD + 0.18, stoneCol, false);
+          const pedSteps = 3;
+          const pedRise = Math.min(1.65, portW * 0.14);
+          for (let s = 0; s < pedSteps; s++) {
+            const frac0 = s / pedSteps, frac1 = (s + 1) / pedSteps;
+            const inset = frac0 * (portW * 0.42);
+            pushDetailWallBox(
+              x1, edgeSurfY, z1, tx, tz, nx, nz,
+              pu0 + inset, pu1 - inset,
+              entY1 + frac0 * pedRise, entY1 + frac1 * pedRise,
+              0.04, portD + 0.12, stoneCol, false
+            );
+          }
+        }
+
+        // Corporate / Tech / Finance / Media / Hotel HQ Double-Height Glass Atrium & Cantilevered Entrance Marquee
+        const fArch = facadeSel.famousInfo ? facadeSel.famousInfo.archFeatures : null;
+        if (!isHole && tIdx === 0 && fArch && fArch.glassAtriumMarquee && entranceMap && entranceMap.has(i) && len >= 10.0 && edgeSpan >= 6.5) {
+          const marqW = Math.min(13.0, Math.max(6.2, len * 0.38));
+          const mu0 = (len - marqW) * 0.5;
+          const mu1 = mu0 + marqW;
+          const marqD = 1.85;
+          const atriumH = Math.min(edgeSpan * 0.65, 6.8);
+          const steelCol = [0.24 * dirShade, 0.26 * dirShade, 0.29 * dirShade];
+          const glassAtriumCol = [0.20, 0.34, 0.48];
+          const brandAcc = facadeSel.parapetAccent || [0.22, 0.62, 0.96];
+          // Double-height projecting glass lobby atrium box + twin brushed-steel portal columns
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mu0 + 0.28, mu1 - 0.28, 0.15, atriumH, 0.04, 0.62, glassAtriumCol, false);
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mu0, mu0 + 0.34, 0.0, atriumH, 0.02, marqD * 0.85, steelCol, false);
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mu1 - 0.34, mu1, 0.0, atriumH, 0.02, marqD * 0.85, steelCol, false);
+          // Cantilevered steel-and-glass marquee canopy + brand-colored fascia accent bar + warm underside LED glow
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mu0 - 0.45, mu1 + 0.45, atriumH - 0.18, atriumH + 0.14, 0.02, marqD, steelCol, false);
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mu0 - 0.48, mu1 + 0.48, atriumH + 0.14, atriumH + 0.34, marqD - 0.22, marqD + 0.06, brandAcc, true);
+          pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mu0 + 0.2, mu1 - 0.2, atriumH - 0.26, atriumH - 0.18, 0.35, marqD - 0.25, [1.0, 0.88, 0.62], true);
+        }
       }
     };
 
@@ -1781,6 +2160,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     const roofY = isTopTier ? tier.y1 - 0.25 : tier.y1;
     const deckCol = isTopTier ? facadeSel.roofDeck : facadeSel.wallSecondary;
 
+    const rCx = (minX + maxX) * 0.5;
+    const rCz = (minZ + maxZ) * 0.5;
     for (const [a, b, c] of tris) {
       const pa = allPts[a], pb = allPts[b], pc = allPts[c];
       pos.push(pa.x, roofY, pa.y, pc.x, roofY, pc.y, pb.x, roofY, pb.y);
@@ -1791,22 +2172,244 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
       if (triEntity) {
         triEntity.push(entityIdx);
       }
-      pushRoofUv(3);
+      if (uv) {
+        // rMat = 8 procedural flat-roof coordinates centered at (500, 500) in building-local meters
+        uv.push(
+          8500.0 + (pa.x - rCx), -20.0 - (500.0 + (pa.y - rCz)),
+          8500.0 + (pc.x - rCx), -20.0 - (500.0 + (pc.y - rCz)),
+          8500.0 + (pb.x - rCx), -20.0 - (500.0 + (pb.y - rCz))
+        );
+      }
     }
 
-    // 4. Compact Rooftop Mechanical Penthouse on Top Tier of Mid/High-Rise Buildings
+    // 4. Worker-Built 3D Rooftop Greebles (routed into near-LOD roofDetail sink)
     const spanX = maxX - minX;
     const spanZ = maxZ - minZ;
-    if (isTopTier && holes.length === 0 && totalSpan >= 20.0 && spanX >= 14.0 && spanZ >= 14.0) {
-      const cx = (minX + maxX) * 0.5;
-      const cz = (minZ + maxZ) * 0.5;
-      const pw = Math.min(12.0, spanX * 0.34);
-      const pd = Math.min(12.0, spanZ * 0.34);
-      const ph = Math.min(3.4, Math.max(2.0, totalSpan * 0.05));
-      const beforeLen = pos.length;
-      pushWorldBox(pos, norm, col, cx, roofY, cz, pw, ph, pd, facadeSel.wallSecondary, triEntity, entityIdx, false);
-      const addedVerts = (pos.length - beforeLen) / 3;
-      pushRoofUv(addedVerts);
+    if (isTopTier && holes.length === 0 && totalSpan >= 10.0 && spanX >= 9.0 && spanZ >= 9.0) {
+      const inOuter = (px, pz) => {
+        let inside = false;
+        const r = tier.flatOuter;
+        for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
+          const xi = r[i], zi = r[i + 1], xj = r[j], zj = r[j + 1];
+          if ((zi > pz) !== (zj > pz) && px < ((xj - xi) * (pz - zi)) / (zj - zi || 1e-9) + xi) inside = !inside;
+        }
+        return inside;
+      };
+      const isBoxSafe = (bx, bz, bw, bd, pad = 1.1) => {
+        const hw = bw * 0.5 + pad, hd = bd * 0.5 + pad;
+        return (
+          inOuter(bx, bz) &&
+          inOuter(bx - hw, bz - hd) &&
+          inOuter(bx + hw, bz - hd) &&
+          inOuter(bx + hw, bz + hd) &&
+          inOuter(bx - hw, bz + hd)
+        );
+      };
+
+      const cx = rCx;
+      const cz = rCz;
+      const pw = Math.min(11.5, Math.max(2.8, spanX * 0.30));
+      const pd = Math.min(11.5, Math.max(2.8, spanZ * 0.30));
+      const ph = Math.min(3.5, Math.max(2.1, totalSpan * 0.05));
+      const secCol = facadeSel.wallSecondary;
+      const capCol = [Math.min(1, secCol[0] * 1.1), Math.min(1, secCol[1] * 1.1), Math.min(1, secCol[2] * 1.1)];
+      const doorCol = [0.16, 0.18, 0.21];
+      const hvacCol = [0.58, 0.61, 0.64];
+      const fanCol = [0.20, 0.22, 0.25];
+      const ductCol = [0.68, 0.70, 0.73];
+
+      if (isBoxSafe(cx, cz, pw, pd, 0.9)) {
+        // 4a. Stairwell / Elevator Penthouse Bulkhead + Overhanging Roof Slab + Recessed Access Door
+        if (totalSpan >= 20.0) {
+          const beforeLen = pos.length;
+          pushWorldBox(pos, norm, col, cx, roofY, cz, pw, ph, pd, secCol, triEntity, entityIdx, false);
+          pushRoofUv((pos.length - beforeLen) / 3);
+        } else {
+          pushDetailWorldBox(cx, roofY, cz, pw, ph, pd, secCol, false);
+        }
+        pushDetailWorldBox(cx, roofY + ph, cz, pw + 0.28, 0.18, pd + 0.28, capCol, false);
+        const doorW = Math.min(1.0, pw * 0.36);
+        const doorH = Math.min(1.95, ph * 0.82);
+        pushDetailWorldBox(cx, roofY + 0.05, cz + pd * 0.5 + 0.04, doorW, doorH, 0.08, doorCol, false);
+
+        // 4b. Articulated HVAC Chiller Unit + Twin Fan Cowls + Galvanized Ductwork Run
+        const hDirX = ((seed & 1) ? 1 : -1);
+        const hDirZ = ((seed & 2) ? 1 : -1);
+        const hw = Math.min(3.6, Math.max(1.8, spanX * 0.14));
+        const hd = Math.min(2.4, Math.max(1.4, spanZ * 0.11));
+        const hh = Math.min(1.65, Math.max(1.05, ph * 0.48));
+        const hx = cx + hDirX * (pw * 0.5 + hw * 0.5 + 1.8);
+        const hz = cz + hDirZ * Math.min(1.6, pd * 0.25);
+        if (isBoxSafe(hx, hz, hw, hd, 0.8)) {
+          pushDetailWorldBox(hx, roofY, hz, hw, hh, hd, hvacCol, false);
+          const cowlS = Math.min(hw * 0.34, hd * 0.62);
+          pushDetailWorldBox(hx - hw * 0.24, roofY + hh, hz, cowlS, 0.26, cowlS, fanCol, false);
+          pushDetailWorldBox(hx + hw * 0.24, roofY + hh, hz, cowlS, 0.26, cowlS, fanCol, false);
+          // Horizontal galvanized duct pipe connecting HVAC chiller to penthouse bulkhead
+          const ductX = (cx + hDirX * pw * 0.5 + hx - hDirX * hw * 0.5) * 0.5;
+          const ductW = Math.abs(hx - cx) - pw * 0.5 - hw * 0.5 + 0.2;
+          if (ductW > 0.3) {
+            pushDetailWorldBox(ductX, roofY + hh * 0.55, hz, ductW, 0.46, 0.52, ductCol, false);
+          }
+        }
+
+        // 4c. Rooftop Water Tank on Steel Support Frame (mid-rise residential/industrial/masonry buildings)
+        if (totalSpan >= 14.0 && totalSpan <= 48.0 && ((seed >>> 4) % 3) === 0) {
+          const tw = Math.min(2.6, Math.max(1.7, Math.min(spanX, spanZ) * 0.12));
+          const legH = 1.15;
+          const tankH = tw * 1.18;
+          const txTank = cx - hDirX * (pw * 0.5 + tw * 0.5 + 1.9);
+          const tzTank = cz - hDirZ * (pd * 0.25);
+          if (isBoxSafe(txTank, tzTank, tw, tw, 0.8)) {
+            const isWoodTank = region !== 'beijing' && ((seed >>> 7) & 1) === 0;
+            const tankCol = isWoodTank ? [0.48, 0.34, 0.22] : [0.60, 0.63, 0.66];
+            const legOff = tw * 0.34;
+            for (const [lx, lz] of [[-legOff, -legOff], [legOff, -legOff], [-legOff, legOff], [legOff, legOff]]) {
+              pushDetailWorldBox(txTank + lx, roofY, tzTank + lz, 0.20, legH, 0.20, fanCol, false);
+            }
+            pushDetailWorldBox(txTank, roofY + legH - 0.14, tzTank, tw * 0.94, 0.16, tw * 0.94, fanCol, false);
+            pushDetailWorldBox(txTank, roofY + legH, tzTank, tw, tankH, tw * 0.76, tankCol, false);
+            pushDetailWorldBox(txTank, roofY + legH, tzTank, tw * 0.76, tankH, tw, tankCol, false);
+            pushDetailWorldBox(txTank, roofY + legH + tankH, tzTank, tw * 0.62, 0.42, tw * 0.62, capCol, false);
+          }
+        }
+
+        // 4d. Rooftop Solar Panel Array Banks & Tech Campus Landscaped Sky-Terrace Planters
+        if (facadeSel.isTechCampus || (totalSpan >= 10.0 && totalSpan <= 36.0 && ((seed >>> 6) & 1) === 1)) {
+          const pvCol = [0.09, 0.15, 0.26];
+          const rackCol = [0.60, 0.62, 0.65];
+          const pvW = Math.min(facadeSel.isTechCampus ? 6.4 : 4.2, spanX * 0.26);
+          const pvD = 1.30;
+          const baseZ = cz - hDirZ * (pd * 0.5 + 1.6);
+          const nRows = facadeSel.isTechCampus ? 3 : 2;
+          for (let rIdx = 0; rIdx < nRows; rIdx++) {
+            const pzRow = baseZ - hDirZ * rIdx * 1.85;
+            if (isBoxSafe(cx, pzRow, pvW, pvD, 0.8)) {
+              pushDetailWorldBox(cx, roofY, pzRow, pvW * 0.9, 0.28, pvD * 0.75, rackCol, false);
+              pushDetailWorldBox(cx, roofY + 0.28, pzRow, pvW, 0.12, pvD, pvCol, false);
+            }
+          }
+          if (facadeSel.isTechCampus) {
+            const greenCol = [0.24, 0.48, 0.22];
+            const planterCol = [0.56, 0.44, 0.30];
+            const gx = cx - hDirX * (pw * 0.5 + 2.6);
+            const gz = cz + hDirZ * (pd * 0.3);
+            const gw = Math.min(4.8, spanX * 0.20), gd = Math.min(3.6, spanZ * 0.18);
+            if (isBoxSafe(gx, gz, gw, gd, 0.8)) {
+              pushDetailWorldBox(gx, roofY, gz, gw, 0.32, gd, planterCol, false);
+              pushDetailWorldBox(gx, roofY + 0.32, gz, gw - 0.3, 0.24, gd - 0.3, greenCol, false);
+            }
+          }
+        }
+
+        // 4e. Neoclassical Civic / Government Central Cupola Dome (copper-patina or gold-accented)
+        if (facadeSel.isCivicBuilding && spanX >= 14.0 && spanZ >= 14.0) {
+          const isGoldDome = /capitol|state|supreme|parliament/i.test(String(bldgInfo.name || '')) || ((seed >>> 5) % 4 === 0);
+          const domeCol = isGoldDome ? [0.84, 0.69, 0.24] : [0.28, 0.56, 0.48]; // gold leaf vs verdigris copper patina
+          const drumCol = [0.84, 0.81, 0.75];
+          const drumW = Math.min(9.5, Math.max(4.4, Math.min(spanX, spanZ) * 0.26));
+          const drumH = drumW * 0.48;
+          const baseDomeY = roofY + ph + 0.18;
+          // Octagonal neoclassical stone drum (2 crossed boxes) + 3-tier stepped cupola dome + lantern finial
+          pushDetailWorldBox(cx, baseDomeY, cz, drumW, drumH, drumW * 0.76, drumCol, false);
+          pushDetailWorldBox(cx, baseDomeY, cz, drumW * 0.76, drumH, drumW, drumCol, false);
+          const d0Y = baseDomeY + drumH;
+          const domeH = drumW * 0.58;
+          pushDetailWorldBox(cx, d0Y, cz, drumW * 0.86, domeH * 0.42, drumW * 0.68, domeCol, false);
+          pushDetailWorldBox(cx, d0Y, cz, drumW * 0.68, domeH * 0.42, drumW * 0.86, domeCol, false);
+          pushDetailWorldBox(cx, d0Y + domeH * 0.42, cz, drumW * 0.64, domeH * 0.36, drumW * 0.52, domeCol, false);
+          pushDetailWorldBox(cx, d0Y + domeH * 0.42, cz, drumW * 0.52, domeH * 0.36, drumW * 0.64, domeCol, false);
+          pushDetailWorldBox(cx, d0Y + domeH * 0.78, cz, drumW * 0.38, domeH * 0.24, drumW * 0.38, domeCol, false);
+          pushDetailWorldBox(cx, d0Y + domeH * 1.02, cz, drumW * 0.16, 1.35, drumW * 0.16, [0.88, 0.74, 0.28], false);
+        }
+
+        // 4f. Famous Global Company & Institution Signature Rooftop Architecture
+        const fInfo = facadeSel.famousInfo;
+        if (fInfo && fInfo.archFeatures) {
+          const af = fInfo.archFeatures;
+          const accCol = facadeSel.parapetAccent || fInfo.accentRgb || [0.22, 0.64, 0.96];
+          // (i) Corporate / Tech / Finance / Auto / Media / Hotel Illuminated Rooftop Sky-Sign Monument Pylon & Atrium Skylight Spine
+          if (af.skySignMonument) {
+            const signW = Math.min(8.5, Math.max(3.6, pw * 0.88));
+            const signH = Math.min(2.2, Math.max(1.1, totalSpan * 0.038));
+            const signBaseY = roofY + ph + 0.18;
+            pushDetailWorldBox(cx, signBaseY, cz, signW + 0.4, signH + 0.25, 0.48, [0.20, 0.22, 0.26], false);
+            pushDetailWorldBox(cx, signBaseY + 0.12, cz, signW, signH, 0.62, accCol, true);
+            if (af.skyGardenAtrium && spanX >= 14.0 && spanZ >= 14.0) {
+              const skyW = Math.min(12.0, spanX * 0.42);
+              const skyD = Math.min(4.2, spanZ * 0.20);
+              const skyZ = cz + hDirZ * (pd * 0.5 + skyD * 0.5 + 1.4);
+              if (isBoxSafe(cx, skyZ, skyW, skyD, 0.8)) {
+                pushDetailWorldBox(cx, roofY, skyZ, skyW, 0.45, skyD, capCol, false);
+                pushDetailWorldBox(cx, roofY + 0.45, skyZ, skyW - 0.35, 0.65, skyD * 0.68, [0.20, 0.38, 0.54], false);
+                pushDetailWorldBox(cx, roofY + 1.10, skyZ, skyW - 0.9, 0.32, skyD * 0.36, [0.82, 0.92, 1.0], true);
+              }
+            }
+          }
+          // (ii) Museum & Performing Arts Central Stepped Glass Pyramid Skylight (Louvre / Great Court style)
+          if (af.glassPyramid && spanX >= 13.0 && spanZ >= 13.0) {
+            const pyrW = Math.min(11.0, Math.min(spanX, spanZ) * 0.34);
+            const pyrH = pyrW * 0.56;
+            const pBaseY = roofY + ph + 0.18;
+            const glassPyrCol = [0.36, 0.64, 0.84];
+            const warmGalleryGlow = [1.0, 0.86, 0.56];
+            for (let st = 0; st < 4; st++) {
+              const f0 = st / 4, f1 = (st + 1) / 4;
+              const wStep = pyrW * (1.0 - f0 * 0.72);
+              pushDetailWorldBox(cx, pBaseY + f0 * pyrH, cz, wStep, (f1 - f0) * pyrH, wStep, glassPyrCol, false);
+            }
+            pushDetailWorldBox(cx, pBaseY + 0.1, cz, pyrW * 0.52, pyrH * 0.45, pyrW * 0.52, warmGalleryGlow, true);
+          }
+          // (iii) Cathedral / Basilica Twin Gothic Spires or Temple Tiered Pagoda Eave Crown
+          if (af.twinSpires && spanX >= 11.0 && spanZ >= 11.0) {
+            const spireCol = [0.78, 0.74, 0.66];
+            const spireCap = [0.30, 0.34, 0.38];
+            const spireSpan = Math.min(9.0, spanX * 0.32);
+            const sBaseY = roofY + ph + 0.18;
+            const spireH = Math.min(14.0, Math.max(6.5, totalSpan * 0.48));
+            for (const sSide of [-1, 1]) {
+              const sx = cx + sSide * spireSpan * 0.5;
+              if (isBoxSafe(sx, cz, 2.6, 2.6, 0.6)) {
+                pushDetailWorldBox(sx, sBaseY, cz, 2.4, spireH * 0.45, 2.4, spireCol, false);
+                pushDetailWorldBox(sx, sBaseY + spireH * 0.45, cz, 1.65, spireH * 0.32, 1.65, spireCap, false);
+                pushDetailWorldBox(sx, sBaseY + spireH * 0.77, cz, 0.85, spireH * 0.23, 0.85, spireCap, false);
+                pushDetailWorldBox(sx, sBaseY + spireH, cz, 0.26, 1.2, 0.26, [0.88, 0.74, 0.28], false);
+              }
+            }
+          } else if (af.pagodaEaves && spanX >= 11.0 && spanZ >= 11.0) {
+            const eaveCol = [0.76, 0.48, 0.18];
+            const redWall = [0.68, 0.18, 0.16];
+            const pW = Math.min(9.5, Math.min(spanX, spanZ) * 0.34);
+            const pY = roofY + ph + 0.18;
+            pushDetailWorldBox(cx, pY, cz, pW * 0.78, 1.6, pW * 0.78, redWall, false);
+            pushDetailWorldBox(cx, pY + 1.4, cz, pW * 1.05, 0.42, pW * 1.05, eaveCol, false);
+            pushDetailWorldBox(cx, pY + 1.82, cz, pW * 0.52, 1.3, pW * 0.52, redWall, false);
+            pushDetailWorldBox(cx, pY + 2.95, cz, pW * 0.76, 0.38, pW * 0.76, eaveCol, false);
+            pushDetailWorldBox(cx, pY + 3.33, cz, 0.42, 1.35, 0.42, [0.92, 0.76, 0.24], true);
+          }
+          // (iv) Stadium & Arena 4 Corner Floodlight Towers
+          if (af.stadiumFloodlights && spanX >= 16.0 && spanZ >= 16.0) {
+            const towerH = Math.min(11.0, Math.max(6.5, totalSpan * 0.36));
+            const offX = spanX * 0.34;
+            const offZ = spanZ * 0.34;
+            for (const [sx, sz] of [[-offX, -offZ], [offX, -offZ], [-offX, offZ], [offX, offZ]]) {
+              const fx = cx + sx, fz = cz + sz;
+              if (isBoxSafe(fx, fz, 1.8, 1.8, 0.6)) {
+                pushDetailWorldBox(fx, roofY, fz, 0.55, towerH, 0.55, ductCol, false);
+                pushDetailWorldBox(fx, roofY + towerH, fz, 2.4, 1.25, 0.85, [1.0, 0.98, 0.88], true);
+              }
+            }
+          }
+        }
+
+        // 4g. High-Rise Telecom Mast & Red Aviation Obstruction Warning Beacons (height >= 45m)
+        if (totalSpan >= 45.0) {
+          const beaconCol = [1.0, 0.18, 0.08];
+          const mastH = Math.min(5.2, Math.max(2.8, totalSpan * 0.045));
+          pushDetailWorldBox(cx, roofY + ph + 0.18, cz, 0.22, mastH, 0.22, ductCol, false);
+          pushDetailWorldBox(cx, roofY + ph + 0.18 + mastH, cz, 0.42, 0.42, 0.42, beaconCol, true);
+        }
+      }
     }
   }
 

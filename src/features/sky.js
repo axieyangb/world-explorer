@@ -1,9 +1,10 @@
 import * as THREE from '../../vendor/three.module.js';
 
 /**
- * Day/night sky dome material: gradient + golden-hour horizon glow + sun disc + phased moon + stars
- * + aurora curtains (aurora.js) + procedural drifting cloud layer + fog blend. Uniform names stay compatible with the original
- * createAtmosphericSkyDome() (uSunDir, uZenithColor, uHorizonColor, uGroundColor, uSunColor, uSunIntensity).
+ * Day/night sky dome material: Rayleigh-Mie gradient + golden-hour horizon glow + sun disc + phased moon + stars
+ * + aurora curtains (aurora.js) + high-altitude cirrus wisps + procedural cumulus cloud layer with Henyey-Greenstein
+ * silver-lining rim scatter + fog/haze blend. Uniform names stay compatible with createAtmosphericSkyDome()
+ * (uSunDir, uZenithColor, uHorizonColor, uGroundColor, uSunColor, uSunIntensity).
  */
 export function createSkyMaterial() {
   const uniforms = {
@@ -85,21 +86,32 @@ export function createSkyMaterial() {
         for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
         return s;
       }
+      // Henyey-Greenstein phase function for forward-scattered cloud silver linings and Mie haze
+      float hgPhase(float cosTheta, float g) {
+        float g2 = g * g;
+        return (1.0 - g2) / (12.5663706 * pow(max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4), 1.5));
+      }
 
       void main() {
         vec3 dir = normalize(vWorldDir);
         float y = dir.y;
         vec3 sunD = normalize(uSunDir);
-        float upT = pow(clamp(y, 0.0, 1.0), 0.52);
+        float sunDot = max(0.0, dot(dir, sunD));
+        float upT = pow(clamp(y, 0.0, 1.0), 0.50);
         vec3 col = mix(uHorizonColor, uZenithColor, upT);
 
-        // Golden-hour / twilight glow hugging the horizon on the sun side
+        // Rayleigh-Mie golden-hour / twilight aerial glow hugging the horizon on the sun side
         vec2 hd = normalize(dir.xz + vec2(1e-5));
         vec2 hs = normalize(sunD.xz + vec2(1e-5));
         float az = max(dot(hd, hs), 0.0);
-        float band = exp(-abs(y - 0.02) * 7.0);
-        col += vec3(1.0, 0.42, 0.14) * uGlow * band * (0.25 + 0.75 * pow(az, 3.0));
-        col += vec3(0.55, 0.30, 0.45) * uGlow * 0.25 * band * (1.0 - az);
+        float band = exp(-abs(y - 0.02) * 6.5);
+        float upperBand = exp(-max(y, 0.0) * 3.0);
+        col += vec3(1.0, 0.44, 0.15) * uGlow * band * (0.28 + 0.78 * pow(az, 2.8));
+        col += vec3(0.95, 0.54, 0.36) * uGlow * upperBand * 0.24 * (0.35 + 0.65 * az);
+        col += vec3(0.56, 0.31, 0.47) * uGlow * 0.26 * band * (1.0 - az);
+        // Warm low-altitude Rayleigh-Mie forward scatter through the lower atmosphere
+        float mieAerial = pow(sunDot, 4.0) * exp(-max(y, 0.0) * 5.2) * (0.14 + 0.48 * uGlow) * uSunIntensity;
+        col += mix(uSunColor, vec3(1.0, 0.55, 0.24), clamp(uGlow * 1.3, 0.0, 1.0)) * mieAerial;
 
         float above = smoothstep(-0.02, 0.03, y);
 
@@ -135,8 +147,7 @@ export function createSkyMaterial() {
         }
 
         // Sun glow + disc
-        float sunDot = max(0.0, dot(dir, sunD));
-        float mieGlow = pow(sunDot, 10.0) * 0.32 * uSunIntensity;
+        float mieGlow = (pow(sunDot, 10.0) * 0.30 + min(hgPhase(sunDot, 0.82), 2.5) * 0.06) * uSunIntensity;
         float sunDisc = smoothstep(0.9982, 0.9996, sunDot) * 1.35 * uSunIntensity * above;
         col += uSunColor * (mieGlow + sunDisc);
 
@@ -185,15 +196,32 @@ export function createSkyMaterial() {
           col += aur * uAurora * 0.75 * above;
         }
 
-        // Procedural cloud layer (planar projection, drifting)
+        // High-altitude cirrus wisps above the main cumulus layer (dir.y > 0.15)
+        if (y > 0.15 && uCloudCover > 0.005) {
+          vec2 cirUv = dir.xz / (y + 0.36) * 1.15 + vec2(uTime * 0.0016, -uTime * 0.0008);
+          float warp = vnoise(cirUv * 1.5 + vec2(3.7, 8.1));
+          float wisp = vnoise(vec2(cirUv.x * 3.6 + warp * 1.35, cirUv.y * 1.15 - warp * 0.55)) * 0.65
+                     + vnoise(cirUv * 6.2 + warp * 0.9) * 0.35;
+          float cirMask = smoothstep(0.15, 0.36, y) * (0.20 + 0.35 * min(uCloudCover, 0.7));
+          float cir = smoothstep(0.57 - uCloudCover * 0.14, 0.88, wisp) * cirMask;
+          vec3 cirCol = mix(uCloudLit, uSunColor, clamp(0.22 + 0.45 * uGlow, 0.0, 0.75));
+          cirCol += uSunColor * min(hgPhase(sunDot, 0.68), 2.4) * 0.28 * uSunIntensity;
+          col = mix(col, cirCol, cir * 0.38);
+        }
+
+        // Procedural cumulus cloud layer (planar projection, drifting) with Henyey-Greenstein silver-lining rim glow
         if (uCloudCover > 0.01 && y > -0.02) {
           vec2 cuv = dir.xz / (max(y, 0.0) + 0.09) * 0.55 + vec2(uTime * 0.006, uTime * 0.002);
           float n = fbm(cuv);
           float cov = smoothstep(1.02 - uCloudCover, 1.28 - uCloudCover * 0.9, n + 0.12);
           cov *= smoothstep(0.0, 0.16, y); // [ground] the deck thins into the horizon haze instead of ending on a line
           float shade = fbm(cuv * 1.7 + 4.0);
-          vec3 cc = mix(uCloudDark, uCloudLit, clamp(0.25 + shade * 0.9 - cov * 0.35, 0.0, 1.0));
-          cc += uSunColor * pow(sunDot, 6.0) * 0.45 * uSunIntensity * (1.0 - cov * 0.6);
+          vec3 cc = mix(uCloudDark, uCloudLit, clamp(0.25 + shade * 0.92 - cov * 0.34, 0.0, 1.0));
+          // Henyey-Greenstein forward-scattered silver-lining rim glow on thin cloud edges near the sun vector
+          float hg = min(hgPhase(sunDot, 0.74), 3.4) * 0.75 + pow(sunDot, 5.0) * 0.45;
+          float silverRim = smoothstep(0.02, 0.38, cov) * (1.0 - smoothstep(0.42, 0.92, cov));
+          float powder = exp(-cov * 2.3) * (1.0 - exp(-cov * 5.0));
+          cc += uSunColor * hg * (silverRim * 0.52 + powder * 0.32 + (1.0 - cov * 0.6) * 0.22) * uSunIntensity;
           col = mix(col, cc, cov * 0.96);
         }
 

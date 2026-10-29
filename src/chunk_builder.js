@@ -705,16 +705,21 @@ export function createSharedMaterials() {
     shader.uniforms.uFacadeArray = wfcNightUniforms.uFacadeArray;
     shader.uniforms.uDoorArray = wfcNightUniforms.uDoorArray;
     shader.vertexShader =
-      'varying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\nflat varying float vNightBid;\n' +
-      shader.vertexShader.replace(
-        '#include <beginnormal_vertex>',
-        '#include <beginnormal_vertex>\nvEmissive = step(1.5, length(objectNormal));\nobjectNormal = normalize(objectNormal);\nvFacadeUv = uv;\nvWorldNorm = objectNormal;\n' +
-          // [night] per-building seed for the lit-room pattern: kaiju's building id (kBid, declared by its patch) + chunk
-          'vNightBid = fract(kBid * 0.6180339 + modelMatrix[3].x * 0.00131 + modelMatrix[3].z * 0.00293);'
-      );
+      'varying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\nvarying vec3 vBldgWorld;\nflat varying float vNightBid;\n' +
+      shader.vertexShader
+        .replace(
+          '#include <beginnormal_vertex>',
+          '#include <beginnormal_vertex>\nvEmissive = step(1.5, length(objectNormal));\nobjectNormal = normalize(objectNormal);\nvFacadeUv = uv;\nvWorldNorm = objectNormal;\n' +
+            // [night] per-building seed for the lit-room pattern: kaiju's building id (kBid, declared by its patch) + chunk
+            'vNightBid = fract(kBid * 0.6180339 + modelMatrix[3].x * 0.00131 + modelMatrix[3].z * 0.00293);'
+        )
+        .replace(
+          '#include <project_vertex>',
+          '#include <project_vertex>\nvBldgWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+        );
     shader.fragmentShader =
       FACADE_NIGHT_PARS + // [night]
-      'uniform float uNightEmissive;\nuniform mediump sampler2DArray uFacadeArray;\nuniform mediump sampler2DArray uDoorArray;\nvarying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\n' +
+      'uniform float uNightEmissive;\nuniform mediump sampler2DArray uFacadeArray;\nuniform mediump sampler2DArray uDoorArray;\nvarying float vEmissive;\nvarying vec2 vFacadeUv;\nvarying vec3 vWorldNorm;\nvarying vec3 vBldgWorld;\n' +
       shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
@@ -782,6 +787,22 @@ export function createSharedMaterials() {
             facadeRgb *= 1.0 + (grain - 0.5) * 0.07 * sh * (1.0 - winMask);
           }
 
+          // Room grid coordinates (FACADE_UNITS for photo layers 0..23, 4x4 grid for procedural layers >= 24)
+          int li = int(min(texLayer, 23.0) + 0.5);
+          vec4 fu = texLayer > 23.5 ? vec4(0.25, 0.25, 0.0, 0.0) : FACADE_UNITS[li];
+          float kind = texLayer > 23.5 ? (abs(texLayer - 31.0) < 0.5 ? 1.0 : 0.0) : FACADE_KIND[li];
+          vec2 gp = vec2((uRep - fu.z) / fu.x, (vRep - fu.w) / fu.y);
+          vec2 cell = floor(gp);
+          vec2 cellUv = fract(gp);
+          vec2 gfw = fwidth(gp);
+          float bSeed = vNightBid;
+          float hF = nightHash(vec2(cell.y, bSeed * 113.0));
+          float hU = nightHash(cell + vec2(bSeed * 57.0, texLayer * 3.1));
+          float hC = nightHash(cell.yx + vec2(19.7, bSeed * 23.0));
+          float uvGrad = max(fwidth(uRep), fwidth(vRep));
+          float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
+          float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5 || abs(texLayer - 31.0) < 0.5) ? 1.0 : 0.0;
+
           // Pure photographic AI facade albedo modulated by subtle per-building tint, vertical AO & analytical sky reflection on glass
           vec3 baseAlbedo = facadeRgb * diffuseColor.rgb * 1.08;
           if (texLayer > 23.5) { // [roofs] regional layers: only paintable wall (A ~0.12) takes the paint tint
@@ -789,36 +810,105 @@ export function createSharedMaterials() {
             vec3 unpainted = facadeRgb * 1.08 * min(1.0, dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) * 1.18);
             baseAlbedo = mix(unpainted, baseAlbedo, paint);
           }
+
+          // Under-sill rain-drip weathering & floor ledge micro-shadow on masonry/cladding outside window glass
+          float sillBand = smoothstep(0.16, 0.0, cellUv.y) * (0.55 + 0.45 * sin(cellUv.x * 18.85 + hU * 6.28));
+          baseAlbedo *= 1.0 - sillBand * 0.11 * bumpFade * (1.0 - winMask) * (1.0 - isCurtain * 0.75);
+
+          // Recessed window frame reveal shadow + True 3D Raycasted Interior Cube-Mapping (ceiling, floor, walls, decor)
           vec3 skyRefl = mix(vec3(0.54, 0.68, 0.84), vec3(0.08, 0.13, 0.22), nightLevel);
-          diffuseColor.rgb = mix(baseAlbedo, mix(baseAlbedo * 1.15, skyRefl, 0.24), winMask);
+          vec3 glassAlbedo = mix(baseAlbedo * 1.15, skyRefl, 0.24);
+          vec3 interiorRoomCol = vec3(0.72, 0.68, 0.62);
+          float interiorLamp = 0.0;
+          float isGroundShowcase = step(vRep, 1.35) * (1.0 - step(2.5, kind));
+          if (winMask > 0.25 && bumpFade > 0.01) {
+            float revTop = smoothstep(0.94, 0.76, cellUv.y);
+            float revSide = smoothstep(0.04, 0.16, cellUv.x) * smoothstep(0.96, 0.84, cellUv.x);
+            float revealShadow = mix(1.0, 0.70 + 0.30 * revTop * revSide, bumpFade * (1.0 - isCurtain * 0.5));
+
+            // Tangent basis on vertical wall & camera-to-fragment ray in room space (rd.z > 0 points into the room)
+            vec3 N = normalize(vWorldNorm);
+            vec3 T = normalize(vec3(-N.z, 0.0, N.x) + vec3(1e-5, 0.0, 0.0));
+            vec3 B = vec3(0.0, 1.0, 0.0);
+            vec3 V = normalize(vBldgWorld - cameraPosition);
+            vec3 rd = vec3(dot(V, T), dot(V, B), max(0.14, -dot(V, N)));
+            vec3 ro = vec3(cellUv.x - 0.5, cellUv.y - 0.5, 0.0);
+            float roomDepth = mix(0.65, 0.78, isGroundShowcase);
+            float tBack = roomDepth / rd.z;
+            float sX = rd.x >= 0.0 ? 0.5 : -0.5;
+            float tX = (sX - ro.x) / (abs(rd.x) < 1e-4 ? (rd.x >= 0.0 ? 1e-4 : -1e-4) : rd.x);
+            float sY = rd.y >= 0.0 ? 0.5 : -0.5;
+            float tY = (sY - ro.y) / (abs(rd.y) < 1e-4 ? (rd.y >= 0.0 ? 1e-4 : -1e-4) : rd.y);
+            float tHit = min(tBack, min(max(0.0, tX), max(0.0, tY)));
+            vec3 pRoom = ro + rd * tHit;
+
+            // Classify hit surface: ceiling (pRoom.y > 0.48), floor (pRoom.y < -0.48), or back/side walls
+            float hitCeil = step(0.48, pRoom.y);
+            float hitFloor = step(pRoom.y, -0.48) * (1.0 - hitCeil);
+            float hitWall = 1.0 - max(hitCeil, hitFloor);
+
+            // Ceiling: warm acoustic tiles + glowing rectangular ceiling light fixture strip
+            float ceilGrid = 0.93 + 0.07 * cos(pRoom.x * 25.1) * cos(pRoom.z * 25.1);
+            float lampMask = step(abs(pRoom.x), 0.22) * step(abs(pRoom.z - 0.32), 0.14);
+            interiorLamp = lampMask * hitCeil;
+            vec3 ceilCol = mix(vec3(0.82, 0.78, 0.72) * ceilGrid, vec3(1.35, 1.24, 1.02), lampMask);
+
+            // Floor: warm hardwood parquet / commercial tile planks with subtle board joints along pRoom.x
+            float plank = 0.88 + 0.12 * sin(pRoom.x * 36.0 + floor(pRoom.z * 6.0) * 1.7);
+            vec3 woodFloor = mix(vec3(0.48, 0.34, 0.22), vec3(0.42, 0.44, 0.47), step(0.5, kind)) * plank;
+            float floorWallAo = smoothstep(0.5, 0.22, max(abs(pRoom.x), abs(pRoom.z - roomDepth * 0.5)));
+            vec3 floorCol = woodFloor * (0.72 + 0.28 * floorWallAo);
+
+            // Back & Side Walls: warm plaster + procedural bookshelves / framed art / office monitors seeded by hU
+            vec3 wallBase = mix(vec3(0.78, 0.73, 0.66), vec3(0.72, 0.76, 0.80), step(0.5, kind));
+            wallBase = mix(wallBase, vec3(0.88, 0.76, 0.58), isGroundShowcase);
+            float wallCoordX = abs(pRoom.x) > 0.48 ? (pRoom.z / roomDepth - 0.5) : pRoom.x;
+            float hasShelves = step(0.38, fract(hU * 11.3));
+            float shelfBand = step(abs(pRoom.y + 0.05), 0.28) * step(abs(wallCoordX), 0.34) * hasShelves;
+            float shelfRow = step(0.42, fract((pRoom.y + 0.35) * 7.5));
+            float bookColorHash = fract(sin(floor((wallCoordX + 0.5) * 18.0 + floor((pRoom.y + 0.5) * 7.5) * 13.0 + hU * 41.0)) * 43758.5453);
+            vec3 shelfCol = mix(vec3(0.34, 0.22, 0.14), mix(vec3(0.68, 0.26, 0.22), vec3(0.24, 0.46, 0.62), bookColorHash), shelfRow);
+            float frameOffset = (fract(hU * 5.7) - 0.5) * 0.26;
+            float artFrame = (1.0 - hasShelves) * step(abs(wallCoordX - frameOffset), 0.17) * step(abs(pRoom.y - 0.06), 0.14);
+            vec3 artCol = mix(vec3(0.24, 0.36, 0.48), vec3(0.76, 0.58, 0.36), fract(hU * 17.9));
+            vec3 wallCol = mix(wallBase, shelfCol, shelfBand * 0.85);
+            wallCol = mix(wallCol, artCol, artFrame * 0.80);
+
+            float depthAo = 1.0 - 0.35 * clamp(pRoom.z / roomDepth, 0.0, 1.0);
+            interiorRoomCol = (ceilCol * hitCeil + floorCol * hitFloor + wallCol * hitWall) * depthAo;
+            interiorRoomCol *= mix(1.0, 1.22, isGroundShowcase);
+
+            // Venetian blind slats / sheer curtains in select upper windows (ground-floor showcases stay open)
+            float hasBlinds = step(0.60, fract(hU * 13.7)) * (1.0 - step(2.5, kind)) * (1.0 - isGroundShowcase);
+            float blindDrop = 0.28 + 0.52 * fract(hU * 7.9);
+            float inBlind = step(1.0 - blindDrop, cellUv.y) * hasBlinds;
+            float slats = 0.82 + 0.18 * sin(cellUv.y * 48.0);
+            vec3 blindTint = mix(vec3(0.84, 0.81, 0.75), vec3(0.74, 0.78, 0.82), step(0.5, hC)) * slats;
+
+            // Blend 3D interior room behind exterior glass reflection & blinds
+            vec3 dayRoomMix = mix(glassAlbedo * 0.88, interiorRoomCol * 0.68 + skyRefl * 0.22, 0.58 * bumpFade);
+            glassAlbedo = mix(dayRoomMix, blindTint * 0.58, inBlind * 0.48 * bumpFade) * revealShadow;
+            // Crisp sun/sky specular glint across glass panes
+            vec3 viewDirV = normalize(vViewPosition);
+            float sunGlint = pow(clamp(dot(reflect(-viewDirV, normal), normalize(vec3(0.42, 0.74, 0.52))), 0.0, 1.0), 18.0);
+            glassAlbedo += vec3(0.95, 0.92, 0.84) * sunGlint * 0.22 * (1.0 - nightLevel * 0.85);
+          }
+          diffuseColor.rgb = mix(baseAlbedo, glassAlbedo, winMask);
 
           // Screen-space micro-bump normal relief on masonry/mullions (fades smoothly at distance)
           float lum = dot(facadeRgb, vec3(0.299, 0.587, 0.114));
           float dLx = clamp(dFdx(lum), -0.08, 0.08);
           float dLy = clamp(dFdy(lum), -0.08, 0.08);
-          float uvGrad = max(fwidth(uRep), fwidth(vRep));
-          float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
           normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask) * (texLayer > 23.5 ? 0.5 : 1.0))); // [roofs] crisp vector layers: softer screen-space bump
 
           // Keep metalness moderate so Three.js PBR without envMap never crushes shaded street-canyon glass to black
-          float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5) ? 1.0 : 0.0;
-          roughnessFactor = mix(mix(0.78, 0.42, isCurtain), 0.16, winMask);
-          metalnessFactor = mix(mix(0.04, 0.16, isCurtain), 0.20, winMask);
+          roughnessFactor = mix(mix(0.78, 0.42, isCurtain), 0.15, winMask);
+          metalnessFactor = mix(mix(0.04, 0.16, isCurtain), 0.22, winMask);
 
           // [night] lit rooms. Each layer has a room grid (FACADE_UNITS) whose cell edges fall on wall, so a room is a
           // whole window. Offices light whole floors (cleaners / late teams), homes light unit by unit in warm tones
           // with the odd flickering TV, shops stay bright until late; uLitFrac follows the local hour.
           if (nightLevel > 0.001 && winMask > 0.01) {
-            int li = int(texLayer + 0.5);
-            vec4 fu = FACADE_UNITS[li];
-            float kind = FACADE_KIND[li];
-            vec2 gp = vec2((uRep - fu.z) / fu.x, (vRep - fu.w) / fu.y);
-            vec2 cell = floor(gp);
-            vec2 gfw = fwidth(gp);
-            float bSeed = vNightBid;
-            float hF = nightHash(vec2(cell.y, bSeed * 113.0));
-            float hU = nightHash(cell + vec2(bSeed * 57.0, texLayer * 3.1));
-            float hC = nightHash(cell.yx + vec2(19.7, bSeed * 23.0));
             float isOffice = step(0.5, kind) * step(kind, 1.5);
             float isShop = step(1.5, kind) * step(kind, 2.5);
             float isGarage = step(2.5, kind);
@@ -857,6 +947,9 @@ export function createSharedMaterials() {
             // the photo's frames / mullions stay a little darker than the glass they hold
             float frameDark = mix(1.0, 0.82 + 0.18 * smoothstep(0.08, 0.35, lum), near);
             vec3 roomE = roomCol * bright * shade * frameDark;
+            // Blend in 3D raycasted interior room surfaces (ceiling lamp strip, wood floor, shelves & back wall depth)
+            roomE *= mix(vec3(1.0), interiorRoomCol * 1.35 + vec3(0.35, 0.32, 0.24) * interiorLamp, 0.55 * near * bumpFade);
+            roomE *= mix(1.0, 1.24, isGroundShowcase);
             // a little of the photo's pane detail (blinds, mullions, displays) so lit glass is not a flat slab
             roomE *= mix(1.0, 0.5 + 1.2 * lum, 0.3 * near);
             vec3 avgCol = mix(mix(vec3(1.0, 0.72, 0.42), vec3(0.95, 0.84, 0.64), isOffice), vec3(1.0, 0.86, 0.62), isShop);
@@ -912,6 +1005,43 @@ export function createSharedMaterials() {
             float hB = fract(sin(floor(rs / 0.14) * 91.7) * 43758.5453);
             pat = (0.8 + 0.2 * smoothstep(0.0, 0.08, fs) * smoothstep(1.0, 0.9, fs)) * (0.86 + 0.24 * hB) * (0.94 + 0.08 * sin(rt * 9.0 + hB * 6.0));
             rRough = 0.9;
+          } else if (abs(rMat - 8.0) < 0.5) {
+            // flat commercial / residential roof (rMat = 8): bitumen/TPO membrane roll seams, gravel grain, drainage stains,
+            // plus seeded rooftop skylight/solar grids or high-rise helipad H markings around roof center (500, 500)
+            vec2 rp = vec2(rs - 500.0, rt - 500.0);
+            vec2 roll = rp / vec2(1.25, 4.2);
+            float rowR = floor(roll.y);
+            float colR = floor(roll.x + 0.5 * mod(rowR, 2.0));
+            vec2 fRoll = fract(vec2(roll.x + 0.5 * mod(rowR, 2.0), roll.y));
+            float seam = smoothstep(0.0, 0.055, fRoll.x) * smoothstep(1.0, 0.945, fRoll.x) *
+                         smoothstep(0.0, 0.035, fRoll.y) * smoothstep(1.0, 0.965, fRoll.y);
+            float hSheet = nightHash(vec2(colR, rowR) + vNightBid * 37.0);
+            float hGrav = nightHash(floor(rp * 7.5));
+            float pond = sin(rp.x * 0.23 + vNightBid * 19.0) * cos(rp.y * 0.19 - vNightBid * 11.0);
+            pat = (0.86 + 0.14 * seam) * (0.93 + 0.14 * hSheet) * (0.94 + 0.12 * hGrav) * (0.92 + 0.10 * pond);
+            rRough = mix(0.90, 0.62, smoothstep(0.35, 0.75, -pond));
+            rMetal = 0.04;
+            // Commercial skylight / photovoltaic grid on a subset of roofs
+            if (vNightBid > 0.56 && vNightBid < 0.85 && abs(rp.x) < 5.6 && abs(rp.y) < 5.6) {
+              vec2 sg = fract((rp + 5.6) / vec2(1.6, 2.4));
+              float inPane = smoothstep(0.08, 0.13, sg.x) * smoothstep(0.92, 0.87, sg.x) *
+                             smoothstep(0.08, 0.13, sg.y) * smoothstep(0.92, 0.87, sg.y);
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.10, 0.17, 0.28), inPane * rFade * 0.82);
+              rRough = mix(rRough, 0.18, inPane * rFade);
+              rMetal = mix(rMetal, 0.35, inPane * rFade);
+              float nightLvl = clamp((uNightEmissive - 0.15) / 1.15, 0.0, 1.0);
+              if (vNightBid > 0.72 && nightLvl > 0.01) {
+                totalEmissiveRadiance += vec3(1.0, 0.82, 0.52) * inPane * rFade * nightLvl * 0.22;
+              }
+            } else if (vNightBid >= 0.86) {
+              // High-rise circular helipad ring + central H marking
+              float rDist = length(rp);
+              float ringM = smoothstep(0.32, 0.18, abs(rDist - 5.8));
+              float hLegs = step(abs(abs(rp.x) - 1.35), 0.28) * step(abs(rp.y), 2.1);
+              float hBar = step(abs(rp.x), 1.35) * step(abs(rp.y), 0.28);
+              float markM = clamp(ringM + max(hLegs, hBar), 0.0, 1.0) * step(rDist, 6.4);
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.78, 0.22), markM * rFade * 0.85);
+            }
           } else if (abs(rMat - 9.0) < 0.5) {
             // pool water: caustic ripples, glossy
             float w1 = sin(rs * 5.1 + rt * 2.3 + sin(rt * 3.1) * 1.5);

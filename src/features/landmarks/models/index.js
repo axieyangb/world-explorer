@@ -77,6 +77,31 @@ import * as m_atomium from "./atomium.js"; // feature/lm-west
 import * as m_shard from "./shard.js"; // feature/lm-west
 import * as m_cologne from "./cologne.js"; // feature/lm-west
 import * as m_elcastillo from "./elcastillo.js"; // feature/lm-west
+import * as m_sfcityhall from "./sfcityhall.js"; // feature/cluster4-landmarks
+import * as m_applepark from "./applepark.js"; // feature/cluster4-landmarks
+import * as m_googleplex from "./googleplex.js"; // feature/cluster4-landmarks
+import * as m_googlebayview from "./googlebayview.js"; // feature/cluster4-landmarks
+import * as m_nvidiahq from "./nvidiahq.js"; // feature/cluster4-landmarks
+import * as m_metahq from "./metahq.js"; // feature/cluster4-landmarks
+import * as m_hollywoodsign from "./hollywoodsign.js"; // feature/cluster4-landmarks
+import * as m_griffith from "./griffith.js"; // feature/cluster4-landmarks
+import * as m_whitehouse from "./whitehouse.js"; // feature/cluster4-landmarks
+import * as m_pentagon from "./pentagon.js"; // feature/cluster4-landmarks
+
+import * as m_amazon_spheres from "./amazon_spheres.js"; // feature/global-companies
+import * as m_microsoft_hq from "./microsoft_hq.js"; // feature/global-companies
+import * as m_openai_hq from "./openai_hq.js"; // feature/global-companies
+import * as m_salesforce_park from "./salesforce_park.js"; // feature/global-companies
+import * as m_stanford_campus from "./stanford_campus.js"; // feature/global-companies
+import * as m_mit_dome from "./mit_dome.js"; // feature/global-companies
+import * as m_nyse from "./nyse.js"; // feature/global-companies
+import * as m_tesla_giga from "./tesla_giga.js"; // feature/global-companies
+import * as m_spacex_starbase from "./spacex_starbase.js"; // feature/global-companies
+import * as m_tsmc_hq from "./tsmc_hq.js"; // feature/global-companies
+import * as m_tencent_hq from "./tencent_hq.js"; // feature/global-companies
+import * as m_samsung_hq from "./samsung_hq.js"; // feature/global-companies
+import * as m_cern_globe from "./cern_globe.js"; // feature/global-companies
+import * as m_louvre from "./louvre.js"; // feature/global-companies
 
 export const MODELS = {
   liberty: m_liberty,
@@ -152,4 +177,28 @@ export const MODELS = {
   shard: m_shard,
   cologne: m_cologne,
   elcastillo: m_elcastillo,
+  sfcityhall: m_sfcityhall,
+  applepark: m_applepark,
+  googleplex: m_googleplex,
+  googlebayview: m_googlebayview,
+  nvidiahq: m_nvidiahq,
+  metahq: m_metahq,
+  hollywoodsign: m_hollywoodsign,
+  griffith: m_griffith,
+  whitehouse: m_whitehouse,
+  pentagon: m_pentagon,
+  amazon_spheres: m_amazon_spheres,
+  microsoft_hq: m_microsoft_hq,
+  openai_hq: m_openai_hq,
+  salesforce_park: m_salesforce_park,
+  stanford_campus: m_stanford_campus,
+  mit_dome: m_mit_dome,
+  nyse: m_nyse,
+  tesla_giga: m_tesla_giga,
+  spacex_starbase: m_spacex_starbase,
+  tsmc_hq: m_tsmc_hq,
+  tencent_hq: m_tencent_hq,
+  samsung_hq: m_samsung_hq,
+  cern_globe: m_cern_globe,
+  louvre: m_louvre,
 };

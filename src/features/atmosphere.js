@@ -57,6 +57,7 @@ for (const [name, kf] of Object.entries(KF)) {
 const NIGHT_OVERCAST_TINT = new THREE.Color(0x1d232c);
 // [night] sodium / LED sky glow over a lit city (horizon, fog and cloud bases) and share of rooms lit by local hour
 const CITY_GLOW = new THREE.Color(0.55, 0.36, 0.2);
+const GOLDEN_AERIAL_TINT = new THREE.Color(0xff944d);
 const LIT_BY_HOUR = [0.3, 0.22, 0.15, 0.11, 0.1, 0.13, 0.24, 0.32, 0.3, 0.26, 0.26, 0.26, 0.26, 0.26, 0.26, 0.28, 0.36,
   0.48, 0.6, 0.66, 0.64, 0.58, 0.5, 0.4];
 function litFraction(h) {
@@ -143,6 +144,8 @@ class AtmosphereSystem {
     this.starRot = new THREE.Matrix3();
     this._tmp = new THREE.Color();
     this._fogGrey = new THREE.Color();
+    this._aerialCol = new THREE.Color();
+    this._bldgMatList = null;
     this._c = {};
     for (const k of COLOR_KEYS) this._c[k] = new THREE.Color();
 
@@ -376,7 +379,17 @@ class AtmosphereSystem {
     fogDensity = Math.max(fogDensity, 0.00042 * rain);
     fogDensity = lerp(fogDensity, 0.0021, fog);
 
-    const fogCol = this._tmp.copy(c.horizon).lerp(
+    const skyGlow = setW * (1 - 0.8 * ovc) * (1 - fog) * 0.65;
+    // Aerial perspective / distance fog tint: smoothly blends horizon color with warm golden-hour Rayleigh-Mie
+    // glow at dawn/dusk and subtle Rayleigh sky scatter by day (zero per-frame allocations).
+    const fogCol = this._tmp.copy(c.horizon);
+    if (dayW > 0.001) {
+      fogCol.lerp(c.hemiSky, dayW * (1 - ovc) * (1 - fog) * 0.08);
+    }
+    if (skyGlow > 0.001) {
+      fogCol.lerp(this._aerialCol.copy(GOLDEN_AERIAL_TINT), skyGlow * 0.28);
+    }
+    fogCol.lerp(
       this._fogGrey.copy(FOG_GREY).multiplyScalar(0.12 + 0.88 * rawDaylight),
       Math.min(1, fog + 0.4 * rain)
     );
@@ -410,11 +423,12 @@ class AtmosphereSystem {
     if (app.scene.background && app.scene.background.isColor) app.scene.background.copy(fogCol);
     app.renderer.toneMappingExposure = 1.12 + 0.06 * setW + 0.06 * dayishOvc;
 
-    // Night emissives follow darkness smoothly (same endpoints as the old presets)
+    // Night emissives follow darkness smoothly (zero-allocation cached list)
     const mats = app.mats;
     if (mats && mats.buildingMats) {
       const em = 0.06 + (1.25 - 0.06) * dark2;
-      for (const m of Object.values(mats.buildingMats)) m.emissiveIntensity = em;
+      const bList = this._bldgMatList || (this._bldgMatList = Object.values(mats.buildingMats));
+      for (let i = 0; i < bList.length; i++) bList[i].emissiveIntensity = em;
     }
     if (mats && mats.wfcBldgMat && mats.wfcBldgMat.userData.nightUniforms) {
       const nu = mats.wfcBldgMat.userData.nightUniforms;
@@ -442,7 +456,7 @@ class AtmosphereSystem {
       (0.3 + 0.7 * nightW) * smooth(-0.02, 0.06, this.moonDir.y) * (1 - 0.9 * ovc) * (1 - fog);
     u.uStars.value = nightW * (1 - ovc) * (1 - fog);
     u.uStarRot.value.copy(this.starRot);
-    u.uGlow.value = setW * (1 - 0.8 * ovc) * (1 - fog) * 0.6;
+    u.uGlow.value = skyGlow;
     if (u.uCityGlow) u.uCityGlow.value = cityGlow; // [night]
     u.uCloudCover.value = this.cloud;
     u.uCloudLit.value.copy(c.cloudLit);

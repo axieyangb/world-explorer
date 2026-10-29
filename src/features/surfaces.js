@@ -4,15 +4,18 @@ import { liteSurfaces } from './quality.js'; // [ui-mobile] Low / touch-Medium t
 /**
  * Weather/sky-aware surface shaders, patched in-place onto the shared materials via onBeforeCompile
  * (so worker-built chunks, horizon meshes and everything else using them pick it up for free):
- *   - waterMat:   animated normal waves, fresnel sky reflection, sun glint, shoreline foam
+ *   - waterMat:   animated normal waves, fresnel sky reflection, sun glint & micro-facet sparkle,
+ *                 shallow-water turquoise absorption & bottom caustics, multi-band breaking shore waves & seafoam lace
  *   - roadMat:    wet look in rain (darker albedo, low roughness, puddles, streaky sky reflections)
  *   - terrainMat / parkMat: slight wet darkening
  *   [street-props] close-range ground detail, faded out by distance and pixel footprint so nothing shimmers:
- *   - roadMat:    asphalt mottling, aggregate grain, cracks, gutter grime, utility-cut patches, manhole covers;
+ *   - roadMat:    asphalt mottling, aggregate grain, cracks, dual tire wear tracks, center oil-drip band,
+ *                 gutter grime, curbside cast-iron storm-drain grates, utility-cut patches, manhole covers;
  *                 sidewalks / paved ways get concrete flags (uPaving 0) or block pavers (uPaving 1) with joints,
- *                 per-slab tone, stains and gum spots. Uses the road-surface uv from chunk_builder.js.
+ *                 per-slab tone, stains, gum spots, tactile warning blister strips and street-tree grates/soil pits.
  *   - streetCurbMat: kerb stones with joints and grain;  line materials: worn paint, dimmed at night
- *   - terrainMat / parkMat: grass colour variation, blade grain and bare patches
+ *   - terrainMat / parkMat: grass colour variation, blade grain, bare patches, park mowing stripes & wildflowers,
+ *                 steep-slope rocky outcrop strata & scree cracks, and coastal sand ripples + wet-sand shoreline band
  * All materials share one uniform set (SURFACE_UNIFORMS) driven by src/features/atmosphere.js;
  * the uSea* / uSwell / uWhitecap terms come from src/features/sea_state.js (live sea state).
  */
@@ -63,6 +66,15 @@ function addWorldPosVarying(shader) {
     .replace(
       '#include <project_vertex>',
       '#include <project_vertex>\nvAtmoWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+    );
+}
+
+function addWorldPosAndNormVarying(shader) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vAtmoWorld;\nvarying vec3 vWorldNorm;')
+    .replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\nvAtmoWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWorldNorm = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);'
     );
 }
 
@@ -167,12 +179,60 @@ function patchWater(mat) {
             vec3 skyR = atmoSky(Rw);
             outgoingLight = mix(outgoingLight, skyR, clamp(fres, 0.0, 1.0) * 0.9);
             float shoreDist = vShoreUv.y > 0.5 ? (vShoreUv.y - 1.0 - abs(vShoreUv.x)) : 1000.0;
-            float fn = atmoNoise(vAtmoWorld.xz * 0.45 + vec2(uAtmoTime * 0.25, 0.0));
-            float band = 0.5 + 0.5 * sin(shoreDist * 2.2 - uAtmoTime * 1.6 + fn * 4.0);
-            float foam = (1.0 - smoothstep(0.0, 3.5, shoreDist)) * (0.55 + 0.45 * band) * smoothstep(0.25, 0.7, fn + 0.25);
-            float shallow = 1.0 - smoothstep(0.0, 12.0, shoreDist);
-            outgoingLight *= 1.0 - 0.25 * shallow;
-            outgoingLight = mix(outgoingLight, vec3(0.86, 0.9, 0.92) * uLightLevel, clamp(foam, 0.0, 1.0) * 0.75);
+            if (shoreDist < 10.0) {
+              // Shallow-water turquoise/emerald depth absorption & sunlit bottom caustics (shoreDist < 8.5)
+              float shallow = 1.0 - smoothstep(0.0, 8.5, shoreDist);
+              vec3 shallowTint = mix(vec3(0.08, 0.44, 0.47), vec3(0.22, 0.50, 0.43), 1.0 - smoothstep(0.0, 2.2, shoreDist)) * uLightLevel;
+              outgoingLight = mix(outgoingLight, shallowTint, shallow * (1.0 - fres * 0.6) * 0.52);
+              #ifndef WATER_LITE
+              if (shoreDist < 8.5) {
+                vec2 cUv = vAtmoWorld.xz * 0.72 + wNw.xz * 1.35;
+                float c1 = abs(sin(cUv.x * 3.1 + uAtmoTime * 1.35 + atmoNoise(cUv * 0.85) * 3.4)
+                             + cos(cUv.y * 3.3 - uAtmoTime * 1.15 + atmoNoise(cUv * 0.85 + 4.2) * 3.4));
+                float c2 = abs(sin((cUv.x - cUv.y) * 2.5 - uAtmoTime * 1.05 + atmoNoise(cUv * 1.25 + 8.1) * 2.8)
+                             + cos((cUv.x + cUv.y) * 2.7 + uAtmoTime * 1.45));
+                float caustic = pow(clamp(1.0 - min(c1, c2) * 0.54, 0.0, 1.0), 3.0);
+                caustic *= shallow * smoothstep(0.12, 0.85, shoreDist) * (1.0 - uRain * 0.75) * wFade * smoothstep(0.2, 0.7, uLightLevel);
+                outgoingLight += vec3(0.36, 0.70, 0.64) * caustic * uLightLevel * 0.42;
+              }
+              #endif
+              // Multi-band asymmetric breaking wave crests + trailing cellular seafoam lace (shoreDist < 4.5)
+              if (shoreDist < 4.5) {
+                float fn = atmoNoise(vAtmoWorld.xz * 0.40 + vec2(uAtmoTime * 0.20, -uAtmoTime * 0.12));
+                float fn2 = atmoNoise(vAtmoWorld.xz * 1.35 - vec2(uAtmoTime * 0.28, uAtmoTime * 0.22) + 5.3);
+                float wPhase = fract(shoreDist * 0.46 + uAtmoTime * 0.36 + fn * 0.55);
+                float wPhase2 = fract(shoreDist * 0.76 + uAtmoTime * 0.48 + fn2 * 0.42 + 0.37);
+                float crest1 = smoothstep(0.04, 0.16, wPhase) * (1.0 - smoothstep(0.16, 0.36, wPhase));
+                float crest2 = smoothstep(0.05, 0.18, wPhase2) * (1.0 - smoothstep(0.18, 0.40, wPhase2)) * 0.75;
+                float wake = smoothstep(0.12, 0.26, wPhase) * (1.0 - smoothstep(0.26, 0.84, wPhase));
+                float cellA = abs(atmoNoise(vAtmoWorld.xz * 2.4 + vec2(uAtmoTime * 0.22, -uAtmoTime * 0.16)) - 0.5);
+                float cellB = abs(atmoNoise(vAtmoWorld.xz * 5.1 - vec2(uAtmoTime * 0.16, uAtmoTime * 0.24) + 3.1) - 0.5);
+                float lace = (1.0 - smoothstep(0.02, 0.14, min(cellA, cellB))) * smoothstep(0.20, 0.65, fn + 0.22);
+                float swash = (1.0 - smoothstep(0.0, 0.85, shoreDist)) * (0.55 + 0.45 * sin(uAtmoTime * 1.9 + fn * 5.0));
+                float shoreEnv = 1.0 - smoothstep(0.0, 4.5, shoreDist);
+                float foam = shoreEnv * clamp((crest1 + crest2) * smoothstep(0.20, 0.65, fn + 0.25) + wake * lace * 0.85 + swash * 0.75, 0.0, 1.0);
+                outgoingLight = mix(outgoingLight, vec3(0.90, 0.93, 0.95) * uLightLevel, foam * 0.82);
+              }
+            }
+            // Solar glitter / micro-facet wave sparkle toward the sun direction
+            {
+              vec3 sunDirW = normalize(vec3(0.45, 0.42, 0.78));
+              vec3 sunGlintCol = mix(uSkyHorizon, vec3(1.0, 0.95, 0.82), 0.65) * uLightLevel;
+              #if NUM_DIR_LIGHTS > 0
+              sunDirW = normalize((vec4(directionalLights[0].direction, 0.0) * viewMatrix).xyz);
+              sunGlintCol = directionalLights[0].color * 0.65 + uSkyHorizon * 0.35;
+              #endif
+              vec3 Hw = normalize(Vw + vec3(sunDirW.x, max(sunDirW.y, 0.06), sunDirW.z));
+              float specBroad = pow(max(dot(wNw, Hw), 0.0), 140.0);
+              vec2 mUv = vAtmoWorld.xz * 3.8 + vec2(uAtmoTime * 0.85, -uAtmoTime * 0.65);
+              vec2 mUv2 = vAtmoWorld.xz * 7.4 + vec2(-uAtmoTime * 1.1, uAtmoTime * 0.95) + 11.7;
+              vec2 microJitter = (vec2(atmoNoise(mUv), atmoNoise(mUv2)) - 0.5) * 0.22 * wFade;
+              vec3 microNw = normalize(vec3(wNw.x * 1.65 + microJitter.x, wNw.y, wNw.z * 1.65 + microJitter.y));
+              float facetDot = max(dot(microNw, Hw), 0.0);
+              float sparkle = smoothstep(0.990, 0.9992, facetDot) * (0.38 + 0.62 * smoothstep(0.60, 0.88, atmoNoise(mUv2 * 1.4)));
+              float sunVis = smoothstep(0.14, 0.35, uLightLevel) * (1.0 - uRain * 0.85);
+              outgoingLight += sunGlintCol * (specBroad * 0.52 + sparkle * 1.80 * wFade) * sunVis;
+            }
             // [sea-state] whitecaps: wind-streaked patches riding the swell crests, open water only
             if (uWhitecap > 0.001 && wOpen > 0.01) {
               vec2 wd = uSeaWind.xy;
@@ -195,7 +255,7 @@ function patchWater(mat) {
           #include <opaque_fragment>`
         );
     },
-    liteSurfaces() ? 'atmo-water-2-lite' : 'atmo-water-2'
+    liteSurfaces() ? 'atmo-water-3-lite' : 'atmo-water-3'
   );
 }
 
@@ -239,7 +299,7 @@ float rdRough = 0.0;
   vec2 rfw = fwidth(vRoadUv);
   float lum = dot(diffuseColor.rgb, vec3(0.3333));
   bool plaza = abs(vRoadUv.y) < 0.5 && lum > 0.45; // paved areas without road coords: world-aligned flags
-  if (vRoadUv.y > -0.5 && !plaza) {
+  if (vRoadUv.y > -0.5 && !plaza && diffuseColor.r < 0.72) {
     // ---- asphalt (dark, unsaturated surfaces only: light decks and painted bike lanes keep their look) ----
     float sat = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)) - min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
     float aMask = (1.0 - smoothstep(0.40, 0.47, lum)) * (1.0 - smoothstep(0.1, 0.2, sat));
@@ -260,13 +320,22 @@ float rdRough = 0.0;
       v -= min(cr, 1.0) * 0.4 * fadeN;
     }
     #endif
-    vec3 cover = vec3(-1.0);
+    vec3 cover = vec3(0.0);
     if (vRoadUv.y > 0.5) {
       float q = floor(vRoadUv.y / 1000.0);
       float hw = q * 0.25, lat = vRoadUv.y - q * 1000.0, along = vRoadUv.x;
       float edge = min(lat, 2.0 * hw - lat);
       // gutter: dust and grime collect against the kerb
       v -= 0.16 * (1.0 - smoothstep(0.05, 0.8, edge)) * fadeM;
+      // dual polished tire wear tracks per lane (lat modulo ~3.3m, twin wheel tracks at +-0.85m) + center oil-drip band
+      float lane = floor(lat / 3.3);
+      float laneLocal = (lat - (lane + 0.5) * 3.3);
+      float wheelD = abs(abs(laneLocal) - 0.85);
+      float laneMask = smoothstep(0.45, 1.15, edge) * fadeM;
+      float tireTrack = exp(-wheelD * wheelD / 0.10) * (0.82 + 0.36 * atmoNoise(vec2(along * 0.16, lat * 2.2))) * laneMask;
+      float oilBand = exp(-laneLocal * laneLocal / 0.085) * (0.45 + 0.55 * atmoNoise(vec2(along * 0.11, lane * 7.3 + 1.9))) * laneMask;
+      v -= tireTrack * 0.065 + oilBand * 0.095;
+      rdRough -= (tireTrack * 0.08 + oilBand * 0.04) * aMask;
       // utility-cut repair patches, rectangles aligned with the carriageway
       vec2 cs = vec2(9.0, 3.4);
       vec2 cp = vec2(along, lat) / cs, ci = floor(cp), f = fract(cp) * cs;
@@ -282,7 +351,6 @@ float rdRough = 0.0;
       v -= seam * 0.3 * fadeN;
       rdRough -= inside * (h > 0.92 ? 0.1 : 0.0);
       // round iron manhole / utility covers at lane centres
-      float lane = floor(lat / 3.3);
       float mc = floor(along / 23.0);
       float mh = atmoHash(vec2(mc, lane) + 9.3);
       if (mh > 0.62 && lat > 0.8 && 2.0 * hw - lat > 0.8) {
@@ -294,13 +362,37 @@ float rdRough = 0.0;
         vec2 lp = (vec2(along, lat) - c);
         float grid = step(0.5, fract((lp.x + lp.y) * 9.0)) * step(0.5, fract((lp.x - lp.y) * 9.0));
         float shade = mix(0.085 + 0.03 * grid * clamp(1.0 - aa * 30.0, 0.0, 1.0), 0.13, rim);
-        cover = vec3(disc, shade, 0.0);
+        cover = vec3(disc, shade, 0.5);
+      }
+      // rectangular cast-iron curbside storm-drain grates along the gutter (edge > 0.12 && edge < 0.52, spaced ~28m)
+      if (edge > 0.08 && edge < 0.56) {
+        float sideId = step(hw, lat);
+        float gc = floor((along + sideId * 14.0) / 28.0);
+        float gh = atmoHash(vec2(gc, sideId + q * 0.013) + 17.7);
+        if (gh > 0.22) {
+          float gAlong = (along + sideId * 14.0) - (gc + 0.5) * 28.0;
+          float gEdge = edge - 0.32;
+          vec2 gd = abs(vec2(gAlong, gEdge)) - vec2(0.38, 0.20);
+          float gaa = max(0.008, max(rfw.x, rfw.y));
+          float gBox = 1.0 - smoothstep(-gaa, gaa, max(gd.x, gd.y));
+          if (gBox > cover.x) {
+            float gInner = 1.0 - smoothstep(-gaa, gaa, max(gd.x + 0.045, gd.y + 0.045));
+            float gRim = gBox - gInner;
+            float slotX = smoothstep(0.18, 0.28, abs(fract(gAlong * 5.5) - 0.5));
+            float crossBar = 1.0 - smoothstep(0.018, 0.03, abs(gEdge));
+            float barMask = clamp(slotX + crossBar, 0.0, 1.0);
+            float slotVis = clamp(1.0 - gaa * 28.0, 0.0, 1.0);
+            float gShade = mix(0.024, 0.14, mix(0.45, barMask, slotVis));
+            gShade = mix(gShade, 0.17, gRim);
+            cover = vec3(gBox, gShade, gRim + gInner * barMask * 0.65);
+          }
+        }
       }
     }
     diffuseColor.rgb *= 1.0 + aMask * v;
     if (cover.x > 0.0) {
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(cover.y * 0.95, cover.y * 0.9, cover.y * 0.85), cover.x * aMask);
-      rdRough -= cover.x * aMask * 0.3;
+      rdRough -= cover.x * aMask * (0.22 + 0.16 * cover.z);
     }
   } else {
     // ---- sidewalk / paved footway / plaza ----
@@ -349,6 +441,50 @@ float rdRough = 0.0;
     v -= gum * 0.3 * clamp(1.0 - fpw * 30.0, 0.0, 1.0);
     diffuseColor.rgb *= (1.0 + v) * (1.0 - 0.38 * j * fadeM);
     rdRough += j * 0.05;
+    if (!plaza && fadeM > 0.0) {
+      float swAa = max(0.008, max(rfw.x, rfw.y));
+      // Tactile warning paving strips along the kerb edge at crossing/corner intervals (~36m)
+      float tcIdx = floor((pp.x + 18.0) / 36.0);
+      float tcAlong = (pp.x + 18.0) - (tcIdx + 0.5) * 36.0;
+      vec2 tcBox = abs(vec2(tcAlong, pp.y - 0.36)) - vec2(1.15, 0.26);
+      float tcMask = (1.0 - smoothstep(-swAa, swAa, max(tcBox.x, tcBox.y))) * fadeM;
+      if (tcMask > 0.0) {
+        vec2 bd = fract(pp / 0.05) - 0.5;
+        float dotR = length(bd);
+        float dotVis = clamp(1.0 - swAa * 16.0, 0.0, 1.0);
+        float blister = (1.0 - smoothstep(0.18, 0.32, dotR)) * dotVis;
+        float bShadow = (smoothstep(0.18, 0.30, dotR) - smoothstep(0.30, 0.42, dotR)) * dotVis;
+        float tcTone = step(0.5, atmoHash(vec2(tcIdx, 4.1)));
+        vec3 tacCol = mix(vec3(0.78, 0.54, 0.22), vec3(0.72, 0.37, 0.22), tcTone);
+        tacCol *= 1.0 + 0.14 * blister - 0.12 * bShadow;
+        diffuseColor.rgb = mix(diffuseColor.rgb, tacCol, tcMask * 0.92);
+        rdRough = mix(rdRough, -0.04, tcMask);
+      }
+      // Street-tree soil pits / cast-iron tree grates every ~18m (offset from tactile strips)
+      float tpIdx = floor(pp.x / 18.0);
+      float tpHash = atmoHash(vec2(tpIdx, 11.3));
+      if (tpHash > 0.32 && pp.y > 0.22 && pp.y < 1.48) {
+        vec2 pitLocal = vec2(pp.x - (tpIdx + 0.5) * 18.0, pp.y - 0.85);
+        vec2 pitBox = abs(pitLocal) - vec2(0.56, 0.56);
+        float pitMask = (1.0 - smoothstep(-swAa, swAa, max(pitBox.x, pitBox.y))) * fadeM;
+        if (pitMask > 0.0) {
+          float rPit = length(pitLocal);
+          float soilHole = 1.0 - smoothstep(0.23 - swAa, 0.23 + swAa, rPit);
+          float outerRim = smoothstep(0.50, 0.53, max(abs(pitLocal.x), abs(pitLocal.y)));
+          float innerCollar = 1.0 - smoothstep(0.015, 0.03, abs(rPit - 0.24));
+          float ringBar = smoothstep(0.15, 0.30, abs(fract(rPit * 9.0) - 0.5));
+          float radAngle = atan(pitLocal.y, pitLocal.x);
+          float radBar = 1.0 - smoothstep(0.08, 0.16, abs(sin(radAngle * 8.0)));
+          float grateDetail = clamp(1.0 - swAa * 22.0, 0.0, 1.0);
+          float ironMask = (1.0 - soilHole) * mix(0.65, clamp(ringBar + radBar + outerRim + innerCollar, 0.0, 1.0), grateDetail);
+          vec3 soilCol = vec3(0.15, 0.11, 0.08) * (0.85 + 0.3 * atmoNoise(wp * 8.0));
+          vec3 ironCol = vec3(0.21, 0.20, 0.19) * (0.92 + 0.16 * atmoNoise(wp * 14.0));
+          vec3 pitCol = mix(soilCol, ironCol, ironMask);
+          diffuseColor.rgb = mix(diffuseColor.rgb, pitCol, pitMask);
+          rdRough = mix(rdRough, mix(0.08, -0.18, ironMask), pitMask);
+        }
+      }
+    }
   }
 }
 `;
@@ -394,7 +530,7 @@ function patchRoad(mat) {
           #include <opaque_fragment>`
         );
     },
-    liteSurfaces() ? 'atmo-road-2-lite' : 'atmo-road-2'
+    liteSurfaces() ? 'atmo-road-3-lite' : 'atmo-road-3'
   );
 }
 
@@ -460,39 +596,151 @@ function patchLines(mat, wear, key) {
   );
 }
 
-// [street-props] grass: patchy colour (lush / dry), fine blade grain and the odd bare patch; green fragments only
-function patchGrass(mat, key) {
+// [street-props] grass & park detail: patchy colour (lush / dry), fine blade grain, bare patches,
+// park lawn mowing stripes + wildflower/clover micro-clusters, and screen-space normal micro-relief
+function patchGrass(mat, key, isPark = false) {
   chainCompile(
     mat,
     (shader) => {
-      addWorldPosVarying(shader);
+      addWorldPosAndNormVarying(shader);
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', `#include <common>\nvarying vec3 vAtmoWorld;\n${NOISE_GLSL}\nfloat grFbm(vec2 p) { return atmoNoise(p) * 0.5 + atmoNoise(p * 2.03 + 1.7) * 0.3 + atmoNoise(p * 4.07 + 3.1) * 0.2; }`)
+        .replace(
+          '#include <common>',
+          `#include <common>\nvarying vec3 vAtmoWorld;\nvarying vec3 vWorldNorm;\n${NOISE_GLSL}\nfloat grFbm(vec2 p) { return atmoNoise(p) * 0.5 + atmoNoise(p * 2.03 + 1.7) * 0.3 + atmoNoise(p * 4.07 + 3.1) * 0.2; }`
+        )
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
+          float grRough = 0.0;
+          float grRelief = 0.0;
           {
             vec3 c0 = diffuseColor.rgb;
             float gm = smoothstep(0.0, 0.05, c0.g - max(c0.r, c0.b));
+            vec2 wp = vAtmoWorld.xz;
+            float camD = length(vAtmoWorld - cameraPosition);
+            float fpw = length(fwidth(wp));
             if (gm > 0.0) {
-              vec2 wp = vAtmoWorld.xz;
-              float camD = length(vAtmoWorld - cameraPosition);
-              float fpw = length(fwidth(wp));
               float fadeM = 1.0 - smoothstep(300.0, 1500.0, camD);
               float n1 = grFbm(wp * 0.035);
               vec3 c = mix(c0 * vec3(0.86, 1.04, 0.9), c0 * vec3(1.2, 1.08, 0.72), smoothstep(0.38, 0.72, n1) * fadeM);
               c *= 1.0 + (grFbm(wp * 0.6) - 0.5) * 0.26 * fadeM;
               float g1 = clamp(1.0 - fpw * 5.0, 0.0, 1.0), g2 = clamp(1.0 - fpw * 25.0, 0.0, 1.0);
-              c *= 1.0 + (atmoNoise(wp * vec2(9.0, 7.0)) - 0.5) * 0.22 * g1 + (atmoNoise(wp * vec2(34.0, 22.0)) - 0.5) * 0.26 * g2;
+              float bladeN = (atmoNoise(wp * vec2(9.0, 7.0)) - 0.5) * 0.22 * g1 + (atmoNoise(wp * vec2(34.0, 22.0)) - 0.5) * 0.26 * g2;
+              c *= 1.0 + bladeN;
+              grRelief += bladeN * 0.14 * gm;
+              ${isPark ? `
+              // Park lawn mowing stripes (alternating 3.5m bands with +-4% albedo/roughness sheen)
+              float fadePark = 1.0 - smoothstep(60.0, 280.0, camD);
+              float mowPhase = dot(wp, vec2(0.8, 0.6)) / 3.5;
+              float mowStripe = smoothstep(-0.18, 0.18, sin(mowPhase * 3.14159265));
+              c *= 1.0 + (mowStripe - 0.5) * 0.08 * fadePark;
+              grRough += (0.5 - mowStripe) * 0.08 * fadePark * gm;
+              // Procedural wildflower & clover micro-clusters (white daisy, yellow dandelion, lavender/clover)
+              float patchNoise = smoothstep(0.50, 0.75, grFbm(wp * 0.16 + 11.3));
+              float clover = smoothstep(0.52, 0.76, atmoNoise(wp * 1.9 + 4.2)) * patchNoise * g1;
+              c = mix(c, vec3(0.14, 0.34, 0.13), clover * 0.35);
+              float fFade = clamp(1.0 - fpw * 14.0, 0.0, 1.0) * (1.0 - smoothstep(18.0, 68.0, camD));
+              if (fFade > 0.0 && patchNoise > 0.04) {
+                vec2 fc = floor(wp * 13.5);
+                vec2 ff = fract(wp * 13.5) - 0.5;
+                float fh = atmoHash(fc + 5.17);
+                if (fh > 0.77) {
+                  vec2 jitter = (vec2(atmoHash(fc + 1.1), atmoHash(fc + 2.3)) - 0.5) * 0.32;
+                  float speck = (1.0 - smoothstep(0.12, 0.34, length(ff + jitter))) * patchNoise * fFade;
+                  vec3 flowerCol = fh > 0.92 ? vec3(0.76, 0.58, 0.88) : (fh > 0.85 ? vec3(0.95, 0.78, 0.16) : vec3(0.96, 0.95, 0.88));
+                  c = mix(c, flowerCol, clamp(speck * 0.88, 0.0, 1.0));
+                  grRelief += speck * 0.08;
+                }
+              }
+              ` : ''}
               float bare = smoothstep(0.74, 0.84, atmoNoise(wp * 0.09 + 5.0) * 0.7 + atmoNoise(wp * 0.7) * 0.3) * fadeM;
               float lum = dot(c0, vec3(0.299, 0.587, 0.114));
               c = mix(c, vec3(0.42, 0.33, 0.22) * lum * 1.6, bare * 0.75);
               diffuseColor.rgb = mix(c0, c, gm);
             }
           }`
+        )
+        .replace(
+          '#include <normal_fragment_maps>',
+          `#include <normal_fragment_maps>
+          if (abs(grRelief) > 1e-5) {
+            vec2 dGr = clamp(vec2(dFdx(grRelief), dFdy(grRelief)), vec2(-0.16), vec2(0.16));
+            normal = normalize(normal + vec3(-dGr.x, -dGr.y, 0.0));
+          }`
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = clamp(roughnessFactor + grRough, 0.06, 1.0);`
         );
     },
     key
+  );
+}
+
+// [terrain-detail] Steep-slope rocky outcrop strata & scree cracks + coastal sand ripples & wet-sand shoreline band
+const makeTerrainDetail = (isPark) => `
+{
+  vec2 wp = vAtmoWorld.xz;
+  float camD = length(vAtmoWorld - cameraPosition);
+  float fpw = length(fwidth(wp));
+  float tFade = 1.0 - smoothstep(450.0, 2200.0, camD);
+  float ny = abs(vWorldNorm.y);
+  float tNat = ${isPark ? "1.0" : "1.0 - smoothstep(0.18, 0.55, clamp(vGroundInfo.x, 0.0, 1.0))"};
+  // Steep slopes (abs(vWorldNorm.y) < 0.85): rocky outcrop strata bands & scree cracks
+  if (ny < 0.85 && tFade > 0.0) {
+    float slopeMask = 1.0 - smoothstep(0.52, 0.85, ny);
+    float outcropN = atmoNoise(wp * 0.045 + vAtmoWorld.y * 0.08);
+    float rockMask = clamp(slopeMask * (0.76 + 0.48 * outcropN), 0.0, 1.0) * tFade * mix(0.45, 1.0, tNat);
+    float strataY = vAtmoWorld.y * 0.55 + atmoNoise(wp * 0.035) * 3.2 + atmoNoise(wp * 0.14 + 4.1) * 0.85;
+    float strata = sin(strataY * 3.4) * 0.5 + 0.5;
+    float fineStrata = atmoNoise(vec2(strataY * 4.5, dot(wp, vec2(0.7, -0.7)) * 0.12));
+    float ledge = smoothstep(0.68, 0.88, fract(strataY * 0.85));
+    vec2 triUv = wp * 0.35 + vec2(vAtmoWorld.y * 0.6, -vAtmoWorld.y * 0.4);
+    float screeCrack = smoothstep(0.03, 0.08, abs(atmoNoise(triUv * 2.2) - 0.5))
+                     * smoothstep(0.03, 0.09, abs(atmoNoise(triUv * 5.1 + 3.7) - 0.5));
+    float crackDark = mix(1.0, 0.52 + 0.48 * screeCrack, clamp(1.0 - fpw * 6.0, 0.0, 1.0));
+    vec3 rockWarm = vec3(0.49, 0.43, 0.37);
+    vec3 rockCool = vec3(0.36, 0.37, 0.39);
+    vec3 rockOchre = vec3(0.55, 0.44, 0.33);
+    vec3 rockCol = mix(rockCool, rockWarm, strata) * (0.82 + 0.32 * fineStrata);
+    rockCol = mix(rockCol, rockOchre, ledge * 0.35) * crackDark * (1.0 - 0.18 * ledge);
+    diffuseColor.rgb = mix(diffuseColor.rgb, rockCol, rockMask);
+    grRough = mix(grRough, 0.08 - 0.12 * (1.0 - screeCrack), rockMask);
+    grRelief += (strata * 0.12 - (1.0 - screeCrack) * 0.15) * rockMask;
+  }
+  // Coastal ground near water level (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2): wind-blown sand ripples + wet-sand shoreline
+  if (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2 && tFade > 0.0) {
+    float coastElev = smoothstep(-0.5, 0.05, vAtmoWorld.y) * (1.0 - smoothstep(1.5, 3.2, vAtmoWorld.y));
+    float flatMask = smoothstep(0.72, 0.93, ny);
+    float coastMask = coastElev * flatMask * tFade * tNat * ${isPark ? "0.35" : "1.0"};
+    if (coastMask > 0.001) {
+      float rippleCoord = dot(wp, vec2(0.85, 0.52)) * 4.2 + atmoNoise(wp * 0.8) * 2.2;
+      float sandRipple = (0.5 + 0.5 * sin(rippleCoord)) * clamp(1.0 - fpw * 10.0, 0.0, 1.0);
+      float sandGrain = (atmoNoise(wp * 18.0) - 0.5) * 0.12 * clamp(1.0 - fpw * 20.0, 0.0, 1.0);
+      vec3 drySand = vec3(0.76, 0.70, 0.58) * (0.94 + 0.10 * atmoNoise(wp * 0.15)) * (1.0 + (sandRipple - 0.5) * 0.09 + sandGrain);
+      float wetWave = (atmoNoise(wp * 0.25) - 0.5) * 0.22;
+      float wetSandMask = (1.0 - smoothstep(0.15, 0.85, vAtmoWorld.y + wetWave)) * smoothstep(-0.5, -0.05, vAtmoWorld.y);
+      vec3 wetSand = drySand * vec3(0.50, 0.48, 0.45);
+      vec3 sandCol = mix(drySand, wetSand, wetSandMask);
+      diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, coastMask * 0.85);
+      grRough = mix(grRough, mix(0.06, -0.58, wetSandMask), coastMask);
+      grRelief += (sandRipple - 0.5) * 0.06 * (1.0 - wetSandMask) * coastMask;
+    }
+  }
+}
+`;
+
+function patchTerrain(mat, isPark = false) {
+  chainCompile(
+    mat,
+    (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>\n${makeTerrainDetail(isPark)}`
+      );
+    },
+    isPark ? '-terrain-detail-park-1' : '-terrain-detail-1'
   );
 }
 
@@ -628,9 +876,14 @@ export function installSurfaceShaders(mats) {
   if (mats.roadMat) patchRoad(mats.roadMat);
   if (mats.terrainMat) patchWetGround(mats.terrainMat, 0.22, 'atmo-wet-terrain');
   if (mats.parkMat) patchWetGround(mats.parkMat, 0.18, 'atmo-wet-park');
-  // [street-props]
-  if (mats.terrainMat) patchGrass(mats.terrainMat, '-grass-1');
-  if (mats.parkMat) patchGrass(mats.parkMat, '-grass-1');
+  // [street-props] + [terrain-detail]
+  // Note: chainCompile prepends each #include <color_fragment> block before earlier ones,
+  // so registering patchTerrain before patchGrass and patchUrbanGround means at runtime:
+  // URBAN_GROUND runs 1st -> GRASS_DETAIL runs 2nd -> TERRAIN_DETAIL runs 3rd.
+  if (mats.terrainMat) patchTerrain(mats.terrainMat, false);
+  if (mats.parkMat) patchTerrain(mats.parkMat, true);
+  if (mats.terrainMat) patchGrass(mats.terrainMat, '-grass-2', false);
+  if (mats.parkMat) patchGrass(mats.parkMat, '-grass-2-park', true);
   if (mats.terrainMat) patchUrbanGround(mats.terrainMat); // [ground] after patchGrass so it runs first
   if (mats.streetCurbMat) patchKerb(mats.streetCurbMat);
   if (mats.streetLineMat) patchLines(mats.streetLineMat, true, 'atmo-lines-1');

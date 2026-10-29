@@ -968,10 +968,11 @@ export function buildYards(houses, others, roads, pools, getY, sinkFor) {
     const hedge = region === 'uk' || region === 'eu' || region === 'nordic' || region === 'paris' || region === 'japan';
 
     // driveway: concrete strip from the front wall to the curb on one side of the house
+    let driveSide = 0;
     if (!h.blocked && rnd(h.seed, 103) < (region === 'us' || region === 'la' ? 0.92 : 0.6)) {
-      const side = rnd(h.seed, 107) < 0.5 ? -1 : 1;
+      driveSide = rnd(h.seed, 107) < 0.5 ? -1 : 1;
       const halfW = 1.55;
-      const ac = side < 0 ? a0 + halfW + 0.3 : a1 - halfW - 0.3;
+      const ac = driveSide < 0 ? a0 + halfW + 0.3 : a1 - halfW - 0.3;
       const fA = f1 - 0.4, fB = bestD - (best.s.hw || 4) + 0.2;
       const steps = Math.max(1, Math.ceil((fB - fA) / 6));
       const dRgb = region === 'uk' || region === 'eu' ? [0.46, 0.44, 0.42] : [0.66, 0.65, 0.62];
@@ -980,6 +981,39 @@ export function buildYards(houses, others, roads, pools, getY, sinkFor) {
         const p1 = W(ac - halfW, fa), p2 = W(ac + halfW, fa), p3 = W(ac + halfW, fb), p4 = W(ac - halfW, fb);
         const y1 = getY(p1[0], p1[1]) + 0.13, y2 = getY(p2[0], p2[1]) + 0.13, y3 = getY(p3[0], p3[1]) + 0.13, y4 = getY(p4[0], p4[1]) + 0.13;
         quad(sink, p1[0], y1, p1[1], p2[0], y2, p2[1], p3[0], y3, p3[1], p4[0], y4, p4[1], 0, 1, 0, dRgb);
+      }
+    }
+
+    // front stone/concrete walkway path from the house front entrance out to the street lot line + foundation flowerbed planters
+    if (!h.blocked && front - f1 >= 2.1 && a1 - a0 >= 4.2) {
+      const walkA = (a0 + a1) * 0.5 - driveSide * Math.min(1.15, (a1 - a0) * 0.15);
+      const walkHalfW = 0.58;
+      const wfA = f1 - 0.15, wfB = front + 0.12;
+      const wSteps = Math.max(1, Math.ceil((wfB - wfA) / 5));
+      const walkRgb = [0.75, 0.72, 0.67];
+      for (let s = 0; s < wSteps; s++) {
+        const fa = wfA + ((wfB - wfA) * s) / wSteps, fb = wfA + ((wfB - wfA) * (s + 1)) / wSteps;
+        const p1 = W(walkA - walkHalfW, fa), p2 = W(walkA + walkHalfW, fa), p3 = W(walkA + walkHalfW, fb), p4 = W(walkA - walkHalfW, fb);
+        const y1 = getY(p1[0], p1[1]) + 0.135, y2 = getY(p2[0], p2[1]) + 0.135, y3 = getY(p3[0], p3[1]) + 0.135, y4 = getY(p4[0], p4[1]) + 0.135;
+        quad(sink, p1[0], y1, p1[1], p2[0], y2, p2[1], p3[0], y3, p3[1], p4[0], y4, p4[1], 0, 1, 0, walkRgb);
+      }
+      // Foundation flowerbed / blooming shrub planters flanking the front wall
+      const shrubRgb = [0.16, 0.36, 0.15];
+      const flowerPick = Math.floor(rnd(h.seed, 131) * 3);
+      const bloomRgb = flowerPick === 0 ? [0.86, 0.32, 0.42] : flowerPick === 1 ? [0.64, 0.44, 0.82] : [0.92, 0.72, 0.22];
+      const bedSpans = [
+        [driveSide < 0 ? a0 + 3.5 : a0 + 0.45, walkA - walkHalfW - 0.25],
+        [walkA + walkHalfW + 0.25, driveSide > 0 ? a1 - 3.5 : a1 - 0.45],
+      ];
+      for (let bIdx = 0; bIdx < bedSpans.length; bIdx++) {
+        const [ba0, ba1] = bedSpans[bIdx];
+        const bLen = (ba1 - ba0) * 0.5;
+        if (bLen < 0.55) continue;
+        const bcA = (ba0 + ba1) * 0.5;
+        const [bx, bz] = W(bcA, f1 + 0.48);
+        const by = getY(bx, bz);
+        orientedBox(sink, bx, by + 0.04, bz, ax, az, bLen, 0.42, 0.52, shrubRgb);
+        orientedBox(sink, bx, by + 0.56, bz, ax, az, Math.max(0.35, bLen - 0.08), 0.34, 0.12, bloomRgb);
       }
     }
 
@@ -1058,6 +1092,23 @@ export function buildYards(houses, others, roads, pools, getY, sinkFor) {
           const wc = [0.12, 0.62, 0.74];
           tri(sink, w1[0], y + 0.19, w1[1], w2[0], y + 0.19, w2[1], w3[0], y + 0.19, w3[1], 0, 1, 0, wc, wUv(w1), wUv(w2), wUv(w3));
           tri(sink, w1[0], y + 0.19, w1[1], w3[0], y + 0.19, w3[1], w4[0], y + 0.19, w4[1], 0, 1, 0, wc, wUv(w1), wUv(w3), wUv(w4));
+
+          // Poolside wooden lounge deck + patio sun umbrella
+          const deckHl = Math.min(pl * 0.78, 2.35), deckHw = 0.82;
+          const deckF = pf + pw + 0.5 + deckHw + 0.08;
+          const [dcx, dcz] = W(pa, deckF);
+          orientedBox(sink, dcx, y + 0.04, dcz, ax, az, deckHl, deckHw, 0.14, [0.58, 0.40, 0.25]);
+          // Patio sun umbrella (pole + 4-sloped colorful pyramid canopy)
+          const [ucx, ucz] = W(pa, deckF);
+          orientedBox(sink, ucx, y + 0.18, ucz, ax, az, 0.06, 0.06, 1.95, [0.22, 0.21, 0.20]);
+          const uPick = Math.floor(rnd(h.seed, 139) * 3);
+          const uRgb = uPick === 0 ? [0.88, 0.30, 0.24] : uPick === 1 ? [0.20, 0.56, 0.84] : [0.94, 0.74, 0.20];
+          const uR = 1.18, yE = y + 2.05, yP = y + 2.44;
+          const u1 = W(pa - uR, deckF - uR), u2 = W(pa + uR, deckF - uR), u3 = W(pa + uR, deckF + uR), u4 = W(pa - uR, deckF + uR);
+          tri(sink, u1[0], yE, u1[1], u2[0], yE, u2[1], ucx, yP, ucz, -fx * 0.3, 0.95, -fz * 0.3, uRgb, null);
+          tri(sink, u2[0], yE, u2[1], u3[0], yE, u3[1], ucx, yP, ucz, ax * 0.3, 0.95, az * 0.3, uRgb, null);
+          tri(sink, u3[0], yE, u3[1], u4[0], yE, u4[1], ucx, yP, ucz, fx * 0.3, 0.95, fz * 0.3, uRgb, null);
+          tri(sink, u4[0], yE, u4[1], u1[0], yE, u1[1], ucx, yP, ucz, -ax * 0.3, 0.95, -az * 0.3, uRgb, null);
         }
       }
     }

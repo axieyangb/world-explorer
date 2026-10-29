@@ -36,6 +36,33 @@ export const QUICK_WORLD_DESTINATIONS = [
   { id: "hk_central", name: "Hong Kong · Central", nameZh: "香港 · 中环维港", street: "Connaught Rd Central", city: "Hong Kong, CN", cityZh: "中国 香港", lat: 22.2819, lon: 114.1581 },
   { id: "bj_guomao", name: "Beijing · CBD Guomao", nameZh: "北京 · 国贸 CBD", street: "East 3rd Ring Rd · CBD", city: "Beijing, CN", cityZh: "中国 北京", lat: 39.9095, lon: 116.4615 },
   { id: "bj_forbidden_city", name: "Beijing · Forbidden City", nameZh: "北京 · 故宫天安门", street: "Chang\x27an Ave", city: "Beijing, CN", cityZh: "中国 北京", lat: 39.9087, lon: 116.3975 },
+  { id: "sf_city_hall", name: "SF City Hall · Civic Center", nameZh: "旧金山 · 市政厅", street: "1 Dr Carlton B Goodlett Pl", city: "San Francisco, US", cityZh: "美国 旧金山", lat: 37.7793, lon: -122.4193 },
+  { id: "sv_apple_park", name: "Apple Park · Cupertino", nameZh: "库比蒂诺 · 苹果园区 Apple Park", street: "One Apple Park Way", city: "Cupertino, US", cityZh: "美国 库比蒂诺", lat: 37.3349, lon: -122.0090 },
+  { id: "sv_googleplex", name: "Googleplex · Mountain View", nameZh: "山景城 · 谷歌总部 Googleplex", street: "1600 Amphitheatre Pkwy", city: "Mountain View, US", cityZh: "美国 山景城", lat: 37.4220, lon: -122.0841 },
+  { id: "sv_google_bayview", name: "Google Bay View · Mountain View", nameZh: "山景城 · 谷歌湾景园区 Bay View", street: "100 Bay View Dr", city: "Mountain View, US", cityZh: "美国 山景城", lat: 37.4184, lon: -122.0575 },
+  { id: "sv_nvidia_hq", name: "NVIDIA HQ · Santa Clara", nameZh: "圣克拉拉 · 英伟达总部 NVIDIA HQ", street: "2788 San Tomas Expy · Endeavor & Voyager", city: "Santa Clara, US", cityZh: "美国 圣克拉拉", lat: 37.3707, lon: -121.9642 },
+  { id: "sv_meta_hq", name: "Meta HQ · Menlo Park", nameZh: "门洛帕克 · Meta 总部", street: "1 Hacker Way", city: "Menlo Park, US", cityZh: "美国 门洛帕克", lat: 37.4845, lon: -122.1477 },
+  { id: "la_hollywood_sign", name: "Hollywood Sign · Los Angeles", nameZh: "洛杉矶 · 好莱坞标志 Hollywood Sign", street: "Mount Lee Dr · Griffith Park", city: "Los Angeles, US", cityZh: "美国 洛杉矶", lat: 34.1341, lon: -118.3215 },
+  { id: "la_griffith", name: "Griffith Observatory · Los Angeles", nameZh: "洛杉矶 · 格里菲斯天文台", street: "2800 E Observatory Rd", city: "Los Angeles, US", cityZh: "美国 洛杉矶", lat: 34.1184, lon: -118.3004 },
+  { id: "dc_us_capitol", name: "US Capitol · Washington DC", nameZh: "华盛顿 · 美国国会大厦 US Capitol", street: "First St SE · Capitol Hill", city: "Washington DC, US", cityZh: "美国 华盛顿", lat: 38.8898, lon: -77.0091 },
+  { id: "dc_white_house", name: "White House · Washington DC", nameZh: "华盛顿 · 白宫 White House", street: "1600 Pennsylvania Ave NW", city: "Washington DC, US", cityZh: "美国 华盛顿", lat: 38.8977, lon: -77.0365 },
+  { id: "dc_pentagon", name: "The Pentagon · Washington DC", nameZh: "华盛顿 · 五角大楼 Pentagon", street: "1400 Defense Pentagon", city: "Arlington, US", cityZh: "美国 阿灵顿", lat: 38.8719, lon: -77.0563 },
+  {"id":"sea_amazon_spheres","name":"Amazon Spheres & HQ · Seattle","nameZh":"西雅图 · 亚马逊球体生态园与总部 Amazon Spheres","street":"2111 7th Ave · Doppler & Spheres","city":"Seattle, US","cityZh":"美国 西雅图","lat":47.6156,"lon":-122.3395},
+  {"id":"sea_microsoft_hq","name":"Microsoft HQ · Redmond","nameZh":"雷德蒙德 · 微软总部园区 Microsoft HQ","street":"One Microsoft Way · Redmond Campus","city":"Redmond, US","cityZh":"美国 雷德蒙德","lat":47.6423,"lon":-122.1369},
+  {"id":"sf_openai_hq","name":"OpenAI HQ · San Francisco","nameZh":"旧金山 · OpenAI 总部园区 Mission Bay","street":"1455 3rd St · Mission Bay","city":"San Francisco, US","cityZh":"美国 旧金山","lat":37.7685,"lon":-122.3905},
+  {"id":"sf_ferry_building","name":"SF Ferry Building · Embarcadero","nameZh":"旧金山 · 渡轮大厦 Ferry Building","street":"1 Ferry Building · The Embarcadero","city":"San Francisco, US","cityZh":"美国 旧金山","lat":37.7955,"lon":-122.3937},
+  {"id":"sf_salesforce_park","name":"Salesforce Park & Tower · SF","nameZh":"旧金山 · Salesforce 空中花园与大厦","street":"425 Mission St · Transbay","city":"San Francisco, US","cityZh":"美国 旧金山","lat":37.7897,"lon":-122.396},
+  {"id":"sv_stanford","name":"Stanford University · Main Quad & Hoover Tower","nameZh":"斯坦福 · 斯坦福大学主方院与胡佛塔","street":"450 Jane Stanford Way · Palm Dr","city":"Stanford, US","cityZh":"美国 斯坦福","lat":37.4275,"lon":-122.1697},
+  {"id":"bos_mit_dome","name":"MIT Great Dome · Cambridge","nameZh":"剑桥 · 麻省理工学院大圆顶 MIT","street":"77 Massachusetts Ave · Killian Court","city":"Cambridge, US","cityZh":"美国 剑桥","lat":42.3598,"lon":-71.0921},
+  {"id":"nyc_nyse","name":"NYSE & Wall Street · New York","nameZh":"纽约 · 纽约证券交易所与华尔街 NYSE","street":"11 Wall St · Federal Hall","city":"New York, US","cityZh":"美国 纽约","lat":40.7069,"lon":-74.0113},
+  {"id":"tx_tesla_giga","name":"Tesla Gigafactory · Austin","nameZh":"奥斯汀 · 特斯拉超级工厂 Giga Texas","street":"1 Tesla Rd · Cybertruck & Megafactory","city":"Austin, US","cityZh":"美国 奥斯汀","lat":30.2223,"lon":-97.6171},
+  {"id":"tx_spacex_starbase","name":"SpaceX Starbase · Boca Chica","nameZh":"博卡奇卡 · SpaceX 星舰发射基地 Starbase","street":"Rocket Rd · Mechazilla & Starship","city":"Starbase, TX","cityZh":"美国 得州星舰基地","lat":25.9968,"lon":-97.1545},
+  {"id":"tw_tsmc_hq","name":"TSMC HQ & Fab 12 · Hsinchu","nameZh":"新竹 · 台积电全球研发中心与十二厂总部 TSMC","street":"8 Li-Hsin Rd 6 · Hsinchu Science Park","city":"Hsinchu, TW","cityZh":"新竹 科学园区","lat":24.7738,"lon":121.0118},
+  {"id":"sz_tencent_hq","name":"Tencent Seafront Towers · Shenzhen","nameZh":"深圳 · 腾讯滨海大厦总部 Tencent HQ","street":"Binhai Ave · Nanshan Hi-Tech Park","city":"Shenzhen, CN","cityZh":"中国 深圳","lat":22.5229,"lon":113.9353},
+  {"id":"kr_samsung_hq","name":"Samsung Town HQ · Seoul","nameZh":"首尔 · 三星瑞草总部大厦 Samsung HQ","street":"129 Samsung-ro · Seocho-gu Digital City","city":"Seoul, KR","cityZh":"韩国 首尔","lat":37.4967,"lon":127.0266},
+  {"id":"ch_cern_globe","name":"CERN Science Gateway & Globe · Geneva","nameZh":"日内瓦 · 欧洲核子研究中心科学之球 CERN","street":"Esplanade des Particules 1 · LHC","city":"Geneva, CH","cityZh":"瑞士 日内瓦","lat":46.233,"lon":6.0557},
+  {"id":"paris_louvre","name":"Louvre Pyramid & Museum · Paris","nameZh":"巴黎 · 卢浮宫金字塔 Musée du Louvre","street":"Cour Napoléon · Rue de Rivoli","city":"Paris, FR","cityZh":"法国 巴黎","lat":48.861,"lon":2.3358},
+  {"id":"bj_cctv","name":"CCTV Headquarters · Beijing","nameZh":"北京 · 中央电视台总部大楼（大裤衩）CCTV","street":"32 East 3rd Ring Middle Rd · CBD","city":"Beijing, CN","cityZh":"中国 北京","lat":39.9138,"lon":116.458},
 ];
 
 export function computeWorldOrigin(lat, lon, displayName = "Beijing, CN", streetName = "") {
@@ -1701,15 +1728,37 @@ export async function searchAddress(query) {
     }
   }
 
-  // 2. Match curated destinations first for instant response
+  // 2. Match curated destinations & 3D landmarks first for instant response
   const ql = q.toLowerCase();
   const localMatches = QUICK_WORLD_DESTINATIONS.filter(
     (d) =>
+      d.id.toLowerCase().includes(ql) ||
       d.name.toLowerCase().includes(ql) ||
       d.nameZh.includes(q) ||
       d.street.toLowerCase().includes(ql) ||
       d.city.toLowerCase().includes(ql)
   );
+  for (const lm of LANDMARKS) {
+    if (!lm.on) continue;
+    if (
+      lm.id.toLowerCase().includes(ql) ||
+      lm.name.toLowerCase().includes(ql) ||
+      (lm.nameZh && lm.nameZh.includes(q))
+    ) {
+      const dup = localMatches.some((m) => Math.hypot(m.lat - lm.lat, m.lon - lm.lon) < 0.005);
+      if (!dup) {
+        localMatches.push({
+          id: "lm_" + lm.id,
+          name: lm.name,
+          nameZh: lm.nameZh || lm.name,
+          street: lm.name,
+          city: "3D Landmark",
+          lat: lm.lat,
+          lon: lm.lon,
+        });
+      }
+    }
+  }
 
   // 3. Query Photon (Komoot OpenStreetMap geocoder)
   try {
@@ -1772,3 +1821,5 @@ export async function searchAddress(query) {
 
 export const BEIJING_DEFAULT_ORIGIN = computeWorldOrigin(39.9087, 116.3975, "Beijing", "Chang\x27an Ave");
 export const createWorldOrigin = computeWorldOrigin;
+
+export const WORLD_DESTINATIONS = QUICK_WORLD_DESTINATIONS;

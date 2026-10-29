@@ -96,9 +96,10 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r2"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r3"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
+import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -591,6 +592,7 @@ class WorldExplorerApp {
     this.venueRides = new VenueRides(this.scene); // [venues] animated theme-park rides
     this.poiVenues = new PoiVenueSystem(this); // [venues-poi] gas stations, shops, supermarkets, car washes + gameplay
     this.placesInfo = new PlacesInfo(this); // places-info
+    this.propertyInspector = new PropertyInspector(this); // [feature/property-inspector]
     this._animate();
   }
 
@@ -785,6 +787,7 @@ class WorldExplorerApp {
     this._updateCamera(0.016);
     this._updateHud();
     this._updateActiveQuickChip(numLat, numLon);
+    if (this.propertyInspector) this.propertyInspector.onLocationJump(numLat, numLon, displayName, streetName);
     return this.worldOrigin;
   }
 
@@ -2973,8 +2976,9 @@ class WorldExplorerApp {
           return;
         }
         debounceTimer = setTimeout(async () => {
-          const results = await searchAddress(q);
-          renderSearchResults(results);
+          const lmMatches = this.propertyInspector ? this.propertyInspector.searchLandmarks(q) : [];
+          const addrResults = await searchAddress(q);
+          renderSearchResults([...lmMatches, ...(addrResults || [])].slice(0, 7));
         }, 200);
       });
 
@@ -3049,6 +3053,7 @@ class WorldExplorerApp {
     this.parkedCars.update(dt); // [parked-cars]
     this.carjack.update(dt); // [polish] after the physics step: drives the avatar during a carjack
     this._updateCamera(dt);
+    if (this.propertyInspector) this.propertyInspector.update(dt); // [feature/property-inspector]
     if (this.nitroFx) this.nitroFx.update(dt); // [nitro-fx] after the camera: shake + world-space boost effects
     this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
     if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]

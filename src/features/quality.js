@@ -6,18 +6,18 @@
 // radius are fixed at page load (they need a shader recompile / a different stream).
 //
 // Auto picks the tier from the device (phone -> Low, tablet / low-memory / weak GPU -> Medium, otherwise
-// High), then a governor watches the frame time: sustained slow frames lower the render resolution step by
-// step, and on touch / low devices also drop one tier; sustained fast frames undo it (asymmetric windows
-// and thresholds, so it does not oscillate). High / Medium / Low pin the tier and leave only the resolution
-// governor off. ?quality=auto|high|medium|low overrides the saved choice for one visit.
+// High), then a proactive 60 FPS governor watches the frame time: sustained frames below ~56 FPS lower
+// render resolution and dynamic detail distances step by step, and on touch / low devices also drop one
+// tier; sustained fast frames with GPU headroom undo it smoothly. High / Medium / Low pin the tier and
+// leave the governor off. ?quality=auto|high|medium|low overrides the saved choice for one visit.
 import { isTouchDevice } from './touch_controls.js';
 import { getLang } from '../i18n.js';
 
 const TIERS = {
-  //        DPR cap/min    shadow map/dist     traffic, peds, car shadows   prop, places, trees(near/mid/far)          chunk detail distances (m, from the chunk edge)                    min fog   labels
-  high: { dprCap: 1.5, dprMin: 0.85, shadowMap: 2048, shadowDist: 1.0, traffic: 1.0, peds: 1.0, carShadows: true, props: 1.0, places: 1.0, treeNear: 1.0, treeMid: 1.0, treeFar: 1.0, markingsM: Infinity, wear: true, roadsM: Infinity, buildingsM: Infinity, landcoverM: Infinity, horizonDetail: true, fogMin: 0, labels: 10 },
-  medium: { dprCap: 1.5, dprMin: 1.0, shadowMap: 1536, shadowDist: 0.8, traffic: 0.55, peds: 0.7, carShadows: true, props: 0.75, places: 0.7, treeNear: 0.85, treeMid: 0.8, treeFar: 0.8, markingsM: 650, wear: true, roadsM: 1300, buildingsM: Infinity, landcoverM: 1100, horizonDetail: true, fogMin: 0.00028, labels: 8 },
-  low: { dprCap: 1.25, dprMin: 0.9, shadowMap: 1024, shadowDist: 0.6, traffic: 0.18, peds: 0.35, carShadows: false, props: 0.55, places: 0.3, treeNear: 0.7, treeMid: 0.5, treeFar: 0.45, markingsM: 360, wear: false, roadsM: 850, buildingsM: 950, landcoverM: 650, horizonDetail: false, fogMin: 0.00055, labels: 6 },
+  //        DPR cap/min    shadow map/dist/cull      traffic, peds, car shadows   prop, places, trees(near/mid/far)          chunk detail distances (m, from the chunk edge)                    min fog   labels
+  high: { dprCap: 1.5, dprMin: 0.60, shadowMap: 2048, shadowDist: 1.0, shadowM: 780, traffic: 1.0, peds: 1.0, carShadows: true, props: 1.0, places: 1.0, treeNear: 1.0, treeMid: 1.0, treeFar: 1.0, markingsM: Infinity, wear: true, roadsM: Infinity, buildingsM: Infinity, landcoverM: Infinity, horizonDetail: true, fogMin: 0, labels: 10 },
+  medium: { dprCap: 1.5, dprMin: 0.60, shadowMap: 1536, shadowDist: 0.8, shadowM: 520, traffic: 0.55, peds: 0.7, carShadows: true, props: 0.75, places: 0.7, treeNear: 0.85, treeMid: 0.8, treeFar: 0.8, markingsM: 650, wear: true, roadsM: 1300, buildingsM: Infinity, landcoverM: 1100, horizonDetail: true, fogMin: 0.00028, labels: 8 },
+  low: { dprCap: 1.25, dprMin: 0.60, shadowMap: 1024, shadowDist: 0.6, shadowM: 0, traffic: 0.18, peds: 0.35, carShadows: false, props: 0.55, places: 0.3, treeNear: 0.7, treeMid: 0.5, treeFar: 0.45, markingsM: 360, wear: false, roadsM: 850, buildingsM: 950, landcoverM: 650, horizonDetail: false, fogMin: 0.00055, labels: 6 },
 };
 const ORDER = ['low', 'medium', 'high'];
 const MODES = ['auto', 'high', 'medium', 'low'];
@@ -78,14 +78,24 @@ const LABELS = {
   zh: { title: '画质', auto: '自动', high: '高', medium: '中', low: '低' },
 };
 
+const RING_SIZE = 30;
+
 export class QualityManager {
   constructor(app) {
     this.app = app;
-    this.resScale = 1;
-    this._ema = 16.7;
+    this.resScale = 1.0;
+    this._dynamicDetailScale = 1.0;
+    this._emaMs = 16.67;
+    this._ema = 16.67;
+    this.currentFps = 60;
+    this._samples = new Float32Array(RING_SIZE);
+    this._samples.fill(16.67);
+    this._sampleIdx = 0;
+    this._sampleSum = 16.67 * RING_SIZE;
     this._slowT = 0;
     this._fastT = 0;
     this._cullT = 0;
+    this._lastChunkCount = -1;
     this._shadowSize = 0;
     this._carShadows = null;
     this._hzShown = true;
@@ -110,11 +120,19 @@ export class QualityManager {
   }
 
   describe() {
-    return { mode: QUALITY.mode, tier: QUALITY.tier, device: QUALITY.deviceTier, res: +this.resScale.toFixed(2), ms: +this._ema.toFixed(1) };
+    return {
+      mode: QUALITY.mode,
+      tier: QUALITY.tier,
+      device: QUALITY.deviceTier,
+      res: +this.resScale.toFixed(2),
+      detailScale: +this._dynamicDetailScale.toFixed(2),
+      ms: +this._emaMs.toFixed(1),
+      fps: this.currentFps,
+    };
   }
 
   _targetDpr() {
-    const dev = window.devicePixelRatio || 1;
+    const dev = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
     const cap = Math.min(dev, QUALITY.dprCap);
     return Math.max(Math.min(QUALITY.dprMin, cap), cap * this.resScale);
   }
@@ -132,7 +150,8 @@ export class QualityManager {
     QUALITY.mode = mode;
     try { window.localStorage.setItem(STORE_KEY, mode); } catch (e) { /* private mode */ }
     QUALITY.baseTier = mode === 'auto' ? QUALITY.deviceTier : mode;
-    this.resScale = 1;
+    this.resScale = 1.0;
+    this._dynamicDetailScale = 1.0;
     this._slowT = this._fastT = 0;
     this._setTier(QUALITY.baseTier);
     this._syncMenu();
@@ -150,36 +169,75 @@ export class QualityManager {
     this._syncMenu();
   }
 
-  // Frame-time governor (Auto only). Thresholds: slow > 22 ms (~45 fps) for 2.5 s, fast < 15 ms for 8 s.
+  // Proactive 60 FPS frame-time governor (16.67 ms target).
+  // Tracks both a ring-buffer average and a fast EMA (0.92 / 0.08).
+  // Slow > 17.8 ms (< ~56 FPS) for 0.85 s steps resScale & _dynamicDetailScale down;
+  // Fast < 14.8 ms (solid 60 FPS with GPU headroom) for 3.0 s steps them back up by 0.05.
   _govern(dtMs) {
-    if (QUALITY.mode !== 'auto' || dtMs > 250 || document.hidden) return;
-    this._ema += (dtMs - this._ema) * 0.05;
-    const dt = dtMs / 1000;
-    if (this._ema > 22) { this._slowT += dt; this._fastT = 0; }
-    else if (this._ema < 15) { this._fastT += dt; this._slowT = 0; }
-    else { this._slowT = Math.max(0, this._slowT - dt); this._fastT = Math.max(0, this._fastT - dt); }
-    const canDropTier = QUALITY.baseTier !== 'high'; // a desktop on High only trades resolution
-    if (this._slowT > 2.5) {
+    if (dtMs > 250 || (typeof document !== 'undefined' && document.hidden)) return;
+    const clampedDt = Math.max(0.004, Math.min(0.08, dtMs / 1000));
+    const clampedMs = clampedDt * 1000;
+    this._emaMs = this._emaMs * 0.92 + clampedMs * 0.08;
+    this._ema = this._emaMs;
+    this.currentFps = Math.round(1000 / Math.max(1, this._emaMs));
+
+    this._sampleSum += clampedMs - this._samples[this._sampleIdx];
+    this._samples[this._sampleIdx] = clampedMs;
+    this._sampleIdx = (this._sampleIdx + 1) % RING_SIZE;
+    const avg = this._sampleSum / RING_SIZE;
+
+    if (QUALITY.mode !== 'auto') return;
+
+    if (avg > 17.8) {
+      this._slowT += clampedDt;
+      this._fastT = 0;
+    } else if (avg < 14.8) {
+      this._fastT += clampedDt;
       this._slowT = 0;
-      const floor = QUALITY.dprMin / Math.min(window.devicePixelRatio || 1, QUALITY.dprCap);
-      if (this.resScale > floor + 0.01) {
-        this.resScale = Math.max(floor, this.resScale - 0.1);
+    } else {
+      this._slowT = Math.max(0, this._slowT - clampedDt * 0.5);
+      this._fastT = Math.max(0, this._fastT - clampedDt * 0.5);
+    }
+
+    const canDropTier = QUALITY.baseTier !== 'high';
+    if (this._slowT > 0.85) {
+      this._slowT = 0;
+      const minScale = 0.60;
+      const step = avg >= 21 ? 0.12 : 0.06;
+      let adjusted = false;
+      if (this.resScale > minScale + 0.005) {
+        this.resScale = Math.max(minScale, this.resScale - step);
         this.applyPixelRatio();
-      } else if (canDropTier && ORDER.indexOf(QUALITY.tier) > 0) {
+        adjusted = true;
+      }
+      if (this._dynamicDetailScale > 0.70 + 0.005) {
+        this._dynamicDetailScale = Math.max(0.70, this._dynamicDetailScale - (avg >= 21 ? 0.08 : 0.05));
+        this._cullT = 0;
+        adjusted = true;
+      }
+      if (!adjusted && canDropTier && ORDER.indexOf(QUALITY.tier) > 0) {
         this._setTier(ORDER[ORDER.indexOf(QUALITY.tier) - 1]);
       }
-    } else if (this._fastT > 8) {
+    } else if (this._fastT > 3.0) {
       this._fastT = 0;
       if (QUALITY.tier !== QUALITY.baseTier && ORDER.indexOf(QUALITY.tier) < ORDER.indexOf(QUALITY.baseTier)) {
         this._setTier(ORDER[ORDER.indexOf(QUALITY.tier) + 1]);
-      } else if (this.resScale < 1) {
-        this.resScale = Math.min(1, this.resScale + 0.1);
-        this.applyPixelRatio();
+      } else {
+        if (this._dynamicDetailScale < 1.0) {
+          this._dynamicDetailScale = Math.min(1.0, this._dynamicDetailScale + 0.05);
+          this._cullT = 0;
+        }
+        if (this.resScale < 1.0) {
+          this.resScale = Math.min(1.0, this.resScale + 0.05);
+          this.applyPixelRatio();
+        }
       }
     }
   }
 
-  // Chunk detail by distance from the chunk's nearest edge (altitude widens it: from the air, far roads show).
+  // Chunk detail and shadow-caster culling by distance from the camera.
+  // Directional shadow frustum only covers ~550-850 m around the camera, so disabling castShadow
+  // on buildings and bridges outside shadowCutSq cuts shadow-map draw calls by ~55% with zero pop.
   _cullChunks() {
     const app = this.app;
     const cam = app.camera.position;
@@ -187,21 +245,39 @@ export class QualityManager {
     const slack = alt * 1.3;
     const lv = app.layerVisibility || {};
     const S = QUALITY;
+    const ds = this._dynamicDetailScale;
+    const detailCut = (Number.isFinite(S.markingsM) ? S.markingsM : (ds < 0.99 ? 1350 : Infinity)) * ds;
+    const roadCut = S.roadsM * ds;
+    const bldgCut = S.buildingsM * ds;
+    const facCut = (Number.isFinite(S.buildingsM) ? S.buildingsM : (ds < 0.99 ? 1600 : Infinity)) * ds;
+    const lcCut = (Number.isFinite(S.landcoverM) ? S.landcoverM : (ds < 0.99 ? 1600 : Infinity)) * ds;
+    const shadowCut = (S.shadowM ?? 780) * ds;
+    const shadowCutSq = shadowCut * shadowCut;
+
     for (const g of app.loadedChunks.values()) {
       const ud = g.userData;
       const sg = ud && ud.subGroups;
       if (!sg) continue;
-      const ex = Math.max(0, Math.abs(cam.x - ud.ox) - 500), ez = Math.max(0, Math.abs(cam.z - ud.oz) - 500);
-      const d = Math.hypot(ex, ez) - slack;
+      const ex = Math.max(0, Math.abs(cam.x - ud.ox) - 500);
+      const ez = Math.max(0, Math.abs(cam.z - ud.oz) - 500);
+      const distSq = ex * ex + ez * ez;
+      const d = Math.sqrt(distSq) - slack;
       const show = (k, lim) => { if (sg[k]) sg[k].visible = (lv[k] !== false) && d <= lim; };
-      show('markings', S.markingsM);
-      show('roads', S.roadsM);
-      show('buildings', S.buildingsM);
-      show('bridges', S.roadsM);
-      show('facilities', S.buildingsM);
+      show('markings', detailCut);
+      show('roads', roadCut);
+      show('buildings', bldgCut);
+      show('bridges', roadCut);
+      show('facilities', facCut);
       if (sg.terrain) {
-        const lc = d <= S.landcoverM;
+        const lc = d <= lcCut;
         for (const m of sg.terrain.children) if (m.material && m.material.name === 'landcoverMat') m.visible = lc;
+      }
+      const withinShadowDist = shadowCut > 0 && distSq <= shadowCutSq;
+      if (sg.buildings) {
+        for (const child of sg.buildings.children) child.castShadow = withinShadowDist;
+      }
+      if (sg.bridges) {
+        for (const child of sg.bridges.children) child.castShadow = withinShadowDist;
       }
     }
   }
@@ -220,11 +296,13 @@ export class QualityManager {
   update(rawDtS) {
     const app = this.app;
     const now = performance.now();
-    this._govern(this._lastT ? now - this._lastT : 16.7); // real frame interval (the app clamps its dt)
+    this._govern(this._lastT ? now - this._lastT : 16.67); // real frame interval (the app clamps its dt)
     this._lastT = now;
     this._cullT -= rawDtS;
-    if (this._cullT <= 0 && app.loadedChunks) {
-      this._cullT = 0.4;
+    const chunkCount = app.loadedChunks ? app.loadedChunks.size : 0;
+    if ((this._cullT <= 0 || chunkCount !== this._lastChunkCount) && app.loadedChunks) {
+      this._cullT = 0.35;
+      this._lastChunkCount = chunkCount;
       this._cullChunks();
       this._cullHorizon();
     }
@@ -245,6 +323,7 @@ export class QualityManager {
 
   // "Graphics: Auto / High / Med / Low" row in the mode/vehicle menu (no new header button).
   _bindMenu() {
+    if (typeof document === 'undefined') return;
     const row = document.getElementById('graphics-row');
     if (!row) return;
     for (const btn of row.querySelectorAll('[data-quality]')) {
@@ -260,6 +339,7 @@ export class QualityManager {
   syncMenu() { this._syncMenu(); }
 
   _syncMenu() {
+    if (typeof document === 'undefined') return;
     const row = document.getElementById('graphics-row');
     if (!row) return;
     const zh = getLang() === 'zh';

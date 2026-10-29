@@ -1,8 +1,9 @@
 /**
  * [feature/ferries-ships] Piers from OpenMapTiles `transportation class=pier` (polygons + lines) at Z14:
- * a solid deck slab slightly above the water with pilings, added to each loaded chunk group, plus
- * synthetic deck segments so walking / driving uses the existing road-surface sampler
- * (sampleRoadSurfaceIndexed) and water physics treats the deck as support.
+ * a solid deck slab slightly above the water with pilings, raised perimeter timber curb/fender beams,
+ * and cast-iron mooring bollards added to each loaded chunk group, plus synthetic deck segments so
+ * walking / driving uses the existing road-surface sampler (sampleRoadSurfaceIndexed) and water physics
+ * treats the deck as support.
  */
 import * as THREE from '../../../vendor/three.module.js';
 import { fetchDecodedMvtTile, latLonToTileXY } from '../../global_tiles.js';
@@ -14,17 +15,164 @@ const SLAB = 0.7;              // m, deck thickness
 const LINE_PIER_W = 4.0;       // m, width for pier ways mapped as lines
 const PILE_STEP = 6.0;         // m, perimeter piling spacing
 const PILE_GRID = 10.0;        // m, interior piling spacing (piers standing in water)
+const BOLLARD_STEP = 12.0;     // m, cast-iron mooring bollard spacing along pier edges
 const MAX_PILES = 1800;        // per chunk
 const SCAN = 2.4;              // m, spacing of deck support segments
 
 const TOP = new THREE.Color(0x8d8476);
 const SIDE = new THREE.Color(0x5a534a);
+const CURB = new THREE.Color(0x6e6050);
+const BOLLARD = new THREE.Color(0x202326);
+
+const PIER_NOISE_GLSL = `
+float pierHash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+float pierNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(pierHash(i), pierHash(i + vec2(1.0, 0.0)), u.x),
+    mix(pierHash(i + vec2(0.0, 1.0)), pierHash(i + vec2(1.0, 1.0)), u.x),
+    u.y
+  );
+}
+`;
 
 let deckMat = null, pileMat = null;
 function mats() {
   if (!deckMat) {
-    deckMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0.02 });
-    pileMat = new THREE.MeshStandardMaterial({ color: 0x3b332b, roughness: 0.95, metalness: 0.0 });
+    deckMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.90, metalness: 0.02 });
+    deckMat.customProgramCacheKey = () => 'pier-deck-planks-v2';
+    deckMat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vPierWorld;\nvarying vec3 vPierNorm;')
+        .replace(
+          '#include <project_vertex>',
+          '#include <project_vertex>\nvPierWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvPierNorm = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);'
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\nvarying vec3 vPierWorld;\nvarying vec3 vPierNorm;\n${PIER_NOISE_GLSL}`)
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float pierRoughDelta = 0.0;
+          float pierMetalDelta = 0.0;
+          {
+            float lum = dot(diffuseColor.rgb, vec3(0.3333));
+            float isIron = 1.0 - smoothstep(0.20, 0.32, lum);
+            vec2 wp = vPierWorld.xz;
+            float camD = length(vPierWorld - cameraPosition);
+            float fade = 1.0 - smoothstep(45.0, 220.0, camD);
+            float fpw = length(fwidth(wp));
+            if (isIron > 0.5) {
+              // Cast-iron mooring bollard: weathered dark graphite iron with subtle pitting
+              float pit = (pierNoise(wp * 24.0 + vPierWorld.y * 18.0) - 0.5) * 0.14 * fade;
+              float capWear = smoothstep(0.45, 0.85, vPierNorm.y) * 0.06;
+              diffuseColor.rgb = diffuseColor.rgb * (1.0 + pit) + vec3(capWear);
+              pierRoughDelta = -0.48 * isIron;
+              pierMetalDelta = 0.65 * isIron;
+            } else if (fade > 0.0) {
+              // Weathered timber deck planks & perimeter fender/curb beams
+              float topMask = smoothstep(0.35, 0.75, abs(vPierNorm.y));
+              float plankW = 0.24;
+              float pCoord = wp.x / plankW;
+              float pIdx = floor(pCoord);
+              float pFrac = fract(pCoord);
+              float buttLen = 3.6;
+              float bCoord = (wp.y + mod(pIdx, 2.0) * 1.8) / buttLen;
+              float bIdx = floor(bCoord);
+              float bFrac = fract(bCoord);
+              float pHash = pierHash(vec2(pIdx, bIdx * 3.1 + 0.7));
+              // Anti-aliased plank gaps and butt joints
+              float aaX = max(0.018, fpw / plankW);
+              float aaZ = max(0.004, fpw / buttLen);
+              float gapX = 1.0 - smoothstep(0.0, aaX, min(pFrac, 1.0 - pFrac));
+              float gapZ = 1.0 - smoothstep(0.0, aaZ, min(bFrac, 1.0 - bFrac));
+              float gap = max(gapX * (0.018 / aaX), gapZ * (0.004 / aaZ)) * topMask * fade;
+              // Elongated wood grain + per-plank tone variation
+              float grain = pierNoise(vec2(wp.x * 22.0 + pHash * 11.0, wp.y * 1.7 + pHash * 29.0)) * 0.65
+                          + pierNoise(vec2(wp.x * 55.0, wp.y * 4.5 + 3.7)) * 0.35;
+              float sideGrain = pierNoise(vec2((wp.x + wp.y) * 2.2, vPierWorld.y * 18.0));
+              float woodVar = mix(sideGrain - 0.5, (grain - 0.5) * 0.22 + (pHash - 0.5) * 0.16, topMask) * fade;
+              diffuseColor.rgb *= 1.0 + woodVar;
+              // Salt-bleached plank edges & sun-weathered silvering
+              float edgeBleach = smoothstep(0.32, 0.48, abs(pFrac - 0.5)) * (0.5 + 0.5 * pierNoise(wp * 0.8)) * topMask * fade;
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.68, 0.65, 0.60), edgeBleach * 0.28);
+              // Darken plank gaps
+              diffuseColor.rgb *= 1.0 - 0.58 * clamp(gap, 0.0, 1.0);
+              // Damp tidal splash darkening near lower slab face
+              float splash = 1.0 - smoothstep(0.55, 1.10, vPierWorld.y);
+              diffuseColor.rgb *= 1.0 - 0.28 * splash;
+              pierRoughDelta = (gap * 0.08 - edgeBleach * 0.05) - splash * 0.25;
+            }
+          }`
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = clamp(roughnessFactor + pierRoughDelta, 0.12, 1.0);`
+        )
+        .replace(
+          '#include <metalnessmap_fragment>',
+          `#include <metalnessmap_fragment>
+          metalnessFactor = clamp(metalnessFactor + pierMetalDelta, 0.0, 0.9);`
+        );
+    };
+
+    pileMat = new THREE.MeshStandardMaterial({ color: 0x3b332b, roughness: 0.94, metalness: 0.0 });
+    pileMat.customProgramCacheKey = () => 'pier-pile-tidal-v2';
+    pileMat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vPierWorld;')
+        .replace(
+          '#include <project_vertex>',
+          `#include <project_vertex>
+          vec4 pierPileWp = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+            pierPileWp = instanceMatrix * pierPileWp;
+          #endif
+          vPierWorld = (modelMatrix * pierPileWp).xyz;`
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\nvarying vec3 vPierWorld;\n${PIER_NOISE_GLSL}`)
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float pileWet = 0.0;
+          {
+            float wY = vPierWorld.y;
+            // Vertical creosote timber grain
+            float vGrain = pierNoise(vec2((vPierWorld.x + vPierWorld.z) * 14.0, wY * 2.4));
+            diffuseColor.rgb *= 0.88 + 0.24 * vGrain;
+            // Tidal line + greenish-brown barnacle/algae encrustation band (worldY < 1.3m)
+            if (wY < 1.35) {
+              float nWave = (pierNoise(vPierWorld.xz * 3.2) - 0.5) * 0.16;
+              float tideH = wY + nWave;
+              // Dark wet tidal zone up to ~1.25m
+              pileWet = 1.0 - smoothstep(0.85, 1.25, tideH);
+              diffuseColor.rgb *= mix(1.0, 0.52, pileWet);
+              // Greenish-brown marine algae band (tideH < 0.95m)
+              float algaeMask = (1.0 - smoothstep(0.55, 0.95, tideH)) * smoothstep(-0.2, 0.25, tideH);
+              float algaeTex = pierNoise(vec2((vPierWorld.x - vPierWorld.z) * 8.0, wY * 7.5));
+              vec3 algaeCol = mix(vec3(0.16, 0.24, 0.11), vec3(0.24, 0.32, 0.15), algaeTex);
+              diffuseColor.rgb = mix(diffuseColor.rgb, algaeCol, algaeMask * 0.72);
+              // Crusty barnacle & mussel band (tideH < 0.55m)
+              float barnMask = 1.0 - smoothstep(0.20, 0.58, tideH);
+              float barnSpec = smoothstep(0.52, 0.78, pierNoise(vec2((vPierWorld.x + vPierWorld.z) * 26.0, wY * 28.0)));
+              vec3 barnCol = mix(vec3(0.17, 0.16, 0.14), vec3(0.46, 0.44, 0.38), barnSpec);
+              diffuseColor.rgb = mix(diffuseColor.rgb, barnCol, barnMask * 0.85);
+            }
+          }`
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = mix(roughnessFactor, 0.18, pileWet * 0.85);`
+        );
+    };
   }
   return { deckMat, pileMat };
 }
@@ -87,7 +235,14 @@ function dedupe(pts) {
 }
 
 class Buf {
-  constructor() { this.p = []; this.n = []; this.c = []; }
+  constructor() {
+    this.p = [];
+    this.n = [];
+    this.c = [];
+    this.deckPos = this.p;
+    this.deckNorm = this.n;
+    this.deckCol = this.c;
+  }
   tri(a, b, c, col, up) {
     // a/b/c: [x, y, z]; orient so the normal points up (top faces) or keep given order.
     let ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
@@ -105,6 +260,43 @@ class Buf {
   wall(x1, z1, x2, z2, yb, yt, col) {
     this.tri([x1, yb, z1], [x2, yb, z2], [x2, yt, z2], col, false);
     this.tri([x1, yb, z1], [x2, yt, z2], [x1, yt, z1], col, false);
+  }
+  // 3D rectangular timber curb / fender beam along (x1,y1,z1)->(x2,y2,z2) of width w and height h.
+  beam(x1, z1, x2, z2, y1, y2, w, h, col) {
+    const L = Math.hypot(x2 - x1, z2 - z1);
+    if (L < 0.2) return;
+    const hw = w * 0.5;
+    const nx = -(z2 - z1) / L * hw, nz = (x2 - x1) / L * hw;
+    const T0 = [x1 + nx, y1 + h, z1 + nz], T1 = [x2 + nx, y2 + h, z2 + nz];
+    const T2 = [x2 - nx, y2 + h, z2 - nz], T3 = [x1 - nx, y1 + h, z1 - nz];
+    const B0 = [x1 + nx, y1, z1 + nz], B1 = [x2 + nx, y2, z2 + nz];
+    const B2 = [x2 - nx, y2, z2 - nz], B3 = [x1 - nx, y1, z1 - nz];
+    this.tri(T0, T1, T2, col, true);
+    this.tri(T0, T2, T3, col, true);
+    this.tri(B0, B1, T1, col, false);
+    this.tri(B0, T1, T0, col, false);
+    this.tri(B2, B3, T3, col, false);
+    this.tri(B2, T3, T2, col, false);
+    this.tri(B3, B0, T0, col, false);
+    this.tri(B3, T0, T3, col, false);
+    this.tri(B1, B2, T2, col, false);
+    this.tri(B1, T2, T1, col, false);
+  }
+  // Cast-iron mooring bollard (base plate + octagonal post + mushroom cap) merged directly into the deck buffer.
+  bollard(cx, y0, cz, col) {
+    const addPrism = (yb, yt, r, sides) => {
+      for (let i = 0; i < sides; i++) {
+        const a0 = (i / sides) * Math.PI * 2;
+        const a1 = ((i + 1) / sides) * Math.PI * 2;
+        const x0 = cx + Math.cos(a0) * r, z0 = cz + Math.sin(a0) * r;
+        const x1 = cx + Math.cos(a1) * r, z1 = cz + Math.sin(a1) * r;
+        this.wall(x0, z0, x1, z1, yb, yt, col);
+        this.tri([cx, yt, cz], [x1, yt, z1], [x0, yt, z0], col, true);
+      }
+    };
+    addPrism(y0, y0 + 0.07, 0.22, 4);
+    addPrism(y0 + 0.07, y0 + 0.52, 0.12, 6);
+    addPrism(y0 + 0.52, y0 + 0.62, 0.17, 6);
   }
   geometry() {
     if (!this.p.length) return null;
@@ -168,7 +360,7 @@ export async function buildChunkPiers(app, group) {
       const A = all[a], B = all[b], C = all[c];
       buf.tri([A.x - ox, yTop, A.y - oz], [B.x - ox, yTop, B.y - oz], [C.x - ox, yTop, C.y - oz], TOP, true);
     }
-    // Slab edges + perimeter piles
+    // Slab edges + perimeter timber curb / fender beams + cast-iron mooring bollards + perimeter piles
     for (const ring of [o, ...hs]) {
       for (let i = 0; i < ring.length; i++) {
         const a = ring[i], b = ring[(i + 1) % ring.length];
@@ -177,12 +369,34 @@ export async function buildChunkPiers(app, group) {
         const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (ring !== o || L < 0.5) continue;
         const nx = (b[1] - a[1]) / L, nz = -(b[0] - a[0]) / L; // one side normal
+        const mx = (a[0] + b[0]) * 0.5, mz = (a[1] + b[1]) * 0.5;
+        const inSign = pointInRing(mx + nx * 0.8, mz + nz * 0.8, o) ? 1 : -1;
+        const inNx = nx * inSign, inNz = nz * inSign;
+        if (L >= 1.2) {
+          // Raised perimeter timber curb beam along deck edge + outer timber fender rub-rail
+          buf.beam(
+            a[0] + inNx * 0.16 - ox, a[1] + inNz * 0.16 - oz,
+            b[0] + inNx * 0.16 - ox, b[1] + inNz * 0.16 - oz,
+            yTop, yTop, 0.22, 0.18, CURB
+          );
+          buf.beam(
+            a[0] - inNx * 0.06 - ox, a[1] - inNz * 0.06 - oz,
+            b[0] - inNx * 0.06 - ox, b[1] - inNz * 0.06 - oz,
+            yTop - 0.32, yTop - 0.32, 0.16, 0.20, SIDE
+          );
+        }
+        // Cast-iron mooring bollards spaced every ~12m along pier edges
+        for (let s = BOLLARD_STEP * 0.5; s < L - 1.2; s += BOLLARD_STEP) {
+          const px = a[0] + (b[0] - a[0]) * (s / L), pz = a[1] + (b[1] - a[1]) * (s / L);
+          if (inWater(px - inNx * 3.0, pz - inNz * 3.0) || inWater(px, pz)) {
+            buf.bollard(px + inNx * 0.55 - ox, yTop, pz + inNz * 0.55 - oz, BOLLARD);
+          }
+        }
         for (let s = PILE_STEP * 0.5; s < L; s += PILE_STEP) {
           const px = a[0] + (b[0] - a[0]) * (s / L), pz = a[1] + (b[1] - a[1]) * (s / L);
           // Inset 0.8 m toward the inside; only where open water lies just outside the edge.
-          const inX = pointInRing(px + nx * 0.8, pz + nz * 0.8, o) ? 0.8 : -0.8;
-          const qx = px + nx * inX, qz = pz + nz * inX;
-          if (inWater(px - nx * inX * 3, pz - nz * inX * 3) || inWater(qx, qz)) addPile(qx, qz, yBot);
+          const qx = px + inNx * 0.8, qz = pz + inNz * 0.8;
+          if (inWater(px - inNx * 2.4, pz - inNz * 2.4) || inWater(qx, qz)) addPile(qx, qz, yBot);
         }
       }
     }
@@ -220,6 +434,20 @@ export async function buildChunkPiers(app, group) {
       buf.wall(P[2][0], P[2][2], P[3][0], P[3][2], yb, yt, SIDE);
       buf.wall(P[3][0], P[3][2], P[0][0], P[0][2], y1 - SLAB, y1, SIDE);
       buf.wall(P[1][0], P[1][2], P[2][0], P[2][2], y2 - SLAB, y2, SIDE);
+      if (L >= 1.0) {
+        // Raised perimeter timber curb beams along both sides of the linear pier
+        const cOff = 0.92;
+        buf.beam(ax + nx * cOff - ox, az + nz * cOff - oz, b[0] + nx * cOff - ox, b[1] + nz * cOff - oz, y1, y2, 0.18, 0.16, CURB);
+        buf.beam(ax - nx * cOff - ox, az - nz * cOff - oz, b[0] - nx * cOff - ox, b[1] - nz * cOff - oz, y1, y2, 0.18, 0.16, CURB);
+      }
+      // Cast-iron mooring bollards every ~12m along linear piers
+      for (let s = BOLLARD_STEP * 0.5; s < L - 1.0; s += BOLLARD_STEP) {
+        const px = a[0] + dx * s, pz = a[1] + dz * s;
+        if (!inWater(px, pz)) continue;
+        const ybTop = y1 + (y2 - y1) * (s / L);
+        buf.bollard(px + nx * 0.78 - ox, ybTop, pz + nz * 0.78 - oz, BOLLARD);
+        buf.bollard(px - nx * 0.78 - ox, ybTop, pz - nz * 0.78 - oz, BOLLARD);
+      }
       for (let s = PILE_STEP * 0.5; s < L; s += PILE_STEP) {
         const px = a[0] + dx * s, pz = a[1] + dz * s;
         if (!inWater(px, pz)) continue;
