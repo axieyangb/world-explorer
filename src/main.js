@@ -1582,6 +1582,8 @@ class WorldExplorerApp {
 
       this.avatarMesh.position.copy(this.pos);
       this.avatarMesh.rotation.y = this.yaw;
+      const mo = this.avatarMesh.userData.motion; // [human-motion] locomotion state for the avatar's procedural pose
+      if (mo) { mo.speed = this.speed; mo.grounded = this.isGrounded; mo.vy = this.walkVelY; mo.sprint = isNitro; mo.punch = this._punchTimer > 0 ? 1 - this._punchTimer / (this._punchDuration || 0.32) : -1; mo.punchHand = this._punchHand; mo.t = performance.now(); }
 
       const { leftLeg, rightLeg, leftArm, rightArm } = this.avatarMesh.userData;
       if (this.speed > 0.3) {

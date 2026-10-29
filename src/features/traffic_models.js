@@ -2,11 +2,11 @@
 // Cars: the low-detail build of each player vehicle (hero builders with options.lod) flattened into one
 // merged geometry per type, drawn with one InstancedMesh each; per-instance paint + brake light, emissive
 // head/tail lights at night.
-// Pedestrians: one low-poly merged figure, walk cycle animated in the vertex shader.
+// Pedestrians: a sculpted figure (near + far detail), walk/run/idle posed in the vertex shader.
 import * as THREE from '../../vendor/three.module.js';
 import { buildHeroVehicle } from './hero_vehicles.js';
 import { HEAVY_VEHICLE_IDS, buildHeavyVehicle } from './hero_heavy.js';
-import { personParts, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL, RAGDOLL_PART_SPECS, createRagdollPartGeometries } from './person_model.js';
+import { personParts, PERSON_COMMON_GLSL, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL, PERSON_COLOR_GLSL, RAGDOLL_PART_SPECS, createRagdollPartGeometries } from './person_model.js';
 
 // Lamp colours in the flat traffic shading (the hero lamp materials rely on reflections and emissive).
 const HEAD_HEX = 0xfff3c4;
@@ -173,78 +173,96 @@ export function createCarMeshes(capacity, uniforms) {
 }
 
 // ---------------- Pedestrians ----------------
-// Shared person model (src/features/person_model.js): rounded head with a face on the front, hair covering
-// the back, forward shoe toes, V-neck/zipper fronts, optional backpack/bag/cap/glasses/coat/umbrella toggled
-// per instance by a style bitmask (disabled parts collapse to a degenerate point in the vertex shader).
-function createPedGeometry() {
-  const pos = [], nor = [], col = [], info = [];
-  for (const pt of personParts()) {
+// Shared person model (src/features/person_model.js): sculpted head with face, hair grown from the scalp,
+// lofted limbs split at knee/elbow, hands, shoes; optional backpack/bag/cap/glasses/coat/skirt/umbrella/
+// phone toggled per instance by a style bitmask (disabled parts collapse to a degenerate point). The walk,
+// run and idle poses are computed in the vertex shader from iAnim/iGait (see PERSON_ANIM_GLSL).
+// lod 0 = near figure, lod 1 = far figure (same shader and instance layout, fewer triangles).
+const PED_GEO_CACHE = new Map();
+function createPedGeometry(lod) {
+  const pos = [], nor = [], col = [], info = [], idx = [];
+  for (const pt of personParts({ indexed: true, lod })) {
     const g = pt.geom;
     const p = g.attributes.position, n = g.attributes.normal;
+    const base = pos.length / 3;
     for (let i = 0; i < p.count; i++) {
       pos.push(p.getX(i), p.getY(i), p.getZ(i));
       nor.push(n.getX(i), n.getY(i), n.getZ(i));
       col.push(pt.rgb[0], pt.rgb[1], pt.rgb[2]);
-      info.push(pt.part, pt.mat, pt.opt);
+      info.push(pt.part, pt.mat, pt.opt, pt.joint);
     }
+    if (g.index) for (const i of g.index.array) idx.push(base + i);
+    else for (let i = 0; i < p.count; i++) idx.push(base + i);
     g.dispose();
   }
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geom.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geom.setAttribute('aInfo', new THREE.Float32BufferAttribute(info, 3));
+  geom.setAttribute('aInfo', new THREE.Float32BufferAttribute(info, 4));
+  geom.setIndex(pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
   geom.computeBoundingSphere();
   return geom;
 }
 
-export function createPedMesh(capacity) {
-  const geom = createPedGeometry();
-  const mk = (n) => {
-    const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * n), n);
-    a.setUsage(THREE.DynamicDrawUsage);
-    return a;
-  };
-  // iAnim = (walk phase, swing amplitude, style bits)
-  const iAnim = mk(3), iShirt = mk(3), iPants = mk(3), iSkin = mk(3), iHair = mk(3), iAcc = mk(3);
-  geom.setAttribute('iAnim', iAnim);
-  geom.setAttribute('iShirt', iShirt);
-  geom.setAttribute('iPants', iPants);
-  geom.setAttribute('iSkin', iSkin);
-  geom.setAttribute('iHair', iHair);
-  geom.setAttribute('iAcc', iAcc);
+let pedMaterial = null;
+function createPedMaterial() {
+  if (pedMaterial) return pedMaterial;
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.0 });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute vec3 aInfo;\nattribute vec3 iAnim;\nattribute vec3 iShirt;\nattribute vec3 iPants;\nattribute vec3 iSkin;\nattribute vec3 iHair;\nattribute vec3 iAcc;'
+        `#include <common>
+attribute vec4 aInfo;
+attribute vec3 iAnim;
+attribute vec4 iGait;
+attribute vec3 iShirt;
+attribute vec3 iPants;
+attribute vec3 iSkin;
+attribute vec3 iHair;
+attribute vec3 iAcc;
+${PERSON_COMMON_GLSL}`
       )
-      .replace(
-        '#include <beginnormal_vertex>',
-        `#include <beginnormal_vertex>
-${PERSON_ANIM_GLSL}
-  objectNormal = vec3(objectNormal.x, pC * objectNormal.y - pS * objectNormal.z, pS * objectNormal.y + pC * objectNormal.z);`
-      )
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${PERSON_ANIM_GLSL}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${PERSON_BEGIN_GLSL}`)
-      .replace(
-        '#include <color_vertex>',
-        `#include <color_vertex>
-  {
-    float m = aInfo.y;
-    vColor.rgb = m < 0.5 ? iSkin : m < 1.5 ? iShirt : m < 2.5 ? iPants : m < 3.5 ? vColor.rgb : m < 4.5 ? iHair : iAcc;
-  }`
-      );
+      .replace('#include <color_vertex>', `#include <color_vertex>\n${PERSON_COLOR_GLSL}`);
   };
-  mat.customProgramCacheKey = () => 'we-traffic-ped-v2';
-  const mesh = new THREE.InstancedMesh(geom, mat, capacity);
+  mat.customProgramCacheKey = () => 'we-traffic-ped-v3';
+  pedMaterial = mat;
+  return mat;
+}
+
+export function createPedMesh(capacity, lod = 0) {
+  let base = PED_GEO_CACHE.get(lod);
+  if (!base) { base = createPedGeometry(lod); PED_GEO_CACHE.set(lod, base); }
+  // Per-mesh geometry wrapper sharing the static vertex buffers, with its own instance attributes.
+  const geom = new THREE.BufferGeometry();
+  for (const k of ['position', 'normal', 'color', 'aInfo']) geom.setAttribute(k, base.attributes[k]);
+  geom.setIndex(base.index);
+  geom.boundingSphere = base.boundingSphere;
+  const mk = (n) => {
+    const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * n), n);
+    a.setUsage(THREE.DynamicDrawUsage);
+    return a;
+  };
+  // iAnim = (gait phase, amplitude, style bits); iGait = (stride, arm swing, idle mode + posture, clock)
+  const iAnim = mk(3), iGait = mk(4), iShirt = mk(3), iPants = mk(3), iSkin = mk(3), iHair = mk(3), iAcc = mk(3);
+  geom.setAttribute('iAnim', iAnim);
+  geom.setAttribute('iGait', iGait);
+  geom.setAttribute('iShirt', iShirt);
+  geom.setAttribute('iPants', iPants);
+  geom.setAttribute('iSkin', iSkin);
+  geom.setAttribute('iHair', iHair);
+  geom.setAttribute('iAcc', iAcc);
+  const mesh = new THREE.InstancedMesh(geom, createPedMaterial(), capacity);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.count = 0;
   mesh.frustumCulled = false;
   mesh.castShadow = false;
   mesh.receiveShadow = true;
-  mesh.name = 'traffic_pedestrians';
-  return { mesh, iAnim, iShirt, iPants, iSkin, iHair, iAcc, tris: geom.attributes.position.count / 3 };
+  mesh.name = lod ? 'traffic_pedestrians_far' : 'traffic_pedestrians';
+  return { mesh, iAnim, iGait, iShirt, iPants, iSkin, iHair, iAcc, tris: base.index.count / 3 };
 }
 
 export const RAGDOLL_PART_NAMES = RAGDOLL_PART_SPECS.map((s) => s.name);
