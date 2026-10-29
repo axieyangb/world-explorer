@@ -7,6 +7,8 @@ per-texel window/glass mask + per-pane random ID (aligned to true mullion/spandr
 and packs all layers into vertical strip images for WebGL2 THREE.DataArrayTexture:
   - assets/facades/facade_strip.jpg       (512 x 512*N RGB)
   - assets/facades/facade_mask_strip.jpg  (512 x 512*N Grayscale)
+    [night] superseded: the game loads facade_mask_strip.png from tools/gen_facade_mask.py (crisp
+    rectangles measured per tile); re-run that after regenerating the strip.
   - assets/facades/manifest.json
 """
 import json

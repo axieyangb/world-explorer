@@ -963,7 +963,9 @@ class WorldExplorerApp {
               diffuseColor.rgb = mix(diffuseColor.rgb, glassCol, win * 0.78);
               roughnessFactor = mix(0.68, 0.20, win);
               float rHash = fract(sin(dot(floor(vec2(gx, gy)), vec2(127.1, 311.7))) * 43758.5453);
-              totalEmissiveRadiance += vec3(1.0, 0.82, 0.52) * win * step(0.62, rHash) * uLodNightEmissive * 0.65;
+              // [night] lit floors come in bands; far away an averaged glow instead of windows fading to black
+              float lodLit = min(step(0.62, rHash) * step(0.45, fract(sin(floor(gy) * 37.3 + floor(uCoord / 40.0) * 7.1) * 43758.5453)) + step(0.9, rHash), 1.0);
+              totalEmissiveRadiance += vec3(1.0, 0.82, 0.52) * (win * lodLit + (1.0 - fade) * 0.07) * uLodNightEmissive * 0.65;
             }`
           );
       };

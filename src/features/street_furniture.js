@@ -941,8 +941,31 @@ uniform float uIntensity;
 varying vec2 vUv;
 void main() {
   float d = length(vUv - 0.5) * 2.0;
-  float a = pow(max(0.0, 1.0 - d), 2.4) * uIntensity;
+  // [night] tight core (the old halo) + a wide faint bloom skirt, so lamps glow without a post pass
+  float a = (pow(max(0.0, 1.0 - d * 1.75), 2.4) + 0.16 * pow(max(0.0, 1.0 - d), 3.0)) * uIntensity;
   gl_FragColor = vec4(uColor * a, a);
+}`;
+// [night] glow around lit traffic-signal lamps: shares the lamps' instanceMatrix / instanceColor
+const SIG_HALO_VS = `
+uniform float uSize;
+varying vec2 vUv;
+varying vec3 vCol;
+void main() {
+  vUv = uv;
+  vCol = instanceColor;
+  vec4 c = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  c.xy += position.xy * uSize;
+  c.z += 0.25; // pull toward the camera so the housing visor does not clip it
+  gl_Position = projectionMatrix * c;
+}`;
+const SIG_HALO_FS = `
+uniform float uIntensity;
+varying vec2 vUv;
+varying vec3 vCol;
+void main() {
+  float d = length(vUv - 0.5) * 2.0;
+  float a = (pow(max(0.0, 1.0 - d * 2.2), 2.0) * 1.2 + 0.25 * pow(max(0.0, 1.0 - d), 2.5)) * uIntensity;
+  gl_FragColor = vec4(vCol * a, a);
 }`;
 const POOL_VS = `
 varying vec2 vUv;
@@ -1137,7 +1160,7 @@ export class StreetFeatures {
     this.bulbs = new THREE.InstancedMesh(models.bulb, this.bulbMat, 6000);
     this.bulbsPost = new THREE.InstancedMesh(models.bulbPost, this.bulbMat, 2000);
     this.haloMat = new THREE.ShaderMaterial({
-      uniforms: { uSize: { value: 3.4 }, uColor: { value: new THREE.Color(1.0, 0.78, 0.5) }, uIntensity: { value: 0 } },
+      uniforms: { uSize: { value: 6.0 }, uColor: { value: new THREE.Color(1.0, 0.78, 0.5) }, uIntensity: { value: 0 } }, // [night] 3.4 -> 6 for the bloom skirt
       vertexShader: HALO_VS, fragmentShader: HALO_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
     this.halos = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), this.haloMat, 8000);
@@ -1167,6 +1190,19 @@ export class StreetFeatures {
     this.lamps.count = 0;
     this.lamps.frustumCulled = false;
     this.root.add(this.lamps);
+    // [night] signal glow sprites (same instances as the lamps)
+    this.sigHaloMat = new THREE.ShaderMaterial({
+      uniforms: { uSize: { value: 1.7 }, uIntensity: { value: 0 } },
+      vertexShader: SIG_HALO_VS, fragmentShader: SIG_HALO_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.sigHalos = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), this.sigHaloMat, 1);
+    this.sigHalos.instanceMatrix = this.lamps.instanceMatrix;
+    this.sigHalos.instanceColor = this.lamps.instanceColor;
+    this.sigHalos.count = 0;
+    this.sigHalos.frustumCulled = false;
+    this.sigHalos.visible = false;
+    this.sigHalos.renderOrder = 3;
+    this.root.add(this.sigHalos);
 
     this.activeSignals = [];
     this.damage = new PropDamage(); // [prop-damage] knocked-over props (persist across refreshes)
@@ -1457,6 +1493,7 @@ export class StreetFeatures {
       this.lamps.count = n;
       changed = true;
     }
+    this.sigHalos.count = n; // [night]
     if (changed) {
       this.lamps.instanceMatrix.needsUpdate = true;
       if (this.lamps.instanceColor) this.lamps.instanceColor.needsUpdate = true;
@@ -1494,7 +1531,9 @@ export class StreetFeatures {
       this.haloMat.uniforms.uIntensity.value = 1.0 * on;
       this.poolMat.uniforms.uIntensity.value = 0.55 * on;
       this.halos.visible = on > 0.02 && this.halos.count > 0;
-      this.pools.visible = on > 0.02 && this.pools.count > 0;
+      this.sigHaloMat.uniforms.uIntensity.value = on; // [night]
+      this.sigHalos.visible = on > 0.02;
+      this.pools.visible = false; // [night] pools now light the ground through night_lights.js (shares this instanceMatrix)
     }
   }
 

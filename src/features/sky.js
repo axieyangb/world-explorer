@@ -28,6 +28,7 @@ export function createSkyMaterial() {
     uAurora: { value: 0.0 },
     uAuroraDir: { value: new THREE.Vector2(0, -1) },
     uAuroraDist: { value: 400.0 },
+    uCityGlow: { value: 0.0 }, // [night] urban light pollution (0 by day), from atmosphere.js
   };
 
   const material = new THREE.ShaderMaterial({
@@ -63,6 +64,7 @@ export function createSkyMaterial() {
       uniform float uAurora;
       uniform vec2 uAuroraDir;
       uniform float uAuroraDist;
+      uniform float uCityGlow;
       varying vec3 vWorldDir;
 
       float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -191,6 +193,13 @@ export function createSkyMaterial() {
 
         if (y < 0.0) {
           col = mix(col, uGroundColor, clamp(-y * 4.0, 0.0, 1.0));
+        }
+
+        // [night] sodium / LED glow of the city scattered in the low sky (and lighting cloud bases from below)
+        if (uCityGlow > 0.001) {
+          float hy = max(y, 0.0);
+          float lowSky = exp(-hy * 9.0) * 0.75 + exp(-hy * 2.2) * 0.18;
+          col += vec3(0.42, 0.27, 0.15) * uCityGlow * lowSky * (y < 0.0 ? 0.6 : 1.0);
         }
 
         col = mix(col, uFogColor, uFogMix * (1.0 - 0.3 * smoothstep(0.0, 0.8, y)));
