@@ -7,6 +7,7 @@
 //     compact list of animated rides for the main-thread VenueRides system (venue_rides.js).
 
 import * as THREE from '../../vendor/three.module.js';
+import { extractPoiVenueSites } from './poi_venues_extract.js'; // [venues-poi]
 // [release-6-integ] no static import of ../environment.js: environment -> global_tiles -> venues -> environment
 // is an import cycle the standalone IIFE bundle cannot handle. chunk_builder injects the terrain sampler.
 let getBeijingTerrainElevation = () => 0;
@@ -420,7 +421,7 @@ export function extractVenues(tiles, toLocalXZ, buildings) {
     }
   }
   if (!stadiums.length && !rides.length) return null;
-  return { stadiums, rides, paths };
+  return { stadiums, rides, paths, poi: extractPoiVenueSites(tiles, toLocalXZ, buildings) }; // [venues-poi] fuel canopies + car parks
 }
 
 // ------------------------------------------------------------------ mesh accumulation
