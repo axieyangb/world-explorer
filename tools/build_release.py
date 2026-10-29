@@ -84,6 +84,7 @@ MOD_ID_MAP = {
     'src/features/hero_heavy.js': '__MOD_hero_heavy',  # [hero-vehicles]
     'src/features/hero_avatar.js': '__MOD_hero_avatar',  # [hero-vehicles]
     'src/features/hero_heli.js': '__MOD_hero_heli',  # [hero-vehicles]
+    'src/features/nitro_fx.js': '__MOD_nitro_fx',  # [nitro-fx]
     'src/features/sea_state.js': '__MOD_sea_state',  # [sea-state]
     'src/features/satellites.js': '__MOD_satellites',  # [satellites]
     'src/navigation.js': '__MOD_navigation',
