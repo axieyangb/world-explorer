@@ -21,7 +21,8 @@ import {
   createImpactPuffMesh,
 } from './traffic_models.js';
 import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehicles]
-import { randomPersonLook, bit, OPT, RAGDOLL_PART_SPECS } from './person_model.js'; // [feature/people]
+import { randomPersonLook, bit, OPT } from './person_model.js'; // [feature/people]
+import { startRagdoll, stepRagdoll, ragdollCenter } from './ped_ragdoll.js'; // [drivers]
 import { PeopleAgents } from './people_agents.js'; // [people-agents]
 import { QUALITY } from './quality.js'; // [ui-mobile]
 import { VehicleDamage, DAMAGE_BY_SOURCE } from './vehicle_damage.js'; // [car-explosions]
@@ -49,8 +50,6 @@ const PED_DESPAWN = 250;
 const GRAPH_SPAN = 1500; // include chunks whose center is within this many meters (3x3 around player)
 const HASH = 30;
 
-const RAGDOLL_GRAVITY = 22.0;
-const RAGDOLL_SETTLE_TIME = 2.2;
 const RAGDOLL_LIE_DURATION = 15.0;
 const MAX_PUFFS = 128;
 
@@ -70,10 +69,6 @@ const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const hashKey = (x, z) => (Math.floor(x / HASH) + 2000) * 5000 + (Math.floor(z / HASH) + 2000);
 const nodeKey = (qx, qz) => (qx + 50000) * 100000 + (qz + 50000);
-const wrapPi = (a) => {
-  a -= Math.round(a / (Math.PI * 2)) * (Math.PI * 2);
-  return a;
-};
 
 function evalEdge(e, s, hint, out) {
   const cum = e.cum, n = e.n, p = e.pts;
@@ -639,6 +634,7 @@ export class CityTraffic {
     }
     if (app.railTransit) app.railTransit.addTrafficObstacles(this); // [feature/rail-transit] cars brake for trams/trains
     if (app.parkedCars) app.parkedCars.addTrafficObstacles(this); // [parked-cars] the player's parked cars: brake / route around
+    if (app.carjack) app.carjack.addTrafficObstacles(this); // [polish] the car being jacked
   }
 
   _updateCar(c, dt, now) {
@@ -1038,69 +1034,12 @@ export class CityTraffic {
     const baseVx = (svx ? clamp(svx * 0.16, -3.5, 3.5) : 0) + dx * launchH * 0.6;
     const baseVz = (svz ? clamp(svz * 0.16, -3.5, 3.5) : 0) + dz * launchH * 0.6;
 
+    // [drivers] one connected body (ped_ragdoll.js): launched along the hit, feet swept, tumbles as a whole
     const L = ped.look || { wScale: 1, hScale: 1, style: 0 };
-    const cy = Math.cos(ped.ryaw || 0), sy = Math.sin(ped.ryaw || 0);
-    const sw = Math.sin(ped.phase || 0) * (ped.amp || 0);
-    const parts = [];
+    const vyL = clamp(2.2 + launchH * 0.55, 3.0, 6.0);
+    const parts = startRagdoll(ped, L, groundY, baseVx * 0.85, vyL, baseVz * 0.85, dx, dz, 3.5 + Math.random() * 3 * fMul);
     const partsByName = {};
-
-    for (let i = 0; i < RAGDOLL_PART_SPECS.length; i++) {
-      const spec = RAGDOLL_PART_SPECS[i];
-      const lx = spec.ox * L.wScale;
-      const ly = spec.oy * L.hScale;
-      const lz = spec.oz * L.wScale;
-      const px = ped.x + lx * cy + lz * sy;
-      const py = groundY + ly;
-      const pz = ped.z - lx * sy + lz * cy;
-
-      let rx = 0;
-      if (spec.name === 'legL') rx = sw;
-      else if (spec.name === 'legR') rx = -sw;
-      else if (spec.name === 'armL') rx = -sw * 0.9;
-      else if (spec.name === 'armR') rx = sw * 0.9;
-
-      // Distinct outward scatter per limb/head/torso so all parts separate visibly in mid-air
-      const ang = (i / RAGDOLL_PART_SPECS.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
-      const scatterMag = 1.6 + Math.random() * 1.6; // up to 3.2 m/s radial scatter
-      const sideBias = spec.ox * 4.2;
-      const scVx = Math.cos(ang) * scatterMag + sideBias * cy + (Math.random() - 0.5) * 1.2;
-      const scVz = Math.sin(ang) * scatterMag - sideBias * sy + (Math.random() - 0.5) * 1.2;
-      const carryMul =
-        spec.name === 'torso' ? 0.82 :
-        spec.name === 'head' ? 1.16 :
-        spec.name === 'accessory' ? 1.28 :
-        spec.name.startsWith('arm') ? 1.06 : 0.94;
-
-      const baseVy =
-        spec.name === 'head' ? 7.4 :
-        spec.name === 'torso' ? 5.2 :
-        spec.name === 'accessory' ? 8.2 :
-        spec.name.startsWith('arm') ? 6.4 : 4.8;
-      const vy = clamp((baseVy + Math.random() * 2.6) * clamp(0.85 + 0.22 * fMul, 0.85, 1.35), 4.0, 11.0);
-
-      const rSign = () => (Math.random() < 0.5 ? -1 : 1);
-      const pt = {
-        name: spec.name,
-        x: px,
-        y: py,
-        z: pz,
-        vx: baseVx * carryMul + scVx,
-        vy,
-        vz: baseVz * carryMul + scVz,
-        rx,
-        ry: (ped.ryaw || 0) + (Math.random() - 0.5) * 0.5,
-        rz: (Math.random() - 0.5) * 0.4,
-        avx: rSign() * (5.2 + Math.random() * 6.8),
-        avy: rSign() * (4.0 + Math.random() * 7.5),
-        avz: rSign() * (5.0 + Math.random() * 7.0),
-        r: spec.r || 0.14,
-        scale: 1.0, // [human-motion] parts are life-size now
-        visible: true,
-        instanceIndex: -1,
-      };
-      parts.push(pt);
-      partsByName[spec.name] = pt;
-    }
+    for (const pt of parts) partsByName[pt.name] = pt;
     partsByName.leftArm = partsByName.armL;
     partsByName.rightArm = partsByName.armR;
     partsByName.leftLeg = partsByName.legL;
@@ -1308,110 +1247,31 @@ export class CityTraffic {
     ped.stateTimer += dt;
     if (ped.state === 'falling_apart') {
       ped.ragdollTimer = ped.stateTimer;
-      const groundY = Number.isFinite(ped.groundY) ? ped.groundY : 0;
-      const parts = ped.parts;
-      if (!parts || !parts.length) {
+      if (!ped.parts || !ped.parts.length || !ped.rag) {
         ped.state = 'lying';
         ped.stateTimer = 0;
         return;
       }
-      let allSettled = ped.stateTimer >= 1.0;
-      for (let i = 0; i < parts.length; i++) {
-        const pt = parts[i];
-        const airDrag = Math.exp(-1.15 * dt);
-        pt.vx *= airDrag;
-        pt.vz *= airDrag;
-        pt.x += pt.vx * dt;
-        pt.y += pt.vy * dt;
-        pt.z += pt.vz * dt;
-        pt.vy -= RAGDOLL_GRAVITY * dt;
-        pt.rx += pt.avx * dt;
-        pt.ry += pt.avy * dt;
-        pt.rz += pt.avz * dt;
-
-        const floorY = groundY + (pt.r || 0.14);
-        if (pt.y <= floorY) {
-          pt.y = floorY;
-          if (pt.vy < 0) {
-            pt.vy = -pt.vy * 0.32;
-            if (Math.abs(pt.vy) < 0.45) pt.vy = 0;
-          }
-          pt.vx *= 0.65;
-          pt.vz *= 0.65;
-          pt.avx *= 0.6;
-          pt.avy *= 0.65;
-          pt.avz *= 0.6;
-          pt.rx = wrapPi(pt.rx);
-          pt.rz = wrapPi(pt.rz);
-          const kSettle = Math.min(1, dt * 11);
-          pt.rx += (Math.PI / 2 - pt.rx) * kSettle;
-          pt.rz += (0 - pt.rz) * kSettle;
-        }
-
-        const spd2 = pt.vx * pt.vx + pt.vy * pt.vy + pt.vz * pt.vz;
-        if (pt.y > floorY + 0.04 || spd2 > 0.04) {
-          allSettled = false;
-        }
-      }
-
-      // Gentle horizontal separation when parts touch the ground so limbs/torso/head don't stack
-      for (let i = 0; i < parts.length; i++) {
-        const a = parts[i];
-        if (a.y > groundY + 0.35) continue;
-        for (let j = i + 1; j < parts.length; j++) {
-          const b = parts[j];
-          if (b.y > groundY + 0.35) continue;
-          const dx = a.x - b.x, dz = a.z - b.z;
-          const d2 = dx * dx + dz * dz;
-          const minD = 0.42;
-          if (d2 < minD * minD) {
-            const d = Math.sqrt(d2) || 0.01;
-            const push = (minD - d) * 0.5;
-            const nx = dx / d, nz = dz / d;
-            a.x += nx * push; a.z += nz * push;
-            b.x -= nx * push; b.z -= nz * push;
-          }
-        }
-      }
-
-      const torso = ped.partsByName?.torso || parts[0];
-      if (torso) {
-        ped.x = torso.x;
-        ped.z = torso.z;
-      }
-
-      if (ped.stateTimer >= RAGDOLL_SETTLE_TIME || allSettled) {
+      // [drivers] connected ragdoll: the body lies where it came to rest (pose kept while lying)
+      const rest = stepRagdoll(ped, dt);
+      ragdollCenter(ped, ped);
+      if (rest) {
         ped.state = 'lying';
         ped.stateTimer = 0;
         ped.lieTimer = 0;
-        for (let i = 0; i < parts.length; i++) {
-          const pt = parts[i];
-          pt.y = groundY + 0.135;
-          pt.vx = 0; pt.vy = 0; pt.vz = 0;
-          pt.avx = 0; pt.avy = 0; pt.avz = 0;
-          pt.rx = Math.PI / 2;
-          pt.rz = 0;
-        }
       }
       return;
     }
 
     if (ped.state === 'lying') {
       ped.lieTimer = ped.stateTimer;
-      const groundY = Number.isFinite(ped.groundY) ? ped.groundY : 0;
-      if (ped.parts) {
-        for (let i = 0; i < ped.parts.length; i++) {
-          const pt = ped.parts[i];
-          pt.y = groundY + 0.135;
-          pt.rx = Math.PI / 2;
-          pt.rz = 0;
-        }
-      }
+      if (ped.getUp > 0 && ped.stateTimer >= ped.getUp) { this._actorGetUp(ped); return; } // [polish] carjacked driver
       if (ped.stateTimer >= RAGDOLL_LIE_DURATION) {
         ped.active = false;
         ped.state = 'walking';
         ped.parts = null;
         ped.partsByName = null;
+        ped.rag = null;
       }
     }
   }
@@ -1425,7 +1285,7 @@ export class CityTraffic {
     if (this.damage && this.damage.ped(ped, dt)) return; // [car-explosions] flee from explosions
     if (this.agents.drive(ped, dt)) return; // [people-agents] brain command / flinch
     const e = ped.e;
-    if (!e.alive) { ped.active = false; return; }
+    if (!e || !e.alive) { ped.active = false; return; } // [polish] actors are off the graph
     let speed = ped.v;
     if (ped.crossState === 0) {
       const end = ped.fwd ? e.b : e.a;
@@ -1545,7 +1405,8 @@ export class CityTraffic {
       if (ped.state === 'walking') this._pedGait(ped, dt); // [human-motion]
       const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
       const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
-      if (ped.state === 'walking' && ((dP > PED_DESPAWN && dK > 220) || (!kj && walking >= this.pedTarget))) {
+      if (ped.actorT > 0) ped.actorT -= dt; // [polish] carjack actors are not culled by the crowd cap
+      if (ped.state === 'walking' && ((dP > PED_DESPAWN && dK > 220) || (!kj && walking >= this.pedTarget && !(ped.actorT > 0)))) {
         ped.active = false;
         continue;
       }
@@ -1573,6 +1434,66 @@ export class CityTraffic {
       }
     }
     return active;
+  }
+
+  // [polish] Temporary pedestrian outside the sidewalk graph (carjack.js: the driver pulled out of the car, the
+  // passengers bailing out). look: a person_model look. opts.flee = { x, z }: run away from that point (the
+  // explosion-flee of vehicle_damage.ped, which recycles the person once out of sight); opts.rag = { vx, vy,
+  // vz, dx, dz, spin }: thrown to the ground as a connected ragdoll instead, getting up after opts.getUp s
+  // and then fleeing. Returns the ped or null when the pool is full.
+  spawnActor(x, y, z, yaw, look, opts = {}) {
+    let ped = null;
+    for (const q of this.peds) if (!q.active) { ped = q; break; }
+    if (!ped) return null;
+    ped.state = 'walking'; ped.crossState = 0; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0;
+    ped.parts = null; ped.partsByName = null; ped.rag = null;
+    ped.e = null; ped.lat = 0; ped.latBase = 0; ped.crossT = 0; ped.side = 1; ped.footOff = 0.5; ped.willCross = false;
+    ped.look = look;
+    ped.v = 1.3;
+    ped.x = x; ped.y = y; ped.z = z; ped.groundY = y;
+    ped.ryaw = yaw; ped.hx = Math.sin(yaw); ped.hz = Math.cos(yaw);
+    ped.phase = Math.random() * 6.28; ped.amp = 0.5;
+    ped.gph = Math.random() * 6.28; ped.gx = x; ped.gz = z; ped.gspd = ped.v;
+    ped.px = x; ped.pz = z;
+    ped.kFlee = 0; ped.kOff = 0; ped.dFlee = 0;
+    ped.leader = null;
+    ped.actorT = 12; ped.getUp = 0;
+    this.agents.onSpawn(ped);
+    ped.active = true;
+    ped.fleeFrom = opts.flee || null;
+    if (opts.rag) {
+      const r = opts.rag;
+      ped.amp = 0;
+      const parts = startRagdoll(ped, look, y, r.vx, r.vy, r.vz, r.dx, r.dz, r.spin);
+      const byName = {};
+      for (const pt of parts) byName[pt.name] = pt;
+      ped.parts = parts; ped.partsByName = byName;
+      ped.state = 'falling_apart';
+      ped.getUp = opts.getUp || 0;
+      if (!ped.fleeFrom) ped.fleeFrom = { x: x - r.dx, z: z - r.dz };
+    } else if (ped.fleeFrom) {
+      this._actorFlee(ped);
+    }
+    return ped;
+  }
+
+  _actorFlee(ped) { // [polish] run from ped.fleeFrom (vehicle_damage.ped moves the person)
+    const f = ped.fleeFrom;
+    let hx = ped.x - f.x, hz = ped.z - f.z;
+    const l = Math.hypot(hx, hz) || 1, j = (Math.random() - 0.5) * 0.7, cj = Math.cos(j), sj = Math.sin(j);
+    hx /= l; hz /= l;
+    ped.dHx = hx * cj - hz * sj; ped.dHz = hx * sj + hz * cj;
+    ped.dFlee = 4 + Math.random() * 2; ped.dSpd = 3.8 + Math.random() * 1.2;
+    ped.crossState = 0;
+  }
+
+  _actorGetUp(ped) { // [polish] back on the feet where the body lies, then run
+    ped.state = 'walking'; ped.stateTimer = 0; ped.getUp = 0;
+    ped.parts = null; ped.partsByName = null; ped.rag = null;
+    ped.y = ped.groundY; ped.amp = 0.3;
+    ped.gx = ped.x; ped.gz = ped.z; ped.px = ped.x; ped.pz = ped.z;
+    if (ped.fleeFrom) this._actorFlee(ped);
+    ped.ryaw = Math.atan2(ped.dHx || 0, ped.dHz || 1);
   }
 
   // [people-agents] Companion walking abreast of `leader` (same edge, direction, speed and crossing plan).
@@ -1882,8 +1803,8 @@ export class CityTraffic {
             if (!pm) continue;
             const idx = partCounts[pt.name]++;
             pt.instanceIndex = idx;
-            eul.set(pt.rx, pt.ry, pt.rz, 'YXZ');
-            q.setFromEuler(eul);
+            if (pt.q) q.copy(pt.q); // [drivers] connected ragdoll
+            else { eul.set(pt.rx, pt.ry, pt.rz, 'YXZ'); q.setFromEuler(eul); }
             v3.set(pt.x, pt.y, pt.z);
             const sc = pt.scale || 1.12;
             s3.set(L.wScale * sc, L.hScale * sc, L.wScale * sc);

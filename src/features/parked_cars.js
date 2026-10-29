@@ -14,7 +14,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { VEHICLE_SPECS } from '../entities.js';
 import { getBeijingTerrainElevation } from '../environment.js';
-import { crashDamage } from './vehicle_damage.js';
+import { crashDamage, burnWreck } from './vehicle_damage.js';
 
 const MAX_PARKED = 3;
 const FAR_DESPAWN = 80;     // an over-the-cap car is removed once the player is this far away
@@ -119,7 +119,7 @@ export class ParkedCars {
     mesh.traverse((o) => {
       if (!o.isMesh) return;
       o.geometry.dispose();
-      for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && m !== this.charMat) m.dispose();
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && m !== this.charMat && !m.userData.shared) m.dispose();
     });
   }
 
@@ -209,7 +209,7 @@ export class ParkedCars {
     e.vy = 8.5; e.vx += (Math.random() - 0.5) * 3; e.vz += (Math.random() - 0.5) * 3;
     e.spinX = (Math.random() - 0.5) * 6; e.spinZ = (Math.random() - 0.5) * 8; e.yawVel += (Math.random() - 0.5) * 3;
     e.mesh.userData.charred = true;
-    e.mesh.traverse((o) => { if (o.isMesh) o.material = this.charMat; if (o.isLight) o.visible = false; });
+    burnWreck(e.mesh); // [drivers] burnt-out shell instead of one flat dark material
     const T = this.app.traffic;
     if (T && T.triggerImpactSphere) T.triggerImpactSphere(x, y, z, 11, { force: 1.7, vy: 6, damage: 3.5, source: 'carExplosion', depth: 1 });
   }

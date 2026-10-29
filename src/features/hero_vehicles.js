@@ -6,6 +6,7 @@
 // underbody), so lamps and windows follow the curved surface exactly.
 // Local frame matches entities.js: +Z forward, +X right, +Y up, tyre contact at y = 0.
 import * as THREE from '../../vendor/three.module.js';
+import { addLodCabin } from './occupants.js'; // [drivers]
 
 // Monotone cubic through [z, value] keys (no overshoot between keys).
 export function curve(keys) {
@@ -285,6 +286,11 @@ export function materials(spec) {
     caliper: new THREE.MeshStandardMaterial({ color: spec.caliper ?? 0x2b2d31, roughness: 0.4, metalness: 0.3 }),
   };
   M.paint.userData.paintWeight = 1;
+  // [drivers] traffic shading classes (see occupants.js): see-through glass, tyres and bright metal char differently
+  M.glass.userData.lodKind = 1;
+  M.tyre.userData.lodKind = 2;
+  M.rim.userData.lodKind = 3;
+  M.chrome.userData.lodKind = 3;
   M.head.userData.emitCode = 1;
   M.tail.userData.emitCode = 2;
   M.drl.userData.emitCode = 3;
@@ -410,30 +416,51 @@ export function addCommonDetails(spec, body, M, chassis) {
       addMesh(chassis, new THREE.BoxGeometry(0.02, 0.028, 0.16), spec.flushHandles ? M.chrome : M.trim, s * hx, hy, hz);
     }
   }
-  if (lod) return; // traffic glass is opaque: no cabin
-  // Cabin: dark backface shell (reads as interior walls), dash, seats, steering wheel, all kept under the roof
+  // [drivers] Seats sized to the roof: hip joint 0.84 m under the roof line so a seated adult's head clears
+  // it (low sports cars recline, tall cars sit upright); the floor follows the front hip.
   const c0 = spec.cabin[0], c1 = spec.cabin[1];
   let roofMin = Infinity;
   for (let z = c0; z <= c1; z += 0.05) roofMin = Math.min(roofMin, body.roofOf(z));
-  const floorY = body.belt(0) - 0.32, top = roofMin - 0.05;
+  const rows = (spec.rearSeats ? [c1 - 0.95, c1 - 1.75] : [c1 - 0.95]).map((sz) => {
+    const hz = sz + 0.05;
+    return { sz, hz, hip: Math.min(body.belt(hz) - 0.08, body.roofOf(hz) - 0.84) };
+  });
+  const floorY = Math.max(body.bottom(0) + 0.06, Math.min(body.belt(0) - 0.32, rows[0].hip - 0.14));
+  const top = roofMin - 0.05;
   const cw = body.halfW(0) * spec.glass.roof * 1.9;
+  const wheelZ = c1 - 0.5, wheelY = Math.min(body.belt(c1), rows[0].hip + 0.48);
+  chassis.userData.driverSeat = { hip: [0.38, rows[0].hip, rows[0].hz], wheel: [0.38, wheelY, wheelZ], tilt: 0.45, r: 0.16, foot: [0.74, Math.max(-0.34, floorY + 0.1 - rows[0].hip)] }; // +X = the driver's left: left-hand drive
+  if (lod) {
+    // Traffic: dark tub, seat backs and the people (the see-through glass is drawn by traffic_models.js)
+    const police = spec.lodCrew === 'police';
+    const seats = [{ x: 0.38, y: rows[0].hip, z: rows[0].hz, seat: 0, wheel: true, uniform: police, hand: [wheelY - rows[0].hip, wheelZ - rows[0].hz] },
+      { x: -0.38, y: rows[0].hip, z: rows[0].hz, seat: police ? 4 : 1, uniform: police }];
+    const backs = [-0.38, 0.38].map((x) => ({ x, y: rows[0].hip - 0.1, z: rows[0].sz - 0.14, w: 0.48, h: Math.min(0.78, top - rows[0].hip + 0.08) }));
+    if (rows[1] && !police) {
+      seats.push({ x: -0.36, y: rows[1].hip, z: rows[1].hz, seat: 2 });
+      backs.push({ x: 0, y: rows[1].hip - 0.1, z: rows[1].sz - 0.16, w: cw * 0.86, h: Math.min(0.7, top - rows[1].hip + 0.06) });
+    }
+    addLodCabin(chassis, { hw: cw * 0.49, y0: floorY, y1: top, z0: c0 + 0.05, z1: c1 + 0.1, backs, seats });
+    return;
+  }
+  // Cabin: dark backface shell (reads as interior walls), dash, seats, steering wheel, all kept under the roof
   addMesh(chassis, new THREE.BoxGeometry(cw, top - floorY, c1 - c0), M.interior, 0, (floorY + top) / 2, (c0 + c1) / 2);
   addMesh(chassis, new THREE.BoxGeometry(cw * 0.98, 0.16, 0.36), M.seat, 0, body.belt(c1) - 0.07, c1 - 0.22);
-  const backH = Math.min(0.62, top - floorY - 0.12);
-  const seatRows = spec.rearSeats ? [c1 - 0.95, c1 - 1.75] : [c1 - 0.95];
-  seatRows.forEach((sz, row) => {
+  rows.forEach(({ sz, hip }, row) => {
+    const backH = Math.min(0.62, top - hip + 0.02);
     const xs = row === 0 ? [-0.38, 0.38] : [0];
     for (const sx of xs) {
       const w = row === 0 ? 0.5 : cw * 0.9;
-      addMesh(chassis, new THREE.BoxGeometry(w, 0.14, 0.5), M.seat, sx, floorY + 0.1, sz + 0.12);
-      const back = addMesh(chassis, new THREE.BoxGeometry(w, backH, 0.12), M.seat, sx, floorY + 0.06 + backH / 2, sz - 0.14);
+      addMesh(chassis, new THREE.BoxGeometry(w, 0.14, 0.5), M.seat, sx, hip - 0.17, sz + 0.12);
+      const back = addMesh(chassis, new THREE.BoxGeometry(w, backH, 0.12), M.seat, sx, hip - 0.12 + backH / 2, sz - 0.14);
       back.rotation.x = -0.2;
-      if (row === 0) addMesh(chassis, new THREE.BoxGeometry(0.26, 0.16, 0.1), M.seat, sx, floorY + 0.1 + backH, sz - 0.2);
+      if (row === 0) addMesh(chassis, new THREE.BoxGeometry(0.26, 0.16, 0.1), M.seat, sx, hip - 0.08 + backH, sz - 0.2);
     }
   });
   const sw = new THREE.TorusGeometry(0.16, 0.02, 8, 24);
-  const swm = addMesh(chassis, sw, M.trim, -0.38, body.belt(c1) - 0.0, c1 - 0.5);
+  const swm = addMesh(chassis, sw, M.trim, 0.38, wheelY, wheelZ);
   swm.rotation.x = -0.45;
+  swm.name = 'steeringWheel';
 }
 
 const fnOf = (v) => (typeof v === 'function' ? v : () => v);
@@ -629,7 +656,7 @@ const CARS = {
     handles: [0.1, -0.85],
     windshieldBase: 1.2,
     lamps: [[1, 0.67, 0.76, 0.19, 0.06, 'head'], [1, 0.73, 0.76, 0.06, 0.035, 'drl', { p: 2, lift: 0.009 }], [1, 0.58, 0.76, 0.05, 0.03, 'drl', { p: 2, lift: 0.009 }], [-1, 0.68, 0.86, 0.2, 0.07, 'tail'], [-1, 0, 0.66, 0.22, 0.07, 'plate', { p: 8 }], [1, 0, 0.67, 0.42, 0.1, 'gloss', { p: 6, lift: 0.006 }], [1, 0, 0.71, 0.4, 0.008, 'chrome', { p: 2, lift: 0.01 }], [1, 0, 0.64, 0.4, 0.008, 'chrome', { p: 2, lift: 0.01 }], [1, 0, 0.4, 0.62, 0.09, 'trim', { p: 8, lift: 0.008 }], [-1, 0, 0.42, 0.62, 0.09, 'trim', { p: 8, lift: 0.008 }]],
-    cabin: [-1.2, 1.1], rearSeats: true,
+    cabin: [-1.2, 1.1], rearSeats: true, lodCrew: 'police',
     classify(c, n, b) {
       const ax = Math.abs(c.x), front = c.z > 2.05, rear = c.z < -2.08;
       if (c.y < b.bottom(c.z) + 0.015) return 'under';

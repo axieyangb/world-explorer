@@ -9,6 +9,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { KaijuFx } from './kaiju/kaiju_fx.js';
 import { getWeaponSfx } from './weapon_sfx.js';
+import { createBurntMaterial } from './traffic_models.js'; // [drivers]
 
 // By CAR_TYPES index: sedan, taxi, coupe, police, bus, tesla, cybertruck, ambulance, tow_truck
 const CAR_HP = [4, 4, 4, 4.5, 10, 4.5, 8, 8, 10];
@@ -46,6 +47,27 @@ function scorchTexture() {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
+}
+
+// [drivers] Turn a detailed vehicle into a burnt-out shell in place: soot / rust / ash paint, glass broken
+// out, charred tyres, rusty rims; the driver (and see-through lenses) gone. Materials are shared
+// (userData.shared: owners must not dispose them).
+let BURNT = null;
+export function burnWreck(root) {
+  if (!BURNT) {
+    BURNT = { 0: createBurntMaterial(0), 2: createBurntMaterial(2), 3: createBurntMaterial(3) };
+    for (const k in BURNT) BURNT[k].userData.shared = true;
+  }
+  root.traverse((o) => {
+    if (o.userData && o.userData.isDriver) { o.visible = false; return; }
+    if (o.isLight) o.visible = false;
+    if (!o.isMesh) return;
+    const m0 = Array.isArray(o.material) ? o.material[0] : o.material;
+    const k = (m0 && m0.userData && m0.userData.lodKind) || 0;
+    if (k === 1 || (m0 && m0.transparent && m0.opacity < 0.95)) { o.visible = false; return; }
+    o.material = BURNT[k === 2 || k === 3 ? k : 0];
+  });
+  return root;
 }
 
 export class VehicleDamage {
@@ -243,9 +265,8 @@ export class VehicleDamage {
     this._scorchAt(x, y, z, 7);
     const mesh = app.vehicleMesh;
     if (mesh) {
-      if (!this._charMat) this._charMat = new THREE.MeshStandardMaterial({ color: 0x15120f, roughness: 1, metalness: 0.05 });
       const w = mesh.clone(true);
-      w.traverse((o) => { if (o.isMesh) o.material = this._charMat; if (o.isLight) o.visible = false; });
+      burnWreck(w); // [drivers]
       w.position.copy(mesh.position);
       w.rotation.copy(mesh.rotation);
       w.userData.v = new THREE.Vector3(rr(-2, 2), 9, rr(-2, 2));

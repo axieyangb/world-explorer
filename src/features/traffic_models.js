@@ -30,7 +30,8 @@ function flattenVehicle(typeId, options = {}) {
   }
   const model = built.group;
   model.updateMatrixWorld(true);
-  const pos = [], nor = [], col = [], paint = [], emit = [];
+  const pos = [], nor = [], col = [], paint = [], emit = [], kind = [], seat = [];
+  const gPos = [], gNor = []; // [drivers] glass goes to its own see-through instanced mesh
   const tmpN = new THREE.Matrix3();
   const v = new THREE.Vector3();
   const c = new THREE.Color();
@@ -49,7 +50,20 @@ function flattenVehicle(typeId, options = {}) {
     if (!g.attributes.normal) g.computeVertexNormals();
     const p = g.attributes.position, n = g.attributes.normal, vc = g.attributes.color;
     tmpN.getNormalMatrix(o.matrixWorld);
+    const kd = ud.lodKind || 0, st = o.userData.lodSeat ?? -1;
+    if (kd === 1) {
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+        gPos.push(v.x, v.y, v.z);
+        v.fromBufferAttribute(n, i).applyMatrix3(tmpN).normalize();
+        gNor.push(v.x, v.y, v.z);
+      }
+      g.dispose();
+      return;
+    }
     for (let i = 0; i < p.count; i++) {
+      kind.push(kd);
+      seat.push(st);
       v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
       pos.push(v.x, v.y, v.z);
       v.fromBufferAttribute(n, i).applyMatrix3(tmpN).normalize();
@@ -68,24 +82,28 @@ function flattenVehicle(typeId, options = {}) {
       if (o.material && !Array.isArray(o.material)) o.material.dispose();
     }
   });
-  return indexed(pos, nor, col, paint, emit);
+  const geom = indexed(pos, nor, col, paint, emit, kind, seat);
+  const glass = new THREE.BufferGeometry();
+  glass.setAttribute('position', new THREE.Float32BufferAttribute(gPos, 3));
+  glass.setAttribute('normal', new THREE.Float32BufferAttribute(gNor, 3));
+  return { geom, glass };
 }
 
 // Weld identical vertices into an indexed geometry: smooth lofted bodies share most corners, so the
 // vertex shader runs far fewer times per instance than on the triangle soup.
-function indexed(pos, nor, col, paint, emit) {
+function indexed(pos, nor, col, paint, emit, kind, seat) {
   const map = new Map(), index = [];
-  const P = [], N = [], C = [], A = [], E = [];
+  const P = [], N = [], C = [], A = [], E = [], K = [], S = [];
   const q = (v, s) => Math.round(v * s);
   for (let i = 0; i < pos.length / 3; i++) {
     const i3 = i * 3;
-    const key = `${q(pos[i3], 1e4)},${q(pos[i3 + 1], 1e4)},${q(pos[i3 + 2], 1e4)},${q(nor[i3], 500)},${q(nor[i3 + 1], 500)},${q(nor[i3 + 2], 500)},${q(col[i3], 500)},${q(col[i3 + 1], 500)},${q(col[i3 + 2], 500)},${paint[i]},${emit[i]}`;
+    const key = `${q(pos[i3], 1e4)},${q(pos[i3 + 1], 1e4)},${q(pos[i3 + 2], 1e4)},${q(nor[i3], 500)},${q(nor[i3 + 1], 500)},${q(nor[i3 + 2], 500)},${q(col[i3], 500)},${q(col[i3 + 1], 500)},${q(col[i3 + 2], 500)},${paint[i]},${emit[i]},${kind[i]},${seat[i]}`;
     let k = map.get(key);
     if (k === undefined) {
       k = P.length / 3;
       map.set(key, k);
       P.push(pos[i3], pos[i3 + 1], pos[i3 + 2]); N.push(nor[i3], nor[i3 + 1], nor[i3 + 2]); C.push(col[i3], col[i3 + 1], col[i3 + 2]);
-      A.push(paint[i]); E.push(emit[i]);
+      A.push(paint[i]); E.push(emit[i]); K.push(kind[i]); S.push(seat[i]);
     }
     index.push(k);
   }
@@ -95,6 +113,8 @@ function indexed(pos, nor, col, paint, emit) {
   geom.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
   geom.setAttribute('aPaint', new THREE.Float32BufferAttribute(A, 1));
   geom.setAttribute('aEmit', new THREE.Float32BufferAttribute(E, 1));
+  geom.setAttribute('aKind', new THREE.Float32BufferAttribute(K, 1));
+  geom.setAttribute('aSeat', new THREE.Float32BufferAttribute(S, 1));
   geom.setIndex(index);
   geom.computeBoundingSphere();
   return geom;
@@ -112,9 +132,60 @@ export const CAR_TYPES = [
   { id: 'tow_truck', base: 'tow_truck', length: 6.40, width: 2.32 },
 ];
 
+// [drivers] Per-car / per-seat occupants and burnt wrecks, shared by the car and glass shaders.
+// Seed: from the car's paint when it has one (stable per car), else the instance slot (fixed liveries).
+const OCC_GLSL = `
+float occHash(float n) { return fract(sin(n * 12.9898 + 4.1414) * 43758.5453); }
+float occSeed(vec4 paint, float useId) {
+  float s = dot(floor(paint.rgb * 255.0 + 0.5), vec3(1.0, 257.0, 65537.0)) * 0.000123;
+  return fract(s * 7.31 + occHash(s) + useId * float(gl_InstanceID) * 0.61803);
+}
+`;
+const BURN_GLSL = `
+float bHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float bNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(bHash(i), bHash(i + vec3(1, 0, 0)), f.x), mix(bHash(i + vec3(0, 1, 0)), bHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(bHash(i + vec3(0, 0, 1)), bHash(i + vec3(1, 0, 1)), f.x), mix(bHash(i + vec3(0, 1, 1)), bHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// Burnt-out car: soot-black shell with rust blooms, grey-white ash on the hot upper panels, a scorched trace
+// of the paint low on the doors, charred tyres on rusty steel rims, a black gutted cabin.
+vec3 burnt(vec3 p, float kind, vec3 paint) {
+  float n = bNoise(p * 2.3) * 0.6 + bNoise(p * 6.7 + 3.1) * 0.4;
+  float h = clamp((p.y - 0.25) / 1.1, 0.0, 1.0);
+  vec3 soot = vec3(0.026, 0.024, 0.022), rustD = vec3(0.1, 0.048, 0.026), rust = vec3(0.27, 0.115, 0.048), ash = vec3(0.34, 0.33, 0.31);
+  if (kind > 1.5 && kind < 2.5) return mix(vec3(0.035, 0.03, 0.028), rustD * 0.8, smoothstep(0.55, 0.8, n));
+  if (kind > 2.5 && kind < 3.5) return mix(vec3(0.16, 0.14, 0.12), rust * 0.7, smoothstep(0.4, 0.75, n));
+  if (kind > 6.5 && kind < 8.5) return soot * (0.8 + 0.6 * n);
+  vec3 c = mix(soot, rustD, smoothstep(0.42, 0.66, n));
+  c = mix(c, rust, smoothstep(0.64, 0.82, n) * (0.3 + 0.7 * h));
+  c = mix(c, ash, smoothstep(0.45, 0.95, h) * smoothstep(0.42, 0.7, bNoise(p * 3.7 + 9.0)) * 0.85);
+  c = mix(c, paint * 0.32, (1.0 - smoothstep(0.1, 0.45, h)) * smoothstep(0.45, 0.65, bNoise(p * 2.9 + 17.0)) * 0.8);
+  return c;
+}
+`;
+
+// [drivers] Burnt material for a cloned hero wreck (vehicle_damage.js): same burn shading in mesh space.
+// kind: 0 body, 2 tyre, 3 bright metal, 7 interior.
+export function createBurntMaterial(kind = 0) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.93, metalness: kind === 3 ? 0.5 : 0.08 });
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vLocal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLocal = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying vec3 vLocal;\n${BURN_GLSL}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\n  diffuseColor.rgb = burnt(vLocal, ${kind.toFixed(1)}, vec3(0.25));`);
+  };
+  mat.customProgramCacheKey = () => `we-burnt-v1-${kind}`;
+  return mat;
+}
+
 export function createCarMaterial(uniforms, matOpts = {}) {
   const roughness = matOpts.roughness != null ? matOpts.roughness : 0.42;
   const metalness = matOpts.metalness != null ? matOpts.metalness : 0.35;
+  const useId = matOpts.idSeed ? 1 : 0;
+  const parked = matOpts.parked ? 1 : 0; // [drivers] parked cars (venues) are empty
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uLights = uniforms.uLights;
@@ -122,14 +193,70 @@ export function createCarMaterial(uniforms, matOpts = {}) {
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute float aPaint;\nattribute float aEmit;\nattribute vec4 iPaint;\nattribute float iBrake;\nvarying float vEmit;\nvarying float vBrake;'
+        `#include <common>
+attribute float aPaint;
+attribute float aEmit;
+attribute float aKind;
+attribute float aSeat;
+attribute vec4 iPaint;
+attribute float iBrake;
+varying float vEmit;
+varying float vBrake;
+varying float vChar;
+varying float vKind;
+varying vec3 vLocal;
+varying vec3 vPaint;
+${OCC_GLSL}
+const vec3 SKINS[6] = vec3[6](vec3(0.86, 0.66, 0.53), vec3(0.78, 0.56, 0.42), vec3(0.62, 0.42, 0.29), vec3(0.45, 0.29, 0.19), vec3(0.3, 0.19, 0.12), vec3(0.9, 0.73, 0.6));
+const vec3 HAIRS[5] = vec3[5](vec3(0.05, 0.04, 0.03), vec3(0.12, 0.08, 0.05), vec3(0.3, 0.2, 0.11), vec3(0.6, 0.48, 0.3), vec3(0.5, 0.49, 0.47));
+const vec3 SHIRTS[10] = vec3[10](vec3(0.85, 0.85, 0.83), vec3(0.08, 0.08, 0.09), vec3(0.12, 0.17, 0.32), vec3(0.55, 0.1, 0.1), vec3(0.3, 0.42, 0.26), vec3(0.45, 0.47, 0.5), vec3(0.62, 0.72, 0.85), vec3(0.75, 0.6, 0.35), vec3(0.2, 0.45, 0.48), vec3(0.42, 0.25, 0.45));`
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+  vLocal = position;
+  vKind = aKind;
+  if (aSeat > -0.5) {
+    float prob = aSeat < 0.5 ? 1.0 : aSeat < 1.5 ? 0.35 : aSeat < 2.5 ? 0.25 : aSeat < 3.5 ? 0.5 : 1.0;
+    if (seatSeed >= prob || iBrake < -0.9 || ${parked} == 1) transformed = vec3(0.0, 0.5, 0.0); // empty seat / wreck / parked
+  }`
       )
       .replace(
         '#include <color_vertex>',
-        '#include <color_vertex>\n  vColor.rgb = mix(vColor.rgb, iPaint.rgb * (aPaint > 0.85 ? 1.0 : 0.8), step(0.01, aPaint) * iPaint.a);\n  float vChar = clamp(-iBrake, 0.0, 1.0);\n  vColor.rgb *= 1.0 - 0.88 * vChar;\n  vEmit = vChar > 0.9 ? 0.0 : aEmit;\n  vBrake = max(iBrake, 0.0);'
+        `#include <color_vertex>
+  float seed = occSeed(iPaint, ${useId}.0);
+  float seatSeed = occHash(seed * 31.7 + aSeat * 7.13);
+  vPaint = mix(vColor.rgb, iPaint.rgb, step(0.01, aPaint) * iPaint.a);
+  vColor.rgb = mix(vColor.rgb, iPaint.rgb * (aPaint > 0.85 ? 1.0 : 0.8), step(0.01, aPaint) * iPaint.a);
+  if (aKind > 3.5 && aKind < 6.5 || aKind > 9.5) {
+    float hs = occHash(seatSeed * 91.3);
+    vec3 skin = SKINS[int(hs * 5.99)];
+    vec3 shirt = SHIRTS[int(occHash(seatSeed * 17.9) * 9.99)];
+    vColor.rgb = aKind < 4.5 ? shirt : aKind < 5.5 ? skin : aKind < 6.5 ? HAIRS[int(occHash(seatSeed * 5.3) * 4.99)] : (occHash(seatSeed * 3.7) < 0.55 ? skin : shirt);
+  } else if (aKind > 8.5 && aKind < 9.5) {
+    vColor.rgb = vec3(0.07, 0.09, 0.16); // police uniform and cap
+  }
+  vChar = clamp(-iBrake, 0.0, 1.0);
+  vEmit = vChar > 0.9 ? 0.0 : aEmit;
+  vBrake = max(iBrake, 0.0);`
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uLights;\nuniform float uStrobeTime;\nvarying float vEmit;\nvarying float vBrake;')
+      .replace('#include <common>', `#include <common>
+uniform float uLights;
+uniform float uStrobeTime;
+varying float vEmit;
+varying float vBrake;
+varying float vChar;
+varying float vKind;
+varying vec3 vLocal;
+varying vec3 vPaint;
+${BURN_GLSL}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+  if (vChar > 0.01) diffuseColor.rgb = mix(diffuseColor.rgb, burnt(vLocal, vKind, vPaint), smoothstep(0.0, 0.9, vChar));`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, 0.93, vChar);`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+  metalnessFactor = mix(metalnessFactor, vKind > 2.5 && vKind < 3.5 ? 0.5 : 0.08, vChar);`)
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
@@ -143,21 +270,82 @@ export function createCarMaterial(uniforms, matOpts = {}) {
   }`
       );
   };
-  mat.customProgramCacheKey = () => `we-traffic-car-v3-${roughness}-${metalness}`;
+  mat.customProgramCacheKey = () => `we-traffic-car-v4-${roughness}-${metalness}-${useId}-${parked}`;
   return mat;
+}
+
+// [drivers] See-through tinted glass: dark tint, sky/street reflection by fresnel (dimmer at night), more
+// opaque at grazing angles. Burning cars smoke the glass up; wrecks lose it (broken out).
+export function createCarGlassMaterial(uniforms) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x0c1318, roughness: 0.06, metalness: 0.2, transparent: true, opacity: 0.4, depthWrite: false });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uLights = uniforms.uLights;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float iBrake;\nvarying float vChar;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vChar = clamp(-iBrake, 0.0, 1.0);\n  if (vChar > 0.9) transformed = vec3(0.0);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uLights;\nvarying float vChar;')
+      .replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+  {
+    vec3 V = normalize(vViewPosition);
+    float fr = pow(1.0 - abs(dot(normalize(vNormal), V)), 3.0);
+    float sky = clamp(0.5 + 0.5 * reflect(-V, normalize(vNormal)).y, 0.0, 1.0);
+    vec3 refl = mix(vec3(0.16, 0.17, 0.18), vec3(0.55, 0.66, 0.78), sky) * (1.0 - 0.85 * uLights);
+    gl_FragColor.rgb += refl * (0.18 + 0.7 * fr);
+    gl_FragColor.a = mix(0.38 + 0.5 * fr, 0.92, vChar);
+    gl_FragColor.rgb *= 1.0 - 0.8 * vChar;
+  }`
+      );
+  };
+  mat.customProgramCacheKey = () => 'we-traffic-glass-v1';
+  return mat;
+}
+
+const ID_SEED = new Set(['taxi', 'police', 'bus', 'ambulance', 'tow_truck']);
+
+const GLASS_MATS = new WeakMap();
+/**
+ * [drivers] Give an instanced car mesh its see-through glass: a child InstancedMesh sharing the car's instance
+ * matrices and iBrake (char), drawn after the opaques with the car's instance count.
+ */
+export function attachCarGlass(mesh, glassGeo, iBrake, uniforms, mat = null) {
+  if (!glassGeo || !glassGeo.attributes.position.count) return null;
+  if (!mat) {
+    mat = GLASS_MATS.get(uniforms);
+    if (!mat) { mat = createCarGlassMaterial(uniforms); GLASS_MATS.set(uniforms, mat); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', glassGeo.attributes.position);
+  geo.setAttribute('normal', glassGeo.attributes.normal);
+  geo.setAttribute('iBrake', iBrake);
+  const gm = new THREE.InstancedMesh(geo, mat, mesh.instanceMatrix.count);
+  gm.instanceMatrix = mesh.instanceMatrix;
+  gm.count = 0;
+  gm.frustumCulled = false;
+  gm.castShadow = false;
+  gm.receiveShadow = false;
+  gm.renderOrder = 1;
+  gm.name = `${mesh.name}_glass`;
+  gm.onBeforeRender = () => { gm.count = mesh.count; };
+  mesh.add(gm);
+  return gm;
 }
 
 export function createCarMeshes(capacity, uniforms) {
   const baseMat = createCarMaterial(uniforms);
+  const idMat = createCarMaterial(uniforms, { idSeed: true });
+  const glassMat = createCarGlassMaterial(uniforms);
   return CAR_TYPES.map((t) => {
-    const geom = flattenVehicle(t.base, t.options);
+    const { geom, glass } = flattenVehicle(t.base, t.options);
     const iPaint = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
     const iBrake = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
     iPaint.setUsage(THREE.DynamicDrawUsage);
     iBrake.setUsage(THREE.DynamicDrawUsage);
     geom.setAttribute('iPaint', iPaint);
     geom.setAttribute('iBrake', iBrake);
-    const mat = t.metalness != null ? createCarMaterial(uniforms, t) : baseMat;
+    const mat = t.metalness != null ? createCarMaterial(uniforms, t) : ID_SEED.has(t.id) ? idMat : baseMat;
     const mesh = new THREE.InstancedMesh(geom, mat, capacity);
     mesh.onBeforeRender = () => {
       uStrobeTime.value = performance.now() * 0.001;
@@ -168,7 +356,8 @@ export function createCarMeshes(capacity, uniforms) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.name = `traffic_${t.id}`;
-    return { type: t, mesh, iPaint, iBrake };
+    attachCarGlass(mesh, glass, iBrake, uniforms, glassMat);
+    return { type: t, mesh, iPaint, iBrake, glassGeo: glass };
   });
 }
 

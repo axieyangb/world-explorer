@@ -5,6 +5,7 @@ import { getBeijingTerrainElevation } from '../environment.js';
 import { createVehicleModel, createHelicopterModel } from '../entities.js';
 import { createWeaponModel } from './weapon_models.js'; // [weapon-pickups]
 import { t as tr } from '../i18n.js'; // [weapon-pickups]
+import { startRagdoll, stepRagdoll } from './ped_ragdoll.js'; // [polish] connected soldier ragdoll
 
 const HALF_PI = Math.PI * 0.5;
 
@@ -351,14 +352,14 @@ SHARED_TRACER_GEOM.rotateX(HALF_PI);
 const SHARED_SHELL_GEOM = new THREE.CylinderGeometry(0.06, 0.06, 0.9, 8);
 SHARED_SHELL_GEOM.rotateX(HALF_PI);
 
-const SHARED_RAGDOLL_GEOMS = [
-  new THREE.SphereGeometry(0.14, 8, 6),
-  new THREE.BoxGeometry(0.38, 0.45, 0.22),
-  new THREE.BoxGeometry(0.12, 0.44, 0.12),
-  new THREE.BoxGeometry(0.12, 0.44, 0.12),
-  new THREE.BoxGeometry(0.14, 0.48, 0.14),
-  new THREE.BoxGeometry(0.14, 0.48, 0.14),
+// [polish] Soldier limb groups for the connected ragdoll (origins in the rest pose, root space, unscaled),
+// in the order of _detonateSoldierRagdoll's body.groups.
+const SOLDIER_RAG_SPECS = [
+  { name: 'torso', ox: 0, oy: 0.9, oz: 0 }, { name: 'head', ox: 0, oy: 1.52, oz: 0 },
+  { name: 'armL', ox: -0.28, oy: 1.42, oz: 0 }, { name: 'armR', ox: 0.28, oy: 1.42, oz: 0 },
+  { name: 'legL', ox: -0.13, oy: 0.9, oz: 0 }, { name: 'legR', ox: 0.13, oy: 0.9, oz: 0 },
 ];
+
 
 export class WalkerWeaponsSystem {
   constructor(app) {
@@ -1337,6 +1338,8 @@ export class WalkerWeaponsSystem {
       this.app.scene.remove(this.aiHeli.mesh);
       free(this.aiHeli.mesh);
     }
+    for (const r of this.aiRagdolls) this._freeSoldierBody(r); // [polish] lying bodies
+    this.aiRagdolls.length = 0;
     this.aiSoldiers.length = 0;
     this.aiTanks.length = 0;
     this.aiHeli = null;
@@ -1453,7 +1456,7 @@ export class WalkerWeaponsSystem {
       if (s.mesh.userData.leftArm) s.mesh.userData.leftArm.rotation.x = pitchUp - 0.25;
 
       if (distToKaiju < 28) {
-        this._detonateSoldierRagdoll(s);
+        this._detonateSoldierRagdoll(s, chestPos); // [polish] thrown away from the kaiju
         continue;
       }
 
@@ -1693,49 +1696,34 @@ export class WalkerWeaponsSystem {
     });
   }
 
-  _detonateSoldierRagdoll(s) {
+  // [polish] A soldier caught by the kaiju dies as ONE body: the connected Verlet ragdoll from ped_ragdoll.js
+  // poses his own limb groups (hips + torso, head, arms, legs), thrown away from the kaiju, tumbling and
+  // lying where he lands until the body is cleared (it used to burst into six loose boxes).
+  _detonateSoldierRagdoll(s, from = null) {
     s.alive = false;
-    this.soldierGroup.remove(s.mesh);
-    s.mesh.traverse((obj) => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
-        else obj.material.dispose();
-      }
-    });
-
-    const parts = [
-      { col: 0x3d4a36, pos: new THREE.Vector3(0, 1.6, 0) },
-      { col: 0x48583c, pos: new THREE.Vector3(0, 1.2, 0) },
-      { col: 0x36442e, pos: new THREE.Vector3(-0.25, 1.2, 0) },
-      { col: 0x36442e, pos: new THREE.Vector3(0.25, 1.2, 0) },
-      { col: 0x2e3826, pos: new THREE.Vector3(-0.12, 0.5, 0) },
-      { col: 0x2e3826, pos: new THREE.Vector3(0.12, 0.5, 0) },
-    ];
-
-    for (let k = 0; k < parts.length; k++) {
-      const p = parts[k];
-      const mat = new THREE.MeshStandardMaterial({ color: p.col, roughness: 0.7 });
-      const mesh = new THREE.Mesh(SHARED_RAGDOLL_GEOMS[k], mat);
-      mesh.position.copy(s.pos).add(p.pos);
-      this.app.scene.add(mesh);
-
-      const vel = new THREE.Vector3(
-        (Math.random() - 0.5) * 8.0,
-        4.0 + Math.random() * 5.0,
-        (Math.random() - 0.5) * 8.0
-      );
-      this.aiRagdolls.push({
-        mesh,
-        mat,
-        pos: mesh.position,
-        vel,
-        rotVel: new THREE.Vector3(Math.random() * 8, Math.random() * 8, Math.random() * 8),
-        groundY: s.pos.y,
-        life: 0,
-      });
+    const ud = s.mesh.userData;
+    const root = s.mesh;
+    let dx = from ? s.pos.x - from.x : Math.sin(s.yaw || 0), dz = from ? s.pos.z - from.z : Math.cos(s.yaw || 0);
+    const l = Math.hypot(dx, dz) || 1;
+    dx /= l; dz /= l;
+    if (!ud.hips || !ud.headGroup || !ud.leftArm || !ud.rightArm || !ud.leftLeg || !ud.rightLeg) {
+      this.soldierGroup.remove(root);
+      root.traverse((obj) => { if (obj.geometry) obj.geometry.dispose(); if (obj.material) obj.material.dispose(); });
+      return;
     }
-
+    // head: out of the hips group so it gets its own frame (rest position in root space)
+    ud.hips.remove(ud.headGroup);
+    root.add(ud.headGroup);
+    const sc = root.scale.x || 1;
+    root.position.set(0, 0, 0); root.rotation.set(0, 0, 0); root.scale.set(1, 1, 1);
+    root.updateMatrix();
+    const body = { x: s.pos.x, z: s.pos.z, ryaw: s.yaw || 0, phase: 0, amp: 0 };
+    const sp = 6 + Math.random() * 4;
+    body.parts = startRagdoll(body, { wScale: sc, hScale: sc }, s.pos.y, dx * sp, 4 + Math.random() * 3, dz * sp, -dx, -dz, 3 + Math.random() * 4, SOLDIER_RAG_SPECS, true);
+    body.groups = [ud.hips, ud.headGroup, ud.leftArm, ud.rightArm, ud.leftLeg, ud.rightLeg];
+    for (const g of body.groups) { g.rotation.set(0, 0, 0); g.scale.setScalar(sc); }
+    this._poseSoldierBody(body);
+    this.aiRagdolls.push({ body, mesh: root, life: 0, done: false });
     setTimeout(() => {
       const idx = this.aiSoldiers.indexOf(s);
       if (idx >= 0) this.aiSoldiers.splice(idx, 1);
@@ -1937,27 +1925,30 @@ export class WalkerWeaponsSystem {
     }
   }
 
+  _poseSoldierBody(body) { // [polish] parts are in world space (soldierGroup has no transform)
+    for (let k = 0; k < body.groups.length; k++) {
+      const pt = body.parts[k], g = body.groups[k];
+      g.position.set(pt.x, pt.y, pt.z);
+      g.quaternion.copy(pt.q);
+    }
+  }
+
+  _freeSoldierBody(r) { // [polish]
+    this.soldierGroup.remove(r.mesh);
+    r.mesh.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) { if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose()); else obj.material.dispose(); }
+    });
+  }
+
   _updateRagdolls(dt) {
     for (let i = this.aiRagdolls.length - 1; i >= 0; i--) {
       const r = this.aiRagdolls[i];
       r.life += dt;
-      if (r.life > 4.5) {
-        this.app.scene.remove(r.mesh);
-        if (r.mat) r.mat.dispose();
-        this.aiRagdolls.splice(i, 1);
-        continue;
-      }
-
-      r.vel.y -= 18.0 * dt;
-      r.pos.addScaledVector(r.vel, dt);
-      if (r.pos.y <= r.groundY + 0.08) {
-        r.pos.y = r.groundY + 0.08;
-        r.vel.set(0, 0, 0);
-      }
-      r.mesh.position.copy(r.pos);
-      r.mesh.rotation.x += r.rotVel.x * dt;
-      r.mesh.rotation.y += r.rotVel.y * dt;
-      r.mesh.rotation.z += r.rotVel.z * dt;
+      // [polish] connected soldier ragdoll: settles, lies for a while, then sinks away
+      if (!r.done) { r.done = stepRagdoll(r.body, dt); this._poseSoldierBody(r.body); }
+      if (r.life > 9) r.mesh.position.y = -(r.life - 9) * 0.5;
+      if (r.life > 11) { this._freeSoldierBody(r); this.aiRagdolls.splice(i, 1); }
     }
   }
 
