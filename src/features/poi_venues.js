@@ -723,7 +723,7 @@ export function buildPoiVenues(ctx) {
       const lx = -hl + ((2 * hl) * (i + 0.5)) / nLx, lz = -hw + ((2 * hw) * (j + 0.5)) / nLz;
       bld.quad(F.p(lx - 0.55, Hc - 0.025, lz - 0.32), F.p(lx + 0.55, Hc - 0.025, lz - 0.32), F.p(lx + 0.55, Hc - 0.025, lz + 0.32), F.p(lx - 0.55, Hc - 0.025, lz + 0.32), C.light, true);
       const [gx, , gz] = F.p(lx, 0, lz);
-      pool(gx, gz, 3.0, C.lightCool, 0.35, 0.115);
+      pool(gx, gz, 3.0, C.lightCool, 0.16, 0.115);
     }
     // pillars: clad square columns with a brand-coloured base wrap
     for (const [x, z] of pillars) {
@@ -740,7 +740,7 @@ export function buildPoiVenues(ctx) {
       const E = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
       sign(E, 0, Hc + Th * 0.52, hl + 0.03, Math.min(2 * hw - 1.5, txtW), Th * 0.36 - 0.04, 2, nm || '加油站', nameEn || nm || 'GAS', toHex(scheme[0]), 0xffffff);
     }
-    poolRect(F, hl, hw, 3.5, C.lightCool, 0.38);
+    poolRect(F, hl, hw, 3.5, C.lightCool, 0.2);
     zones.fuel.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, hl, hw]);
     for (const p of pumpIds) zones.pumps.push(p);
     // --- price sign pylon by the road
