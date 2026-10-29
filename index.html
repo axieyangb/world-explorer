@@ -16,31 +16,38 @@
     /* Loading screen: inline so it paints before styles.css and the app modules arrive. */
     #loading-screen {
       position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(ellipse at 50% 35%, #16263d 0%, #0a1220 55%, #05080f 100%);
+      background: radial-gradient(ellipse at 50% 38%, #0d1829 0%, #060b14 55%, #020408 100%);
       color: #eef2f7; font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "PingFang SC", sans-serif;
       transition: opacity 0.7s ease, visibility 0.7s ease;
+      overflow: hidden;
+    }
+    #loading-screen::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.7;
+      background-image:
+        radial-gradient(1px 1px at 15% 20%, rgba(255,255,255,0.85) 50%, transparent 100%),
+        radial-gradient(1.5px 1.5px at 35% 85%, rgba(180,220,255,0.9) 50%, transparent 100%),
+        radial-gradient(1px 1px at 60% 12%, rgba(255,255,255,0.7) 50%, transparent 100%),
+        radial-gradient(2px 2px at 80% 65%, rgba(200,230,255,0.8) 50%, transparent 100%),
+        radial-gradient(1px 1px at 92% 30%, rgba(255,255,255,0.75) 50%, transparent 100%),
+        radial-gradient(1.5px 1.5px at 8% 70%, rgba(255,255,255,0.8) 50%, transparent 100%),
+        radial-gradient(1px 1px at 45% 45%, rgba(160,200,255,0.65) 50%, transparent 100%),
+        radial-gradient(1px 1px at 75% 90%, rgba(255,255,255,0.7) 50%, transparent 100%),
+        radial-gradient(1.5px 1.5px at 25% 40%, rgba(255,255,255,0.75) 50%, transparent 100%),
+        radial-gradient(1px 1px at 50% 80%, rgba(255,255,255,0.6) 50%, transparent 100%),
+        radial-gradient(1px 1px at 88% 18%, rgba(180,210,255,0.7) 50%, transparent 100%),
+        radial-gradient(1.5px 1.5px at 68% 38%, rgba(255,255,255,0.8) 50%, transparent 100%);
+      background-size: 550px 550px;
     }
     #loading-screen.ls-done { opacity: 0; visibility: hidden; pointer-events: none; }
-    .ls-inner { width: min(420px, calc(100vw - 32px)); text-align: center; }
-    .ls-globe {
-      width: 96px; height: 96px; margin: 0 auto 22px; border-radius: 50%; position: relative; overflow: hidden;
-      background: radial-gradient(circle at 34% 30%, #5fb4ff 0%, #2366b8 45%, #0f2c57 100%);
-      box-shadow: 0 0 40px rgba(80, 160, 255, 0.35), inset -10px -12px 24px rgba(0, 0, 0, 0.45);
+    .ls-inner { width: min(420px, calc(100vw - 32px)); text-align: center; position: relative; z-index: 1; }
+    .ls-globe-wrap {
+      width: 160px; height: 160px; margin: 0 auto 20px; position: relative;
+      display: flex; align-items: center; justify-content: center;
     }
-    .ls-globe::before {
-      content: ""; position: absolute; inset: 0; width: 200%;
-      background: repeating-linear-gradient(90deg, rgba(255,255,255,0.16) 0 1px, transparent 1px 24px),
-                  radial-gradient(ellipse 22px 14px at 30px 40px, rgba(120,200,120,0.75) 60%, transparent 62%),
-                  radial-gradient(ellipse 16px 22px at 70px 62px, rgba(120,200,120,0.7) 60%, transparent 62%),
-                  radial-gradient(ellipse 26px 12px at 126px 34px, rgba(120,200,120,0.75) 60%, transparent 62%),
-                  radial-gradient(ellipse 14px 18px at 166px 66px, rgba(120,200,120,0.7) 60%, transparent 62%);
-      animation: ls-spin 9s linear infinite;
+    #ls-earth-canvas {
+      width: 160px; height: 160px; display: block; border-radius: 50%;
+      filter: drop-shadow(0 0 28px rgba(60, 140, 255, 0.38));
     }
-    .ls-globe::after {
-      content: ""; position: absolute; inset: 0; border-radius: 50%;
-      background: repeating-linear-gradient(0deg, rgba(255,255,255,0.10) 0 1px, transparent 1px 24px);
-    }
-    @keyframes ls-spin { to { transform: translateX(-50%); } }
     .ls-title { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: 0.5px; }
     .ls-sub { margin: 2px 0 26px; color: #9fb3cc; font-size: 14px; letter-spacing: 3px; }
     .ls-bar { height: 4px; border-radius: 4px; background: rgba(255,255,255,0.10); overflow: hidden; }
@@ -59,14 +66,13 @@
       margin-left: 8px; padding: 4px 12px; border: 0; border-radius: 6px; cursor: pointer;
       background: #3a8dff; color: #fff; font: inherit;
     }
-    @media (prefers-reduced-motion: reduce) { .ls-globe::before { animation: none; } }
   </style>
 </head>
 <body>
   <!-- Loading screen: shown until the first view of the world is built -->
   <div id="loading-screen" role="status" aria-live="polite">
     <div class="ls-inner">
-      <div class="ls-globe" aria-hidden="true"></div>
+      <div class="ls-globe-wrap" aria-hidden="true"><canvas id="ls-earth-canvas" width="160" height="160"></canvas></div>
       <h1 class="ls-title">World Explorer</h1>
       <p class="ls-sub">世界探索</p>
       <div class="ls-bar"><div id="loading-bar-fill"></div></div>
@@ -167,6 +173,7 @@
         done: function () {
           if (done) return;
           done = true; pct = 100; render();
+          if (typeof stopEarth === 'function') stopEarth();
           if (!isBundle) { try { sessionStorage.removeItem('we-bundle-fallback'); } catch (e) {} }
           status.textContent = 'Ready';
           clearInterval(creep); clearInterval(watchdog); clearInterval(tipTimer);
@@ -181,8 +188,180 @@
           window.__loading.fail(e.message);
         }
       });
-      var gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) window.__loading.fail('Your browser or device does not support WebGL2, which World Explorer needs.');
+      if (typeof window !== 'undefined' && !window.WebGL2RenderingContext) {
+        window.__loading.fail('Your browser or device does not support WebGL2, which World Explorer needs.');
+      }
+
+      // Ultra-realistic 3D-shaded rotating Earth on 2D canvas (Zero WebGL contexts!)
+      var stopEarth = null;
+      (function initEarthGlobe() {
+        var cv = document.getElementById('ls-earth-canvas');
+        if (!cv || !cv.getContext) return;
+        var ctx = cv.getContext('2d');
+        if (!ctx) return;
+
+        var b64Rle = "AP8A/wD/ABoBBAANAREAwQElBgYBDQArAQcAgAEJBgYHBwYBBwIGCwcMBggBBgARAQkACQEQAAcBAwAEAQgAYQEMBgIHAQYBAQEGCQcEBggHFAYKAQIADAEOAAkBAQYFAQEGCAEBAAUBAwcBAQEABAEDBgQBBgBXAQsGAgEEBg8BBAYEBxcGBwEFAAwBAQYLAQIACQEQAAUBAQYBAQUAAQEEBgUBAQYCAQQAUwEHBgMBBQYCAQEGAwEBBgEBAQYJAQIGBQcaBgYBAQAQAQMGBAEBBgMBAwASAQoAAgEHAAEBCAYBAQIGAQEIAAsBDAA3AQIGAwEBBgMBAgYBAQMGBAEBBgwBBgYHBxcGBAECABABDAARAQUGBgECAAQBCgYEBQQGAQUBBgIFAgECAAsBAwYBAQEGAQEHADYBBwYGAQQGAgEBBgIBAQYIAQ8GAgcVBgMBAgATAQYAEwEDBgQBDAYBAQMGCQUJBgEBDAABAQMFAQYDAQIGAwEBABIBAwALAQUAEAECBgcBBAYDAQIGBwEBBgkBBAAGAQMGAgcRBgUBAwADAQMADwEEAAEBBAANAQMGAwEIBgEBAgYBAQMGBgUVAQEFBQEGBgIFAQELAAsBBQAHARoGBAEBBgoBAgYFAQIGCwEGAAQBAgYEBw4GAQcCBgIBAgAFAQMADgEOAAkBAQYBBQIGAQEIBgwFHQEBBQEBAwYBBQcGAQEXAAQBBAYHBQMGAQEBBgEBCAYBAQEGAQEGBgsBAwYDAQIGDgECAAUBAgYEBw0GBQEBAAYBAwAMAQUFCAESBQEBBQUEBgYFNAEHBgEBBQYBAQgGCQUDBggFBgYJAQEGEQEBBgMBAQYBAQEGBgEGAAEBAwYEBw0GAQEEAAYBAwALAQMFAgYCBQwBAwYBBQEBAQUCAQEFDgYBBQ0GAgUVBgEFFwYDBQIGCgEGBQIGBQUIBgIFAQYBBQoGAwUBBgQFAQYRAQMGAQECBgQHAQYCAQIAAgEBBgUHCQEPAA4BAgUCBgEFEAEBBQIBAQUMBgEFBAEBBSsGAQUQBhEBAQYDBQ8GAgURBgIFAgYQAQYGCAECAAIBAgYEBwQGAwEEAAMBAQYHAQIACwEEBAEFDwEDBTsGAQUFBgMFAwYBBQgGBQUEBgEFAgYBAQQGAQEFBQIBAQUMBgEFBQYDBRgGBAEBBgMBAgYJAQQAAgECBgQHAwYCAQYAAwECBAEGBQECAAEBBAAEAQUFCAEBBUwGAgUCBgMFBgYFBQEGAQUHAQsFCQYBBQ4GAwUVBgIBBAYCAQIGAQEEBgQBAgAFAQMGAgcCBgIBAgACAQMAAwEKAAEBBwABAQIEAQUBBgEFBgEBBU4GBAUBBgMFBQYCBQYGAgUEBgEBAgACAQYFBwYCBQIGAQUCBgQFDwEBBQ4BAwABAQYGBgEGAAUBAgYFAQIAAwEDAAUBBQAEAQcAAQEBBAEFCAECBU8GCwUBAQIFCQEEAAcBAgYBAQEFCgEFBQIGAwUCBgEFFwEDAAUBAwYGAQMGAQEDAAUBBAYCAQIAAwEDAA4BBQQBAQEAAQECBQEGAQUHAQIFAQEBBQEBAQVUAQQFBAEIAAYBCQUFAQoFAgYBBQQGAQUWAQQAAwECBgYFAgYDAQIACAEEABUBAQQBAQEEAQEDAAEBAgQCAQIEAQUCBAEBAwVQAQsFAQYBBQEBBwAJAQMAAQEFBQIBAQUBAQMABgEDBAEFBAYBBRoBBQUBAQEGAgUGBgIFAQEEAB0BAgQEAQIAAgEDBAcBAQQBBUwGAQUBAQMABAEEBQIGAQUCAQUACwEGBAIBBwAIAQMEAgUhAQIFDQEEABsBAwQFAQYEBQEDBAEFTAEGAAYBAQUBBgEFAQYBAQYABgEJBgEBBgANAQIEAwUGBgEFGQEBBRABAgAbAQEEAwECBAMBBAQJBSQDAgUqAQEFAQEBAAYBAQUBBgIBEQQBAQcAEgECBAEBAQQCBgEFBQYBBRcBAgUPAQIAGwEBBAMBAQQFAQEEDAUgAwIFEQYBBR0BAgAEAQIFAgEDAAUBDwAWAQQEAgUGBgEFAQMEBSABAQUBAQMAGgEFBBEFUAEBBQEBAgAEAQIFAQEDAAYBBgAhAQMEAwUGAwQFHgECBQQBAgAZAQYEDgUUAwUFAwMFBQUDAQUHBgIDAwUOAwEFEAEBBQIBAQACAQMFAQEDAC8BAwQDAwEEAgUCAwYFCgECBQ4BAgUBAQEFBAECAB0BAQQNBQEEBQUCBAEFDAMUBQYDAgUBAwQFAQYBBQUDAQUDAwQFDgECBQEBAgABAQYAMwEBBAYFAgMBBQEDBQUdAQYAHQEDBAYGAQUBBgEFAgQFBQQEBQEBBAMFAgMDAQMDEQUDAwwFAQMKBQ4BBwYBAQMANAEBBAQFAQQBBQUDBQUJAQEFAgEBBQ0BCAAaAQYEFQECBAIBAQQDBQMDAQECAwUBAgMJBQMGAQUBAxcFDgEDBQEBAgUBAQQANQEBBAMDAwUCAwEFAQMFBQoBAQULAQgAHwEBBAsBAgQDAQEEBAUBBAQBBwQBBQIEAgECAxAFBQMBBQEDFQUCAwEFCgEDBQQBAwA3AQEEAwUBAwIFAQMBBQIDAQUCAwMFDAEBBQYEAgEIABABAwAMAQEEBQMBBAMBAwQBAQEEAwECBAMFAQQCAQMEAwEDBQIEAQUBBAEBAgMKBAIFBQYBAxcFCwEHBQEBBQA4AQEEBAMCBQEDAQQBBQEDAQUCAwMFDQQFAQQAFwEGAAkBAQQHAQUEAQEDBA8FBgQBAwIBAQMJBAIDAwUCAxgFBgEBBQUBAgACAQIEAQUBAQIAOwECBAMDBAUBAwIFAgMDBBEBBAAYAQcACAEBBAUDAQQBAQkEAgECBAoFAgQBBQMDAQUBBAEBAwMIBAEFAwYDAw0GAwMHBQUBAgUBAQIFAgEDAAEBAwQCAQIAOwEDBAMDAwQBAwIFAgMEBBABAgAaAQcACAEBBAUBBQQEAQEEAgEEBBAFAgQBAQIDAwQBAwYEAQUBBgMDBwYCAwcFAgMEBQMEAQMBBAIFAQQBAQIEAQUBBAIBAwQCBQEEAQEBAD0BAgQBAwUEAQMDBAEDBAQQAQIAHgEDAAgBAwQBAQIDAgQCAwIEAQMCAQgEAQEBBAEBBQQBAwUEAQUCBAIFAQMGBAIFAwYBBQEDAQUBBg4DAQYBBQcDAQUBBAUBAwQBBQEEAQEDBAIFAQQBAQIAPgECBAMDAwQCAwYEDwECACQBBAACAQMEAwMIAREEAQMGBAMDCAQBBQIDAQUBAwEEAgUDBg4FAQYBBQEECwEDBAEBAQQGAQQAPgEDAwEEAQMLBA0BBAAkAQQAAQECBAMDDQEEBAEDAQEHBAEDCAQCAwsEAgMCBAIFAQYBBQEGAQUBBgwFAQQMAQUEAwEGAEEBAgMLBA0BAwAmAQcDEgECAxQEAQMPBAMGAwUBBgkFAgQOAQUEAQEHABoBAwAkAQMDCgQIAQIEAwECACcBBgMoAQEDEQQDBQEGBAUDBgEFAQYBBQMEDgECAAEBBAAgAQMAJAEDAwIBAQMBBAIDBQQCAQkEAgEDACUBAQQCAQIDKQEBAxIEBQYFBAMGAQQPAQIAAQECBAEBAgAFAQMAGAEDACYBAgMCAQEDAQQCAwUEAQECAAYBAQQBAgEBAQIBAQIAJAEEAyABAQMKAQIDEAQdAQgABAEEAEEBAwMDAgEEAQMGAQEABwECAgEBAgIBAQIAJAECAyIBAQMKAQIDAQECAwsEHQEBBAEBBwAEAQQAIwEFABsBAgMBAQICAQMEAgEBAgADAQgCAgEEACIBAgMiAQIDDgEFAwUECAIDBAMCAQQOAQEEAgEDAAEBAwAEAQMAJAEGABoBBgIBBAEDAgIBAQIAAgEFAgUBAgIBAQIAIQECAyQBAQMOAQIAAgECAwQCAgQBAgkEAQICBAwBAwIBAQQALwEDAgEBAwAbAQQEAwMBBAECAQEEAgMBBQIEAQUAHgECAyQBAQMOAQIAAwECAgEBAQIBAwECBwEEAgMEBwEBBAEBCQAyAQMEAQECAB0BAgICBAQBAwIDAQoCAwEGABUBAwACAQIDJAEDAwsBAgAEAQQCAQMBAgYBBgIFBAICAQECAgEBAgADAQQANAEEAB4BAwIDBAECBgEGAgIBAgIBAQICAgEEABUBBQABAQIDJAECAwoBAgAHAQICBwEDAAIBAgIIAQUAAwEBAgIBAQBXAQQCAQQBAgYBBAABAQwCAQEBABUBBwMmAQIDBwEDAAgBAgICAwMCAQEDAAQBAQIKAQIABAEBAgIBAgAMAQMASQEGAgEEAQICBAECAgEDAAkBAgIBAQIAFAECAwEBBAMnAQEDBQEEAAoBAgIBAwICAQEDAAQBBAIHBAEBAgAEAQECAgEDAAoBBABOAQQCBAEDAAEBCgICAQEAFAEEAAEBAgIGAx4CAQQBAwUBBgAKAQICBAEBAAYBBQIHAQIAAwECAgMBAwAJAQQATwEEAgMBBwMCAQgAGgEBAg4DAQICAxICAQQCAwIBBQMBAQMACwEBAgQBAQAFAQYCAQEBAgUBAgADAQICAgEBAgEBAgAFAQMAAQEDAFMBAgICAQUCCgECABoBAgIUAwECBAMIAgIEAgMIAQMACwECAgMBAgAEAQYCAQECAgMBAwACAQICAQECAgIBAgAFAQMAEgEDAEMBAgIQAQMAGgECAhwDAwIDBAIDBwECAA0BAgIEAQEABAEGAgEBAwIBAQMAAwEBAgEBAwIDAQEAAgEGAAYBAwABAQMABAEFAEMBAwIBAQECDgEFABcBAgIgBAECAQQCAwYBAgAOAQMCAgEBAAUBBQICAQUAAwEFAgEBAQICAQEAAgEGAAYBAQIBAQwCAQEBABEBAwAwAQUCAgQBAg0BAwAWAQMCCAECAhYEAQIBAwYBAgANAQMAAQEEAAUBBgICAQgCAwEDAgEBAgACAQQACAENAgEBAgARAQMAMgEDAhEBAgAYAQMCAQEIAgEBAQISAwECAgMFAQMADQEBAgEBAQABAQQABgECAgIBAQICAQMCAQEDAgQBCAANAQMAAwEEAAEBBQAQAQQAMAEDAgEEAQIRAQEAGQEIAAEBBQIRAwECAQMGAQIADgEDAAsBAgIDAQECAgEFAgQBCQAaAQMAEQEDACkBBAADAQICAQQBAhIBBAAgAQMCEQQBAgIDBAEDAB4BAgIFAQMCBwEDAgEBAQIBAQcAEQEDAAEBBAAQAQMAKQEBAwEBAgADAQICAQQBAhMBBQAeAQMCEAEBAgEEAQIBAwMBAwAgAQMCAwEDAgYBAgIBAQMCAQEBAgIBBwABAQUACAEDAAEBBQA7AQQAAwEBAhkBBQABAQMAFwEDAg0EAQIGAwECAQEDACEBAgIFAQICBQECAgIBAQIDAQICBQELAAYBAwABAQUAEQEDACcBAwAEAQIEAQIaAQYAGQECAgwEAQIHAQMABgEDABoBAwIFAQECBAEBAgMBAgIMAQUCAQEDAAsBAwARAQMALgEBAwEEAQIcAQQAGQEDAhAEAQICAQIABwEBAgEBAQAbAQMCAgEJAgMBCAIHAQMCAQEEAB4BAwAuAQEDAgQBAhwBAgAbAQICDwMCAgIBAQAIAQMACAEDABEBBAICAQcCAQELAgcBAQIBAQICAQEFAEwBAgMBBAECFwMCAgMBAgAcAQIDAQIRAQEAAgEDAA4BAwASAQQCBQEHAgEBBwIHAQcCAQECAE0BAgYBAhcDAwICAQIAHAECAwECCgQEAgMBBgAOAQMAFAEKAgEBAgIBAQoCAgECAgMBBgIBAQUASQECAwEGAQIWAwECAwECAB0BAgMBBAECBgQBAgIEAwIFAQcAKAEHAgEBDAIBAQQCAQEHAgEBBABKAQIDAgQBAhcBAwAdAQIDAwQCAgEEBgIBBAECBQEBAgEBAwIBAQEALAEIAgUBAwIBAQkAAQEIAAkBAwA9AQIDAQYBBAMCFQECAB4BAQMEBAkCAQQB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";
+        var rawStr = atob(b64Rle);
+        var MW = 240, MH = 120;
+        var eMap = new Uint8Array(MW * MH);
+        var mIdx = 0;
+        for (var i = 0; i < rawStr.length; i += 2) {
+          var v = rawStr.charCodeAt(i);
+          var run = rawStr.charCodeAt(i + 1);
+          for (var r = 0; r < run; r++) eMap[mIdx++] = v;
+        }
+
+        var EW = cv.width, EH = cv.height;
+        var eImg = ctx.createImageData(EW, EH);
+        var ePix = eImg.data;
+        var ER = EW * 0.425, cx = EW * 0.5, cy = EH * 0.5;
+        var tiltSin = 0.3971, tiltCos = 0.9177; // 23.4 deg axial tilt
+        var Lx = -0.57, Ly = -0.38, Lz = 0.73; // Sun direction
+        var Hx = -0.33, Hy = -0.22, Hz = 0.92; // Specular half-vector
+
+        var PAL = [
+          [8, 22, 48],     // 0: Deep Ocean (#081630)
+          [18, 64, 102],   // 1: Continental Shelf (#124066)
+          [26, 84, 38],    // 2: Tropical Rainforest (#1a5426)
+          [205, 168, 104], // 3: Desert / Arid (#cda868)
+          [52, 112, 50],   // 4: Temperate Forest (#347032)
+          [32, 66, 40],    // 5: Boreal Taiga (#204228)
+          [98, 94, 82],    // 6: Tundra / Alpine (#625e52)
+          [242, 246, 252], // 7: Polar Ice (#f2f6fc)
+        ];
+
+        var startT = performance.now();
+        var animId = null;
+        var running = true;
+
+        stopEarth = function () {
+          running = false;
+          if (animId) cancelAnimationFrame(animId);
+        };
+
+        var prefersReduced = false;
+        try { prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+
+        function renderFrame(now) {
+          if (!running || done) return;
+          var t = (now - startT) * 0.001;
+          var rot = t * 0.32;
+          var cRot = rot * 1.14;
+
+          for (var y = 0; y < EH; y++) {
+            var dy = (y - cy) / ER;
+            var dy2 = dy * dy;
+            for (var x = 0; x < EW; x++) {
+              var dx = (x - cx) / ER;
+              var d2 = dx * dx + dy2;
+              var pIdx = (y * EW + x) * 4;
+
+              if (d2 <= 1.0) {
+                var nz = Math.sqrt(1.0 - d2);
+                var nx = dx, ny = dy;
+
+                // Axial tilt rotation
+                var rx = nx * tiltCos + ny * tiltSin;
+                var ry = -nx * tiltSin + ny * tiltCos;
+                var rz = nz;
+
+                var lat = -Math.asin(Math.max(-1, Math.min(1, ry)));
+                var lon = Math.atan2(rx, rz) + rot;
+
+                var u = (lon / 6.283185307 + 1.0) % 1.0;
+                if (u < 0) u += 1.0;
+                var v = 0.5 - lat / 3.1415926535;
+                v = Math.max(0, Math.min(0.999, v));
+
+                var mx = (u * MW) | 0;
+                var my = (v * MH) | 0;
+                var biome = eMap[my * MW + mx];
+                var base = PAL[biome];
+
+                // Diffuse lighting
+                var dotL = nx * Lx + ny * Ly + nz * Lz;
+                var day = Math.max(0, Math.min(1, (dotL + 0.08) * 5.0));
+                var light = 0.04 + day * 1.08;
+
+                var r = base[0] * light;
+                var g = base[1] * light;
+                var b = base[2] * light;
+
+                // Ocean specular sun glint
+                if (biome <= 1 && dotL > 0) {
+                  var dotH = Math.max(0, nx * Hx + ny * Hy + nz * Hz);
+                  var spec = Math.pow(dotH, 28) * (biome === 0 ? 1.5 : 1.0);
+                  r += spec * 255;
+                  g += spec * 250;
+                  b += spec * 240;
+                }
+
+                // Night-side city lights
+                if (day < 0.6 && biome >= 1 && biome <= 4) {
+                  var night = (1.0 - day * 1.666);
+                  var hash = ((mx * 37 + my * 101) % 97);
+                  if (hash > 80) {
+                    var city = night * 0.9 * ((hash % 10) * 0.1);
+                    r += 255 * city;
+                    g += 190 * city;
+                    b += 80 * city;
+                  }
+                }
+
+                // Dynamic swirling clouds
+                var cu = (lon + cRot) / 6.283185307 + 1.0;
+                var c1 = Math.sin(cu * 24 + Math.cos(v * 16)) * Math.cos(v * 14);
+                var c2 = Math.sin(cu * 48 - v * 28) * Math.sin(cu * 14 + v * 20);
+                var cloudRaw = c1 * 0.55 + c2 * 0.45;
+                var latCloud = Math.cos(lat) * 0.25 + Math.sin(Math.abs(lat) * 2.8) * 0.15;
+                var cDensity = Math.max(0, Math.min(1, (cloudRaw + 0.2 + latCloud) * 1.5));
+                if (cDensity > 0.38) {
+                  var cAlpha = Math.min(0.88, (cDensity - 0.38) * 1.8);
+                  var cLight = Math.max(0.04, day * 1.25);
+                  var cCol = 255 * cLight;
+                  r = r * (1 - cAlpha) + cCol * cAlpha;
+                  g = g * (1 - cAlpha) + cCol * cAlpha;
+                  b = b * (1 - cAlpha) + cCol * cAlpha;
+                }
+
+                // Atmospheric limb scattering (Rayleigh blue)
+                var rim = Math.pow(1.0 - nz, 2.6) * 0.75;
+                var sunRim = Math.max(0.1, dotL + 0.35);
+                r += 60 * rim * sunRim;
+                g += 155 * rim * sunRim;
+                b += 255 * rim * sunRim;
+
+                ePix[pIdx] = r > 255 ? 255 : (r < 0 ? 0 : r | 0);
+                ePix[pIdx + 1] = g > 255 ? 255 : (g < 0 ? 0 : g | 0);
+                ePix[pIdx + 2] = b > 255 ? 255 : (b < 0 ? 0 : b | 0);
+                ePix[pIdx + 3] = 255;
+              } else if (d2 < 1.30) {
+                // Soft Rayleigh outer atmospheric glow
+                var d = Math.sqrt(d2);
+                var halo = Math.pow((1.15 - d) / 0.15, 2.2);
+                var sunHalo = Math.max(0.0, (dx * Lx + dy * Ly) * 0.45 + 0.55);
+                var a = halo * sunHalo * 175;
+                ePix[pIdx] = 60;
+                ePix[pIdx + 1] = 150;
+                ePix[pIdx + 2] = 255;
+                ePix[pIdx + 3] = a > 255 ? 255 : (a < 0 ? 0 : a | 0);
+              } else {
+                ePix[pIdx] = 0;
+                ePix[pIdx + 1] = 0;
+                ePix[pIdx + 2] = 0;
+                ePix[pIdx + 3] = 0;
+              }
+            }
+          }
+
+          ctx.putImageData(eImg, 0, 0);
+          if (running && !done && !prefersReduced) {
+            animId = requestAnimationFrame(renderFrame);
+          }
+        }
+
+        animId = requestAnimationFrame(renderFrame);
+      })();
     })();
   </script>
   <!-- Primary 3D WebGL2 Viewport -->
