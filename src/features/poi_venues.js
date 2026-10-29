@@ -14,7 +14,7 @@
 //   3. `q.venue = 1` on every POI it claims, so places_worker.js skips its generic gas-station totem and awning.
 // Every random choice is seeded from the world position, so a venue looks the same after a reload.
 import * as THREE from '../../vendor/three.module.js';
-import { getChunkTerrainMeshElevation } from '../environment.js';
+import { getChunkTerrainMeshElevation, getBeijingTerrainElevation } from '../environment.js';
 import { kaijuPatchBuildingShader } from './kaiju/kaiju_destruction.js';
 
 export const POI_VENUE_STRIDE = 8;
@@ -229,8 +229,12 @@ export function buildPoiVenues(ctx) {
     const [px, py, pz] = F.p(x, y, z);
     signs.push([ox + px, py, oz + pz, F.rotY(), w, h, style, text || '', textEn || text || '', bg, fg]);
   };
-  const zones = { fuel: [], wash: [], pumps: [] };
-  const ground = (x, z) => getChunkTerrainMeshElevation(ox + x, oz + z);
+  const zones = { fuel: [], wash: [], pumps: [], shops: [] }; // shops: test / camera hook
+  const dbg = [];
+  // Road surfaces sit on the DEM; the terrain mesh is 0.35 m under it. Slabs follow the DEM so they cover lots and
+  // forecourts that OSM maps as paved service areas; props stand on the slab top (groundTop).
+  const ground = (x, z) => Math.max(getBeijingTerrainElevation(ox + x, oz + z), getChunkTerrainMeshElevation(ox + x, oz + z) + 0.3);
+  const groundTop = (x, z) => ground(x, z) + 0.1;
   const inWater = (x, z) => Boolean(isPointInWater && isPointInWater(x, z, 0));
 
   // Footprints of the extruded ground-level buildings (local), with their entity index for kBid
@@ -309,7 +313,7 @@ export function buildPoiVenues(ctx) {
     for (let i = 0; i <= nx; i++) for (let j = 0; j <= nz; j++) {
       const lx = x0 + ((x1 - x0) * i) / nx, lz = z0 + ((z1 - z0) * j) / nz;
       const x = F.wx(lx, lz), z = F.wz(lx, lz);
-      if (Math.abs(x) > HALF + 40 || Math.abs(z) > HALF + 40) return false;
+      if (Math.abs(x) > HALF + 70 || Math.abs(z) > HALF + 70) return false; // neighbour-chunk buildings are not known here
       const B = bldAt(x, z, 0.3);
       if (B && B !== skip) return false;
       if (inWater(x, z)) return false;
@@ -646,7 +650,7 @@ export function buildPoiVenues(ctx) {
           slabSpot(sx, sz, 1.1, 1.8, F.rotY(), 0.09, [0.3, 0.3, 0.29]);
         }
         const [wx, , wz] = F.p(ix, 0, iz);
-        const gy = ground(wx, wz) + 0.24;
+        const gy = groundTop(wx, wz) + 0.24;
         push('pump', wx, gy, wz, F.rotY(), 1, 1, 1, pumpTint);
         pumpIds.push([ox + wx, gy, oz + wz]);
         for (const s of [-1, 1]) {
@@ -736,7 +740,7 @@ export function buildPoiVenues(ctx) {
         const fr = frontOn(best, E.e, (E.e.ax + E.e.bx) / 2, (E.e.az + E.e.bz) / 2, Math.min(9, E.e.len - 1.2));
         A_store(fr, 'fuelShop', rng32(seed + 3), { name: '', scheme: [scheme[0], scheme[2], scheme[1]], kinds: ['freezer', 'news', 'bin'] });
         const [ax, , az] = fr.F.p(fr.W / 2 + 1.6, 0, 1.5);
-        if (!bldAt(ax, az, 0.3)) push('airPump', ax, ground(ax, az), az, fr.F.rotY(), 1, 1, 1, 0xffffff);
+        if (!bldAt(ax, az, 0.3)) push('airPump', ax, groundTop(ax, az), az, fr.F.rotY(), 1, 1, 1, 0xffffff);
         shopDone = true;
       }
     }
@@ -754,7 +758,7 @@ export function buildPoiVenues(ctx) {
         // forecourt between canopy and kiosk
         slab(bld, F, -KW / 2 - 1, KW / 2 + 1, away > 0 ? hw : kz + KD / 2, away > 0 ? kz - KD / 2 : -hw, 0.072, C.concreteLt, 4);
         const [ax, , az] = K.p(KW / 2 + 1.4, 0, KD / 2 + 1.0);
-        if (!bldAt(ax, az, 0.3)) push('airPump', ax, ground(ax, az), az, K.rotY(), 1, 1, 1, 0xffffff);
+        if (!bldAt(ax, az, 0.3)) push('airPump', ax, groundTop(ax, az), az, K.rotY(), 1, 1, 1, 0xffffff);
         shopDone = true;
         break;
       }
@@ -772,10 +776,10 @@ export function buildPoiVenues(ctx) {
       bld.tri([x, cy, z], P(a1), P(a0), rgb);
     }
   }
-  function arrow(F, x, z, len, rgb) {
-    gline(bld, F, x, z - len / 2, x, z + len / 2 - 0.5, 0.18, 0.09, rgb);
+  function arrow(F, x, z, len, rgb, yOff = 0.09) {
+    gline(bld, F, x, z - len / 2, x, z + len / 2 - 0.5, 0.18, yOff, rgb);
     const tip = F.p(x, 0, z + len / 2), l = F.p(x - 0.45, 0, z + len / 2 - 0.75), r = F.p(x + 0.45, 0, z + len / 2 - 0.75);
-    const y = ground(tip[0], tip[2]) + 0.09;
+    const y = ground(tip[0], tip[2]) + yOff;
     bld.tri([l[0], y, l[2]], [tip[0], y, tip[2]], [r[0], y, r[2]], rgb);
   }
   function pricePylon(F, scheme, nm, nameEn, R) {
@@ -894,12 +898,12 @@ export function buildPoiVenues(ctx) {
     push('brushH', hx, G.y0 + H - 1.25, hz, G.rotY(), 1, 1, Wb - 1.2, 0x29c4ff);
     // pay kiosk at the entry (driver side), vacuum stations along the outside
     const [kx, , kz] = G.p(-L / 2 - 2.4, 0, -Wb / 2 + 0.2);
-    push('payKiosk', kx, ground(kx, kz) + 0.08, kz, G.rotY(Math.PI / 2), 1, 1, 1, toHex(scheme[0]));
+    push('payKiosk', kx, groundTop(kx, kz) + 0.08, kz, G.rotY(Math.PI / 2), 1, 1, 1, toHex(scheme[0]));
     for (let i = 0; i < 3; i++) {
       const lz = Wb / 2 + 1.0, lx = -L / 2 + 2.5 + i * 5;
       const [vx, , vz] = G.p(lx, 0, lz);
       if (bldAt(vx, vz, 0.5)) continue;
-      push('vacuum', vx, ground(vx, vz) + 0.08, vz, G.rotY(Math.PI), 1, 1, 1, toHex(scheme[R() < 0.5 ? 0 : 2]));
+      push('vacuum', vx, groundTop(vx, vz) + 0.08, vz, G.rotY(Math.PI), 1, 1, 1, toHex(scheme[R() < 0.5 ? 0 : 2]));
     }
     // colliders: the two side walls (the bay itself stays drivable)
     for (const s of [-1, 1]) addCollider(G, -L / 2, L / 2, s * (Wb / 2) - 0.15, s * (Wb / 2) + 0.15, H, `poi-wash-${seed}-${s}`);
@@ -909,6 +913,7 @@ export function buildPoiVenues(ctx) {
   // ------------------------------------------------------------ shops on a host building
   function A_store(fr, kind, rnd, o) {
     const { F, W, B } = fr;
+    zones.shops.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, W / 2, 1, kind]);
     const hostTop = o.hostTop ?? (B ? Math.max(3.4, (B.e.topY || 0) - F.y0) : 6);
     const prevBid = bld.bid;
     bld.bid = glass.bid = B ? B.idx + 1 : 0;
@@ -926,9 +931,9 @@ export function buildPoiVenues(ctx) {
       else if (o.kinds) {
         // free-standing kiosk: freezer + rack in front of the glass, off the door line
         const [fx, , fz] = F.p(-W / 2 + 1.0, 0, res.D + 0.7);
-        push('iceChest', fx, ground(fx, fz), fz, F.rotY(), 1, 1, 1, 0xffffff);
+        push('iceChest', fx, groundTop(fx, fz), fz, F.rotY(), 1, 1, 1, 0xffffff);
         const [nx, , nz] = F.p(W / 2 - 0.6, 0, res.D + 0.55);
-        push('newsRack', nx, ground(nx, nz), nz, F.rotY(), 1, 1, 1, 0xffffff);
+        push('newsRack', nx, groundTop(nx, nz), nz, F.rotY(), 1, 1, 1, 0xffffff);
       }
     } else if (kind === 'pharmacy') {
       const GH = Math.min(2.95, hostTop - 1.05);
@@ -948,7 +953,7 @@ export function buildPoiVenues(ctx) {
       for (const s of [-1, 1]) {
         if (W + 2.2 > (fr.E ? fr.E.len : 0)) break;
         const [ax, , az] = F.p(s * (W / 2 + 0.6), 0, 0.3);
-        push('atm', ax, ground(ax, az), az, F.rotY(), 1, 1, 1, 0x1f3a66);
+        push('atm', ax, groundTop(ax, az), az, F.rotY(), 1, 1, 1, 0x1f3a66);
       }
     } else if (kind === 'fast') {
       const GH = Math.min(3.0, hostTop - 1.05);
@@ -1008,7 +1013,7 @@ export function buildPoiVenues(ctx) {
     const [mx, , mz] = F.p(wx - dir * 8.5, 0, 0.0);
     if (!bldAt(mx + F.bx * 0.2, mz + F.bz * 0.2, 0)) {
       const [bx, , bz] = F.p(wx - dir * 8.5, 0, 0.15);
-      push('menuBoard', bx, ground(bx, bz), bz, F.rotY(), 1, 1, 1, toHex(scheme[0]));
+      push('menuBoard', bx, groundTop(bx, bz), bz, F.rotY(), 1, 1, 1, toHex(scheme[0]));
     }
     // clearance bar at the lane entry
     const ex = -dir * (L / 2 - 1);
@@ -1039,11 +1044,13 @@ export function buildPoiVenues(ctx) {
     }
     if (!bestE) return false;
     const { E, free } = bestE;
+    dbg.push(`sm free=${free} len=${E.len.toFixed(1)} road=${E.road.toFixed(1)}`);
     const hostTop = Math.max(4.5, (B.e.topY || 0) - ground(E.mx, E.mz));
     const W = Math.max(6, Math.min(E.len - 3, 20));
     const fr = frontOn(B, E, (E.ax + E.bx) / 2, (E.az + E.bz) / 2, W);
     const { F } = fr;
     const scheme = MARKET_SCHEMES[(rnd() * MARKET_SCHEMES.length) | 0];
+    zones.shops.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, fr.W / 2, 1, 'super']);
     bld.bid = glass.bid = B.idx + 1;
     // glazed vestibule + entrance canopy + parapet sign tower
     const GH = Math.min(4.0, hostTop - 1.0);
@@ -1090,7 +1097,7 @@ export function buildPoiVenues(ctx) {
     for (const e of [-1, 1]) box(bld, F, x, 1.15, z + (e * (L + 0.1)) / 2, 0.08, 2.3, 0.08, C.galv, false, 'b');
     for (let i = 0; i < n; i++) {
       const [cx, , cz] = F.p(x, 0, z - L / 2 + 0.6 + i * 0.42);
-      push('cart', cx, ground(cx, cz) + 0.03, cz, F.rotY(Math.PI), 1, 1, 1, 0xffffff);
+      push('cart', cx, groundTop(cx, cz) + 0.03, cz, F.rotY(Math.PI), 1, 1, 1, 0xffffff);
     }
   }
   function parkingLot(F, facadeW, z0, zMax, E, rnd, scheme) {
@@ -1110,11 +1117,12 @@ export function buildPoiVenues(ctx) {
     if (zEnd - z0 < 14) {
       x0 = -facadeW / 2 - 4; x1 = facadeW / 2 + 4;
       zEnd = grow();
-      if (zEnd - z0 < 14) return;
+      if (zEnd - z0 < 14) { dbg.push(`lot fail z=${zEnd - z0}`); return; }
     }
-    slab(bld, F, x0, x1, z0 - 3, zEnd, 0.07, C.asphalt, 6);
+    dbg.push(`lot ok ${(x1 - x0).toFixed(0)}x${(zEnd - z0).toFixed(0)}`);
+    slab(bld, F, x0, x1, z0 - 3, zEnd, 0.08, C.asphalt, 6);
     // fire lane hatching along the store front
-    gline(bld, F, x0 + 0.5, z0 - 0.4, x1 - 0.5, z0 - 0.4, 0.15, 0.085, C.paintY);
+    gline(bld, F, x0 + 0.5, z0 - 0.4, x1 - 0.5, z0 - 0.4, 0.15, 0.1, C.paintY);
     // rows: bays face +-z, 2.7 x 5.4 m, aisles 7 m
     const BW = 2.7, BD = 5.4, AISLE = 7;
     const bays = [];
@@ -1127,14 +1135,14 @@ export function buildPoiVenues(ctx) {
     const nB = Math.floor((x1 - x0 - 1) / BW);
     const bx0 = (x0 + x1) / 2 - (nB * BW) / 2;
     for (const [rz, face] of rows) {
-      for (let i = 0; i <= nB; i++) gline(bld, F, bx0 + i * BW, rz + 0.1, bx0 + i * BW, rz + BD - 0.1, 0.12, 0.09, C.paintW);
-      gline(bld, F, bx0, face > 0 ? rz : rz + BD, bx0 + nB * BW, face > 0 ? rz : rz + BD, 0.12, 0.09, C.paintW);
+      for (let i = 0; i <= nB; i++) gline(bld, F, bx0 + i * BW, rz + 0.1, bx0 + i * BW, rz + BD - 0.1, 0.12, 0.1, C.paintW);
+      gline(bld, F, bx0, face > 0 ? rz : rz + BD, bx0 + nB * BW, face > 0 ? rz : rz + BD, 0.12, 0.1, C.paintW);
       for (let i = 0; i < nB; i++) bays.push([bx0 + (i + 0.5) * BW, rz + BD / 2, face]);
     }
     // accessible bays nearest the door
     const accBays = bays.filter((b) => b[1] < z0 + AISLE + BD).sort((a, b) => Math.abs(a[0]) - Math.abs(b[0])).slice(0, 2);
     for (const b of accBays) {
-      slabFill(F, b[0] - BW / 2 + 0.12, b[0] + BW / 2 - 0.12, b[1] - BD / 2 + 0.15, b[1] + BD / 2 - 0.15, 0.088, C.paintB);
+      slabFill(F, b[0] - BW / 2 + 0.12, b[0] + BW / 2 - 0.12, b[1] - BD / 2 + 0.15, b[1] + BD / 2 - 0.15, 0.097, C.paintB);
       b.acc = true;
     }
     // aisle arrows
@@ -1143,7 +1151,7 @@ export function buildPoiVenues(ctx) {
       if (az > zEnd - 2) break;
       for (let ax = x0 + 8; ax < x1 - 6; ax += 18) {
         const G = new Frame(F.wx(ax, az), F.y0, F.wz(ax, az), F.ax, F.az);
-        arrow(G, 0, 0, 3, C.paintW);
+        arrow(G, 0, 0, 3, C.paintW, 0.1);
       }
     }
     // lamp posts on the row ends / medians, light pools
@@ -1153,7 +1161,7 @@ export function buildPoiVenues(ctx) {
       const zz = rows[k + 1] && rows[k + 1][1] < 0 ? rz + BD : rz + BD + 0.6;
       for (let lx = bx0 + 3 * BW; lx < bx0 + nB * BW - 1; lx += 8 * BW) {
         const [wx, , wz] = F.p(lx, 0, zz);
-        push('lotLamp', wx, ground(wx, wz), wz, F.rotY(), 1, 1, 1, 0xffffff);
+        push('lotLamp', wx, groundTop(wx, wz), wz, F.rotY(), 1, 1, 1, 0xffffff);
         pool(wx, wz, 9, C.lightWarm, 0.32, 0.105);
       }
     }
@@ -1163,20 +1171,20 @@ export function buildPoiVenues(ctx) {
     for (const b of free) {
       if (returns > 0 && rnd() < 0.08 && Math.abs(b[0]) > 6) {
         const [wx, , wz] = F.p(b[0], 0, b[1]);
-        push('cartReturn', wx, ground(wx, wz) + 0.08, wz, F.rotY(), 1, 1, 1, toHex(scheme[0]));
+        push('cartReturn', wx, groundTop(wx, wz) + 0.08, wz, F.rotY(), 1, 1, 1, toHex(scheme[0]));
         returns--;
         continue;
       }
       const dz = (b[1] - z0) / Math.max(10, zEnd - z0);
       const occ = 0.78 - dz * 0.45 - Math.abs(b[0]) / Math.max(30, Wl) * 0.3;
       if (rnd() > occ) {
-        if (rnd() < 0.05) { const [wx, , wz] = F.p(b[0] + 0.6, 0, b[1] + 1.2); push('cart', wx, ground(wx, wz) + 0.08, wz, F.rotY(rnd() * 6.28), 1, 1, 1, 0xffffff); }
+        if (rnd() < 0.05) { const [wx, , wz] = F.p(b[0] + 0.6, 0, b[1] + 1.2); push('cart', wx, groundTop(wx, wz) + 0.08, wz, F.rotY(rnd() * 6.28), 1, 1, 1, 0xffffff); }
         continue;
       }
       const [wx, , wz] = F.p(b[0] + (rnd() - 0.5) * 0.25, 0, b[1] + (rnd() - 0.5) * 0.4);
       const t = rnd();
       const type = t < 0.5 ? 0 : t < 0.72 ? 2 : t < 0.94 ? 5 : 6;
-      push('car', wx, ground(wx, wz) + 0.07, wz, F.rotY(b[2] > 0 ? Math.PI : 0) + (rnd() - 0.5) * 0.08, type, 1, 1, CAR_PAINT[(rnd() * CAR_PAINT.length) | 0]);
+      push('car', wx, groundTop(wx, wz) + 0.07, wz, F.rotY(b[2] > 0 ? Math.PI : 0) + (rnd() - 0.5) * 0.08, type, 1, 1, CAR_PAINT[(rnd() * CAR_PAINT.length) | 0]);
     }
   }
   function slabFill(F, x0, x1, z0, z1, yOff, rgb) {
@@ -1213,7 +1221,7 @@ export function buildPoiVenues(ctx) {
       for (const s of [-1, 1]) cyl(bld, F, x + s * 1.9, 0, 1.4, 0.12, 1.1, 8, C.paintY);
       if (apron && i === 0 && rnd() < 0.65) {
         const [tx, , tz] = F.p(x, 0, 0.8 + 6.8);
-        push('trailer', tx, ground(tx, tz) + 0.05, tz, F.rotY(Math.PI), 1, 1, 1, rnd() < 0.5 ? 0xe8e8e4 : 0xb0b4b8);
+        push('trailer', tx, groundTop(tx, tz) + 0.05, tz, F.rotY(Math.PI), 1, 1, 1, rnd() < 0.5 ? 0xe8e8e4 : 0xb0b4b8);
       }
     }
     sign(F, 0, 4.9, 0.3, Math.min(W - 1, 6), 0.5, 3, '收货区', 'RECEIVING', 0x2b2f36, 0xf0c040);
@@ -1288,7 +1296,7 @@ export function buildPoiVenues(ctx) {
     }
     // entry barrier at ground level
     const [ex, , ez] = F.p(-hl + 3, 0, -hw - 0.5);
-    push('payKiosk', ex, ground(ex, ez), ez, F.rotY(), 1, 1, 1, 0x1f4fbf);
+    push('payKiosk', ex, groundTop(ex, ez), ez, F.rotY(), 1, 1, 1, 0x1f4fbf);
     addCollider(F, -hl, hl, -hw, hw, levels * LH, `poi-garage-${G0.seed}`);
     return true;
   }
@@ -1381,7 +1389,7 @@ export function buildPoiVenues(ctx) {
     const ml = glow.toMesh(mats.poiGlowMat || mats.markingMat, { kbid: false, shadow: false, colorsU8: false });
     if (ml) { ml.receiveShadow = false; ml.name = 'poi_glow'; groups.buildings.add(ml); }
   }
-  const out = { inst: {}, signs, zones };
+  const out = { inst: {}, signs, zones, dbg };
   let any = signs.length > 0 || zones.fuel.length > 0;
   for (const [k, a] of Object.entries(inst)) { out.inst[k] = new Float32Array(a); any = true; }
   return any || bld.count > 0 ? out : null;
