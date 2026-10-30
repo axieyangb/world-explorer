@@ -42,6 +42,8 @@ import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
 import { StreetDetail } from "./features/street_detail.js"; // [feature/street-detail]
 import { PlacesSystem } from "./features/places.js"; // feature/places
+import { AirlinerSystem } from "./features/airliner_system.js";
+import { AIRLINER_LIVERIES } from "./features/airliner_models.js";
 import { VenueRides } from "./features/venue_rides.js"; // [venues]
 import { PoiVenueSystem } from "./features/poi_venue_system.js"; // [venues-poi]
 import { PlacesInfo } from "./features/places_info/index.js"; // places-info
@@ -96,11 +98,11 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261029_r6"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261030_r2"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
-import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261029_r6"; // [feature/space-launch]
+import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261030_r2"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -522,6 +524,16 @@ class WorldExplorerApp {
         cityLodCount: this.skylineCount || 0,
         landmarksCount: LANDMARKS_40.length,
         spaceLaunch: this.spaceLaunch ? this.spaceLaunch.getState() : null,
+        airliner: this.airliner ? {
+          grounded: this.airliner.grounded,
+          gearDown: this.airliner.gearDown,
+          speed: Math.round(this.airliner.speed),
+          ias: Math.round(this.airliner.ias),
+          mach: Number(this.airliner.mach.toFixed(2)),
+          alt: Math.round(this.pos.y),
+          hp: this.airliner.hp,
+          livery: AIRLINER_LIVERIES[this.airliner.liveryIdx]?.name || ''
+        } : null,
         workerActive: Boolean(this.chunkWorker),
         shadowBounds: Math.round(this.currentShadowBounds),
       }),
@@ -582,7 +594,11 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     }
 
+    this.world = { getHeightAt: (x, z) => Math.max(0, getBeijingTerrainElevation(x, z), getChunkTerrainMeshElevation(x, z)) };
+    this._showToast = (msg) => showVehicleToast(String(msg || ""), "");
     this.places = new PlacesSystem(this.scene); // feature/places
+    this.airliner = new AirlinerSystem(this);
+    this.airlinerMesh = this.airliner.mesh;
     this.railTransit = new RailTransit(this); // [feature/rail-transit]
     this.liveSky = initLiveSky(this); // [live-sky-weather] real aircraft (needs places' airliner geometry)
     this.liveWeather = initLiveWeather(this); // [live-sky-weather] real weather -> atmosphere
@@ -1631,6 +1647,22 @@ class WorldExplorerApp {
 
     const shiftPressed = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") || this.nitroLocked;
 
+    if (this.mode === "airliner" && this.airliner) {
+      this.airliner.updateFlight(dt);
+      updateEntityNitroVfx(this.heliMesh, false, 0, this.vfxTime);
+      updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
+      updateEntityNitroVfx(this.avatarMesh, false, 0, this.vfxTime);
+      return;
+    }
+
+    if (this.mode === "boat" && this.maritime) {
+      this.maritime.updatePlayerBoat(dt);
+      updateEntityNitroVfx(this.heliMesh, false, 0, this.vfxTime);
+      updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
+      updateEntityNitroVfx(this.avatarMesh, false, 0, this.vfxTime);
+      return;
+    }
+
     if (this.mode === "helicopter") {
       this._ensureHeli().update(dt, { boost: shiftPressed }); // feature/heli-gta: GTA-style flight model
       updateVehicleDriver(this.heliMesh, this.avatarMesh, 0); // [drivers] pilot
@@ -1941,31 +1973,41 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
       const isWalk = this.mode === "walk";
       const isHeli = this.mode === "helicopter";
+      const isAirliner = this.mode === "airliner";
+      const isBoat = this.mode === "boat";
       if (isHeli && this.heli) this.heli.cameraPivot(this.camPivot, dt); // feature/heli-gta: lagged chase pivot
       const spec = VEHICLE_SPECS[this.vehicleIdx];
-      const isBus = !isWalk && !isHeli && spec && spec.id === "bus";
-      const isUtility = !isWalk && !isHeli && spec && (spec.id === "ambulance" || spec.id === "tow_truck" || spec.id === "cybertruck");
-      const rawBaseDist = isHeli
-        ? this.camMode === "street" ? 12.5 : 18.5
-        : isWalk
-          ? this.camMode === "street" ? 3.8 : 6.4
-          : isBus
-            ? this.camMode === "street" ? 13.5 : 19.5
-            : isUtility
-              ? this.camMode === "street" ? 8.2 : 15.2
-              : this.camMode === "street" ? 6.8 : 13.5;
+      const isBus = !isWalk && !isHeli && !isAirliner && !isBoat && spec && spec.id === "bus";
+      const isUtility = !isWalk && !isHeli && !isAirliner && !isBoat && spec && (spec.id === "ambulance" || spec.id === "tow_truck" || spec.id === "cybertruck");
+      const rawBaseDist = isAirliner
+        ? this.camMode === "street" ? 42.0 : 68.0
+        : isBoat
+          ? this.camMode === "street" ? 12.0 : 22.0
+          : isHeli
+            ? this.camMode === "street" ? 12.5 : 18.5
+            : isWalk
+              ? this.camMode === "street" ? 3.8 : 6.4
+              : isBus
+                ? this.camMode === "street" ? 13.5 : 19.5
+                : isUtility
+                  ? this.camMode === "street" ? 8.2 : 15.2
+                  : this.camMode === "street" ? 6.8 : 13.5;
       const baseDist = rawBaseDist * (this.camZoom || 1.0);
-      const pivotH = isHeli
-        ? 2.45
-        : isWalk
-          ? 1.55
-          : isBus
-            ? this.camMode === "street" ? 3.85 : 4.25
-            : isUtility
-              ? this.camMode === "street" ? 2.05 : 2.35
-              : this.camMode === "street" ? 1.65 : 1.95;
+      const pivotH = isAirliner
+        ? 6.8
+        : isBoat
+          ? 2.8
+          : isHeli
+            ? 2.45
+            : isWalk
+              ? 1.55
+              : isBus
+                ? this.camMode === "street" ? 3.85 : 4.25
+                : isUtility
+                  ? this.camMode === "street" ? 2.05 : 2.35
+                  : this.camMode === "street" ? 1.65 : 1.95;
       const isTank = this.isDrivingTank();
-      const minPitch = isWalk ? -0.85 : isTank ? -0.65 : 0.05;
+      const minPitch = isWalk ? -0.85 : (isTank || isAirliner) ? -0.65 : 0.05;
       const pitch = THREE.MathUtils.clamp(this.camPitch, minPitch, 1.18);
       const viewYaw = this.camYaw + this.camYawOffset;
 
@@ -1976,7 +2018,7 @@ class WorldExplorerApp {
       const CAM_PAD = 0.45;
       const armOx = this.camPivot.x, armOy = this.camPivot.y + pivotH, armOz = this.camPivot.z;
       const armHx = -Math.sin(viewYaw) * Math.cos(pitch), armHz = -Math.cos(viewYaw) * Math.cos(pitch);
-      const frac = this.collision.segmentHit(armOx, armOy, armOz, armHx, Math.sin(pitch), armHz, baseDist + CAM_PAD);
+      const frac = isAirliner ? 1.0 : this.collision.segmentHit(armOx, armOy, armOz, armHx, Math.sin(pitch), armHz, baseDist + CAM_PAD);
       const freeDist = Math.max(0.6, frac * (baseDist + CAM_PAD) - CAM_PAD);
       const armKey = this.mode + this.camMode;
       if (this._camArmKey !== armKey || !(this._camArm > 0)) { this._camArmKey = armKey; this._camArm = freeDist; }
@@ -1991,10 +2033,11 @@ class WorldExplorerApp {
       const camY = Math.max(minCamY, rawCamY);
 
       this.camera.position.set(camX, camY, camZ);
-      const lookAhead = isHeli ? 10.5 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
+      const lookAhead = isAirliner ? 6.0 : isBoat ? 8.5 : isHeli ? 10.5 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
+      const lookY = isAirliner ? (this.camPivot.y + 4.8) : (this.camPivot.y + pivotH);
       this.camera.lookAt(
         this.camPivot.x + Math.sin(viewYaw) * lookAhead,
-        this.camPivot.y + pivotH,
+        lookY,
         this.camPivot.z + Math.cos(viewYaw) * lookAhead
       );
       if (isHeli && this.heli) this.heli.cameraShake(this.camera, dt);
@@ -2015,8 +2058,10 @@ class WorldExplorerApp {
         : Math.max(1.2, Math.min(4.0, activeOrbitDist * 0.22));
     let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
     if (this.camMode !== "topdown" && activeOrbitDist < 5.0) targetNear = Math.max(0.25, Math.min(targetNear, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
-    if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15) {
+    const targetFar = Math.max(8500, this.camera.position.y * 7.5 + 16000);
+    if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15 || Math.abs(this.camera.far - targetFar) > 250) {
       this.camera.near = targetNear;
+      this.camera.far = targetFar;
       this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, Math.min(1, 8.0 * dt));
       this.camera.updateProjectionMatrix();
     }
@@ -2062,6 +2107,18 @@ class WorldExplorerApp {
         gearBadgeEl.textContent = `MACH ${mach.toFixed(2)}`;
       } else if (this.nitroActive) {
         gearBadgeEl.textContent = "BOOST";
+      } else if (this.mode === "airliner" && this.airliner) {
+        if (this.airliner.stalling) {
+          gearBadgeEl.textContent = "STALL WARN";
+        } else if (this.airliner.grounded) {
+          gearBadgeEl.textContent = this.airliner.speed < -0.5 ? "REV PUSH" : `TAXI · IAS ${Math.round(this.airliner.ias * 3.6)}`;
+        } else if (this.pos.y >= 3000) {
+          gearBadgeEl.textContent = `M${this.airliner.mach.toFixed(2)} · FL${Math.round(this.pos.y / 30.48)}`;
+        } else {
+          gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m · ${this.airliner.gearDown ? "GEAR DN" : "CLIMB"}`;
+        }
+      } else if (this.mode === "boat") {
+        gearBadgeEl.textContent = `KTS ${Math.round(absSpd * 1.944)}`;
       } else if (this.mode === "helicopter") {
         if (this.heliLanded) {
           gearBadgeEl.textContent = getLang() === "zh" ? "已降落" : "LANDED";
@@ -2140,24 +2197,24 @@ class WorldExplorerApp {
         const minPitch = this.mode === "walk" ? -0.85 : -0.65;
         this.camPitch = THREE.MathUtils.clamp(this.camPitch - 0.08, minPitch, 1.18);
       } else if (e.code === "KeyF" && !e.repeat) {
-        if (this.mode === "helicopter") {
+        if (this.mode === "airliner" && this.airliner) {
+          this.airliner.exitToWalk();
+        } else if (this.mode === "boat" && this.maritime) {
+          this.maritime.exitToWalk();
+        } else if (this.mode === "helicopter") {
           if (this.heliLanded || (this.heli && this.heli.state.grounded)) {
             this.setMode("walk");
           } else {
             this._ensureHeli().fireRockets();
           }
         } else if (this.mode === "walk") {
-          const hits = this.triggerPlayerPunch();
-          if (hits === 0 && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 8) {
-            this.setMode("helicopter");
-          } else if (hits === 0 && this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 2.5)) {
-            this.setMode("drive"); // [parked-cars]
+          // Try boarding nearby airliner, boat, helicopter, or parked/traffic car first; otherwise throw a punch
+          if (!this.handleVehicleInteract()) {
+            this.triggerPlayerPunch();
           }
-        } else {
-          this.setMode(this.mode === "drive" ? "walk" : "drive");
+        } else if (this.mode === "drive") {
+          this.handleVehicleInteract();
         }
-      } else if (e.code === "KeyE" && !e.repeat && this.mode === "walk" && this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
-        this.setMode("helicopter");
       } else if (e.code === "KeyC" && !e.repeat) {
         if (this.kaiju && this.kaiju.active) {
           this.kaiju.cyclePlayableUnit();
@@ -2191,9 +2248,10 @@ class WorldExplorerApp {
           this.cycleCameraMode();
         }
       } else if (e.code === "KeyG") {
+        if (this.mode === "airliner") return;
         if (this.mode !== "drive") this.setMode("drive");
         this.cycleVehicle();
-      } else if (e.code === "KeyE" && !e.repeat && (this.mode === "walk" || this.mode === "drive")) {
+      } else if (e.code === "KeyE" && !e.repeat && (this.mode === "walk" || this.mode === "drive" || this.mode === "airliner" || this.mode === "boat")) {
         this.handleVehicleInteract();
       } else if (e.code === "KeyH") {
         this.triggerHornOrSiren();
@@ -2327,7 +2385,15 @@ class WorldExplorerApp {
     if (!hint) return;
     const zh = getLang() === "zh";
     let text;
-    if (this.mode === "helicopter") {
+    if (this.mode === "airliner") {
+      text = zh
+        ? "W/↑ 推力 · S/↓ 刹车/反推 · A/D 转向/滚转 · Space/Q 拉起起飞 · Shift/C 压机头 · G 起落架 · L 涂装 · F/E 下机"
+        : "W/Up Thrust · S/Down Brake/Reverse · A/D Steer/Bank · Space/Q Rotate & Climb · Shift/C Nose Down · G Gear · L Livery · F/E Exit";
+    } else if (this.mode === "boat") {
+      text = zh
+        ? "W/S 前进/倒船 · A/D 转向 · Shift 加速 · F/E 登岸"
+        : "W/S Throttle & Reverse · A/D Rudder Steer · Shift Boost · F/E Disembark";
+    } else if (this.mode === "helicopter") {
       text = zh
         ? "W/S 移动 · A/D 转向 · Q/E 升降 · ←/→ 平移 · 空格 机炮 · F 火箭弹 · L 降落"
         : "W/S Move · A/D Turn · Q/E Alt · ←/→ Strafe · Space Cannon · F Rockets · L Land";
@@ -2357,6 +2423,11 @@ class WorldExplorerApp {
         const vName = spec ? getVehicleName(spec.id, spec.name) : "Drive";
         const prefix = getLang() === "zh" ? "驾驶" : "DRIVE";
         modeLabelEl.textContent = `${prefix} · ${vName.toUpperCase()}`;
+      } else if (this.mode === "airliner") {
+        const liv = this.airliner ? AIRLINER_LIVERIES[this.airliner.liveryIdx] : null;
+        modeLabelEl.textContent = getLang() === "zh" ? `客机 · ${liv && liv.name ? liv.name : "BOEING 787"}` : `JET · ${liv && liv.name ? liv.name.toUpperCase() : "BOEING 787"}`;
+      } else if (this.mode === "boat") {
+        modeLabelEl.textContent = getLang() === "zh" ? "游艇驾驶" : "BOAT · MARITIME";
       } else if (this.mode === "walk") {
         modeLabelEl.textContent = getLang() === "zh" ? "步行模式" : "WALK";
       } else {
@@ -2405,6 +2476,24 @@ class WorldExplorerApp {
       });
       listEl.appendChild(btn);
     });
+    // Also add playable Boeing 787-9 Dreamliner & Airbus A350-1000 XWB to the Vehicle dropdown
+    const airlinerOpts = [
+      { label: getLang() === "zh" ? "波音 787-9 梦想客机" : "Boeing 787-9 Dreamliner", liveryIdx: 0, meta: "950 km/h" },
+      { label: getLang() === "zh" ? "空客 A350-1000 宽体客机" : "Airbus A350-1000 XWB", liveryIdx: 1, meta: "945 km/h" }
+    ];
+    for (const ao of airlinerOpts) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `vehicle-option-btn${this.mode === "airliner" && this.airliner && this.airliner.liveryIdx === ao.liveryIdx ? " active" : ""}`;
+      btn.innerHTML = `<span>✈ ${ao.label}</span><span class="vehicle-option-meta">${ao.meta}</span>`;
+      btn.addEventListener("click", () => {
+        if (this.airliner) this.airliner.cycleLivery(ao.liveryIdx);
+        this.setMode("airliner");
+        const pop = document.getElementById("mode-vehicle-menu");
+        if (pop) pop.classList.add("hidden");
+      });
+      listEl.appendChild(btn);
+    }
   }
 
   _refreshLocalizedUi() {
@@ -2483,6 +2572,22 @@ class WorldExplorerApp {
       this.avatarMesh.position.copy(this.pos);
       this.avatarMesh.rotation.y = this.yaw;
       this.camPivot.copy(this.pos);
+    } else if (newMode === "airliner") {
+      this.avatarMesh.visible = false;
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.visible = false;
+      if (!this.parkedHeli) this.heliMesh.visible = false;
+      if (this.airliner) {
+        this.airliner.enterAirlinerMode(Boolean(this._enteringAirlinerDirectly));
+        this.pos.copy(this.airliner.mesh.position);
+        this.camYaw = this.yaw;
+        this.camPivot.copy(this.pos);
+      }
+    } else if (newMode === "boat") {
+      this.avatarMesh.visible = false;
+      if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.visible = false;
+      if (!this.parkedHeli) this.heliMesh.visible = false;
+      this.camYaw = this.yaw;
+      this.camPivot.copy(this.pos);
     } else {
       this.avatarMesh.visible = false;
       if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.visible = false; // [parked-cars]
@@ -2545,7 +2650,7 @@ class WorldExplorerApp {
     this._driveEnter = "";
     if (how === "keep") return; // car-jacking: the car is already where the traffic car was
     if (how !== "fresh") {
-      const near = this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 3.5);
+      const near = this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 7.5);
       if (near) { this._enterParked(near); return; }
     }
     if (this.parkedCars.isParked(this.vehicleMesh) || this.vehicleMesh.userData.charred) {
@@ -2684,24 +2789,183 @@ class WorldExplorerApp {
     });
   }
 
+  claimNearestWorldParkedCar(px, pz, maxDist = 7.5) {
+    if (!this._claimedVenueCars) this._claimedVenueCars = new Set();
+    if (!this._wreckedVenueCars) this._wreckedVenueCars = new Set();
+
+    let hit = null;
+    if (this.streetProps && typeof this.streetProps.claimNearestParkedCar === "function") {
+      hit = this.streetProps.claimNearestParkedCar(px, pz, maxDist);
+    }
+    if (!hit && this.poiVenues && typeof this.poiVenues.claimNearestParkedCar === "function") {
+      hit = this.poiVenues.claimNearestParkedCar(px, pz, maxDist);
+    }
+    // Direct scan of PoiVenueSystem tracked chunks (pv.inst.car, stride 8) if not claimed yet
+    if (!hit && this.poiVenues && this.poiVenues.tracked) {
+      let bestD2 = maxDist * maxDist;
+      for (const g of this.poiVenues.tracked) {
+        const pv = g.userData && g.userData.poiVenues;
+        const a = pv && pv.inst && pv.inst.car;
+        if (!a) continue;
+        for (let i = 0; i < a.length; i += 8) {
+          const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+          if (cy < -500) continue;
+          const key = `${Math.round(cx * 2)}|${Math.round(cz * 2)}`;
+          if (this._claimedVenueCars.has(key) || this._wreckedVenueCars.has(key)) continue;
+          const d2 = (cx - px) * (cx - px) + (cz - pz) * (cz - pz);
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            hit = { key, arr: a, idx: i, x: cx, y: cy, z: cz, yaw: a[i + 3], typeIdx: a[i + 4] | 0, colorHex: a[i + 7] | 0 };
+          }
+        }
+      }
+      if (hit && hit.arr) {
+        this._claimedVenueCars.add(hit.key);
+        hit.arr[hit.idx + 1] = -9999;
+        hit.arr[hit.idx] = 1e9;
+        try { this.poiVenues._rebuild(this.pos.x, this.pos.z); } catch (_) {}
+      }
+    }
+    if (!hit && this.placesInfo && typeof this.placesInfo.claimNearestParkedCar === "function") {
+      hit = this.placesInfo.claimNearestParkedCar(px, pz, maxDist);
+    }
+    if (!hit) return null;
+
+    // Map parked car type to playable VEHICLE_SPECS
+    let specId = "taxi";
+    if (hit.kind === "pi_policeCar") specId = "police";
+    else if (hit.kind === "pi_fireTruck") specId = "tow_truck";
+    else if (typeof hit.typeIdx === "number" && CAR_TYPES[hit.typeIdx]) {
+      const tid = CAR_TYPES[hit.typeIdx].id;
+      specId = tid === "sedan" ? "taxi" : tid === "coupe" ? "supercar" : tid;
+    }
+    const specIdx = Math.max(0, VEHICLE_SPECS.findIndex((s) => s.id === specId));
+    this._driveEnter = "keep";
+    this._claimTrafficCar({
+      x: hit.x,
+      y: hit.y,
+      z: hit.z,
+      yaw: hit.yaw || 0,
+      v: 0,
+      specIdx,
+      specId: VEHICLE_SPECS[specIdx].id,
+      typeId: specId,
+      paintColor: hit.colorHex || undefined,
+      hideTaxiSign: specId === "taxi",
+    }, null);
+    return hit;
+  }
+
+  damageWorldParkedCarsInRadius(wx, wz, radius = 5, damage = 45, wy = undefined) {
+    if (!this._wreckedVenueCars) this._wreckedVenueCars = new Set();
+    if (!this._venueCarHp) this._venueCarHp = new Map();
+    let hits = 0;
+
+    if (this.parkedCars && typeof this.parkedCars.impactSphere === "function") {
+      hits += this.parkedCars.impactSphere(wx, Number.isFinite(wy) ? wy : this.pos.y, wz, radius, Math.max(1.5, damage / 14), "weapon");
+    }
+    if (this.streetProps && typeof this.streetProps.damageParkedCarsInRadius === "function") {
+      hits += this.streetProps.damageParkedCarsInRadius(wx, wz, radius, damage) || 0;
+    }
+    if (this.poiVenues && typeof this.poiVenues.damageParkedCarsInRadius === "function") {
+      hits += this.poiVenues.damageParkedCarsInRadius(wx, wz, radius, damage) || 0;
+    }
+    // Direct scan of PoiVenueSystem tracked chunks (pv.inst.car, stride 8)
+    if (this.poiVenues && this.poiVenues.tracked) {
+      const r2 = (radius + 2.2) * (radius + 2.2);
+      let dirty = false;
+      for (const g of this.poiVenues.tracked) {
+        const pv = g.userData && g.userData.poiVenues;
+        const a = pv && pv.inst && pv.inst.car;
+        if (!a) continue;
+        for (let i = 0; i < a.length; i += 8) {
+          const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+          if (cy < -500) continue;
+          const key = `${Math.round(cx * 2)}|${Math.round(cz * 2)}`;
+          if (this._wreckedVenueCars.has(key)) continue;
+          const d2 = (cx - wx) * (cx - wx) + (cz - wz) * (cz - wz);
+          if (d2 <= r2) {
+            const hp = (this._venueCarHp.has(key) ? this._venueCarHp.get(key) : 80) - damage;
+            this._venueCarHp.set(key, hp);
+            hits++;
+            if (hp <= 0) {
+              this._wreckedVenueCars.add(key);
+              a[i + 7] = 0x1e1e22; // Charred dark hull
+              dirty = true;
+              const fx = this.vehicleDamage?._fx?.();
+              if (fx) {
+                fx.spawn("explosion", new THREE.Vector3(cx, cy + 1.0, cz), { scale: 0.95 });
+                fx.spawn("smoke", new THREE.Vector3(cx, cy + 1.6, cz), { count: 3, scale: 0.45, life: 4 });
+              }
+              this.vehicleDamage?._sfx?.("explosion", cx, cy, cz, 0.85);
+            }
+          }
+        }
+      }
+      if (dirty) {
+        try { this.poiVenues._rebuild(this.pos.x, this.pos.z); } catch (_) {}
+      }
+    }
+    if (this.placesInfo && typeof this.placesInfo.damageParkedCarsInRadius === "function") {
+      hits += this.placesInfo.damageParkedCarsInRadius(wx, wz, radius, damage) || 0;
+    }
+    return hits;
+  }
+
   handleVehicleInteract() {
-    if (this.carjack.active) { this.carjack.skip(); return; } // [polish] E again skips the carjack
-    if (this.mode === "helicopter" || (this.kaiju && this.kaiju.active)) return;
+    if (this.carjack.active) { this.carjack.skip(); return true; } // [polish] E again skips the carjack
+    if (this.kaiju && this.kaiju.active) return false;
+    if (this.mode === "airliner" && this.airliner) {
+      this.airliner.exitToWalk();
+      return true;
+    }
+    if (this.mode === "boat" && this.maritime) {
+      this.maritime.exitToWalk();
+      return true;
+    }
+    if (this.mode === "helicopter") {
+      if (this.heliLanded || (this.heli && this.heli.state.grounded)) {
+        this.setMode("walk");
+        return true;
+      }
+      return false;
+    }
     if (this.mode === "walk") {
+      // 1. Board nearby Airport Commercial Airliner (within 45 m)
+      if (this.airliner && this.airliner.tryBoardNearest(this.pos.x, this.pos.y, this.pos.z, 45)) {
+        return true;
+      }
+      // 2. Board nearby Docked / Water Boat (within 26 m)
+      if (this.maritime && this.maritime.tryBoardNearest(this.pos.x, this.pos.y, this.pos.z, 26)) {
+        return true;
+      }
+      // 3. Board landed Helicopter (within 12 m)
       if (this.parkedHeli && Math.hypot(this.pos.x - this.parkedHeli.x, this.pos.z - this.parkedHeli.z) < 12) {
         this.setMode("helicopter");
-      } else if (this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 3.5)) {
-        this.setMode("drive"); // [parked-cars] your own parked car first
-      } else if (!this.hijackNearestTrafficCar(16, { sequence: true })) { // [polish]
-        this.setMode("drive");
+        return true;
       }
+      // 4. Enter player's own parked car (within 7.5 m)
+      const ownParked = this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 7.5);
+      if (ownParked) {
+        this.setMode("drive");
+        return true;
+      }
+      // 5. Enter parked car in parking lot / curbside (within 7.5 m)
+      if (this.claimNearestWorldParkedCar(this.pos.x, this.pos.z, 7.5)) {
+        return true;
+      }
+      // 6. Carjack nearby AI traffic car (within 7.5 m) — NEVER summon a car out of thin air if none is nearby!
+      if (this.hijackNearestTrafficCar(7.5, { sequence: true })) {
+        return true;
+      }
+      return false;
     } else if (this.mode === "drive") {
-      // [parked-cars] E in a car always gets out (GTA) and leaves it parked; car-jacking is done on foot
-      // (it used to jack any traffic car within 10.5 m, so you could not get out in traffic).
       stopVehicleSirenAudio();
       this.sirenActive = false;
       this.setMode("walk");
+      return true;
     }
+    return false;
   }
 
   isDrivingTank() {
@@ -2733,18 +2997,25 @@ class WorldExplorerApp {
     const fz = this.pos.z + fwdZ * 1.3;
     let hits = 0;
     if (this.traffic && typeof this.traffic.triggerImpactSphere === "function") {
-      hits += this.traffic.triggerImpactSphere(fx, fy, fz, 2.8, {
-        vx: fwdX * 14,
-        vy: 2.5,
-        vz: fwdZ * 14,
-        force: 1.6,
+      // Physically matched melee punch against a 75 kg human (~90-140 N*s momentum -> dv_xy <= 1.25 m/s, dv_y = 0.0 m/s)
+      hits += this.traffic.triggerImpactSphere(fx, fy, fz, 2.2, {
+        vx: fwdX * 1.2,
+        vy: 0.0,
+        vz: fwdZ * 1.2,
+        force: 0.45,
+        damage: 0,
+        pedsOnly: true,
+        source: "punch",
       });
       if (hits === 0) {
-        hits += this.traffic.triggerImpactSphere(this.pos.x + fwdX * 0.5, fy, this.pos.z + fwdZ * 0.5, 2.2, {
-          vx: fwdX * 14,
-          vy: 2.5,
-          vz: fwdZ * 14,
-          force: 1.6,
+        hits += this.traffic.triggerImpactSphere(this.pos.x + fwdX * 0.5, fy, this.pos.z + fwdZ * 0.5, 1.8, {
+          vx: fwdX * 1.2,
+          vy: 0.0,
+          vz: fwdZ * 1.2,
+          force: 0.45,
+          damage: 0,
+          pedsOnly: true,
+          source: "punch",
         });
       }
     }
@@ -3079,6 +3350,7 @@ class WorldExplorerApp {
     this.streetDetail.update(dt, this.camera.position, this.loadedChunks, this.worldOrigin, this.layerVisibility); // [feature/street-detail]
     this.vegetation.update(this.camera, this.loadedChunks, dt); // [feature/vegetation]
     if (this.places) this.places.update(dt, this.camera, this.pos, this.loadedChunks); // feature/places
+    if (this.airliner) this.airliner.updateAmbient(dt, this.pos);
     if (this.railTransit) this.railTransit.update(dt); // [feature/rail-transit]
     if (this.liveSky) this.liveSky.update(dt); // [live-sky-weather] after places: may hide simulated jets
     if (this.liveWeather) this.liveWeather.update(dt); // [live-sky-weather]

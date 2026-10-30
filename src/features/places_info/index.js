@@ -64,4 +64,12 @@ export class PlacesInfo {
     this.borders.update(dt);
     this.cards.update(dt);
   }
+
+  claimNearestParkedCar(px, pz, maxDist = 7.5) {
+    return this.system.claimNearestParkedCar(px, pz, maxDist);
+  }
+
+  damageParkedCarsInRadius(wx, wz, radius = 5, damage = 45) {
+    return this.system.damageParkedCarsInRadius(wx, wz, radius, damage, this.app);
+  }
 }

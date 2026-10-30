@@ -583,3 +583,21 @@ export class PropDamage {
 }
 
 export const PROP_DAMAGE_CFG = DAMAGE_CFG;
+
+export function claimNearestParkedCar(app, px, pz, maxDist = 7.5) {
+  if (!app) return null;
+  if (app.placesInfo && typeof app.placesInfo.claimNearestParkedCar === 'function') {
+    const hit = app.placesInfo.claimNearestParkedCar(px, pz, maxDist);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+export function damageParkedCarsInRadius(app, wx, wz, radius = 5, damage = 45) {
+  if (!app) return 0;
+  let hits = 0;
+  if (app.placesInfo && typeof app.placesInfo.damageParkedCarsInRadius === 'function') {
+    hits += app.placesInfo.damageParkedCarsInRadius(wx, wz, radius, damage);
+  }
+  return hits;
+}

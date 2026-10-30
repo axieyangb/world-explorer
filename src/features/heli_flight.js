@@ -1113,6 +1113,12 @@ export class HeliFlight {
       this.weaponStats.trafficHits += hits;
     }
     if (this.app.maritime) this.app.maritime.impact(hit.x, hit.y, hit.z, isRocket); // [feature/ferries-ships]
+    if (this.app.airliner && typeof this.app.airliner.applyWeaponImpact === 'function') {
+      this.app.airliner.applyWeaponImpact(hit, isRocket ? 18 : 6, isRocket ? 210 : 28);
+    }
+    if (typeof this.app.damageWorldParkedCarsInRadius === 'function') {
+      this.app.damageWorldParkedCarsInRadius(hit.x, hit.z, isRocket ? 16 : 5, isRocket ? 140 : 30, hit.y);
+    }
     this.app.vegetation?.impact?.(hit, isRocket ? ROCKET_SPLASH_R : 0, isRocket ? ROCKET_UNITS : CANNON_UNITS * 4); // [tree-damage]
   }
 

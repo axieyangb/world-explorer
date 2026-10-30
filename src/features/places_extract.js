@@ -1,5 +1,6 @@
 // Places feature (worker side, stage 1): pulls POIs, aeroways, piers, stadium footprints,
-// neighborhood/district places, mountain peaks, water names, and aerodrome labels out of
+// neighborhood/district places, mountain peaks, cliffs, water names, aerodrome labels,
+// aviation gates/towers, and industrial/military/construction/civic landuse zones out of
 // decoded OpenMapTiles layers into compact chunk-local arrays.
 // Called once per chunk from `fetchGlobalChunkData` (src/global_tiles.js).
 
@@ -73,6 +74,9 @@ function pickNameEn(tags) {
 function firstPoint(geom) {
   if (!Array.isArray(geom) || !geom.length) return null;
   const g0 = geom[0];
+  if (g0 && typeof g0 === 'object' && Array.isArray(g0.outer) && g0.outer.length) {
+    return g0.outer[Math.floor(g0.outer.length / 2)];
+  }
   if (!Array.isArray(g0)) return null;
   if (typeof g0[0] === 'number' && typeof g0[1] === 'number') return g0;
   if (Array.isArray(g0[0]) && typeof g0[0][0] === 'number') {
@@ -82,6 +86,11 @@ function firstPoint(geom) {
   return null;
 }
 
+const LANDUSE_PROP_CLASSES = new Set([
+  'industrial', 'military', 'construction', 'brownfield', 'railway',
+  'prison', 'school', 'kindergarten', 'university', 'college', 'hospital',
+]);
+
 /**
  * @param {Array<Object>} tiles decoded MVT layer maps
  * @param {(lat:number, lon:number) => [number, number]} toLocalXZ
@@ -90,21 +99,29 @@ function firstPoint(geom) {
 export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
   const pois = [];          // [x, z, cls, subclass, name, nameEn, rank]
   const placePoints = [];   // [x, z, cls, name, nameEn, rank]
-  const peaks = [];         // [x, z, eleM, name, nameEn, rank]
+  const peaks = [];         // [x, z, eleM, name, nameEn, rank, cls]
+  const cliffs = [];        // [flatXZ]
   const waterNames = [];    // [x, z, cls, name, nameEn]
   const airports = [];      // [x, z, iata, name, nameEn, cls]
   const aeroPolys = [];     // [cls, flatXZ clipped to chunk]
   const aeroLines = [];     // [cls, flatXZ (unclipped, local), ref]
+  const aeroGates = [];     // [x, z, ref]
+  const aeroTowers = [];    // [x, z, cls, name, nameEn]
   const piers = [];         // [flatXZ]
   const stadiums = [];      // [flatXZ (unclipped, local)]
+  const landuseZones = [];  // [cls, cx, cz, area, flatXZ]
   const seenPoi = new Set();
   const seenPlace = new Set();
   const seenPeak = new Set();
+  const seenCliff = new Set();
   const seenWater = new Set();
   const seenAirport = new Set();
   const seenAeroLine = new Set();
+  const seenAeroGate = new Set();
+  const seenAeroTower = new Set();
   const seenHelipad = new Set();
   const seenStadium = new Set();
+  const seenLanduse = new Set();
 
   const ringToLocal = (ring) => {
     const flat = [];
@@ -117,12 +134,31 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
 
   for (const t of tiles) {
     for (const f of t.poi || []) {
-      if (f.type !== 1) continue;
-      const pts = Array.isArray(f.geom) ? f.geom : [];
       const cls = String(f.tags.class || '');
-      const sub = String(f.tags.subclass || f.tags.religion || '');
-      for (const g of pts) {
-        const p = Array.isArray(g[0]) ? g[0] : g;
+      const sub = String(f.tags.subclass || f.tags.religion || f.tags.station || f.tags.information || '');
+      if (f.type === 1) {
+        const pts = Array.isArray(f.geom) ? f.geom : [];
+        for (const g of pts) {
+          const p = Array.isArray(g[0]) ? g[0] : g;
+          if (!p || p.length < 2) continue;
+          const [lx, lz] = toLocalXZ(p[0], p[1]);
+          if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+          const name = pickName(f.tags);
+          const key = `${Math.round(lx / 4)},${Math.round(lz / 4)},${cls},${sub},${name}`;
+          if (seenPoi.has(key)) continue;
+          seenPoi.add(key);
+          pois.push([
+            Math.round(lx * 10) / 10,
+            Math.round(lz * 10) / 10,
+            cls,
+            sub,
+            name,
+            pickNameEn(f.tags),
+            Number(f.tags.rank) || 99,
+          ]);
+        }
+      } else if (f.type === 3) {
+        const p = firstPoint(f.geom);
         if (!p || p.length < 2) continue;
         const [lx, lz] = toLocalXZ(p[0], p[1]);
         if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
@@ -170,10 +206,32 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
       ]);
     }
 
-    // Mountain peaks (`mountain_peak` layer, class === 'peak')
+    // Mountain peaks, volcanoes, saddles & cliffs (`mountain_peak` layer)
     for (const f of t.mountain_peak || []) {
+      const cls = String(f.tags.class || f.tags.subclass || 'peak');
+      if (cls === 'cliff') {
+        if (f.type === 2) {
+          for (const line of f.geom || []) {
+            const flat = ringToLocal(line);
+            if (flat.length < 4 || !lineTouchesBox(flat, 40)) continue;
+            const key = `${Math.round(flat[0] / 8)},${Math.round(flat[1] / 8)},${flat.length}`;
+            if (seenCliff.has(key)) continue;
+            seenCliff.add(key);
+            cliffs.push(flat);
+          }
+        } else if (f.type === 1) {
+          const p = firstPoint(f.geom);
+          if (!p) continue;
+          const [lx, lz] = toLocalXZ(p[0], p[1]);
+          if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+          const key = `pt:${Math.round(lx / 10)},${Math.round(lz / 10)}`;
+          if (seenCliff.has(key)) continue;
+          seenCliff.add(key);
+          cliffs.push([Math.round((lx - 7) * 10) / 10, Math.round((lz - 2) * 10) / 10, Math.round((lx + 7) * 10) / 10, Math.round((lz + 2) * 10) / 10]);
+        }
+        continue;
+      }
       if (f.type !== 1) continue;
-      const cls = String(f.tags.class || 'peak');
       if (cls !== 'peak' && cls !== 'volcano' && cls !== 'saddle') continue;
       const p = firstPoint(f.geom);
       if (!p) continue;
@@ -181,7 +239,6 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
       if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
       const name = pickName(f.tags);
       const nameEn = pickNameEn(f.tags);
-      if (!name && !nameEn) continue;
       const rawEle = Number(f.tags.ele);
       const rawFt = Number(f.tags.ele_ft);
       const eleM = Number.isFinite(rawEle)
@@ -189,7 +246,7 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
         : Number.isFinite(rawFt)
           ? Math.round(rawFt * 0.3048)
           : null;
-      const key = `${nameEn || name}:${Math.round(lx / 20)},${Math.round(lz / 20)}`;
+      const key = `${cls}:${nameEn || name}:${Math.round(lx / 20)},${Math.round(lz / 20)}`;
       if (seenPeak.has(key)) continue;
       seenPeak.add(key);
       peaks.push([
@@ -199,6 +256,7 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
         name || nameEn,
         nameEn || name,
         Number(f.tags.rank) || 5,
+        cls,
       ]);
     }
 
@@ -251,6 +309,30 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
 
     for (const f of t.aeroway || []) {
       const cls = String(f.tags.class || '');
+      if (cls === 'gate' && (f.type === 1 || f.type === 3)) {
+        const p = firstPoint(f.geom);
+        if (!p) continue;
+        const [lx, lz] = toLocalXZ(p[0], p[1]);
+        if (lx < -CHUNK_HALF || lx >= CHUNK_HALF || lz < -CHUNK_HALF || lz >= CHUNK_HALF) continue;
+        const gk = `${Math.round(lx / 6)},${Math.round(lz / 6)}`;
+        if (seenAeroGate.has(gk)) continue;
+        seenAeroGate.add(gk);
+        aeroGates.push([Math.round(lx * 10) / 10, Math.round(lz * 10) / 10, String(f.tags.ref || f.tags.name || '')]);
+        continue;
+      }
+      if ((cls === 'aerodrome' || cls === 'heliport' || cls === 'tower') && (f.type === 1 || f.type === 3)) {
+        const p = firstPoint(f.geom);
+        if (p) {
+          const [lx, lz] = toLocalXZ(p[0], p[1]);
+          if (lx >= -CHUNK_HALF && lx < CHUNK_HALF && lz >= -CHUNK_HALF && lz < CHUNK_HALF) {
+            const tk = `${cls}:${Math.round(lx / 80)},${Math.round(lz / 80)}`;
+            if (!seenAeroTower.has(tk)) {
+              seenAeroTower.add(tk);
+              aeroTowers.push([Math.round(lx * 10) / 10, Math.round(lz * 10) / 10, cls, pickName(f.tags), pickNameEn(f.tags)]);
+            }
+          }
+        }
+      }
       if (f.type === 3) {
         for (const poly of f.geom) {
           if (!poly.outer || poly.outer.length < 3) continue;
@@ -308,21 +390,41 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
     }
 
     for (const f of t.landuse || []) {
-      if (f.type !== 3 || f.tags.class !== 'stadium') continue;
-      for (const poly of f.geom) {
-        if (!poly.outer || poly.outer.length < 4) continue;
-        const flat = ringToLocal(poly.outer);
-        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-        for (let i = 0; i < flat.length; i += 2) {
-          minX = Math.min(minX, flat[i]); maxX = Math.max(maxX, flat[i]);
-          minZ = Math.min(minZ, flat[i + 1]); maxZ = Math.max(maxZ, flat[i + 1]);
+      const cls = String(f.tags.class || '');
+      if (f.type === 3 && cls === 'stadium') {
+        for (const poly of f.geom) {
+          if (!poly.outer || poly.outer.length < 4) continue;
+          const flat = ringToLocal(poly.outer);
+          let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+          for (let i = 0; i < flat.length; i += 2) {
+            minX = Math.min(minX, flat[i]); maxX = Math.max(maxX, flat[i]);
+            minZ = Math.min(minZ, flat[i + 1]); maxZ = Math.max(maxZ, flat[i + 1]);
+          }
+          const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
+          if (cx < -CHUNK_HALF || cx >= CHUNK_HALF || cz < -CHUNK_HALF || cz >= CHUNK_HALF) continue;
+          const key = `${Math.round(cx / 40)},${Math.round(cz / 40)}`;
+          if (seenStadium.has(key)) continue;
+          seenStadium.add(key);
+          stadiums.push(flat);
         }
-        const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
-        if (cx < -CHUNK_HALF || cx >= CHUNK_HALF || cz < -CHUNK_HALF || cz >= CHUNK_HALF) continue;
-        const key = `${Math.round(cx / 40)},${Math.round(cz / 40)}`;
-        if (seenStadium.has(key)) continue;
-        seenStadium.add(key);
-        stadiums.push(flat);
+      } else if (f.type === 3 && LANDUSE_PROP_CLASSES.has(cls)) {
+        for (const poly of f.geom) {
+          if (!poly.outer || poly.outer.length < 3) continue;
+          const flat = ringToLocal(poly.outer);
+          let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+          for (let i = 0; i < flat.length; i += 2) {
+            minX = Math.min(minX, flat[i]); maxX = Math.max(maxX, flat[i]);
+            minZ = Math.min(minZ, flat[i + 1]); maxZ = Math.max(maxZ, flat[i + 1]);
+          }
+          const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
+          if (cx < -CHUNK_HALF || cx >= CHUNK_HALF || cz < -CHUNK_HALF || cz >= CHUNK_HALF) continue;
+          const area = (maxX - minX) * (maxZ - minZ);
+          if (area < 180) continue;
+          const key = `${cls}:${Math.round(cx / 35)},${Math.round(cz / 35)}`;
+          if (seenLanduse.has(key)) continue;
+          seenLanduse.add(key);
+          landuseZones.push([cls, Math.round(cx * 10) / 10, Math.round(cz * 10) / 10, Math.round(area), flat]);
+        }
       }
     }
   }
@@ -358,11 +460,15 @@ export function extractPlaceFeatures(tiles, toLocalXZ, origin) {
     pois,
     placePoints,
     peaks,
+    cliffs,
     waterNames,
     airports,
     aeroPolys,
     aeroLines,
+    aeroGates,
+    aeroTowers,
     piers,
     stadiums,
+    landuseZones,
   };
 }

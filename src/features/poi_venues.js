@@ -16,6 +16,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { getChunkTerrainMeshElevation, getBeijingTerrainElevation } from '../environment.js';
 import { kaijuPatchBuildingShader } from './kaiju/kaiju_destruction.js';
+import { classifyPoiVenueKind } from './poi_venues_extract.js';
 
 export const POI_VENUE_STRIDE = 8;
 const HALF = 500;
@@ -126,12 +127,105 @@ const GENERIC = {
   super: [['超市', 'SUPERMARKET'], ['超市', 'FRESH MARKET'], ['超市', 'FOOD MARKET']],
   fast: [['快餐', 'BURGERS'], ['快餐', 'FAST FOOD'], ['快餐', 'DRIVE-IN']],
   pharmacy: [['药店', 'PHARMACY']], bank: [['银行', 'BANK']],
+  wash: [['自动洗车', 'CAR WASH'], ['精洗美容', 'AUTO WASH']],
+  cafe_bistro: [['精品咖啡', 'CAFE & BISTRO'], ['烘焙工坊', 'BOULANGERIE'], ['西式简餐', 'BRASSERIE'], ['意式咖啡', 'ESPRESSO BAR']],
+  pub_bar: [['精酿酒馆', 'TAVERN & PUB'], ['啤酒花园', 'BIERGARTEN'], ['老橡木酒馆', 'OLD OAK PUB'], ['威士忌吧', 'TAPHOUSE']],
+  hotel: [['大酒店', 'GRAND HOTEL'], ['精品酒店', 'PLAZA HOTEL'], ['迎宾大饭店', 'ROYAL HOTEL']],
+  cinema_theatre: [['百老汇大剧院', 'GRAND THEATRE'], ['星光影城', 'PALACE CINEMA'], ['艺术剧场', 'PLAYHOUSE']],
+  auto_service: [['汽车维修中心', 'AUTO SERVICE'], ['名车中心', 'AUTO MOTORS'], ['轮胎与保养', 'TIRE & LUBE']],
+  marketplace_retail: [['鲜花蔬果集市', 'FARMERS MARKET'], ['城市市集', 'FRESH MARKET'], ['时代百货', 'GALLERIA MALL']],
 };
 export function signNames(kind, name, nameEn, repeated, rnd) {
-  const nm = String(name || ''), en = String(nameEn || '');
-  if ((nm || en) && !repeated && !CHAINS.test(nm) && !CHAINS.test(en)) return [nm || en, en || nm];
-  const g = GENERIC[kind];
+  const nm = String(name || '').trim(), en = String(nameEn || '').trim();
+  if (nm || en) return [nm || en, en || nm];
+  const g = GENERIC[kind] || GENERIC.conv;
   return g[(rnd() * g.length) | 0];
+}
+export function brandSchemeFor(kind, name, nameEn, rnd) {
+  const s = `${name || ''} ${nameEn || ''}`;
+  if (kind === 'fuel' || kind === 'wash') {
+    if (/shell|壳牌/i.test(s)) return [[0.86, 0.08, 0.06], [0.96, 0.80, 0.04], [0.96, 0.80, 0.04]];
+    if (/chevron|雪佛龙|caltex|加德士/i.test(s)) return [[0.03, 0.24, 0.65], [0.92, 0.93, 0.95], [0.82, 0.08, 0.12]];
+    if (/\b76\b|conoco|phillips/i.test(s)) return [[0.92, 0.36, 0.04], [0.92, 0.92, 0.90], [0.05, 0.22, 0.58]];
+    if (/mobil|exxon|esso|埃克森|美孚/i.test(s)) return [[0.82, 0.06, 0.08], [0.92, 0.93, 0.95], [0.04, 0.20, 0.58]];
+    if (/\barco\b/i.test(s)) return [[0.04, 0.22, 0.56], [0.92, 0.93, 0.95], [0.85, 0.08, 0.10]];
+    if (/\bbp\b|碧辟|amoco/i.test(s)) return [[0.02, 0.48, 0.18], [0.94, 0.95, 0.92], [0.95, 0.82, 0.05]];
+    if (/sinopec|中国石化|中石化/i.test(s)) return [[0.84, 0.05, 0.06], [0.93, 0.93, 0.92], [0.95, 0.76, 0.05]];
+    if (/petrochina|cnpc|中国石油|中石油/i.test(s)) return [[0.82, 0.06, 0.05], [0.96, 0.72, 0.04], [0.92, 0.92, 0.90]];
+    if (/valero|gulf|sunoco/i.test(s)) return [[0.04, 0.36, 0.46], [0.92, 0.92, 0.90], [0.95, 0.68, 0.04]];
+    if (/texaco|speedway|circle ?k|wawa|sheetz|quiktrip|\bqt\b/i.test(s)) return [[0.78, 0.05, 0.06], [0.92, 0.92, 0.90], [0.95, 0.62, 0.04]];
+    if (/total|eneos|idemitsu|repsol/i.test(s)) return [[0.88, 0.34, 0.04], [0.92, 0.92, 0.90], [0.82, 0.06, 0.08]];
+    if (/petronas/i.test(s)) return [[0.02, 0.52, 0.46], [0.92, 0.94, 0.94], [0.88, 0.88, 0.86]];
+    return FUEL_SCHEMES[(rnd() * FUEL_SCHEMES.length) | 0];
+  }
+  if (kind === 'conv') {
+    if (/7-?eleven|7-?11|seven|セブン/i.test(s)) return [[0.92, 0.92, 0.90], [0.02, 0.44, 0.20], [0.90, 0.32, 0.04]];
+    if (/family ?mart|全家|ファミリーマート/i.test(s)) return [[0.92, 0.94, 0.95], [0.02, 0.46, 0.78], [0.04, 0.62, 0.26]];
+    if (/lawson|罗森|ローソン/i.test(s)) return [[0.04, 0.34, 0.74], [0.94, 0.95, 0.96], [0.85, 0.22, 0.35]];
+    if (/circle ?k|ok便利/i.test(s)) return [[0.78, 0.06, 0.06], [0.95, 0.62, 0.04], [0.94, 0.94, 0.92]];
+    if (/ministop|ミニストップ|meiyijia|美宜佳|喜士多|良友|快客|联华|好德/i.test(s)) return [[0.82, 0.08, 0.08], [0.95, 0.76, 0.06], [0.04, 0.32, 0.68]];
+    return SHOP_SCHEMES[(rnd() * SHOP_SCHEMES.length) | 0];
+  }
+  if (kind === 'super') {
+    if (/whole foods|sprouts|联华|永辉/i.test(s)) return [[0.02, 0.38, 0.16], [0.92, 0.92, 0.90]];
+    if (/walmart|沃尔玛|aldi|lidl|tesco|sainsbury/i.test(s)) return [[0.04, 0.24, 0.58], [0.92, 0.92, 0.90]];
+    if (/target|costco|safeway|kroger|trader joe|carrefour|家乐福|auchan|大润发|华润|盒马/i.test(s)) return [[0.74, 0.06, 0.06], [0.92, 0.92, 0.90]];
+    return MARKET_SCHEMES[(rnd() * MARKET_SCHEMES.length) | 0];
+  }
+  if (kind === 'cafe_bistro') {
+    if (/starbucks|星巴克/i.test(s)) return [[0.02, 0.36, 0.22], [0.95, 0.93, 0.88], [0.78, 0.62, 0.32]];
+    if (/blue bottle|蓝瓶|luckin|瑞幸/i.test(s)) return [[0.06, 0.38, 0.68], [0.96, 0.96, 0.95], [0.85, 0.68, 0.32]];
+    if (/tim horton|costa|pret|boulangerie|paul\b/i.test(s)) return [[0.58, 0.08, 0.10], [0.95, 0.90, 0.80], [0.85, 0.68, 0.28]];
+    if (/peet|皮爷|lavazza|illy|manner/i.test(s)) return [[0.24, 0.14, 0.08], [0.94, 0.88, 0.76], [0.86, 0.64, 0.20]];
+    const bistroSchemes = [
+      [[0.12, 0.28, 0.18], [0.95, 0.92, 0.84], [0.82, 0.66, 0.26]],
+      [[0.52, 0.10, 0.12], [0.95, 0.92, 0.84], [0.85, 0.68, 0.28]],
+      [[0.14, 0.18, 0.28], [0.95, 0.92, 0.84], [0.84, 0.66, 0.26]],
+      [[0.34, 0.20, 0.11], [0.96, 0.92, 0.82], [0.88, 0.56, 0.18]],
+    ];
+    return bistroSchemes[(rnd() * bistroSchemes.length) | 0];
+  }
+  if (kind === 'pub_bar') {
+    const pubSchemes = [
+      [[0.14, 0.09, 0.06], [0.88, 0.70, 0.24], [0.55, 0.12, 0.08]],
+      [[0.08, 0.18, 0.11], [0.90, 0.74, 0.26], [0.45, 0.22, 0.10]],
+      [[0.22, 0.07, 0.07], [0.92, 0.76, 0.28], [0.16, 0.12, 0.09]],
+    ];
+    return pubSchemes[(rnd() * pubSchemes.length) | 0];
+  }
+  if (kind === 'hotel') {
+    const hotelSchemes = [
+      [[0.12, 0.14, 0.18], [0.88, 0.72, 0.30], [0.72, 0.08, 0.10]],
+      [[0.18, 0.14, 0.12], [0.90, 0.76, 0.36], [0.68, 0.07, 0.09]],
+      [[0.08, 0.18, 0.24], [0.86, 0.70, 0.28], [0.75, 0.08, 0.10]],
+    ];
+    return hotelSchemes[(rnd() * hotelSchemes.length) | 0];
+  }
+  if (kind === 'cinema_theatre') {
+    const cinemaSchemes = [
+      [[0.55, 0.05, 0.08], [0.98, 0.82, 0.22], [0.95, 0.35, 0.65]],
+      [[0.10, 0.08, 0.24], [0.98, 0.80, 0.20], [0.20, 0.85, 0.95]],
+      [[0.42, 0.06, 0.18], [0.98, 0.84, 0.25], [1.0, 0.45, 0.15]],
+    ];
+    return cinemaSchemes[(rnd() * cinemaSchemes.length) | 0];
+  }
+  if (kind === 'auto_service') {
+    const autoSchemes = [
+      [[0.06, 0.26, 0.62], [0.94, 0.95, 0.96], [0.92, 0.42, 0.05]],
+      [[0.72, 0.08, 0.08], [0.94, 0.94, 0.92], [0.95, 0.72, 0.06]],
+      [[0.14, 0.16, 0.18], [0.95, 0.72, 0.05], [0.85, 0.12, 0.08]],
+    ];
+    return autoSchemes[(rnd() * autoSchemes.length) | 0];
+  }
+  if (kind === 'marketplace_retail') {
+    const mktSchemes = [
+      [[0.12, 0.44, 0.22], [0.96, 0.94, 0.88], [0.92, 0.48, 0.08]],
+      [[0.72, 0.14, 0.10], [0.96, 0.94, 0.88], [0.95, 0.75, 0.12]],
+      [[0.14, 0.32, 0.58], [0.96, 0.95, 0.92], [0.88, 0.36, 0.52]],
+    ];
+    return mktSchemes[(rnd() * mktSchemes.length) | 0];
+  }
+  return SHOP_SCHEMES[(rnd() * SHOP_SCHEMES.length) | 0];
 }
 
 // ------------------------------------------------------------------ geometry accumulator
@@ -255,8 +349,8 @@ function priceString(A, F, s, x, y, z, h, rgb) {
 export function buildPoiVenues(ctx) {
   const { data, ox, oz, groups, mats, buildingEntities = [], roadSegments = [], isPointInWater, colliders } = ctx;
   const pois = (data && data.places && data.places.pois) || [];
-  const sites = (data && data.venues && data.venues.poi) || { canopies: [], garages: [] };
-  if (!pois.length && !sites.garages.length) return null;
+  const sites = (data && data.venues && data.venues.poi) || { canopies: [], garages: [], venues: [] };
+  if (!pois.length && !sites.garages.length && !(sites.venues && sites.venues.length)) return null;
   const lat = (data.places && data.places.lat) || 0, lon = (data.places && data.places.lon) || 0;
   // Seeds come from absolute lat/lon (1e-5 deg grid), so a venue looks the same whichever spawn point set the origin
   const latR = (lat * Math.PI) / 180;
@@ -620,10 +714,10 @@ export function buildPoiVenues(ctx) {
   }
 
   // ------------------------------------------------------------ gas station
-  function gasStation(q, rnd) {
+  function gasStation(q, rnd, hasWashPoi = false) {
     const [px0, pz0, , , name, nameEn] = q;
-    const canopy = sites.canopies.find((c) => Math.hypot(c.px - px0, c.pz - pz0) < 1.5);
-    const scheme = FUEL_SCHEMES[(rnd() * FUEL_SCHEMES.length) | 0];
+    const canopy = sites.canopies.find((c) => Math.hypot(c.px - px0, c.pz - pz0) < 6.0 || Math.hypot(c.cx - px0, c.cz - pz0) < 32.0);
+    const scheme = brandSchemeFor('fuel', name, nameEn, rnd);
     let F, hl, hw;
     const road0 = roadNear(px0, pz0, 90);
     if (canopy) {
@@ -809,8 +903,50 @@ export function buildPoiVenues(ctx) {
         break;
       }
     }
-    // --- car wash bay at about half the stations that have room
-    if (R() < 0.6) carWash(F, hl, hw, fx0, fx1, fz0, fz1, scheme, seed, road);
+    // --- car wash bay only when backed by a real car wash POI or named car wash
+    if (hasWashPoi || /car ?wash|洗車|洗车|auto ?wash|auto ?spa/i.test(`${name || ''} ${nameEn || ''}`)) {
+      carWash(F, hl, hw, fx0, fx1, fz0, fz1, scheme, seed, road);
+    }
+    return true;
+  }
+  function standaloneCarWash(q, rnd) {
+    const [px0, pz0, , , name, nameEn] = q;
+    const road0 = roadNear(px0, pz0, 95);
+    const scheme = brandSchemeFor('wash', name, nameEn, rnd);
+    const L = 15, Wb = 5.6, H = 4.5;
+    let G = null;
+    if (road0 && road0.d <= 80) {
+      let nx = px0 - road0.qx, nz = pz0 - road0.qz;
+      const l = Math.hypot(nx, nz);
+      if (l < 0.5) { nx = -road0.uz; nz = road0.ux; } else { nx /= l; nz /= l; }
+      for (const back of [4, 7, 10, 2.5, 14]) {
+        const cx = road0.qx + nx * (road0.hw + back + Wb * 0.5), cz = road0.qz + nz * (road0.hw + back + Wb * 0.5);
+        for (const along of [0, -5, 5, -10, 10]) {
+          const wx = cx + road0.ux * along, wz = cz + road0.uz * along;
+          if (Math.hypot(wx - px0, wz - pz0) > 42) continue;
+          const cand = Frame.fromAxis(wx, 0, wz, road0.ux, road0.uz);
+          if (!rectClear(cand, -L / 2 - 2.0, L / 2 + 2.0, -Wb / 2 - 1.2, Wb / 2 + 1.2, { roadPad: 0.4 })) continue;
+          if (taken(wx, wz, L * 0.45)) continue;
+          G = cand;
+          G.y0 = ground(wx, wz);
+          break;
+        }
+        if (G) break;
+      }
+    }
+    if (!G) {
+      if (bldAt(px0, pz0, 1.5) || taken(px0, pz0, 6)) return false;
+      const ux = road0 ? road0.ux : 1, uz = road0 ? road0.uz : 0;
+      G = Frame.fromAxis(px0, ground(px0, pz0), pz0, ux, uz);
+    }
+    claim(G.x0, G.z0, L * 0.55);
+    const seed = hashAbs(G.x0, G.z0, 19);
+    washBay(G, L, Wb, H, scheme, seed);
+    const [sZh, sEn] = signNames('wash', name, nameEn, false, rnd);
+    for (const s of [-1, 1]) {
+      const E = new Frame(G.x0, G.y0, G.z0, G.bx * s, G.bz * s);
+      sign(E, 0, H - 0.35, L / 2 + 0.04, Wb - 0.8, 0.52, 3, sZh, sEn, toHex(scheme[0]), 0xffffff);
+    }
     return true;
   }
   function slabSpot(x, z, rx, rz, ang, yOff, rgb) {
@@ -1032,6 +1168,206 @@ export function buildPoiVenues(ctx) {
         awning: [scheme[0], scheme[1]], frame: C.aluDk,
       });
       diner(F, W, res, rnd);
+    } else if (kind === 'cafe_bistro') {
+      const GH = Math.min(3.05, hostTop - 1.0);
+      const woodFrame = [0.34, 0.20, 0.11], brassTrim = [0.85, 0.68, 0.26];
+      res = storefront(F, W, {
+        rnd, scheme, hostTop, glassH: GH, fasciaH: 0.88, depth: 1.0, shelves: false, interior: [0.98, 0.88, 0.70],
+        signText: o.name || '咖啡馆', signTextEn: o.nameEn || o.name || 'CAFE & BISTRO',
+        signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 4,
+        awning: [scheme[0], scheme[1]], awningDepth: 1.75, frame: woodFrame,
+      });
+      // Brass fascia accent rail + warm interior espresso bar & glowing pendant lamps
+      box(bld, F, 0, GH + 0.04, res.D + 0.19, W + 0.12, 0.05, 0.04, brassTrim);
+      box(bld, F, 0, 0.85, 0.38, Math.min(W - 1.6, 5.2), 1.0, 0.42, woodFrame);
+      box(bld, F, 0, 1.37, 0.38, Math.min(W - 1.5, 5.3), 0.05, 0.48, [0.92, 0.90, 0.85]);
+      const nPend = Math.max(2, Math.min(5, Math.round(W / 1.9)));
+      for (let i = 0; i < nPend; i++) {
+        const px = -W * 0.36 + (W * 0.72 * i) / Math.max(1, nPend - 1);
+        box(bld, F, px, GH - 0.55, 0.52, 0.24, 0.18, 0.24, [1.0, 0.86, 0.55], true);
+      }
+      // Sidewalk patio dining zone: 2-3 bistro tables with umbrellas + A-frame chalkboard menu sign
+      const patioZ = res.D + 1.85;
+      const nTables = W >= 8.2 ? 3 : 2;
+      const span = Math.min(W - 1.4, (nTables - 1) * 2.55);
+      const uTint = toHex(scheme[0]);
+      for (let i = 0; i < nTables; i++) {
+        const tx = nTables === 1 ? 0 : -span / 2 + (span * i) / (nTables - 1);
+        if (Math.abs(tx) < 0.85 && nTables === 2) continue;
+        const [wx, , wz] = F.p(tx, 0, patioZ);
+        if (!bldAt(wx, wz, 0.2)) push('patioTable', wx, groundTop(wx, wz), wz, F.rotY((i % 2) * 0.35), 1, 1, 1, uTint);
+      }
+      const [mx, , mz] = F.p(W / 2 - 0.35, 0, res.D + 2.35);
+      if (!bldAt(mx, mz, 0.2)) push('menuAFrame', mx, groundTop(mx, mz), mz, F.rotY(0.28), 1, 1, 1, uTint);
+      pool(F.wx(0, patioZ), F.wz(0, patioZ), Math.min(5.5, W * 0.55), C.lightWarm, 0.38, 0.11, 2.8, F.rotY());
+    } else if (kind === 'pub_bar') {
+      const GH = Math.min(2.95, hostTop - 1.0);
+      const darkOak = [0.16, 0.10, 0.06], brickW = [0.44, 0.20, 0.14], gold = [0.90, 0.72, 0.24];
+      res = storefront(F, W, {
+        rnd, scheme, hostTop, glassH: GH, fasciaH: 0.9, depth: 0.95, shelves: false, interior: [0.92, 0.64, 0.28],
+        signText: o.name || '精酿酒馆', signTextEn: o.nameEn || o.name || 'TAVERN & PUB',
+        signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 4, frame: darkOak,
+      });
+      // Classic brick wainscot + dark-timber pilasters + warm amber stained-glass transom windows
+      for (const s of [-1, 1]) {
+        const wx = s * (W * 0.28), ww = Math.max(0.8, W * 0.26);
+        box(bld, F, wx, 0.55, res.D - 0.02, ww, 0.78, 0.14, brickW, false, 'b');
+        face(bld, F, wx - ww * 0.44, wx + ww * 0.44, GH - 0.52, GH - 0.08, res.D + 0.01, [0.98, 0.68, 0.18], true);
+      }
+      // Projecting wrought-iron hanging tavern sign bracket at corner
+      const bx = W / 2 - 0.15, by = GH + 0.35;
+      box(bld, F, bx, by + 0.28, res.D + 0.55, 0.06, 0.06, 1.05, C.black);
+      box(bld, F, bx, by - 0.08, res.D + 0.68, 0.08, 0.56, 0.68, scheme[0], 'lr');
+      box(bld, F, bx, by - 0.08, res.D + 0.68, 0.09, 0.60, 0.72, gold, false, 'fb');
+      // Outdoor oak barrels flanking entrance + beer-garden bench table
+      for (const s of [-1, 1]) {
+        const [px, , pz] = F.p(s * (W * 0.34), 0, res.D + 0.65);
+        if (!bldAt(px, pz, 0.15)) push('pubBarrel', px, groundTop(px, pz), pz, F.rotY(s * 0.4), 1, 1, 1, toHex(scheme[0]));
+      }
+      const [bx2, , bz2] = F.p(W * 0.26, 0, res.D + 2.05);
+      if (!bldAt(bx2, bz2, 0.2)) push('beerBench', bx2, groundTop(bx2, bz2), bz2, F.rotY(Math.PI / 2), 1, 1, 1, toHex(scheme[0]));
+    } else if (kind === 'hotel') {
+      const GH = Math.min(3.5, hostTop - 1.1);
+      const brass = [0.86, 0.70, 0.28], marble = [0.90, 0.88, 0.84], carpetR = [0.68, 0.06, 0.08];
+      res = storefront(F, W, {
+        rnd, scheme, hostTop, glassH: GH, fasciaH: 0.95, depth: 1.25, shelves: false,
+        interior: [0.98, 0.90, 0.74], doorW: 2.5,
+        signText: o.name || '大酒店', signTextEn: o.nameEn || o.name || 'GRAND HOTEL',
+        signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 4, frame: brass,
+      });
+      // Revolving glass entrance drum + brass crown
+      cyl(glass, F, 0, 0.18, res.D + 0.15, 1.18, GH - 0.55, 12, [0.68, 0.82, 0.88], false, false);
+      cyl(bld, F, 0, GH - 0.42, res.D + 0.15, 1.24, 0.22, 12, brass, false, true);
+      // Grand porte-cochere drop-off canopy projecting over front driveway on twin marble/brass columns
+      const cd = 5.4, cw = Math.min(W + 1.2, 11.5), cy = GH + 0.85;
+      box(bld, F, 0, cy + 0.34, res.D + cd / 2, cw, 0.68, cd, marble, false, '');
+      box(bld, F, 0, cy + 0.34, res.D + cd / 2, cw + 0.08, 0.18, cd + 0.08, brass, true, 'tb');
+      box(bld, F, 0, cy - 0.01, res.D + cd / 2, cw - 0.16, 0.03, cd - 0.16, C.soffit, false, 't');
+      for (let i = 0; i < 3; i++) box(bld, F, 0, cy - 0.04, res.D + 1.1 + i * 1.6, cw * 0.62, 0.03, 0.32, C.lightWarm, true);
+      for (const sx of [-1, 1]) {
+        const colX = sx * (cw / 2 - 0.48), colZ = res.D + cd - 0.48;
+        box(bld, F, colX, 0.35, colZ, 0.56, 0.7, 0.56, brass, false, 'b');
+        box(bld, F, colX, cy / 2, colZ, 0.44, cy, 0.44, marble, false, 'b');
+        box(bld, F, colX, cy - 0.15, colZ, 0.54, 0.26, 0.54, brass);
+      }
+      // Red VIP entrance carpet runner + driveway apron
+      slab(bld, F, -cw / 2 - 0.4, cw / 2 + 0.4, res.D + 0.1, res.D + cd + 0.4, 0.072, C.concreteLt, 4);
+      flat(bld, F, -1.15, 1.15, res.D + 0.05, res.D + cd - 0.2, 0.095, carpetR);
+      // Vertical illuminated HOTEL blade sign higher on the facade
+      const bladeH = Math.min(4.6, Math.max(2.4, hostTop - cy - 1.2));
+      const bladeY = cy + 0.8 + bladeH / 2;
+      box(bld, F, W / 2 - 0.35, bladeY, res.D + 0.55, 0.26, bladeH, 0.92, scheme[0], 'lr');
+      box(bld, F, W / 2 - 0.35, bladeY, res.D + 1.02, 0.16, bladeH - 0.2, 0.08, brass, true);
+      for (const s of [-1, 1]) {
+        const BFrame = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
+        sign(BFrame, s > 0 ? -(res.D + 0.55) : res.D + 0.55, bladeY, W / 2 - 0.2, 0.82, bladeH * 0.72, 4, '酒店', 'HOTEL', toHex(scheme[0]), 0xf5d76e);
+      }
+      // Brass bellhop luggage trolley + VIP stanchion post
+      const [tx, , tz] = F.p(1.85, 0, res.D + 1.45);
+      push('bellhopCart', tx, groundTop(tx, tz), tz, F.rotY(0.25), 1, 1, 1, toHex(scheme[2] || carpetR));
+      const [sx0, , sz0] = F.p(-1.45, 0, res.D + 2.1);
+      push('stanchion', sx0, groundTop(sx0, sz0), sz0, F.rotY(), 1, 1, 1, 0xd4af37);
+      pool(F.wx(0, res.D + cd / 2), F.wz(0, res.D + cd / 2), cw * 0.55, C.lightWarm, 0.45, 0.115, cd * 0.6, F.rotY());
+    } else if (kind === 'cinema_theatre') {
+      const GH = Math.min(3.3, hostTop - 1.2);
+      const goldGlow = [1.0, 0.84, 0.24], neonTrim = scheme[2] || [0.95, 0.30, 0.65], carpetR = [0.72, 0.05, 0.08];
+      res = storefront(F, W, {
+        rnd, scheme, hostTop, glassH: GH, fasciaH: 1.05, depth: 1.1, shelves: false,
+        interior: [0.95, 0.78, 0.52], doorW: 2.4, signText: false, frame: [0.16, 0.12, 0.14],
+      });
+      // Iconic retro Broadway/Cinema 3-sided projecting marquee canopy with warm gold & neon bulb trim
+      const mw = Math.min(W + 0.6, 10.8), md = 2.65, my = GH + 0.55, mh = 1.18;
+      box(bld, F, 0, my, res.D + md / 2, mw, mh, md, scheme[0], false, 'k');
+      // Glowing marquee chaser bulbs / neon bands around all 3 sides (front + left + right)
+      box(bld, F, 0, my + mh / 2 - 0.07, res.D + md / 2, mw + 0.1, 0.12, md + 0.1, goldGlow, 'flr', 'k');
+      box(bld, F, 0, my - mh / 2 + 0.07, res.D + md / 2, mw + 0.1, 0.12, md + 0.1, goldGlow, 'flr', 'k');
+      box(bld, F, 0, my, res.D + md / 2, mw + 0.06, mh - 0.28, md + 0.06, [0.98, 0.95, 0.86], 'flr', 'tbk');
+      box(bld, F, 0, my + mh / 2 + 0.18, res.D + md - 0.15, mw * 0.55, 0.28, 0.16, neonTrim, true);
+      // Glowing soffit light bulbs under marquee
+      flat(bld, F, -mw / 2 + 0.2, mw / 2 - 0.2, res.D + 0.15, res.D + md - 0.15, my - mh / 2 - 0.01, goldGlow, true);
+      // Front and side marquee sign panels
+      const sZh = o.name || '百老汇剧院', sEn = o.nameEn || o.name || 'GRAND CINEMA';
+      sign(F, 0, my, res.D + md + 0.05, mw - 0.5, mh - 0.34, 2, sZh, sEn, 0xfff6dc, toHex(scheme[0]));
+      for (const s of [-1, 1]) {
+        const SFrame = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
+        sign(SFrame, s > 0 ? -(res.D + md / 2) : res.D + md / 2, my, mw / 2 + 0.05, md - 0.35, mh - 0.36, 2, sZh, sEn, 0xfff6dc, toHex(scheme[0]));
+      }
+      // Ticket booth in center + glowing movie/show poster lightboxes flanking double doors
+      box(bld, F, 0, 1.1, res.D + 0.25, 1.15, 2.1, 0.9, [0.78, 0.62, 0.22], false, 'b');
+      face(bld, F, -0.45, 0.45, 0.95, 1.85, res.D + 0.72, [1.0, 0.92, 0.70], true);
+      const posterCols = [[0.95, 0.28, 0.18], [0.18, 0.55, 0.95], [0.95, 0.75, 0.15], [0.75, 0.22, 0.88]];
+      for (const s of [-1, 1]) {
+        const px = s * Math.min(W * 0.34, 3.1);
+        box(bld, F, px, 1.55, res.D + 0.04, 1.05, 1.55, 0.1, [0.85, 0.68, 0.24]);
+        face(bld, F, px - 0.44, px + 0.44, 0.85, 2.25, res.D + 0.1, posterCols[(s > 0 ? 1 : 0) + ((rnd() * 2) | 0)], true);
+      }
+      // Red carpet runner + twin brass velvet-rope stanchion posts
+      flat(bld, F, -1.25, 1.25, res.D + 0.02, res.D + md + 0.7, 0.09, carpetR);
+      for (const s of [-1, 1]) {
+        const [sx0, , sz0] = F.p(s * 1.45, 0, res.D + 1.55);
+        push('stanchion', sx0, groundTop(sx0, sz0), sz0, F.rotY(), 1, 1, 1, 0xd4af37);
+      }
+      pool(F.wx(0, res.D + md * 0.6), F.wz(0, res.D + md * 0.6), mw * 0.6, goldGlow, 0.52, 0.115, md * 0.9, F.rotY());
+    } else if (kind === 'auto_service') {
+      const GH = Math.min(3.5, hostTop - 1.0);
+      res = storefront(F, W, {
+        rnd, scheme, hostTop, glassH: GH, fasciaH: 0.92, depth: 2.35, shelves: false,
+        interior: [0.82, 0.84, 0.86], doorW: 1.5, doorX: -W * 0.32,
+        signText: o.name || '名车维修中心', signTextEn: o.nameEn || o.name || 'AUTO SERVICE',
+        signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 2, frame: C.aluDk,
+      });
+      // Open roll-up service bay on +X side of the facade + paved service apron
+      const bayX = W * 0.16, bayW = Math.min(3.8, W * 0.52), bayH = Math.min(2.75, GH - 0.25);
+      slab(bld, F, -W / 2 - 0.4, W / 2 + 0.4, res.D - 0.1, res.D + 3.8, 0.072, C.concrete, 4);
+      gline(bld, F, bayX - bayW / 2, res.D + 0.2, bayX - bayW / 2, res.D + 3.4, 0.12, 0.09, C.paintY);
+      gline(bld, F, bayX + bayW / 2, res.D + 0.2, bayX + bayW / 2, res.D + 3.4, 0.12, 0.09, C.paintY);
+      // Roll-up shutter header & ribbed door partially open at top + dark garage bay recess
+      box(bld, F, bayX, bayH / 2 + 0.16, res.D - 0.02, bayW + 0.24, bayH, 0.18, C.aluDk, false, 'fb');
+      face(bld, F, bayX - bayW / 2 + 0.08, bayX + bayW / 2 - 0.08, bayH - 0.55, bayH + 0.12, res.D + 0.04, C.shutter);
+      face(bld, F, bayX - bayW / 2 + 0.08, bayX + bayW / 2 - 0.08, 0.2, bayH - 0.55, 0.28, [0.18, 0.20, 0.22]);
+      // Interior hydraulic 2-post car lift (twin painted columns + lift arms + elevated car)
+      const liftCol = scheme[0];
+      for (const s of [-1, 1]) {
+        box(bld, F, bayX + s * 1.32, 1.35, 1.18, 0.24, 2.5, 0.24, liftCol, false, 'b');
+        box(bld, F, bayX + s * 0.92, 1.18, 1.18, 0.85, 0.1, 1.85, C.paintY);
+      }
+      const [cx, , cz] = F.p(bayX, 0, 1.25);
+      push('car', cx, F.y0 + 1.22, cz, F.rotY(), 0, 1, 1, CAR_PAINT[(rnd() * CAR_PAINT.length) | 0]);
+      // Stacked rubber tire racks + roadside auto service pylon sign
+      const [trx, , trz] = F.p(-W / 2 + 1.05, 0, res.D + 0.52);
+      push('tireRack', trx, groundTop(trx, trz), trz, F.rotY(), 1, 1, 1, toHex(scheme[0]));
+      const pX = W / 2 + 0.45, pZ = res.D + 2.6;
+      box(bld, F, pX, 2.2, pZ, 1.15, 4.2, 0.32, scheme[0], 'fk', 'b');
+      box(bld, F, pX, 0.2, pZ, 1.4, 0.4, 0.5, C.concrete, false, 'b');
+      sign(F, pX, 3.25, pZ + 0.18, 1.0, 0.75, 2, '修车', 'AUTO', toHex(scheme[0]), 0xffffff);
+    } else if (kind === 'marketplace_retail') {
+      const GH = Math.min(3.4, hostTop - 1.0);
+      res = storefront(F, W, {
+        rnd, scheme, hostTop, glassH: GH, fasciaH: 0.95, depth: 1.1, shelves: true, tall: true,
+        interior: [0.96, 0.92, 0.82],
+        signText: o.name || '鲜花蔬果市集', signTextEn: o.nameEn || o.name || 'MARKETPLACE',
+        signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 1, frame: C.aluDk,
+      });
+      // Tall glazed atrium arch centerpiece + colorful multi-gable open-air market canopy stalls
+      const archW = Math.min(3.4, W * 0.42), archH = GH + 1.25;
+      box(bld, F, 0, archH / 2, res.D + 0.18, archW + 0.36, archH, 0.38, scheme[0], false, 'b');
+      face(glass, F, -archW / 2, archW / 2, 0.3, archH - 0.25, res.D + 0.38, [0.70, 0.86, 0.92]);
+      const nGables = Math.max(2, Math.min(4, Math.floor(W / 2.6)));
+      const gw = (W - 0.4) / nGables, gz0 = res.D + 0.05, gz1 = res.D + 2.25, gy0 = GH - 0.15, gyPeak = GH + 0.48;
+      const stallPalette = [[0.86, 0.18, 0.14], [0.14, 0.58, 0.26], [0.94, 0.62, 0.08], [0.58, 0.20, 0.68]];
+      for (let i = 0; i < nGables; i++) {
+        const x0 = -W / 2 + 0.2 + i * gw, x1 = x0 + gw - 0.08, xm = (x0 + x1) / 2;
+        const cA = stallPalette[i % stallPalette.length], cB = [0.96, 0.95, 0.90];
+        bld.quad(F.p(x0, gy0, gz1), F.p(xm, gyPeak, gz1), F.p(xm, gyPeak + 0.1, gz0), F.p(x0, gy0 + 0.1, gz0), cA);
+        bld.quad(F.p(xm, gyPeak, gz1), F.p(x1, gy0, gz1), F.p(x1, gy0 + 0.1, gz0), F.p(xm, gyPeak + 0.1, gz0), cB);
+        bld.tri(F.p(x0, gy0, gz1), F.p(x1, gy0, gz1), F.p(xm, gyPeak, gz1), cA, true);
+        // Tilted wooden produce & flower display crates under the canopy stalls
+        if (Math.abs(xm) > 1.05) {
+          const [cx, , cz] = F.p(xm, 0, res.D + 1.15);
+          if (!bldAt(cx, cz, 0.15)) push('marketCrate', cx, groundTop(cx, cz), cz, F.rotY(), 1, 1, 1, toHex(cA));
+        }
+      }
+      pool(F.wx(0, res.D + 1.5), F.wz(0, res.D + 1.5), W * 0.55, C.lightWarm, 0.42, 0.11, 2.6, F.rotY());
     }
     bld.bid = glass.bid = prevBid;
     return res;
@@ -1118,7 +1454,7 @@ export function buildPoiVenues(ctx) {
     const W = Math.max(6, Math.min(E.len - 3, 20));
     const fr = frontOn(B, E, (E.ax + E.bx) / 2, (E.az + E.bz) / 2, W);
     const { F } = fr;
-    const scheme = MARKET_SCHEMES[(rnd() * MARKET_SCHEMES.length) | 0];
+    const scheme = brandSchemeFor('super', name, nameEn, rnd);
     zones.shops.push([ox + F.x0, F.y0, oz + F.z0, F.ax, F.az, fr.W / 2, 1, 'super']);
     bld.bid = glass.bid = B.idx + 1;
     // glazed vestibule + entrance canopy + parapet sign tower
@@ -1396,16 +1732,36 @@ export function buildPoiVenues(ctx) {
   for (const q of pois) { const k = String(q[5] || q[4] || '').toLowerCase().trim(); if (k) nameCount.set(k, (nameCount.get(k) || 0) + 1); }
   const repeated = (q) => (nameCount.get(String(q[5] || q[4] || '').toLowerCase().trim()) || 0) > 1;
   const safeQ = (q, kind, rnd) => { const c = q.slice(); [c[4], c[5]] = signNames(kind, q[4], q[5], repeated(q), rnd); return c; };
-  let nStores = 0;
+  let nStores = 0, nBatch3 = 0;
+  if (sites.venues && sites.venues.length) {
+    for (const sv of sites.venues) {
+      if (!list.some((q) => Math.hypot(q[0] - sv.px, q[1] - sv.pz) < 4)) {
+        list.push([sv.px, sv.pz, sv.cls || sv.kind, sv.sub || sv.kind, sv.name || '', sv.nameEn || '', sv.rank || 50]);
+      }
+    }
+  }
+  const washPois = list.filter((q) => q[2] === 'car_wash' || q[3] === 'car_wash' || /car ?wash|洗車|洗车|lavage|waschanlage|auto ?wash/i.test(`${q[4] || ''} ${q[5] || ''}`));
   for (const q of list) {
     const [px, pz, cls, sub, name, nameEn] = q;
     if (Math.abs(px) > HALF || Math.abs(pz) > HALF || inWater(px, pz)) continue;
     const rnd = rng32(hashAbs(px, pz, 5));
     const isFuel = cls === 'fuel' && sub !== 'charging_station';
-    const isWash = /car ?wash|洗車|洗车|lavage|waschanlage/i.test(`${name} ${nameEn}`);
-    if (isFuel || isWash) {
-      if (near(px, pz, 40, 'fuel')) { q.venue = 1; continue; }
-      if (isFuel ? gasStation(safeQ(q, 'fuel', rng32(hashAbs(px, pz, 6))), rnd) : false) { q.venue = 1; done.push([px, pz, 'fuel']); }
+    const isWash = !isFuel && (cls === 'car_wash' || sub === 'car_wash' || /car ?wash|洗車|洗车|lavage|waschanlage|auto ?wash/i.test(`${name} ${nameEn}`));
+    if (isFuel) {
+      if (near(px, pz, 36, 'fuel')) { q.venue = 1; continue; }
+      const nearWash = washPois.some((w) => w !== q && Math.hypot(w[0] - px, w[1] - pz) < 55);
+      if (gasStation(safeQ(q, 'fuel', rng32(hashAbs(px, pz, 6))), rnd, nearWash)) {
+        q.venue = 1;
+        done.push([px, pz, 'fuel']);
+      }
+      continue;
+    }
+    if (isWash) {
+      if (near(px, pz, 55, 'fuel') || near(px, pz, 35, 'wash')) { q.venue = 1; continue; }
+      if (standaloneCarWash(safeQ(q, 'wash', rng32(hashAbs(px, pz, 6))), rnd)) {
+        q.venue = 1;
+        done.push([px, pz, 'wash']);
+      }
       continue;
     }
     const conv = (cls === 'shop' && (sub === 'convenience' || sub === 'kiosk')) || (cls === 'grocery' && sub === 'convenience');
@@ -1414,10 +1770,12 @@ export function buildPoiVenues(ctx) {
     const pharm = cls === 'pharmacy' || sub === 'chemist';
     const bank = cls === 'bank';
     const hosp = cls === 'hospital' && sub === 'hospital';
-    if (!conv && !supm && !fast && !pharm && !bank && !hosp) continue;
+    const batch3Kind = !conv && !supm && !fast && !pharm && !bank && !hosp ? classifyPoiVenueKind(cls, sub) : null;
+    if (!conv && !supm && !fast && !pharm && !bank && !hosp && !batch3Kind) continue;
     if (hosp && near(px, pz, 150, 'hosp')) continue;
-    if (nStores >= 70) continue;
-    const B = hostOf(px, pz, supm || hosp ? 24 : 12);
+    if (batch3Kind && (nBatch3 >= 18 || near(px, pz, batch3Kind === 'hotel' || batch3Kind === 'cinema_theatre' ? 32 : 16, batch3Kind))) continue;
+    if (nStores >= 76) continue;
+    const B = hostOf(px, pz, supm || hosp || batch3Kind === 'hotel' || batch3Kind === 'cinema_theatre' || batch3Kind === 'marketplace_retail' ? 24 : 15);
     if (!B) continue;
     if (B.used) continue;
     if (supm && B.area >= 500) { // big box with a car park; small urban supermarkets just get a shop front
@@ -1433,15 +1791,17 @@ export function buildPoiVenues(ctx) {
       const s = Math.min(E.road, 40) + dq * 0.6 - Math.min(E.len, 12) * 0.15;
       if (s < bs) { bs = s; bestE = E; }
     }
-    if (!bestE || bestE.road > 45) continue;
+    if (!bestE || bestE.road > 52) continue;
     // one storefront per facade stretch
-    const fr = frontOn(B, bestE, px, pz, supm ? 12 : conv ? 8.5 : fast ? 10 : hosp ? 9 : 7);
+    const wantW = supm ? 12 : batch3Kind === 'hotel' || batch3Kind === 'marketplace_retail' ? 11 : batch3Kind === 'cinema_theatre' || batch3Kind === 'auto_service' ? 10 : fast || hosp ? 9.5 : batch3Kind === 'cafe_bistro' || conv ? 8.5 : 7.5;
+    const fr = frontOn(B, bestE, px, pz, wantW);
     const [fx, , fz] = fr.F.p(0, 0, 0);
     if (taken(fx, fz, fr.W / 2)) continue;
     claim(fx, fz, fr.W / 2 + 0.3);
-    const scheme = SHOP_SCHEMES[(rnd() * SHOP_SCHEMES.length) | 0];
-    const kind = conv || supm ? 'conv' : fast ? 'fast' : pharm ? 'pharmacy' : hosp ? 'hospital' : 'bank';
+    const kind = batch3Kind || (conv || supm ? 'conv' : fast ? 'fast' : pharm ? 'pharmacy' : hosp ? 'hospital' : 'bank');
+    const scheme = brandSchemeFor(kind, name, nameEn, rnd);
     if (hosp) done.push([px, pz, 'hosp']);
+    if (batch3Kind) { done.push([px, pz, batch3Kind]); nBatch3++; }
     const sch = pharm ? [[0.94, 0.95, 0.94], [0.03, 0.5, 0.2], [0.03, 0.5, 0.2]] : fast ? [[0.75, 0.06, 0.04], [0.98, 0.8, 0.1], [0.98, 0.8, 0.1]] : scheme;
     const [sZh, sEn] = signNames(supm ? 'super' : hosp ? 'pharmacy' : kind, name, nameEn, repeated(q), rng32(hashAbs(px, pz, 6)));
     A_store(fr, kind, rnd, {
@@ -1514,3 +1874,5 @@ export function poiVenuesTransfer(pv, transferSet) {
   for (const a of Object.values(pv.inst)) if (a && a.buffer) transferSet.add(a.buffer);
   return pv;
 }
+
+export { buildPoiVenues as buildChunkPoiVenues };

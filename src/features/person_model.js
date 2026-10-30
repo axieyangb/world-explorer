@@ -240,15 +240,15 @@ const shellOff = (w, thick) => (ux, uy, uz) => { const m = w(ux, uy, uz); return
 export function personParts({ indexed = false, lod = 0 } = {}) {
   const P = [];
   const far = lod > 0;
-  const M = far ? 4 : 9;            // ring segments for limbs
-  const SUB = 1;
+  const M = far ? 8 : 12;           // smooth anatomical ring segments for limbs (never 4-sided Lego boxes)
+  const SUB = far ? 1 : 2;
   const add = (geom, part, joint, mat, opt = 0, rgb = DARK) => P.push({ geom, part, joint, mat, opt, rgb });
   // Far figure: every other interior profile key, and the small optional details are left out.
   const tube = (keys, o) => tubeGeo(far && keys.length > 4 ? keys.filter((k, i) => i === 0 || i === keys.length - 1 || i % 2 === 1) : keys, o);
   const FAR_SKIP = new Set([OPT.BEARD, OPT.GLASSES, OPT.BUN, OPT.ZIPPER, OPT.VNECK, OPT.PHONE]);
 
   // ---- head ----
-  add(headSurface(far ? 7 : 14, far ? 5 : 11, null), PART.STATIC, J.HEAD, MAT.SKIN);
+  add(headSurface(far ? 12 : 16, far ? 9 : 13, null), PART.STATIC, J.HEAD, MAT.SKIN);
   const [hx, hy, hz] = HEAD_C;
   for (const s of [-1, 1]) {
     if (!far) add(prim(ellip(0.012, 0.027, 0.019, 6, 5), hx + s * 0.083, hy - 0.004, hz - 0.012, 0, s * 0.35, 0), PART.STATIC, J.HEAD, MAT.SKIN);
@@ -270,7 +270,7 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
     add(prim(rbox(0.016, 0.004, 0.004, 0.0015, 1), hx, hy + 0.016, hz + headZ(0, 0.016) + 0.002), PART.STATIC, J.HEAD, MAT.FIXED, OPT.GLASSES, [0.06, 0.06, 0.07]);
   }
   // ---- hair (grown from the scalp, thicker on the crown) ----
-  const hw = far ? 8 : 18, hh = far ? 6 : 13;
+  const hw = far ? 12 : 18, hh = far ? 9 : 13;
   add(headSurface(hw, hh, null, shellOff(scalpW, (ux, uy) => 0.005 + 0.012 * smooth(-0.2, 0.9, uy))), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
   add(headSurface(far ? 8 : 14, far ? 6 : 11, (ux, uy) => uy < 0.2, shellOff(beardW, () => 0.006)), PART.STATIC, J.HEAD, MAT.HAIR, OPT.BEARD);
   // Long hair: a rounded drape from the crown down the back to the shoulders.
@@ -295,11 +295,15 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
   // Pelvis/trousers (seat at the back), then the shirt from the waist over the chest to rounded shoulders.
   add(tube([
     [0.8, 0.07, 0.05, 0.06], [0.83, 0.16, 0.09, 0.105], [0.9, 0.175, 0.1, 0.12], [0.96, 0.168, 0.097, 0.103], [1.02, 0.15, 0.09, 0.09],
-  ], { m: far ? 7 : 14, sub: SUB }), PART.STATIC, J.TORSO, MAT.PANTS);
+  ], { m: far ? 10 : 16, sub: SUB }), PART.STATIC, J.TORSO, MAT.PANTS);
   add(tube([
     [0.965, 0.166, 0.104, 0.108], [0.985, 0.17, 0.106, 0.11], [1.06, 0.152, 0.097, 0.094], [1.18, 0.158, 0.105, 0.095], [1.28, 0.175, 0.115, 0.1],
     [1.37, 0.19, 0.11, 0.1], [1.44, 0.18, 0.09, 0.088], [1.49, 0.125, 0.07, 0.072], [1.515, 0.06, 0.055, 0.058],
-  ], { m: far ? 7 : 16, sub: SUB }), PART.STATIC, J.TORSO, MAT.TOP);
+  ], { m: far ? 12 : 18, sub: SUB }), PART.STATIC, J.TORSO, MAT.TOP);
+  // Sculpted shoulder deltoid caps and rounded elbow/knee anatomical joint spheres
+  for (const s of [-1, 1]) {
+    add(prim(ellip(0.062, 0.068, 0.058, far ? 7 : 10, far ? 5 : 8), s * 0.185, 1.415, 0.0, 0, 0, -s * 0.18), PART.STATIC, J.CHEST, MAT.TOP);
+  }
   // Shirt front cues: V-neck skin wedge, jacket zipper + collar.
   {
     const vz = 0.112;
@@ -353,6 +357,8 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
       [0.52, 0.03, 0.03, 0.03], [0.49, 0.054, 0.055, 0.055], [0.4, 0.053, 0.048, 0.066], [0.3, 0.046, 0.042, 0.054],
       [0.18, 0.038, 0.038, 0.04], [0.11, 0.036, 0.036, 0.038], [0.07, 0.02, 0.02, 0.02],
     ], { m: M, sub: SUB, x }), part, jS, MAT.PANTS);
+    // Sculpted patella / knee joint sphere so knee flexion is smooth and anatomical
+    add(prim(ellip(0.054, 0.058, 0.056, far ? 6 : 9, far ? 5 : 7), x, 0.485, 0.004), part, jT, MAT.PANTS);
     // Shoe upper (heel counter to rounded toe box), then the sole.
     add(tube([
       [-0.08, 0.02, 0.03, 0.01, 0, 0.065], [-0.065, 0.042, 0.055, 0.04, 0, 0.065], [-0.02, 0.048, 0.07, 0.045, 0, 0.06],
@@ -373,6 +379,8 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
       [1.17, 0.025, 0.025, 0.025], [1.14, 0.042, 0.043, 0.043], [1.06, 0.043, 0.042, 0.045], [0.96, 0.034, 0.036, 0.036],
       [0.9, 0.028, 0.033, 0.031], [0.87, 0.02, 0.02, 0.02],
     ], { m: M, sub: SUB, x }), part, jF, MAT.TOP);
+    // Rounded elbow joint sphere
+    add(prim(ellip(0.042, 0.045, 0.043, far ? 6 : 8, far ? 4 : 6), x, 1.135, -0.003), part, jU, MAT.TOP);
     // Hand: palm and loosely curled fingers in one loft (thin across X, wide along Z), plus a thumb.
     add(tube([
       [0.895, 0.016, 0.022, 0.022], [0.87, 0.02, 0.036, 0.034, -s * 0.002, 0.002], [0.82, 0.018, 0.042, 0.038, -s * 0.004, 0.006],
@@ -578,17 +586,20 @@ export const PERSON_ANIM_GLSL = `
     float rollP = mov * -0.045 * s1 * (1.0 - run * 0.5) + idle * 0.045 * ws;
     mat3 Rp = pRotY(yawP) * pRotZ(rollP);
     vec3 C0 = vec3(0.0, 0.95, 0.0), offP = vec3(swayX, bob - posture * 0.03, 0.0);
-    // ---- chest: counter-rotation, lean (posture, running, phone), breathing ----
-    float lean = 0.04 + posture * 0.32 + run * 0.26 + (pPhone ? 0.05 : 0.0);
-    float yawC = -mov * mix(0.09, 0.17, run) * c1 * sqrt(armK) + idle * 0.05 * sin(tm * 0.31);
+    // ---- chest: counter-rotation, lean (posture, running, phone, stagger flinch), breathing ----
+    float staggerW = (mode > 4.5 && mode < 5.5) ? sin(clamp(posture, 0.0, 1.0) * 3.14159) : 0.0;
+    float effPosture = (mode > 4.5 && mode < 5.5) ? 0.1 : posture;
+    // 22 deg (0.384 rad) backward torso flinch when staggered by a punch
+    float lean = 0.04 + effPosture * 0.32 + run * 0.26 + (pPhone ? 0.05 : 0.0) - staggerW * 0.384;
+    float yawC = -mov * mix(0.09, 0.17, run) * c1 * sqrt(armK) + idle * 0.05 * sin(tm * 0.31) + staggerW * 0.18;
     mat3 Rc = pRotY(yawC) * pRotX(-lean) * pRotZ(-rollP * 0.6);
     vec3 W0 = vec3(0.0, 1.02, 0.0);
-    vec3 Wp = Rp * (W0 - C0) + C0 + offP + vec3(0.0, 0.003 * breath, 0.0);
-    // ---- head: stabilised (cancels chest yaw and most of the lean), looks around when idle, phone nod ----
+    vec3 Wp = Rp * (W0 - C0) + C0 + offP + vec3(0.0, 0.003 * breath - staggerW * 0.05, -staggerW * 0.06);
+    // ---- head: stabilised (cancels chest yaw and most of the lean), snaps back on stagger ----
     float look = idle * (mode < 0.5 ? 0.75 : 0.3) * smoothstep(0.35, 0.8, abs(sin(tm * 0.23))) * sign(sin(tm * 0.23))
       + mov * 0.2 * smoothstep(0.85, 1.0, sin(tm * 0.19));
-    float nod = pPhone && mode < 3.5 ? 0.5 : (idle * (mode > 1.5 && mode < 2.5 ? 0.12 : 0.0));
-    mat3 Rh = pRotY(look) * pRotX(-(lean * 0.35 + nod - posture * 0.1));
+    float nod = pPhone && mode < 3.5 ? 0.5 : (idle * (mode > 1.5 && mode < 2.5 ? 0.12 : 0.0)) - staggerW * 0.28;
+    mat3 Rh = pRotY(look) * pRotX(-(lean * 0.35 + nod - effPosture * 0.1));
     vec3 N0 = vec3(0.0, 1.52, 0.0);
     vec3 Np = Wp + Rc * (N0 - W0);
 
@@ -649,8 +660,14 @@ export const PERSON_ANIM_GLSL = `
       // idle: relaxed arms or crossed arms
       float crossW = idle * (mode > 0.5 && mode < 1.5 ? 1.0 : 0.0);
       swing = mix(swing, 0.2, crossW); elbow = mix(elbow, 1.6, crossW); inY = mix(inY, -side * 0.95, crossW); abd = mix(abd, 0.2, crossW);
-      if (side > 0.0 && mode > 2.5 && mode < 3.5) { swing = 0.2; abd = 2.45; inY = 0.0; elbow = 0.5 + 0.35 * sin(tm * 9.0); } // wave
-      else if (side > 0.0 && mode > 3.5) { swing = 0.45; abd = 0.5; inY = -0.2; elbow = 2.55; } // phone call: hand to the ear
+      if (mode > 4.5 && mode < 5.5) {
+        // Defensive arm guard during melee punch stagger
+        swing = mix(swing, 0.75, staggerW);
+        abd = mix(abd, 0.38, staggerW);
+        inY = mix(inY, -side * 0.45, staggerW);
+        elbow = mix(elbow, 1.75, staggerW);
+      } else if (side > 0.0 && mode > 2.5 && mode < 3.5) { swing = 0.2; abd = 2.45; inY = 0.0; elbow = 0.5 + 0.35 * sin(tm * 9.0); } // wave
+      else if (side > 0.0 && mode > 3.5 && mode < 4.5) { swing = 0.45; abd = 0.5; inY = -0.2; elbow = 2.55; } // phone call: hand to the ear
       else if (side > 0.0 && pUmb) { swing = 0.6; elbow = 1.1; inY = -0.12; abd = 0.04; }
       else if (side > 0.0 && pPhone) { swing = 0.28; elbow = 1.55; inY = -0.5; abd = 0.08; }
       mat3 Ru = Rc * pRotZ(side * abd) * pRotY(inY) * pRotX(swing);
@@ -688,10 +705,14 @@ export const PERSON_COLOR_GLSL = `
 export const RAGDOLL_PART_SPECS = [
   { name: 'head', ox: 0.0, oy: 1.62, oz: 0.0, r: 0.14 },
   { name: 'torso', ox: 0.0, oy: 1.15, oz: 0.0, r: 0.16 },
-  { name: 'armL', ox: -0.2, oy: 1.12, oz: 0.0, r: 0.12 },
-  { name: 'armR', ox: 0.2, oy: 1.12, oz: 0.0, r: 0.12 },
-  { name: 'legL', ox: -0.09, oy: 0.47, oz: 0.0, r: 0.12 },
-  { name: 'legR', ox: 0.09, oy: 0.47, oz: 0.0, r: 0.12 },
+  { name: 'armL', ox: -0.20, oy: 1.28, oz: 0.0, r: 0.10 },
+  { name: 'foreL', ox: -0.21, oy: 0.96, oz: 0.01, r: 0.10 },
+  { name: 'armR', ox: 0.20, oy: 1.28, oz: 0.0, r: 0.10 },
+  { name: 'foreR', ox: 0.21, oy: 0.96, oz: 0.01, r: 0.10 },
+  { name: 'legL', ox: -0.095, oy: 0.70, oz: 0.0, r: 0.11 },
+  { name: 'shinL', ox: -0.095, oy: 0.25, oz: 0.02, r: 0.11 },
+  { name: 'legR', ox: 0.095, oy: 0.70, oz: 0.0, r: 0.11 },
+  { name: 'shinR', ox: 0.095, oy: 0.25, oz: 0.02, r: 0.11 },
   { name: 'accessory', ox: 0.0, oy: 1.22, oz: -0.165, r: 0.12 },
 ];
 
@@ -723,8 +744,13 @@ function buildPartBuffer(pieces, spec) {
 }
 
 export function createRagdollPartGeometries() {
-  const parts = personParts({ indexed: true, lod: 1 });
-  const groups = { head: [], torso: [], armL: [], armR: [], legL: [], legR: [], accessory: [] };
+  const parts = personParts({ indexed: true, lod: 0 });
+  const groups = {
+    head: [], torso: [],
+    armL: [], foreL: [], armR: [], foreR: [],
+    legL: [], shinL: [], legR: [], shinR: [],
+    accessory: [],
+  };
   const keepOpt = new Set([0, OPT.HAIR_SHORT, OPT.BACKPACK]);
   for (const pt of parts) {
     if (!keepOpt.has(pt.opt)) { pt.geom.dispose(); continue; }
@@ -733,10 +759,14 @@ export function createRagdollPartGeometries() {
     if (pt.opt === OPT.BACKPACK) { name = 'accessory'; slot = 1; }
     else if (j === J.HEAD || j === J.NECK) { name = 'head'; slot = pt.mat === MAT.HAIR ? 2 : pt.mat === MAT.FIXED ? 0 : 1; }
     else if (j === J.TORSO || j === J.CHEST || j === J.PELVIS) { name = 'torso'; slot = pt.mat === MAT.PANTS ? 2 : pt.mat === MAT.FIXED ? 0 : 1; }
-    else if (j === J.LUPPER || j === J.LFORE) { name = 'armL'; slot = pt.mat === MAT.SKIN ? 2 : 1; }
-    else if (j === J.RUPPER || j === J.RFORE) { name = 'armR'; slot = pt.mat === MAT.SKIN ? 2 : 1; }
-    else if (j >= J.LTHIGH && j <= J.LFOOT) { name = 'legL'; slot = pt.mat === MAT.FIXED ? 0 : 1; }
-    else if (j >= J.RTHIGH && j <= J.RFOOT) { name = 'legR'; slot = pt.mat === MAT.FIXED ? 0 : 1; }
+    else if (j === J.LUPPER) { name = 'armL'; slot = pt.mat === MAT.SKIN ? 2 : 1; }
+    else if (j === J.LFORE) { name = 'foreL'; slot = pt.mat === MAT.SKIN ? 2 : 1; }
+    else if (j === J.RUPPER) { name = 'armR'; slot = pt.mat === MAT.SKIN ? 2 : 1; }
+    else if (j === J.RFORE) { name = 'foreR'; slot = pt.mat === MAT.SKIN ? 2 : 1; }
+    else if (j === J.LTHIGH) { name = 'legL'; slot = pt.mat === MAT.FIXED ? 0 : 1; }
+    else if (j === J.LSHIN || j === J.LFOOT) { name = 'shinL'; slot = pt.mat === MAT.FIXED ? 0 : 1; }
+    else if (j === J.RTHIGH) { name = 'legR'; slot = pt.mat === MAT.FIXED ? 0 : 1; }
+    else if (j === J.RSHIN || j === J.RFOOT) { name = 'shinR'; slot = pt.mat === MAT.FIXED ? 0 : 1; }
     if (!name) { pt.geom.dispose(); continue; }
     groups[name].push({ geom: pt.geom, slot, rgb: pt.rgb });
   }

@@ -68,6 +68,12 @@ export const QUICK_WORLD_DESTINATIONS = [
   {"id":"kz_baikonur","name":"Baikonur Cosmodrome · Site 1/5","nameZh":"拜科努尔 · 拜科努尔航天发射场加加林发射台","street":"Site 1/5 Gagarin's Start · Soyuz R-7 Pad","city":"Baikonur, KZ","cityZh":"哈萨克斯坦 拜科努尔","keywords":"baikonur cosmodrome soyuz gagarin start roscosmos r-7 拜科努尔 联盟号 加加林","lat":45.9203,"lon":63.3422},
   {"id":"gf_kourou_esa","name":"ESA Guiana Space Centre · Kourou ELA-4","nameZh":"库鲁 · 欧洲航天局圭亚那航天中心 ELA-4","street":"ELA-4 Launch Complex · Ariane 6 Pad","city":"Kourou, GF","cityZh":"法属圭亚那 库鲁","keywords":"esa kourou ariane 6 ariane6 ela-4 guiana space centre csg 欧洲航天局 库鲁 阿丽亚娜","lat":5.2360,"lon":-52.7686},
   {"id":"jp_tanegashima_jaxa","name":"JAXA Tanegashima Space Center · Yoshinobu","nameZh":"种子岛 · 日本 JAXA 种子岛宇宙中心吉信射点","street":"Yoshinobu Launch Complex LP-2 · H3 Rocket","city":"Tanegashima, JP","cityZh":"日本 鹿儿岛种子岛","keywords":"jaxa tanegashima h3 rocket yoshinobu 种子岛 種子島 宇宙中心","lat":30.4009,"lon":130.9777},
+  {"id":"sfo_airport","name":"SFO International Airport · San Francisco","nameZh":"旧金山 · SFO 国际机场航站楼与停机坪","street":"International Terminal & Runways 28L/28R","city":"San Francisco, US","cityZh":"美国 旧金山国际机场","keywords":"sfo airport san francisco international airport boeing airbus runway terminal 机场 旧金山机场 飞机场 波音 空客","lat":37.6188,"lon":-122.3750},
+  {"id":"lax_airport","name":"LAX International Airport · Los Angeles","nameZh":"洛杉矶 · LAX 国际机场汤姆布拉德利航站楼","street":"World Way · Tom Bradley International Terminal","city":"Los Angeles, US","cityZh":"美国 洛杉矶国际机场","keywords":"lax airport los angeles international airport boeing airbus 洛杉矶机场 机场","lat":33.9425,"lon":-118.4081},
+  {"id":"jfk_airport","name":"JFK International Airport · New York","nameZh":"纽约 · 肯尼迪国际机场 JFK","street":"Terminal 4 Apron & Runways 13R/31L","city":"New York, US","cityZh":"美国 纽约肯尼迪机场","keywords":"jfk airport kennedy international airport new york boeing airbus 肯尼迪机场 纽约机场","lat":40.6413,"lon":-73.7781},
+  {"id":"lhr_airport","name":"London Heathrow Airport · LHR","nameZh":"伦敦 · 希思罗国际机场 LHR","street":"Terminal 5 Apron & Runways 09L/27R","city":"London, UK","cityZh":"英国 伦敦希思罗机场","keywords":"lhr heathrow airport london british airways boeing airbus 希思罗机场 伦敦机场","lat":51.4715,"lon":-0.4580},
+  {"id":"nrt_airport","name":"Tokyo Narita International Airport · NRT","nameZh":"东京 · 成田国际机场 NRT","street":"Terminal 1 Apron & Runway 16R/34L","city":"Tokyo, JP","cityZh":"日本 东京成田机场","keywords":"nrt narita airport tokyo ana jal boeing airbus 成田机场 东京机场","lat":35.7653,"lon":140.3856},
+  {"id":"pek_airport","name":"Beijing Capital International Airport · PEK","nameZh":"北京 · 首都国际机场 T3 航站楼 PEK","street":"Terminal 3 Apron & Runway 36R/18L","city":"Beijing, CN","cityZh":"中国 北京首都国际机场","keywords":"pek airport beijing capital international airport air china t3 首都机场 北京机场 飞机场","lat":40.0725,"lon":116.5975},
 ];
 
 export function computeWorldOrigin(lat, lon, displayName = "Beijing, CN", streetName = "") {
@@ -266,6 +272,9 @@ const INTERESTING_LAYERS = new Set([
   "poi", // feature/places
   "housenumber",
   "aeroway", // feature/places
+  "mountain_peak", // feature/places
+  "water_name", // feature/places
+  "aerodrome_label", // feature/places
   "boundary", // places-info: admin borders (minimap dashes + crossing toast)
 ]);
 
@@ -496,6 +505,19 @@ const ROAD_CLASS_MAP = {
   track: { cls: "footway", linkCls: "footway", lanes: 1, width: 3.0, oneway: 0 }, // [terrain-roads] trail, no cars
   path: { cls: "footway", linkCls: "footway", lanes: 1, width: 2.2, oneway: 0 },
   pedestrian: { cls: "pedestrian", linkCls: "pedestrian", lanes: 1, width: 4.5, oneway: 0 },
+  busway: { cls: "tertiary", linkCls: "tertiary_link", lanes: 2, width: 7.0, oneway: 0 },
+  raceway: { cls: "secondary", linkCls: "secondary_link", lanes: 2, width: 9.0, oneway: 1 },
+  construction: { cls: "service", linkCls: "service", lanes: 1, width: 4.5, oneway: 0 },
+  motorway_construction: { cls: "service", linkCls: "service", lanes: 1, width: 5.5, oneway: 0 },
+  trunk_construction: { cls: "service", linkCls: "service", lanes: 1, width: 5.2, oneway: 0 },
+  primary_construction: { cls: "service", linkCls: "service", lanes: 1, width: 4.8, oneway: 0 },
+  secondary_construction: { cls: "service", linkCls: "service", lanes: 1, width: 4.5, oneway: 0 },
+  tertiary_construction: { cls: "service", linkCls: "service", lanes: 1, width: 4.2, oneway: 0 },
+  minor_construction: { cls: "service", linkCls: "service", lanes: 1, width: 3.8, oneway: 0 },
+  service_construction: { cls: "service", linkCls: "service", lanes: 1, width: 3.5, oneway: 0 },
+  path_construction: { cls: "footway", linkCls: "footway", lanes: 1, width: 2.2, oneway: 0 },
+  track_construction: { cls: "footway", linkCls: "footway", lanes: 1, width: 2.8, oneway: 0 },
+  raceway_construction: { cls: "service", linkCls: "service", lanes: 1, width: 4.5, oneway: 0 },
 };
 
 const LINK_SPECS = {
@@ -587,9 +609,9 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     return first;
   };
   const namedRoadSamples = [];
-  const pushSample = (lx, lz, dx, dz, nm, nmZh, ref, cls) => {
+  const pushSample = (lx, lz, dx, dz, nm, nmZh, ref, cls, isTunnel = false, isBridge = false) => {
     if (lx >= -680 && lx <= 680 && lz >= -680 && lz <= 680) {
-      namedRoadSamples.push({ lx, lz, dx, dz, name: nm, nameZh: nmZh, ref, cls });
+      namedRoadSamples.push({ lx, lz, dx, dz, name: nm, nameZh: nmZh, ref, cls, isTunnel, isBridge });
     }
   };
   const highwayJunctions = [];
@@ -633,10 +655,16 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       ) continue;
       if (nm.includes("...") || nm.includes("Herb Caen")) continue;
       if (!nm && !ref) continue;
+      const sampIsBridge = Boolean(f.tags.brunnel === "bridge" || (f.tags.layer || 0) > 0);
+      const sampIsTunnel = Boolean(
+        (f.tags.brunnel === "tunnel" && !sampIsBridge) ||
+        (f.tags.layer || 0) < 0 ||
+        (!sampIsBridge && /\btunnel\b|隧道|地道/i.test(nm || nmZh))
+      );
       if (f.type === 1) {
         for (const pt of f.geom) {
           const [lx, lz] = toLocalXZ(pt[0], pt[1]);
-          pushSample(lx, lz, 0, 0, nm, nmZh, ref, cls);
+          pushSample(lx, lz, 0, 0, nm, nmZh, ref, cls, sampIsTunnel, sampIsBridge);
         }
       } else if (f.type === 2) {
         for (const line of f.geom) {
@@ -650,12 +678,12 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
                 dx = (nx - lx) / segD;
                 dz = (nz - lz) / segD;
               }
-              pushSample(lx, lz, dx, dz, nm, nmZh, ref, cls);
+              pushSample(lx, lz, dx, dz, nm, nmZh, ref, cls, sampIsTunnel, sampIsBridge);
               if (segD > 18) {
                 const steps = Math.min(16, Math.floor(segD / 16));
                 for (let s = 1; s < steps; s++) {
                   const u = s / steps;
-                  pushSample(lx + (nx - lx) * u, lz + (nz - lz) * u, dx, dz, nm, nmZh, ref, cls);
+                  pushSample(lx + (nx - lx) * u, lz + (nz - lz) * u, dx, dz, nm, nmZh, ref, cls, sampIsTunnel, sampIsBridge);
                 }
               }
             } else if (i > 0) {
@@ -665,7 +693,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
                 dx = (lx - px) / segD;
                 dz = (lz - pz) / segD;
               }
-              pushSample(lx, lz, dx, dz, nm, nmZh, ref, cls);
+              pushSample(lx, lz, dx, dz, nm, nmZh, ref, cls, sampIsTunnel, sampIsBridge);
             }
           }
         }
@@ -708,7 +736,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         continue;
       }
 
-      const baseSpec = ROAD_CLASS_MAP[rawCls] || ROAD_CLASS_MAP[subCls];
+      const baseSpec = ROAD_CLASS_MAP[rawCls] || ROAD_CLASS_MAP[subCls] || (rawCls.endsWith("_construction") || subCls.endsWith("_construction") ? ROAD_CLASS_MAP.construction : null);
       if (!baseSpec) continue;
 
       const isRamp = Boolean(f.tags.ramp);
@@ -728,9 +756,12 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       const oneway = f.tags.oneway !== undefined ? (f.tags.oneway ? 1 : 0) : linkSpec ? linkSpec.oneway : baseSpec.oneway;
       const onewayRev = Number(f.tags.oneway) === -1; // OSM oneway=-1: traffic flows against the way geometry
       const isBridge = f.tags.brunnel === "bridge" || (f.tags.layer || 0) > 0 ? 1 : 0;
+      const rawWayName = f.tags["name:en"] || f.tags.name_en || f.tags.name || "";
+      const rawWayNameZh = f.tags["name:zh-Hans"] || f.tags["name:zh"] || f.tags.name || "";
+      const hasTunnelName = !isBridge && (f.tags.layer || 0) <= 0 && /\btunnel\b|隧道|地道/i.test(rawWayName || rawWayNameZh);
       // [release-6-integ] a "tunnel" with layer > 0 is a building passage on a bridge (Tower Bridge towers): keep it a
       // bridge deck, otherwise the deck graph loses the tower sections and the bascule span drops to the water (~6 m walls)
-      const isTunnel = (f.tags.brunnel === "tunnel" && !((f.tags.layer || 0) > 0)) || (f.tags.layer || 0) < 0 ? 1 : 0;
+      const isTunnel = (f.tags.brunnel === "tunnel" && !((f.tags.layer || 0) > 0)) || (f.tags.layer || 0) < 0 || hasTunnelName ? 1 : 0;
       const layer = f.tags.layer !== undefined ? Number(f.tags.layer) : isBridge ? 1 : isTunnel ? -1 : 0;
 
       for (const rawLine of f.geom) {
@@ -806,6 +837,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
       let bestD2 = 26.0 * 26.0;
       for (let k = 0; k < namedRoadSamples.length; k++) {
         const ns = namedRoadSamples[k];
+        if (Boolean(ns.isTunnel) !== Boolean(isTunnel)) continue;
         if (ns.cls && ns.cls !== rawCls) continue;
         if ((ns.dx !== 0 || ns.dz !== 0) && (rdx !== 0 || rdz !== 0)) {
           if (Math.abs(rdx * ns.dx + rdz * ns.dz) < 0.72) continue;
@@ -1058,6 +1090,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         if (approxArea < 16.0 && rawH < 12.0) continue;
         let bName = f.tags["name:en"] || f.tags.name_en || f.tags.name || "";
         let btype = f.tags.class || f.tags.building || "yes";
+        let hasMatchedPoi = false;
 
         // Spatially bind POI points and `housenumber` addresses inside or within 14m of building footprint
         if (!bName || btype === "yes") {
@@ -1081,6 +1114,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
               bestNamedPoi = p;
             }
           }
+          if (bestPoi || bestNamedPoi) hasMatchedPoi = true;
           if (bestPoi && btype === "yes" && bestPoi.btype) {
             btype = bestPoi.btype === "retail" && rawH > 36.0 ? "commercial" : bestPoi.btype;
           }
@@ -1128,7 +1162,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
 
         const bId = f.id || bldgIdSeq++;
         buildings.push({
-          score: rawH * Math.sqrt(Math.max(16.0, approxArea)) + (bName ? 500 : 0),
+          score: rawH * Math.sqrt(Math.max(16.0, approxArea)) + (bName ? 500 : 0) + (hasMatchedPoi ? 2500 : 0),
           tuple: [
             bId,
             bName,
@@ -1151,11 +1185,14 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   // [ground] Dense districts (Shibuya, SF, Copacabana) map 1-2.5k footprints per km^2: the 420 highest-scoring get the
   // detailed facade build, the rest come back flagged (tuple[13] = 1) as plain infill blocks (features/infill_buildings.js)
   // instead of being dropped, which left whole blocks empty.
+  buildings.sort((a, b) => b.score - a.score);
   if (buildings.length > 420) {
-    buildings.sort((a, b) => b.score - a.score);
     if (buildings.length > 420 + INFILL_MAX) buildings.length = 420 + INFILL_MAX;
     for (let i = 420; i < buildings.length; i++) buildings[i].tuple[13] = 1;
   }
+  // Always process non-part footprints (isPart === 0) before building parts (isPart === 1), and highest-scoring / tallest first
+  // so primary towers are never suppressed by low podiums and elevated parts can verify their supporting base.
+  buildings.sort((a, b) => ((a.tuple[13] || 0) - (b.tuple[13] || 0)) || (a.tuple[3] - b.tuple[3]) || (b.score - a.score));
   for (let i = 0; i < buildings.length; i++) {
     buildings[i] = buildings[i].tuple;
   }
@@ -1679,6 +1716,7 @@ export async function buildGlobalOverviewFromTiles(worldOrigin) {
       if (cls !== "motorway" && cls !== "trunk" && cls !== "primary" && cls !== "secondary") continue;
       const isBridge = f.tags.brunnel === "bridge" || (f.tags.layer || 0) > 0 ? 1 : 0;
       const isTunnel = f.tags.brunnel === "tunnel" || (f.tags.layer || 0) < 0 ? 1 : 0;
+      if (isTunnel) continue;
       const layer = isBridge ? 1 : 0;
       const widthM = cls === "motorway" || cls === "trunk" ? 12.0 : 9.0;
       const rY = isBridge ? 6.0 : 0.0;

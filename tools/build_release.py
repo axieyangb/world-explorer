@@ -269,6 +269,8 @@ MOD_ID_MAP = {
     'src/features/property_inspector.js': '__MOD_property_inspector',
     'src/features/space_launch_system.js': '__MOD_space_launch_system',
     'src/features/landmarks.js': '__MOD_landmarks_wrapper',
+    'src/features/airliner_models.js': '__MOD_airliner_models',
+    'src/features/airliner_system.js': '__MOD_airliner_system',
     'src/world_cities.js': '__MOD_world_cities',
     'src/main.js': '__MOD_main',
 }

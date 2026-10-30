@@ -284,10 +284,13 @@ export class VehicleDamage {
   _playerRespawn() {
     const app = this.app, P = this.player;
     P.dead = false; P.hp = PLAYER_HP; P.t = 0;
-    if (P.wreck) { app.scene.remove(P.wreck); P.wreck = null; }
+    // Keep any existing P.wreck in the world as a permanent burnt-out shell instead of deleting it!
+    if (P.wreck) {
+      if (!this.persistentWrecks) this.persistentWrecks = [];
+      this.persistentWrecks.push(P.wreck);
+      P.wreck = null;
+    }
     if (app.vehicleMesh) app.vehicleMesh.visible = app.mode === 'drive';
-    const fx = this._fx();
-    if (fx) fx.spawn('smoke', this._v.set(app.pos.x, app.pos.y + 1, app.pos.z), { count: 3, scale: 0.4, light: true, life: 3 });
     this._event('player_respawn', null);
   }
 
@@ -304,12 +307,24 @@ export class VehicleDamage {
       w.position.addScaledVector(u.v, dt);
       if (w.position.y <= u.gy) { w.position.y = u.gy; u.v.set(u.v.x * 0.4, Math.abs(u.v.y) > 4 ? -u.v.y * 0.25 : 0, u.v.z * 0.4); u.spin.multiplyScalar(0.4); }
       w.rotation.x += u.spin.x * dt; w.rotation.y += u.spin.y * dt; w.rotation.z += u.spin.z * dt;
-      if (P.t > 1.6) { w.rotation.x *= 0.9; w.rotation.z *= 0.9; }
+      if (P.t > 1.0) { w.rotation.x *= 0.85; w.rotation.z *= 0.85; }
       const fx = this._fx();
       P.smokeAcc += dt * 8;
       if (fx) while (P.smokeAcc >= 1) { P.smokeAcc -= 1; fx.spawn('fire', this._v.set(w.position.x, w.position.y + 0.8, w.position.z), { scale: 0.5 }); fx.spawn('smoke', this._v.set(w.position.x, w.position.y + 2, w.position.z), { scale: 0.35, speed: 4, life: 5 }); }
     }
-    if (P.t >= PLAYER_DEAD_T) this._playerRespawn();
+    // Eject player on foot beside the permanently wrecked vehicle (do NOT auto-repair the car!)
+    if (P.t >= 1.2 && this.app.mode === 'drive') {
+      if (w) {
+        if (!this.persistentWrecks) this.persistentWrecks = [];
+        this.persistentWrecks.push(w);
+        P.wreck = null;
+      }
+      this.app.pos.set(this.app.pos.x + 2.6, this.app.pos.y, this.app.pos.z + 1.2);
+      this.app.walkVelY = 0;
+      this.app._wreckedExit = true;
+      this.app.setMode('walk');
+      this.app._wreckedExit = false;
+    }
     return true;
   }
 
@@ -536,13 +551,13 @@ export class VehicleDamage {
       if (fx.time === this._fxSeen) { try { fx.update(dt); } catch (_) { /* fx optional */ } }
       this._fxSeen = fx.time;
     }
-    if (this.player.dead && this.app.mode !== 'drive') this._playerRespawn();
+    // Wrecked player car stays destroyed unless a new car is explicitly entered or selected
     // player car damage smoke
     const P = this.player;
     if (!P.dead && this.app.mode === 'drive') { // [crash-damage] heal light damage, a burning car cooks off
       P.sinceHit += dt;
       if (P.hp < PLAYER_HP * P_BURN) { P.hp -= PLAYER_HP * P_BURN_DRAIN * dt; if (P.hp <= 0) this._playerBoom(); }
-      else if (P.sinceHit > P_HEAL_DELAY && P.hp < PLAYER_HP) P.hp = Math.min(PLAYER_HP, P.hp + PLAYER_HP * P_HEAL * dt);
+      // No magic passive HP auto-regeneration (repair at Car Wash / Service Station)
     }
     if (!P.dead && P.hp < PLAYER_HP * P_SMOKE && this.app.mode === 'drive' && fx) {
       P.smokeAcc += dt * (P.hp < PLAYER_HP * P_BURN ? 8 : P.hp < PLAYER_HP * (P_SMOKE + P_BURN) * 0.5 ? 4 : 2);

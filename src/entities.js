@@ -815,7 +815,9 @@ export function createPlayerAvatarModel() {
 
   // Tactical Body Armor / Plate Carrier Vest
   const vestMat = new THREE.MeshStandardMaterial({ color: 0x2e3826, roughness: 0.80, metalness: 0.20 });
-  const vestMesh = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.44, 0.26), vestMat);
+  const vestGeo = new THREE.CylinderGeometry(0.195, 0.172, 0.40, 12, 1);
+  vestGeo.scale(1.05, 1.0, 0.72);
+  const vestMesh = new THREE.Mesh(vestGeo, vestMat);
   vestMesh.position.set(0, 1.18, 0);
   root.add(vestMesh);
 

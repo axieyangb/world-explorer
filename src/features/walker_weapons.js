@@ -249,17 +249,30 @@ export function createArmySoldierModel(weaponType = 'RIFLE') {
   hips.position.set(0, 0.90, 0);
   root.add(hips);
 
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.52, 0.24), camoUniformMat);
+  // Sculpted anatomical pelvis, ribcage & deltoid shoulders (replaces blocky Lego BoxGeometry)
+  const pelvisGeo = new THREE.SphereGeometry(0.165, 10, 8);
+  pelvisGeo.scale(1.05, 0.68, 0.68);
+  const pelvisMesh = new THREE.Mesh(pelvisGeo, darkFatigueMat);
+  pelvisMesh.position.set(0, 0.03, 0);
+  hips.add(pelvisMesh);
+
+  const torsoGeo = new THREE.CylinderGeometry(0.185, 0.148, 0.48, 12, 2);
+  torsoGeo.scale(1.06, 1.0, 0.68);
+  const torso = new THREE.Mesh(torsoGeo, camoUniformMat);
   torso.position.set(0, 0.28, 0);
   hips.add(torso);
 
-  const plateCarrier = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.44, 0.28), tacticalVestMat);
-  plateCarrier.position.set(0, 0.28, 0);
+  const vestGeo = new THREE.CylinderGeometry(0.198, 0.175, 0.38, 12, 1);
+  vestGeo.scale(1.06, 1.0, 0.74);
+  const plateCarrier = new THREE.Mesh(vestGeo, tacticalVestMat);
+  plateCarrier.position.set(0, 0.29, 0);
   hips.add(plateCarrier);
 
-  for (const sx of [-0.11, 0, 0.11]) {
-    const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.06), tacticalVestMat);
-    pouch.position.set(sx, 0.22, 0.16);
+  for (const sx of [-0.10, 0, 0.10]) {
+    const pouchGeo = new THREE.CylinderGeometry(0.036, 0.036, 0.13, 8);
+    pouchGeo.scale(1.0, 1.0, 0.72);
+    const pouch = new THREE.Mesh(pouchGeo, tacticalVestMat);
+    pouch.position.set(sx, 0.22, 0.145);
     hips.add(pouch);
   }
 
@@ -267,57 +280,75 @@ export function createArmySoldierModel(weaponType = 'RIFLE') {
   headGroup.position.set(0, 0.62, 0);
   hips.add(headGroup);
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.22, 0.22), skinMat);
+  const neckMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.11, 10), skinMat);
+  neckMesh.position.set(0, -0.07, -0.005);
+  headGroup.add(neckMesh);
+
+  const headGeo = new THREE.SphereGeometry(0.108, 12, 10);
+  headGeo.scale(0.88, 1.08, 0.96);
+  const head = new THREE.Mesh(headGeo, skinMat);
   headGroup.add(head);
 
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8), helmetMat);
-  helmet.scale.set(0.95, 0.92, 1.05);
-  helmet.position.set(0, 0.05, 0);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.142, 12, 9), helmetMat);
+  helmet.scale.set(0.96, 0.92, 1.06);
+  helmet.position.set(0, 0.045, -0.005);
   headGroup.add(helmet);
 
-  const goggles = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.05, 0.06), goggleMat);
-  goggles.position.set(0, 0.06, 0.13);
+  const goggleGeo = new THREE.CylinderGeometry(0.095, 0.095, 0.046, 10, 1, false, -0.9, 1.8);
+  const goggles = new THREE.Mesh(goggleGeo, goggleMat);
+  goggles.position.set(0, 0.035, 0.03);
   headGroup.add(goggles);
 
-  const leftArm = new THREE.Group();
-  leftArm.position.set(-0.28, 1.42, 0);
+  const buildSculptedArm = (side) => {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.23, 1.42, 0);
+    const shBall = new THREE.Mesh(new THREE.SphereGeometry(0.058, 9, 7), camoUniformMat);
+    arm.add(shBall);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.054, 0.045, 0.26, 10), camoUniformMat);
+    upper.position.set(0, -0.13, 0);
+    arm.add(upper);
+    const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.044, 8, 6), camoUniformMat);
+    elbow.position.set(0, -0.26, 0);
+    arm.add(elbow);
+    const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.033, 0.24, 10), camoUniformMat);
+    fore.position.set(0, -0.37, 0.02);
+    arm.add(fore);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.036, 8, 6), skinMat);
+    hand.scale.set(0.8, 1.15, 0.95);
+    hand.position.set(0, -0.49, 0.03);
+    arm.add(hand);
+    return arm;
+  };
+
+  const leftArm = buildSculptedArm(-1);
   root.add(leftArm);
-
-  const leftArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.48, 0.13), camoUniformMat);
-  leftArmMesh.position.set(0, -0.22, 0);
-  leftArm.add(leftArmMesh);
-
-  const rightArm = new THREE.Group();
-  rightArm.position.set(0.28, 1.42, 0);
+  const rightArm = buildSculptedArm(1);
   root.add(rightArm);
 
-  const rightArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.48, 0.13), camoUniformMat);
-  rightArmMesh.position.set(0, -0.22, 0);
-  rightArm.add(rightArmMesh);
+  const buildSculptedLeg = (side) => {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.105, 0.90, 0);
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.058, 0.42, 10), darkFatigueMat);
+    thigh.position.set(0, -0.21, 0);
+    leg.add(thigh);
+    const knee = new THREE.Mesh(new THREE.SphereGeometry(0.056, 9, 7), darkFatigueMat);
+    knee.position.set(0, -0.42, 0.005);
+    leg.add(knee);
+    const calf = new THREE.Mesh(new THREE.CylinderGeometry(0.056, 0.040, 0.38, 10), darkFatigueMat);
+    calf.position.set(0, -0.61, 0);
+    leg.add(calf);
+    const bootGeo = new THREE.SphereGeometry(0.065, 10, 8);
+    bootGeo.scale(0.82, 0.62, 1.85);
+    const boot = new THREE.Mesh(bootGeo, bootMat);
+    boot.position.set(0, -0.84, 0.045);
+    leg.add(boot);
+    return leg;
+  };
 
-  const leftLeg = new THREE.Group();
-  leftLeg.position.set(-0.13, 0.90, 0);
+  const leftLeg = buildSculptedLeg(-1);
   root.add(leftLeg);
-
-  const leftLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.52, 0.16), darkFatigueMat);
-  leftLegMesh.position.set(0, -0.26, 0);
-  leftLeg.add(leftLegMesh);
-
-  const bootL = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.18, 0.24), bootMat);
-  bootL.position.set(0, -0.52, 0.03);
-  leftLeg.add(bootL);
-
-  const rightLeg = new THREE.Group();
-  rightLeg.position.set(0.13, 0.90, 0);
+  const rightLeg = buildSculptedLeg(1);
   root.add(rightLeg);
-
-  const rightLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.52, 0.16), darkFatigueMat);
-  rightLegMesh.position.set(0, -0.26, 0);
-  rightLeg.add(rightLegMesh);
-
-  const bootR = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.18, 0.24), bootMat);
-  bootR.position.set(0, -0.52, 0.03);
-  rightLeg.add(bootR);
 
   const weaponMesh = weaponType === 'RPG' ? createRpgModel() : createRifleModel();
   weaponMesh.position.set(0, -0.46, 0.22);
@@ -951,6 +982,15 @@ export class WalkerWeaponsSystem {
     const pk = this.app.parkedCars && this.app.parkedCars.raycast(o, d, bestDist); // [parked-cars] the player's parked cars
     if (pk) { bestDist = pk.dist; hitResult = { dist: bestDist, point: o.clone().addScaledVector(d, bestDist), kind: 'parked', ref: null }; }
 
+    // 4b. Airport Airliners (Parked & Active Boeing 787 / Airbus A350)
+    if (this.app.airliner && typeof this.app.airliner.raycast === 'function') {
+      const ah = this.app.airliner.raycast(o, d, bestDist);
+      if (ah && ah.dist < bestDist) {
+        bestDist = ah.dist;
+        hitResult = { dist: bestDist, point: ah.point.clone(), kind: 'airliner', ref: ah.targetRef };
+      }
+    }
+
     // 5. Maritime Ships
     const sea = this.app.maritime;
     if (sea && typeof sea.raycast === 'function') {
@@ -1226,17 +1266,19 @@ export class WalkerWeaponsSystem {
       getWeaponSfx(this.app).play('spark', { gain: 0.8 });
     }
 
-    if (D) {
+    if (D && splashRadius > 0 && buildingUnits > 0) {
       if (hit && hit.kind === 'building' && hit.ref && typeof D.applyHeliHit === 'function') {
         D.applyHeliHit(hit.ref, buildingUnits);
       }
-      if (splashRadius > 0 && typeof D.heliSplash === 'function') {
+      if (typeof D.heliSplash === 'function') {
         D.heliSplash(hitPos.x, hitPos.y, hitPos.z, splashRadius, buildingUnits, hit?.ref);
       }
     }
 
     this.app.streetFeatures?.weaponHit?.(this.app.pos, hitPos, splashRadius); // [prop-damage] lamps / signals / bins topple
-    this.app.landmarks?.damage?.impact(hitPos, hit, buildingUnits, splashRadius); // [landmark-damage]
+    if (splashRadius > 0 && buildingUnits > 0) {
+      this.app.landmarks?.damage?.impact(hitPos, hit, buildingUnits, splashRadius); // [landmark-damage]
+    }
 
     if (hit && hit.kind === 'car' && hit.car) {
       if (this.app.vehicleDamage && typeof this.app.vehicleDamage.hit === 'function') {
@@ -1252,7 +1294,7 @@ export class WalkerWeaponsSystem {
       const src = splashRadius > 0 ? 'rocket' : 'walkerWeapon';
       this.app.traffic.triggerImpactSphere(hitPos.x, hitPos.y, hitPos.z, radius, {
         vx: 0,
-        vy: 4.5,
+        vy: splashRadius > 0 ? 1.5 : 0.3,
         vz: 0,
         force,
         damage: dmg,
@@ -1267,8 +1309,18 @@ export class WalkerWeaponsSystem {
       }
     }
 
-    if (this.app.maritime && typeof this.app.maritime.applyWeaponImpact === 'function') {
-      this.app.maritime.applyWeaponImpact(hitPos, buildingUnits * 100);
+    if (this.app.maritime) {
+      if (typeof this.app.maritime.damageVesselsInRadius === 'function') {
+        this.app.maritime.damageVesselsInRadius(hitPos.x, hitPos.z, splashRadius > 0 ? splashRadius : 4.5, splashRadius > 0 ? 180 : 35, hitPos.y);
+      } else if (typeof this.app.maritime.applyWeaponImpact === 'function') {
+        this.app.maritime.applyWeaponImpact(hitPos, Math.max(18, buildingUnits * 100));
+      }
+    }
+    if (this.app.airliner && typeof this.app.airliner.applyWeaponImpact === 'function') {
+      this.app.airliner.applyWeaponImpact(hitPos, splashRadius > 0 ? splashRadius : 4.5, splashRadius > 0 ? 220 : 40);
+    }
+    if (typeof this.app.damageWorldParkedCarsInRadius === 'function') {
+      this.app.damageWorldParkedCarsInRadius(hitPos.x, hitPos.z, splashRadius > 0 ? splashRadius : 3.8, splashRadius > 0 ? 120 : 35, hitPos.y);
     }
     this.app.vegetation?.impact?.(hitPos, splashRadius, buildingUnits); // [tree-damage]
   }
@@ -1718,8 +1770,8 @@ export class WalkerWeaponsSystem {
     root.position.set(0, 0, 0); root.rotation.set(0, 0, 0); root.scale.set(1, 1, 1);
     root.updateMatrix();
     const body = { x: s.pos.x, z: s.pos.z, ryaw: s.yaw || 0, phase: 0, amp: 0 };
-    const sp = 6 + Math.random() * 4;
-    body.parts = startRagdoll(body, { wScale: sc, hScale: sc }, s.pos.y, dx * sp, 4 + Math.random() * 3, dz * sp, -dx, -dz, 3 + Math.random() * 4, SOLDIER_RAG_SPECS, true);
+    const sp = 3.2 + Math.random() * 1.8;
+    body.parts = startRagdoll(body, { wScale: sc, hScale: sc }, s.pos.y, dx * sp, 1.2 + Math.random() * 0.8, dz * sp, -dx, -dz, 1.1 + Math.random() * 0.5, SOLDIER_RAG_SPECS, true, 'impact');
     body.groups = [ud.hips, ud.headGroup, ud.leftArm, ud.rightArm, ud.leftLeg, ud.rightLeg];
     for (const g of body.groups) { g.rotation.set(0, 0, 0); g.scale.setScalar(sc); }
     this._poseSoldierBody(body);

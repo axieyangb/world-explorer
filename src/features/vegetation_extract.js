@@ -25,6 +25,8 @@ export const LC_SWIMMING_POOL = 18;
 export const LC_FLOWERBED     = 19;
 export const LC_PLAZA         = 20;
 export const LC_STEPS         = 21;
+export const LC_DAM           = 22;
+export const LC_PARK_POI      = 23;
 
 // kind -> [rgb, height above terrain, shader pattern]
 // pattern: 0 plain, 1 field rows, 2 sand, 3 paving, 4 undergrowth/flowerbed, 5 crisp court, 6 turquoise pool water, 7 stone plaza/steps
@@ -49,73 +51,150 @@ export const LC_STYLE = {
   [LC_TRACK]:         [[0.74, 0.26, 0.20], 0.188, 5],
   [LC_PITCH]:         [[0.19, 0.50, 0.32], 0.196, 5],
   [LC_PLAYGROUND]:    [[0.24, 0.52, 0.68], 0.196, 5],
+  [LC_PARK_POI]:      [[0.68, 0.64, 0.56], 0.205, 7],
+  [LC_DAM]:           [[0.66, 0.65, 0.62], 0.220, 7],
   [LC_PLAZA]:         [[0.76, 0.72, 0.65], 0.235, 7],
   [LC_SWIMMING_POOL]: [[0.133, 0.722, 0.812], 0.335, 6],
   [LC_STEPS]:         [[0.80, 0.77, 0.72], 0.440, 7],
 };
 
+export function normalizeSportSubclass(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (!s) return "";
+  if (s.includes("basketball") || s.includes("streetball")) return "basketball";
+  if (s.includes("table_tennis") || s.includes("ping_pong")) return "table_tennis";
+  if (s.includes("pickleball")) return "pickleball";
+  if (s.includes("badminton")) return "badminton";
+  if (s.includes("tennis")) return "tennis";
+  if (s.includes("volleyball") || s.includes("beachvolleyball")) return "volleyball";
+  if (s.includes("baseball") || s.includes("softball")) return "baseball";
+  if (s.includes("skateboard") || s.includes("skate") || s.includes("bmx") || s.includes("roller")) return "skateboard";
+  if (
+    s.includes("american_football") ||
+    s.includes("canadian_football") ||
+    s.includes("australian_football") ||
+    s.includes("gridiron") ||
+    s.includes("rugby") ||
+    s.includes("gaelic_football")
+  ) {
+    return "american_football";
+  }
+  if (s.includes("soccer") || s.includes("football") || s.includes("futsal")) return "soccer";
+  if (s.includes("disc_golf") || s.includes("frisbee")) return "disc_golf";
+  if (s.includes("miniature_golf") || s.includes("minigolf")) return "miniature_golf";
+  if (s.includes("golf")) return "golf";
+  if (s.includes("ice_rink") || s.includes("ice_skating") || s.includes("ice_hockey") || s.includes("curling")) return "ice_rink";
+  if (s.includes("boules") || s.includes("petanque") || s.includes("bocce") || s.includes("bowls")) return "boules";
+  if (s.includes("chess")) return "chess";
+  if (s.includes("four_square") || s.includes("foursquare") || s === "multi") return "four_square";
+  if (
+    s.includes("american_handball") ||
+    s.includes("handball") ||
+    s.includes("racquet") ||
+    s.includes("squash") ||
+    s.includes("pelota") ||
+    s.includes("wallball")
+  ) {
+    return "american_handball";
+  }
+  if (s.includes("cricket")) return "cricket";
+  if (s.includes("equestrian") || s.includes("horse") || s.includes("riding")) return "equestrian";
+  if (s.includes("climbing") || s.includes("boulder")) return "climbing";
+  if (s.includes("athletics") || s.includes("running") || s === "track") return "track";
+  return "";
+}
+
+export function normalizeParkPoiKind(cls, sub) {
+  const c = String(cls || "").toLowerCase();
+  const s = String(sub || "").toLowerCase();
+  if (c === "shelter" || s === "shelter" || s === "gazebo" || s === "pavilion") return "shelter";
+  if (c === "picnic_site" || s === "picnic_site" || s === "picnic_table") return "picnic_site";
+  if (s === "bbq" || c === "bbq") return "bbq";
+  if (c === "dog_park" || s === "dog_park") return "dog_park";
+  if (
+    c === "campsite" ||
+    c === "camp_site" ||
+    c === "caravan_site" ||
+    s === "campsite" ||
+    s === "camp_site" ||
+    s === "caravan_site"
+  ) {
+    return "campsite";
+  }
+  if (c === "water_park" || s === "water_park") return "water_park";
+  if (c === "aquarium" || s === "aquarium") return "aquarium";
+  if (s === "aviary" || c === "aviary") return "aviary";
+  if (c === "enclosure" || s === "enclosure") return "enclosure";
+  if (c === "zoo" || s === "zoo") return "zoo";
+  return "";
+}
+
 function classifyLandcover(layer, tags) {
-  const c = String(tags.class || '').toLowerCase();
-  const s = String(tags.subclass || '').toLowerCase();
+  const c = String(tags.class || "").toLowerCase();
+  const s = String(tags.subclass || "").toLowerCase();
 
-  if (s === 'flowerbed' || c === 'flowerbed' || s === 'garden' || c === 'garden') return LC_FLOWERBED;
-  if (c === 'pitch' || s === 'pitch') return LC_PITCH;
-  if (c === 'track' || s === 'track') return LC_TRACK;
-  if (c === 'playground' || s === 'playground') return LC_PLAYGROUND;
+  if (s === "flowerbed" || c === "flowerbed" || s === "garden" || c === "garden") return LC_FLOWERBED;
+  if (c === "track" || s === "track" || c === "athletics" || s === "athletics" || c === "running" || s === "running") return LC_TRACK;
+  if (c === "playground" || s === "playground") return LC_PLAYGROUND;
+  if (
+    c === "pitch" ||
+    s === "pitch" ||
+    c === "golf" ||
+    s === "golf" ||
+    s === "golf_course" ||
+    s === "miniature_golf" ||
+    c === "disc_golf" ||
+    s === "disc_golf" ||
+    c === "ice_rink" ||
+    s === "ice_rink" ||
+    s === "ice_skating"
+  ) {
+    return LC_PITCH;
+  }
+  if (c === "dam" || s === "dam") return LC_DAM;
 
-  if (layer === 'landcover') {
-    if (c === 'wood' || s === 'forest' || s === 'wood') return LC_WOOD;
-    if (c === 'sand' || s === 'beach' || s === 'sand' || s === 'dune') return LC_SAND;
-    if (c === 'wetland' || s === 'marsh' || s === 'swamp' || s === 'bog' || s === 'reedbed' || s === 'wet_meadow') return LC_WETLAND;
-    if (c === 'rock' || s === 'bare_rock' || s === 'scree') return LC_ROCK;
-    if (c === 'ice' || s === 'glacier') return LC_ICE;
-    if (s === 'orchard' || s === 'vineyard') return LC_ORCHARD;
-    if (c === 'farmland' || s === 'farmland' || s === 'allotments' || s === 'plant_nursery') return LC_FARMLAND;
-    if (s === 'scrub' || s === 'heath' || s === 'shrubbery') return LC_SCRUB;
-    if (c === 'grass') return LC_GRASS;
+  const parkKind = normalizeParkPoiKind(c, s);
+  if (parkKind && parkKind !== "zoo") return LC_PARK_POI;
+
+  if (layer === "landcover") {
+    if (c === "wood" || s === "forest" || s === "wood") return LC_WOOD;
+    if (c === "sand" || s === "beach" || s === "sand" || s === "dune") return LC_SAND;
+    if (c === "wetland" || s === "marsh" || s === "swamp" || s === "bog" || s === "reedbed" || s === "wet_meadow") return LC_WETLAND;
+    if (c === "rock" || s === "bare_rock" || s === "scree") return LC_ROCK;
+    if (c === "ice" || s === "glacier") return LC_ICE;
+    if (s === "orchard" || s === "vineyard") return LC_ORCHARD;
+    if (c === "farmland" || s === "farmland" || s === "allotments" || s === "plant_nursery") return LC_FARMLAND;
+    if (s === "scrub" || s === "heath" || s === "shrubbery") return LC_SCRUB;
+    if (c === "grass") return LC_GRASS;
     return 0;
   }
-  if (layer === 'landuse') {
+  if (layer === "landuse") {
     switch (c) {
-      case 'residential': return LC_RESIDENTIAL;
-      case 'commercial':
-      case 'retail': return LC_COMMERCIAL;
-      case 'industrial':
-      case 'railway':
-      case 'garages':
-      case 'military':
-      case 'quarry':
-      case 'bus_station':
-      case 'dam': return LC_INDUSTRIAL;
-      case 'school':
-      case 'university':
-      case 'kindergarten':
-      case 'college':
-      case 'library':
-      case 'hospital': return LC_INSTITUTION;
-      case 'cemetery': return LC_CEMETERY;
-      case 'theme_park':
-      case 'zoo': return LC_GRASS;
-      default: return 0;
+      case "residential": return LC_RESIDENTIAL;
+      case "commercial":
+      case "retail": return LC_COMMERCIAL;
+      case "industrial":
+      case "railway":
+      case "garages":
+      case "military":
+      case "quarry":
+      case "bus_station": return LC_INDUSTRIAL;
+      case "school":
+      case "university":
+      case "kindergarten":
+      case "college":
+      case "library":
+      case "hospital": return LC_INSTITUTION;
+      case "cemetery":
+      case "grave_yard": return LC_CEMETERY;
+      case "theme_park":
+      case "zoo": return LC_GRASS;
+      default:
+        if (s === "cemetery" || s === "grave_yard") return LC_CEMETERY;
+        return 0;
     }
   }
   return 0;
-}
-
-function normalizeSportSubclass(raw) {
-  const s = String(raw || '').toLowerCase();
-  if (!s) return '';
-  if (s.includes('basketball') || s.includes('streetball')) return 'basketball';
-  if (s.includes('table_tennis') || s.includes('ping_pong')) return 'table_tennis';
-  if (s.includes('tennis')) return 'tennis';
-  if (s.includes('pickleball')) return 'pickleball';
-  if (s.includes('badminton')) return 'badminton';
-  if (s.includes('volleyball') || s.includes('beachvolleyball')) return 'volleyball';
-  if (s.includes('baseball') || s.includes('softball')) return 'baseball';
-  if (s.includes('skateboard') || s.includes('bmx') || s.includes('roller')) return 'skateboard';
-  if (s.includes('soccer') || s.includes('football') || s.includes('futsal')) return 'soccer';
-  if (s.includes('athletics') || s.includes('running') || s === 'track') return 'track';
-  return '';
 }
 
 function clipRing(flat, minB, maxB) {
@@ -214,38 +293,74 @@ function makeRectRing(cx, cz, hl, hw, angle = 0) {
 }
 
 function sportDefaultDims(sport) {
-  if (sport === 'soccer') return [42.0, 26.0];
-  if (sport === 'baseball') return [28.0, 28.0];
-  if (sport === 'tennis') return [12.0, 6.0];
-  if (sport === 'basketball') return [14.0, 7.8];
-  if (sport === 'badminton' || sport === 'pickleball') return [7.5, 4.0];
-  if (sport === 'volleyball') return [9.5, 5.2];
-  if (sport === 'table_tennis') return [4.5, 2.8];
-  if (sport === 'skateboard') return [12.0, 7.5];
+  if (sport === "soccer") return [42.0, 26.0];
+  if (sport === "american_football") return [44.0, 22.0];
+  if (sport === "cricket") return [30.0, 25.0];
+  if (sport === "baseball") return [28.0, 28.0];
+  if (sport === "track") return [36.0, 20.0];
+  if (sport === "equestrian") return [20.0, 11.5];
+  if (sport === "ice_rink") return [22.0, 11.0];
+  if (sport === "golf") return [15.0, 10.5];
+  if (sport === "miniature_golf") return [10.0, 7.0];
+  if (sport === "disc_golf") return [9.0, 6.5];
+  if (sport === "tennis") return [12.0, 6.0];
+  if (sport === "basketball") return [14.0, 7.8];
+  if (sport === "skateboard") return [12.5, 7.5];
+  if (sport === "volleyball") return [9.5, 5.2];
+  if (sport === "american_handball") return [9.0, 6.2];
+  if (sport === "badminton" || sport === "pickleball") return [7.5, 4.0];
+  if (sport === "boules") return [7.2, 2.8];
+  if (sport === "climbing") return [6.2, 4.4];
+  if (sport === "four_square") return [5.2, 5.2];
+  if (sport === "table_tennis") return [4.5, 2.8];
+  if (sport === "chess") return [3.2, 3.2];
   return [13.0, 7.5];
 }
 
+function parkPoiDefaultDims(poiKind) {
+  if (poiKind === "water_park") return [14.0, 10.5];
+  if (poiKind === "aquarium") return [11.0, 8.5];
+  if (poiKind === "dog_park") return [10.5, 7.2];
+  if (poiKind === "campsite") return [9.5, 7.5];
+  if (poiKind === "zoo" || poiKind === "aviary") return [9.0, 9.0];
+  if (poiKind === "enclosure") return [8.0, 6.5];
+  if (poiKind === "shelter") return [3.4, 3.4];
+  if (poiKind === "picnic_site") return [3.0, 2.6];
+  if (poiKind === "bbq") return [2.5, 2.5];
+  return [4.5, 4.5];
+}
+
 /**
- * Tile-side hook: extracts landuse/landcover polygons and rich court/pool/flowerbed/plaza/step features
+ * Tile-side hook: extracts landuse/landcover polygons and rich court/pool/flowerbed/plaza/step/park/cemetery features
  * as `[kind, outerFlat, holesFlat[], meta]` in chunk-local XZ.
  */
 export function extractLandcoverPolys(tiles, toLocalXZ) {
   const out = [];
   const seen = new Set();
 
-  // 1. Collect sport/pitch and swimming_pool POI points (`f.type === 1`)
+  // 1. Collect sport/pitch, swimming_pool, cemetery, and outdoor park amenity POI points (`f.type === 1`)
   const pitchPois = [];
   const poolPois = [];
+  const cemeteryPois = [];
+  const parkPois = [];
   const seenPoi = new Set();
 
   for (const t of tiles) {
     for (const f of t.poi || []) {
       if (f.type !== 1 || !f.tags) continue;
-      const cls = String(f.tags.class || '').toLowerCase();
-      const sub = String(f.tags.subclass || f.tags.sport || '').toLowerCase();
-      const isPitchPoi = cls === 'pitch' || cls === 'track' || cls === 'playground' || cls === 'stadium';
-      const isPoolPoi = cls === 'swimming_pool' || sub === 'swimming_pool';
-      if (!isPitchPoi && !isPoolPoi) continue;
+      const cls = String(f.tags.class || "").toLowerCase();
+      const sub = String(f.tags.sport || f.tags.subclass || "").toLowerCase();
+      const isPoolPoi = cls === "swimming_pool" || sub === "swimming_pool";
+      const isCemeteryPoi = cls === "cemetery" || sub === "cemetery" || sub === "grave_yard" || cls === "grave_yard";
+      const parkKind = normalizeParkPoiKind(cls, sub);
+      const normSport = normalizeSportSubclass(sub || cls);
+      const isPitchPoi =
+        !isPoolPoi &&
+        !isCemeteryPoi &&
+        !parkKind &&
+        (cls === "pitch" || cls === "track" || cls === "playground" || cls === "stadium" || Boolean(normSport));
+
+      if (!isPitchPoi && !isPoolPoi && !isCemeteryPoi && !parkKind) continue;
 
       const pts = Array.isArray(f.geom) ? f.geom : [];
       for (const g of pts) {
@@ -261,8 +376,17 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
 
         if (isPoolPoi) {
           poolPois.push({ x: rx, z: rz, matched: false });
+        } else if (isCemeteryPoi) {
+          cemeteryPois.push({ x: rx, z: rz, matched: false });
+        } else if (parkKind) {
+          parkPois.push({ x: rx, z: rz, poiKind: parkKind, matched: false });
         } else {
-          const sport = cls === 'track' ? 'track' : cls === 'playground' ? 'playground' : normalizeSportSubclass(sub);
+          const sport =
+            cls === "playground" || sub === "playground"
+              ? "playground"
+              : cls === "track" || normSport === "track"
+                ? "track"
+                : normSport;
           pitchPois.push({ x: rx, z: rz, sport, rawSub: sub, cls, matched: false });
         }
       }
@@ -322,26 +446,48 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
   };
 
   for (const t of tiles) {
-    for (const layer of ['landuse', 'landcover']) {
+    for (const layer of ["landuse", "landcover"]) {
       for (const f of t[layer] || []) {
         if (f.type !== 3) continue;
         const tags = f.tags || {};
         const kind = classifyLandcover(layer, tags);
         if (!kind) continue;
-        const sub = String(tags.subclass || tags.class || '').toLowerCase();
-        const sport = kind === LC_PITCH ? normalizeSportSubclass(tags.sport || tags.subclass || '') : '';
+        const cls = String(tags.class || "").toLowerCase();
+        const sub = String(tags.subclass || tags.class || "").toLowerCase();
+        const sport = kind === LC_PITCH ? normalizeSportSubclass(tags.sport || tags.subclass || tags.class || "") : "";
+        const poiKind = kind === LC_PARK_POI ? normalizeParkPoiKind(cls, sub) : "";
         for (const poly of f.geom) {
-          pushPoly(kind, poly, kind >= LC_PITCH ? { sub, sport, pois: [] } : null);
+          pushPoly(
+            kind,
+            poly,
+            kind >= LC_PITCH ? { sub, sport, poiKind, pois: [] } : null
+          );
+          // For `landuse=zoo`, keep the green lawn/tree polygon and also seed a zoo aviary dome POI at its center
+          if (cls === "zoo" || sub === "zoo") {
+            if (poly.outer && poly.outer.length >= 3) {
+              let zx = 0, zz = 0;
+              for (let i = 0; i < poly.outer.length; i++) {
+                const [lx, lz] = toLocalXZ(poly.outer[i][0], poly.outer[i][1]);
+                zx += lx;
+                zz += lz;
+              }
+              zx /= poly.outer.length;
+              zz /= poly.outer.length;
+              if (zx >= -475 && zx <= 475 && zz >= -475 && zz <= 475) {
+                parkPois.push({ x: Math.round(zx * 10) / 10, z: Math.round(zz * 10) / 10, poiKind: "zoo", matched: false });
+              }
+            }
+          }
         }
       }
     }
 
-    // Swimming pools from `water` layer (`class === 'swimming_pool'`)
+    // Swimming pools from `water` layer (`class === "swimming_pool"`)
     for (const f of t.water || []) {
       if (f.type !== 3 || !f.tags) continue;
-      const cls = String(f.tags.class || '').toLowerCase();
-      const sub = String(f.tags.subclass || '').toLowerCase();
-      if (cls !== 'swimming_pool' && sub !== 'swimming_pool') continue;
+      const cls = String(f.tags.class || "").toLowerCase();
+      const sub = String(f.tags.subclass || "").toLowerCase();
+      if (cls !== "swimming_pool" && sub !== "swimming_pool") continue;
       for (const poly of f.geom) {
         pushPoly(LC_SWIMMING_POOL, poly, { synthetic: false });
       }
@@ -350,19 +496,19 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
     // Pedestrian plazas (`f.type === 3`) & hillside steps (`f.type === 2`) from `transportation`
     for (const f of t.transportation || []) {
       if (!f.tags) continue;
-      const cls = String(f.tags.class || '').toLowerCase();
-      const sub = String(f.tags.subclass || '').toLowerCase();
-      const isTunnel = f.tags.brunnel === 'tunnel' || (Number(f.tags.layer) || 0) < 0;
+      const cls = String(f.tags.class || "").toLowerCase();
+      const sub = String(f.tags.subclass || "").toLowerCase();
+      const isTunnel = f.tags.brunnel === "tunnel" || (Number(f.tags.layer) || 0) < 0;
       if (isTunnel) continue;
 
       if (f.type === 3) {
-        if (sub === 'pedestrian' || sub === 'platform' || cls === 'pedestrian' || cls === 'platform') {
+        if (sub === "pedestrian" || sub === "platform" || cls === "pedestrian" || cls === "platform") {
           for (const poly of f.geom) {
             pushPoly(LC_PLAZA, poly, { sub: sub || cls });
           }
         }
       } else if (f.type === 2) {
-        if (sub === 'steps' || cls === 'steps') {
+        if (sub === "steps" || cls === "steps") {
           for (const line of f.geom) {
             if (!line || line.length < 2) continue;
             const flat = [];
@@ -410,7 +556,7 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
     if (kind === LC_PITCH && meta) {
       meta.pois = chosen.map((p) => [p.x, p.z, p.sport]);
       if (!meta.sport) {
-        const withSport = chosen.find((p) => p.sport && p.sport !== 'track' && p.sport !== 'playground');
+        const withSport = chosen.find((p) => p.sport && p.sport !== "track" && p.sport !== "playground");
         if (withSport) meta.sport = withSport.sport;
       }
     }
@@ -428,14 +574,38 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
     }
   }
 
-  // Synthesize regulation footprints for unmatched `pitchPois` and `poolPois` whose small polygons were omitted at Z14
+  // Match `cemeteryPois` with `LC_CEMETERY` polygons
+  for (let i = 0; i < out.length; i++) {
+    const [kind, outer] = out[i];
+    if (kind !== LC_CEMETERY) continue;
+    for (let j = 0; j < cemeteryPois.length; j++) {
+      const p = cemeteryPois[j];
+      if (pointInRingXZ(p.x, p.z, outer) || distSqToRingXZ(p.x, p.z, outer) <= 24.0 * 24.0) {
+        p.matched = true;
+      }
+    }
+  }
+
+  // Match `parkPois` with `LC_PARK_POI` polygons
+  for (let i = 0; i < out.length; i++) {
+    const [kind, outer, , meta] = out[i];
+    if (kind !== LC_PARK_POI) continue;
+    for (let j = 0; j < parkPois.length; j++) {
+      const p = parkPois[j];
+      if (pointInRingXZ(p.x, p.z, outer) || distSqToRingXZ(p.x, p.z, outer) <= 15.0 * 15.0) {
+        p.matched = true;
+        if (meta && !meta.poiKind) meta.poiKind = p.poiKind;
+      }
+    }
+  }
+
+  // Synthesize regulation footprints for unmatched `pitchPois`, `poolPois`, `cemeteryPois`, and `parkPois`
   let synPitchCount = 0;
-  for (let j = 0; j < pitchPois.length && synPitchCount < 22; j++) {
+  for (let j = 0; j < pitchPois.length && synPitchCount < 64; j++) {
     const p = pitchPois[j];
     if (p.matched || !p.sport) continue;
     if (p.x < -475 || p.x > 475 || p.z < -475 || p.z > 475) continue;
-    if (p.sport === 'track') continue;
-    const kind = p.sport === 'playground' ? LC_PLAYGROUND : LC_PITCH;
+    const kind = p.sport === "playground" ? LC_PLAYGROUND : p.sport === "track" ? LC_TRACK : LC_PITCH;
     let [hl, hw] = sportDefaultDims(p.sport);
     // Align court lengthwise axis perpendicular to nearest neighbor court POI so side-by-side courts never overlap
     let bestD2 = 26 * 26;
@@ -454,7 +624,7 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
     if (nbrDx !== 0 || nbrDz !== 0) {
       angle = Math.atan2(nbrDz, nbrDx) + Math.PI * 0.5;
       const nbrDist = Math.sqrt(bestD2);
-      if (hw * 2 > nbrDist * 0.88) hw = Math.max(3.5, nbrDist * 0.43);
+      if (hw * 2 > nbrDist * 0.88) hw = Math.max(2.6, nbrDist * 0.43);
     } else {
       angle = (((Math.round(p.x * 13) ^ Math.round(p.z * 29)) & 1) === 0) ? 0 : Math.PI * 0.5;
     }
@@ -464,13 +634,35 @@ export function extractLandcoverPolys(tiles, toLocalXZ) {
   }
 
   let synPoolCount = 0;
-  for (let j = 0; j < poolPois.length && synPoolCount < 10; j++) {
+  for (let j = 0; j < poolPois.length && synPoolCount < 14; j++) {
     const p = poolPois[j];
     if (p.matched) continue;
     if (p.x < -475 || p.x > 475 || p.z < -475 || p.z > 475) continue;
     const outer = makeRectRing(p.x, p.z, 9.5, 5.0, 0);
     out.push([LC_SWIMMING_POOL, outer, [], { synthetic: true }]);
     synPoolCount++;
+  }
+
+  let synCemCount = 0;
+  for (let j = 0; j < cemeteryPois.length && synCemCount < 12; j++) {
+    const p = cemeteryPois[j];
+    if (p.matched) continue;
+    if (p.x < -475 || p.x > 475 || p.z < -475 || p.z > 475) continue;
+    const outer = makeRectRing(p.x, p.z, 15.0, 11.0, 0);
+    out.push([LC_CEMETERY, outer, [], { synthetic: true }]);
+    synCemCount++;
+  }
+
+  let synParkPoiCount = 0;
+  for (let j = 0; j < parkPois.length && synParkPoiCount < 48; j++) {
+    const p = parkPois[j];
+    if (p.matched || !p.poiKind) continue;
+    if (p.x < -475 || p.x > 475 || p.z < -475 || p.z > 475) continue;
+    const [hl, hw] = parkPoiDefaultDims(p.poiKind);
+    const angle = (((Math.round(p.x * 17) ^ Math.round(p.z * 23)) & 1) === 0) ? 0 : Math.PI * 0.5;
+    const outer = makeRectRing(p.x, p.z, hl, hw, angle);
+    out.push([LC_PARK_POI, outer, [], { poiKind: p.poiKind, synthetic: true }]);
+    synParkPoiCount++;
   }
 
   // Render low-priority (urban) kinds first; natural cover & courts/pools/steps last

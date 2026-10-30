@@ -305,7 +305,7 @@ export class CityTraffic {
       if ((i & 255) === 255) yield;
       const cls = g.eCls[i];
       const isBridge = (g.eOneway[i] & 2) !== 0;
-      const car = CAR_W[cls] > 0, ped = PED_W[cls] > 0 && !(isBridge && cls !== 8);
+      const car = CAR_W[cls] > 0, ped = PED_W[cls] > 0 && !isBridge;
       if (!car && !ped) continue;
       const p0 = g.ptOff[i], p1 = g.ptOff[i + 1], n = p1 - p0;
       if (n < 2) continue;
@@ -1532,6 +1532,8 @@ export class CityTraffic {
       ped.stateTimer = 0;
       ped.ragdollTimer = 0;
       ped.lieTimer = 0;
+      ped.staggerTimer = 0;
+      ped.meleeHits = 0;
       ped.parts = null;
       ped.partsByName = null;
       ped.lat = 0; ped.crossT = 0;
@@ -1691,16 +1693,17 @@ export class CityTraffic {
   }
 
   /**
-   * Transition a walking pedestrian into 'falling_apart' multi-part ragdoll physics.
+   * Physically realistic human impact response (m = 75 kg, g = -9.81 m/s^2):
+   * - Melee Punch (source === 'punch' / 'fist'):
+   *   1st Punch -> 'stagger' state (0.45s): stumbles back 0.4-0.7 m on feet (vy = 0), torso flinches back 22 deg,
+   *                head snaps back, arms raise defensively, then recovers balance!
+   *   2nd / Knockout Punch -> 'falling_apart' knockdown ragdoll: loses footing and crumples downward under gravity
+   *                right where they stand (vy <= 0, horizontal slide < 0.9 m), knees buckle first (0.18s) then lays flat!
+   * - Vehicle / Explosion Impact: scales impulse by vehicle speed with realistic velocity caps and high ground friction.
    */
-  hitPedestrian(ped, ix, iy, iz, svx = 0, svy = 0, svz = 0, forceMul = 1) {
-    if (!ped || !ped.active || ped.state !== 'walking') return false;
-    ped.state = 'falling_apart';
-    this.agents.emit('person_hit', ped.x, ped.y, ped.z, { severity: 0.9, actor: this.app.mode === 'drive' ? 'player_vehicle' : undefined }); // [people-agents]
-    ped.stateTimer = 0;
-    ped.ragdollTimer = 0;
-    ped.lieTimer = 0;
-    const groundY = Number.isFinite(ped.y) ? ped.y : 0;
+  hitPedestrian(ped, ix, iy, iz, svx = 0, svy = 0, svz = 0, forceMul = 1, source = null) {
+    if (!ped || !ped.active || (ped.state !== 'walking' && ped.state !== 'stagger')) return false;
+    const groundY = Number.isFinite(ped.groundY) ? ped.groundY : (Number.isFinite(ped.y) ? ped.y : 0);
     ped.groundY = groundY;
 
     let dx = ped.x - (Number.isFinite(ix) ? ix : ped.x);
@@ -1721,15 +1724,73 @@ export class CityTraffic {
       dz /= dist;
     }
 
-    const fMul = clamp(Number.isFinite(forceMul) ? forceMul : 1, 0.85, 2.2);
-    const launchH = clamp(2.0 + sSpeed * 0.14 + 1.4 * fMul, 2.4, 5.8);
-    const baseVx = (svx ? clamp(svx * 0.16, -3.5, 3.5) : 0) + dx * launchH * 0.6;
-    const baseVz = (svz ? clamp(svz * 0.16, -3.5, 3.5) : 0) + dz * launchH * 0.6;
+    const isMelee = source === 'punch' || source === 'fist' || (forceMul <= 0.65 && sSpeed < 2.2);
+    if (isMelee) {
+      const nowS = performance.now() * 0.001;
+      const recentHit = ped._lastMeleeT && (nowS - ped._lastMeleeT) < 6.0;
+      ped.meleeHits = (ped.state === 'stagger' || recentHit) ? ((ped.meleeHits || 0) + 1) : 1;
+      ped._lastMeleeT = nowS;
 
-    // [drivers] one connected body (ped_ragdoll.js): launched along the hit, feet swept, tumbles as a whole
+      // 1st Punch: Realistic Stagger (0.45s stumble back 0.4-0.7 m on feet, vy = 0, torso flinches 22°, defensive guard)
+      if (ped.meleeHits === 1 && ped.state === 'walking') {
+        ped.state = 'stagger';
+        ped.stateTimer = 0;
+        ped.staggerTimer = 0.45;
+        ped.staggerDur = 0.45;
+        // 90-140 N*s impulse on 75 kg human -> dv_xy <= 1.25 m/s, dv_y = 0.0 m/s
+        const dv = 1.15 + Math.random() * 0.15;
+        ped.staggerVx = dx * dv;
+        ped.staggerVz = dz * dv;
+        ped.ryaw = Math.atan2(-dx, -dz); // face the striker while stumbling backward
+        ped.poseMode = 5; // shader mode 5: 22° backward torso flinch + head snap + raised guard arms
+        this.agents.emit('person_hit', ped.x, ped.y, ped.z, { severity: 0.55, actor: 'player' });
+        this._playHitSound(ped.x, ped.y, ped.z, 0.7);
+        this._spawnImpactPuff(ped.x, groundY + 1.15, ped.z, dx * 0.8, dz * 0.8, 0.6);
+        return true;
+      }
+
+      // 2nd / Knockout Punch: Grounded Crumple (vy = 0, slide < 0.9 m, knees drop first 0.18s -> lay flat)
+      ped.state = 'falling_apart';
+      ped.poseMode = -1;
+      ped.stateTimer = 0;
+      ped.ragdollTimer = 0;
+      ped.lieTimer = 0;
+      this.agents.emit('person_hit', ped.x, ped.y, ped.z, { severity: 0.85, actor: 'player' });
+      const L = ped.look || { wScale: 1, hScale: 1, style: 0 };
+      const koVx = dx * 0.85, koVz = dz * 0.85;
+      const parts = startRagdoll(ped, L, groundY, koVx, 0.0, koVz, dx, dz, 0.85, undefined, false, 'knockdown');
+      const partsByName = {};
+      for (const pt of parts) partsByName[pt.name] = pt;
+      partsByName.leftArm = partsByName.armL;
+      partsByName.rightArm = partsByName.armR;
+      partsByName.leftLeg = partsByName.legL;
+      partsByName.rightLeg = partsByName.legR;
+      ped.parts = parts;
+      ped.partsByName = partsByName;
+      this.stats.hits = (this.stats.hits || 0) + 1;
+      this._playHitSound(ped.x, ped.y, ped.z, 0.95);
+      this._spawnImpactPuff(ped.x, groundY + 1.1, ped.z, koVx, koVz, 0.85);
+      return true;
+    }
+
+    // Vehicle / Explosion Impact: physically scaled by car speed, capped so humans never fly away!
+    ped.state = 'falling_apart';
+    ped.poseMode = -1;
+    this.agents.emit('person_hit', ped.x, ped.y, ped.z, { severity: 0.9, actor: this.app.mode === 'drive' ? 'player_vehicle' : undefined }); // [people-agents]
+    ped.stateTimer = 0;
+    ped.ragdollTimer = 0;
+    ped.lieTimer = 0;
+
+    const fMul = clamp(Number.isFinite(forceMul) ? forceMul : 1, 0.6, 1.6);
+    const vCar = clamp(sSpeed, 0, 22);
+    const launchH = clamp(1.1 + vCar * 0.18 + 0.65 * fMul, 1.4, 4.6);
+    const baseVx = (svx ? clamp(svx * 0.22, -3.2, 3.2) : 0) + dx * launchH * 0.55;
+    const baseVz = (svz ? clamp(svz * 0.22, -3.2, 3.2) : 0) + dz * launchH * 0.55;
+
     const L = ped.look || { wScale: 1, hScale: 1, style: 0 };
-    const vyL = clamp(2.2 + launchH * 0.55, 3.0, 6.0);
-    const parts = startRagdoll(ped, L, groundY, baseVx * 0.85, vyL, baseVz * 0.85, dx, dz, 3.5 + Math.random() * 3 * fMul);
+    const vyL = clamp(0.45 + vCar * 0.06 + 0.35 * fMul, 0.5, 1.9);
+    const spin = clamp(0.9 + vCar * 0.04, 0.8, 1.5);
+    const parts = startRagdoll(ped, L, groundY, baseVx, vyL, baseVz, dx, dz, spin, undefined, false, 'impact');
     const partsByName = {};
     for (const pt of parts) partsByName[pt.name] = pt;
     partsByName.leftArm = partsByName.armL;
@@ -1746,31 +1807,39 @@ export class CityTraffic {
   }
 
   /**
-   * Queue or immediately apply a spherical impact zone (used by Kaiju stomp, tail whip, breath, missiles, cannon).
+   * Queue or immediately apply a spherical impact zone (used by melee punch, Kaiju stomp, tail whip, breath, missiles, cannon).
    */
   triggerImpactSphere(x, y, z, radius, opts = {}, vzArg = 0, forceArg = 1.3) {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !(radius > 0)) return 0;
     const isObj = opts !== null && typeof opts === 'object';
-    const force = isObj ? (opts.force || 1.3) : (Number.isFinite(forceArg) ? forceArg : 1.3);
+    const src = isObj ? (opts.source || null) : null;
+    const isPunch = src === 'punch' || src === 'fist' || Boolean(isObj && opts.pedsOnly);
+    const force = isObj ? (opts.force ?? (isPunch ? 0.45 : 1.3)) : (Number.isFinite(forceArg) ? forceArg : 1.3);
     const vx = isObj ? (opts.vx || 0) : (Number.isFinite(opts) ? opts : 0);
-    const vy = isObj ? (opts.vy || 0) : 0;
+    const vy = isPunch ? 0 : (isObj ? (opts.vy || 0) : 0);
     const vz = isObj ? (opts.vz || 0) : (Number.isFinite(vzArg) ? vzArg : 0);
     const dmg = isObj ? (opts.damage ?? DAMAGE_BY_SOURCE[opts.source] ?? 0) : 0; // [car-explosions]
     const r2 = radius * radius;
     this.agents.onImpact(x, y, z, radius, opts); // [people-agents]
     let count = 0;
     for (const ped of this.peds) {
-      if (!ped.active || ped.state !== 'walking') continue;
+      if (!ped.active || (ped.state !== 'walking' && ped.state !== 'stagger')) continue;
       const dx = ped.x - x, dz = ped.z - z;
       const d2 = dx * dx + dz * dz;
       if (d2 <= r2) {
         const d = Math.sqrt(d2) || 0.1;
-        const outSpd = 8.0 * force * (1 - 0.35 * (d / radius));
-        const ivx = vx + (dx / d) * outSpd;
-        const ivz = vz + (dz / d) * outSpd;
-        if (this.hitPedestrian(ped, x, Number.isFinite(y) ? y : ped.y, z, ivx, vy, ivz, force)) count++;
+        if (isPunch) {
+          if (this.hitPedestrian(ped, x, Number.isFinite(y) ? y : ped.y, z, vx, 0, vz, force, 'punch')) count++;
+        } else {
+          const outSpd = Math.min(4.8, 3.8 * force * (1 - 0.35 * (d / radius)));
+          const ivx = vx * 0.35 + (dx / d) * outSpd;
+          const ivz = vz * 0.35 + (dz / d) * outSpd;
+          if (this.hitPedestrian(ped, x, Number.isFinite(y) ? y : ped.y, z, ivx, vy, ivz, force, src)) count++;
+        }
       }
     }
+    // A human fist strike never launches cars into the air!
+    if (isPunch) return count;
     const carR = radius * 1.15;
     const carR2 = carR * carR;
     for (const c of this.cars) {
@@ -2000,6 +2069,29 @@ export class CityTraffic {
       this._updateRagdollPed(ped, dt);
       return;
     }
+    if (ped.state === 'stagger') {
+      ped.stateTimer += dt;
+      ped.staggerTimer = Math.max(0, (ped.staggerTimer || 0) - dt);
+      // High ground friction decelerates stumble so total backward displacement is 0.4-0.7 m with vy = 0
+      const decay = Math.exp(-0.55 * dt);
+      ped.x += (ped.staggerVx || 0) * dt;
+      ped.z += (ped.staggerVz || 0) * dt;
+      ped.y = ped.groundY;
+      ped.staggerVx = (ped.staggerVx || 0) * decay;
+      ped.staggerVz = (ped.staggerVz || 0) * decay;
+      ped.amp = 0.65;
+      ped.phase = (ped.phase || 0) + dt * 7.5;
+      ped.gph = (ped.gph || 0) + dt * 6.5;
+      ped.gx = ped.x; ped.gz = ped.z;
+      ped.px = ped.x; ped.pz = ped.z;
+      if (ped.staggerTimer <= 0) {
+        ped.state = 'walking';
+        ped.poseMode = -1;
+        ped.stateTimer = 0;
+        ped.amp = 0.5;
+      }
+      return;
+    }
     if (this.kaiju && this.kaiju.ped(ped, dt)) return; // [kaiju] panic flee (off the sidewalk graph)
     if (this.damage && this.damage.ped(ped, dt)) return; // [car-explosions] flee from explosions
     if (this.agents.drive(ped, dt)) return; // [people-agents] brain command / flinch
@@ -2125,7 +2217,7 @@ export class CityTraffic {
         ped.active = false;
         continue;
       }
-      if (ped.state === 'walking') walking++;
+      if (ped.state === 'walking' || ped.state === 'stagger') walking++;
       else if (ped.state === 'falling_apart') ragdolls++;
       else if (ped.state === 'lying') lying++;
       active++;
@@ -2160,7 +2252,7 @@ export class CityTraffic {
     let ped = null;
     for (const q of this.peds) if (!q.active) { ped = q; break; }
     if (!ped) return null;
-    ped.state = 'walking'; ped.crossState = 0; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0;
+    ped.state = 'walking'; ped.crossState = 0; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0; ped.staggerTimer = 0; ped.meleeHits = 0;
     ped.parts = null; ped.partsByName = null; ped.rag = null;
     ped.e = null; ped.lat = 0; ped.latBase = 0; ped.crossT = 0; ped.side = 1; ped.footOff = 0.5; ped.willCross = false;
     ped.look = look;
@@ -2216,8 +2308,8 @@ export class CityTraffic {
     let ped = null;
     for (const q of this.peds) if (!q.active) { ped = q; break; }
     if (!ped) return false;
-    ped.state = 'walking'; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0;
-    ped.parts = null; ped.partsByName = null;
+    ped.state = 'walking'; ped.stateTimer = 0; ped.ragdollTimer = 0; ped.lieTimer = 0; ped.staggerTimer = 0; ped.meleeHits = 0;
+    ped.parts = null; ped.partsByName = null; ped.rag = null;
     ped.lat = 0; ped.latBase = (leader.latBase || 0) + (k === 1 ? 0.62 : -0.62); // leader in the middle of a trio
     const o = this.app.worldOrigin || {};
     ped.look = randomPersonLook(o.centerLat, o.centerLon);
@@ -2494,7 +2586,7 @@ export class CityTraffic {
 
     const P = this.ped, PF = this.pedFar;
     let nWalk = 0, nFar = 0;
-    const partCounts = { head: 0, torso: 0, armL: 0, armR: 0, legL: 0, legR: 0, accessory: 0 };
+    const partCounts = { head: 0, torso: 0, armL: 0, foreL: 0, armR: 0, foreR: 0, legL: 0, shinL: 0, legR: 0, shinR: 0, accessory: 0 };
 
     if (showPeds) {
       const rain = typeof daylight.getWeather === 'function' && daylight.getWeather() === 'rain';
@@ -2504,7 +2596,7 @@ export class CityTraffic {
       for (const ped of this.peds) {
         if (!ped.active) continue;
         const L = ped.look || DEFAULT_LOOK;
-        if (ped.state === 'walking') {
+        if (ped.state === 'walking' || ped.state === 'stagger') {
           // [human-motion] frustum cull + near/far detail level
           if (!this._visible(ped.x, ped.y, ped.z, 1.6)) continue;
           const dc = (ped.x - cx) * (ped.x - cx) + (ped.y - cy) * (ped.y - cy) + (ped.z - cz) * (ped.z - cz);
@@ -2522,7 +2614,12 @@ export class CityTraffic {
           an[i3 + 2] = L.style | (ped.extraStyle || 0) | (rain && L.umbRoll < 0.65 ? UMBRELLA_BIT : 0);
           gt[i4] = (ped.stride || 1.2) / L.wScale;
           gt[i4 + 1] = L.gaitArm || 1;
-          gt[i4 + 2] = (ped.poseMode >= 0 ? ped.poseMode : L.idleMode || 0) + (L.posture || 0) * 0.99; // [people-agents] wave / call
+          if (ped.state === 'stagger') {
+            const stProg = clamp(1 - (ped.staggerTimer || 0) / (ped.staggerDur || 0.45), 0.01, 0.99);
+            gt[i4 + 2] = 5 + stProg * 0.99;
+          } else {
+            gt[i4 + 2] = (ped.poseMode >= 0 ? ped.poseMode : L.idleMode || 0) + (L.posture || 0) * 0.99; // [people-agents] wave / call
+          }
           gt[i4 + 3] = (clock + (L.clock || 0)) % 1000;
           const sh = T.iShirt.array, pa = T.iPants.array, sk = T.iSkin.array, ha = T.iHair.array, ac = T.iAcc.array;
           sh[i3] = L.top.r; sh[i3 + 1] = L.top.g; sh[i3 + 2] = L.top.b;
@@ -2541,7 +2638,7 @@ export class CityTraffic {
             if (pt.q) q.copy(pt.q); // [drivers] connected ragdoll
             else { eul.set(pt.rx, pt.ry, pt.rz, 'YXZ'); q.setFromEuler(eul); }
             v3.set(pt.x, pt.y, pt.z);
-            const sc = pt.scale || 1.12;
+            const sc = pt.scale || 1.0;
             s3.set(L.wScale * sc, L.hScale * sc, L.wScale * sc);
             m4.compose(v3, q, s3);
             pm.setMatrixAt(idx, m4);
@@ -2551,8 +2648,8 @@ export class CityTraffic {
             let colA = L.top, colB = L.pants;
             if (pt.name === 'head') { colA = L.skin; colB = L.hair; }
             else if (pt.name === 'torso') { colA = L.top; colB = L.pants; }
-            else if (pt.name === 'armL' || pt.name === 'armR') { colA = L.top; colB = L.skin; }
-            else if (pt.name === 'legL' || pt.name === 'legR') { colA = L.pants; colB = L.pants; }
+            else if (pt.name === 'armL' || pt.name === 'armR' || pt.name === 'foreL' || pt.name === 'foreR') { colA = L.top; colB = L.skin; }
+            else if (pt.name === 'legL' || pt.name === 'legR' || pt.name === 'shinL' || pt.name === 'shinR') { colA = L.pants; colB = L.pants; }
             else if (pt.name === 'accessory') { colA = L.acc; colB = L.top; }
             cA[j3] = colA.r; cA[j3 + 1] = colA.g; cA[j3 + 2] = colA.b;
             cB[j3] = colB.r; cB[j3 + 1] = colB.g; cB[j3 + 2] = colB.b;

@@ -11,6 +11,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { getLang } from '../i18n.js';
 import { isNight } from './daylight.js';
 import { QUALITY } from './quality.js'; // [ui-mobile]
+import { buildAirlinerInstancedGeometries } from './airliner_models.js';
 
 const STRIDE = 8;
 const M4 = new THREE.Matrix4();
@@ -282,23 +283,12 @@ function buildUnitGeometries() {
     [box(0.50, 0.74, 0.30), [0.92, 0.75, 0.18], mat(0, 4.04, 0)],
   ]);
 
-  // Narrow-body airliner (nose +Z), real size ~38 m
-  const white = [0.95, 0.95, 0.96];
-  const grey = [0.7, 0.72, 0.75];
-  const dark = [0.14, 0.15, 0.17];
-  G.plane = mergeParts([
-    [cyl(2, 2, 30, 14), white, mat(0, 3.2, 0, Math.PI / 2, 0, 0)],
-    [cone(2, 5, 14), white, mat(0, 3.2, 17.5, Math.PI / 2, 0, 0)],
-    [cone(2, 6.5, 14), white, mat(0, 3.5, -18.2, -Math.PI / 2, 0, 0)],
-    [box(34, 0.4, 5.5), grey, mat(0, 2.3, 0.5)],
-    [box(12, 0.3, 3), grey, mat(0, 4.0, -17.5)],
-    [cyl(0.95, 0.95, 3.6, 10), grey, mat(6, 1.4, 2.6, Math.PI / 2, 0, 0)],
-    [cyl(0.95, 0.95, 3.6, 10), grey, mat(-6, 1.4, 2.6, Math.PI / 2, 0, 0)],
-    [box(2.4, 0.5, 1.0), dark, mat(0, 4.3, 15.4)],
-    [box(0.3, 1.3, 0.3), dark, mat(0, 0.65, 13)],
-    [box(2.6, 1.0, 0.6), dark, mat(0, 0.5, -1)],
-  ]);
-  G.planeTail = mergeParts([[box(0.45, 6.5, 5), [1, 1, 1], mat(0, 8.0, -17.2)]]);
+  // High-detail Boeing 787 / Airbus A350 wide-body airliner (nose +Z)
+  {
+    const airlinerGeoms = buildAirlinerInstancedGeometries();
+    G.plane = airlinerGeoms.plane;
+    G.planeTail = airlinerGeoms.planeTail;
+  }
   // Cargo ship (bow +Z), 120 m; small vessels reuse it scaled down
   {
     const shape = new THREE.Shape();
@@ -333,6 +323,472 @@ function buildUnitGeometries() {
     [box(2.4, 0.9, 3), [0.18, 0.18, 0.2], mat(0, 0.75, 6.5)],
     [box(2.4, 0.9, 3), [0.18, 0.18, 0.2], mat(0, 0.75, -6.5)],
   ]);
+
+  // ---------------- Batch 1: Civic, Emergency, Postal, Healthcare & Education ----------------
+  // Parked black-and-white police patrol cruiser with red/blue roof lightbar
+  G.policeCruiser = mergeParts([
+    [box(1.92, 0.54, 4.65), [0.12, 0.14, 0.18], mat(0, 0.44, 0)],
+    [box(1.94, 0.52, 1.95), [0.96, 0.97, 0.99], mat(0, 0.45, 0)],
+    [box(1.66, 0.52, 2.05), [0.96, 0.97, 0.99], mat(0, 0.94, -0.10)],
+    [box(1.70, 0.38, 1.85), [0.16, 0.22, 0.30], mat(0, 0.92, -0.10)],
+    [box(0.55, 0.12, 0.24), [0.92, 0.14, 0.16], mat(-0.30, 1.25, -0.05)],
+    [box(0.55, 0.12, 0.24), [0.12, 0.38, 0.96], mat(0.30, 1.25, -0.05)],
+    [box(0.90, 0.42, 0.12), [0.15, 0.16, 0.18], mat(0, 0.42, 2.36)],
+    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(-0.88, 0.34, 1.42, 0, 0, Math.PI / 2)],
+    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(0.88, 0.34, 1.42, 0, 0, Math.PI / 2)],
+    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(-0.88, 0.34, -1.42, 0, 0, Math.PI / 2)],
+    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(0.88, 0.34, -1.42, 0, 0, Math.PI / 2)],
+  ]);
+
+  // Station entrance blue police lamp globe on a dark steel column with gold crest band
+  G.policeBeacon = mergeParts([
+    [cyl(0.26, 0.32, 0.45, 8), [0.24, 0.26, 0.30], mat(0, 0.225, 0)],
+    [cyl(0.11, 0.13, 2.85, 8), [0.16, 0.20, 0.28], mat(0, 1.65, 0)],
+    [cyl(0.22, 0.16, 0.18, 10), [0.92, 0.76, 0.18], mat(0, 3.12, 0)],
+    [cyl(0.38, 0.38, 0.62, 12), [0.14, 0.48, 0.98], mat(0, 3.50, 0)],
+    [cone(0.32, 0.22, 10), [0.16, 0.20, 0.28], mat(0, 3.90, 0)],
+  ]);
+
+  // Red fire engine apparatus with white roof ladder & chrome bumper
+  G.fireTruck = mergeParts([
+    [box(2.42, 2.15, 7.60), [0.84, 0.12, 0.14], mat(0, 1.52, -0.30)],
+    [box(2.44, 0.28, 7.64), [0.96, 0.97, 0.99], mat(0, 1.32, -0.30)],
+    [box(2.42, 2.25, 2.45), [0.88, 0.14, 0.15], mat(0, 1.58, 2.55)],
+    [box(2.30, 0.72, 0.18), [0.16, 0.22, 0.30], mat(0, 2.10, 3.72)],
+    [box(2.50, 0.34, 0.28), [0.85, 0.87, 0.90], mat(0, 0.56, 3.84)],
+    [box(1.90, 0.78, 3.90), [0.74, 0.77, 0.80], mat(0, 1.55, -0.80)],
+    // White aluminum roof extension ladder + red lightbar
+    [box(0.68, 0.18, 6.40), [0.95, 0.96, 0.98], mat(0.45, 2.75, -0.10)],
+    [box(1.55, 0.16, 0.32), [0.96, 0.16, 0.14], mat(0, 2.78, 3.25)],
+    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(-1.12, 0.48, 2.35, 0, 0, Math.PI / 2)],
+    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(1.12, 0.48, 2.35, 0, 0, Math.PI / 2)],
+    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(-1.12, 0.48, -2.25, 0, 0, Math.PI / 2)],
+    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(1.12, 0.48, -2.25, 0, 0, Math.PI / 2)],
+  ]);
+
+  // Red roll-up fire station apparatus bay door fascia
+  G.fireDoor = mergeParts([
+    [box(4.20, 4.10, 0.36), [0.90, 0.88, 0.84], mat(0, 2.05, 0)],
+    [box(3.60, 3.55, 0.42), [0.84, 0.12, 0.14], mat(0, 1.78, 0.04)],
+    [box(3.40, 0.52, 0.46), [0.22, 0.28, 0.36], mat(0, 2.35, 0.05)],
+    [box(4.36, 0.28, 0.48), [0.86, 0.14, 0.16], mat(0, 3.92, 0.06)],
+    [cyl(0.16, 0.16, 0.24, 8), [0.98, 0.22, 0.14], mat(0, 4.24, 0.18)],
+  ]);
+
+  // Iconic 3D street mailbox (arched blue USPS / red pillar box with mail slot, tinted by instance color)
+  G.postBox = mergeParts([
+    [box(0.64, 0.14, 0.64), [0.32, 0.34, 0.36], mat(0, 0.07, 0)],
+    [box(0.56, 1.05, 0.56), [1.0, 1.0, 1.0], mat(0, 0.62, 0)],
+    [cyl(0.28, 0.28, 0.56, 10), [1.0, 1.0, 1.0], mat(0, 1.14, 0, 0, 0, Math.PI / 2)],
+    [box(0.38, 0.08, 0.60), [0.14, 0.16, 0.20], mat(0, 1.02, 0)],
+    [box(0.34, 0.22, 0.59), [0.95, 0.96, 0.98], mat(0, 0.74, 0)],
+  ]);
+
+  // Yellow/dark-grey multi-column automated parcel locker bank with touchscreen console
+  G.parcelLocker = mergeParts([
+    [box(2.85, 0.12, 0.78), [0.34, 0.36, 0.38], mat(0, 0.06, 0)],
+    [box(2.72, 2.05, 0.64), [0.95, 0.78, 0.12], mat(0, 1.12, 0)],
+    [box(0.56, 2.07, 0.68), [0.20, 0.22, 0.26], mat(0, 1.12, 0)],
+    [box(0.36, 0.44, 0.71), [0.22, 0.76, 0.96], mat(0, 1.38, 0)],
+    [box(2.60, 0.04, 0.67), [0.76, 0.60, 0.08], mat(0, 0.65, 0)],
+    [box(2.60, 0.04, 0.67), [0.76, 0.60, 0.08], mat(0, 1.15, 0)],
+    [box(2.60, 0.04, 0.67), [0.76, 0.60, 0.08], mat(0, 1.65, 0)],
+    [box(2.92, 0.14, 0.92), [0.22, 0.24, 0.28], mat(0, 2.20, 0.08)],
+  ]);
+
+  // Medical / dental / veterinary cross canopy pylon totem sign
+  G.clinicCross = mergeParts([
+    [box(1.10, 0.22, 0.68), [0.68, 0.72, 0.76], mat(0, 0.11, 0)],
+    [box(0.88, 3.20, 0.32), [0.96, 0.98, 1.0], mat(0, 1.78, 0)],
+    [box(0.94, 0.36, 0.36), [0.08, 0.56, 0.78], mat(0, 3.32, 0)],
+    [box(1.15, 0.38, 0.44), [0.08, 0.62, 0.82], mat(0, 2.45, 0)],
+    [box(0.38, 1.15, 0.44), [0.08, 0.62, 0.82], mat(0, 2.45, 0)],
+    [box(0.92, 0.18, 0.18), [1.0, 1.0, 1.0], mat(0, 2.45, 0.16)],
+    [box(0.18, 0.92, 0.18), [1.0, 1.0, 1.0], mat(0, 2.45, 0.16)],
+  ]);
+
+  // Tall 9m silver/white flagpole with fluttering civic/national banner and stone pedestal
+  G.flagpole = mergeParts([
+    [cyl(0.62, 0.74, 0.42, 8), [0.78, 0.76, 0.72], mat(0, 0.21, 0)],
+    [cyl(0.36, 0.46, 0.55, 8), [0.86, 0.85, 0.82], mat(0, 0.68, 0)],
+    [cyl(0.045, 0.095, 8.6, 8), [0.92, 0.94, 0.96], mat(0, 4.80, 0)],
+    [cyl(0.12, 0.12, 0.22, 8), [0.95, 0.78, 0.18], mat(0, 9.18, 0)],
+    [box(1.15, 1.10, 0.06), [0.86, 0.14, 0.16], mat(0.62, 8.35, 0)],
+    [box(0.95, 1.04, 0.06), [0.86, 0.14, 0.16], mat(1.62, 8.28, 0.12, 0, 0.22, 0)],
+    [box(0.62, 0.52, 0.07), [0.12, 0.32, 0.76], mat(0.36, 8.62, 0)],
+  ]);
+
+  // Tall concrete/steel perimeter guard watchtower with observation cabin and searchlight roof
+  G.watchtower = mergeParts([
+    [box(3.2, 0.45, 3.2), [0.56, 0.58, 0.60], mat(0, 0.225, 0)],
+    [box(2.1, 7.6, 2.1), [0.72, 0.73, 0.70], mat(0, 4.20, 0)],
+    [box(3.8, 0.35, 3.8), [0.48, 0.50, 0.52], mat(0, 8.15, 0)],
+    [box(3.6, 0.95, 3.6), [0.64, 0.66, 0.64], mat(0, 8.75, 0)],
+    [box(3.1, 1.35, 3.1), [0.22, 0.30, 0.38], mat(0, 9.75, 0)],
+    [cone(2.65, 1.35, 8), [0.32, 0.35, 0.38], mat(0, 11.05, 0, 0, Math.PI / 8, 0)],
+    [cyl(0.24, 0.20, 0.45, 8), [0.98, 0.92, 0.55], mat(0.85, 8.95, 1.75, Math.PI / 3, 0, 0)],
+  ]);
+
+  // ---------------- Batch 4: Street Furniture, Micro-Mobility, Barriers, Sanitation & Wayfinding ----------------
+  // 3-hoop stainless steel Sheffield bike rack with 2 colorful parked 3D bicycles
+  {
+    const br = [
+      [box(2.6, 0.07, 1.5), [0.58, 0.60, 0.62], mat(0, 0.035, 0)],
+    ];
+    for (const hx of [-0.85, 0, 0.85]) {
+      br.push(
+        [cyl(0.035, 0.035, 0.78, 6), [0.78, 0.81, 0.85], mat(hx, 0.42, -0.36)],
+        [cyl(0.035, 0.035, 0.78, 6), [0.78, 0.81, 0.85], mat(hx, 0.42, 0.36)],
+        [box(0.07, 0.07, 0.78), [0.78, 0.81, 0.85], mat(hx, 0.80, 0)],
+      );
+    }
+    for (const [bx, col] of [[-0.42, [0.90, 0.22, 0.18]], [0.42, [0.14, 0.62, 0.88]]]) {
+      br.push(
+        [cyl(0.28, 0.28, 0.05, 10), [0.15, 0.16, 0.18], mat(bx, 0.32, -0.42, 0, 0, Math.PI / 2)],
+        [cyl(0.28, 0.28, 0.05, 10), [0.15, 0.16, 0.18], mat(bx, 0.32, 0.42, 0, 0, Math.PI / 2)],
+        [box(0.07, 0.42, 0.78), col, mat(bx, 0.48, 0)],
+        [box(0.42, 0.05, 0.05), [0.76, 0.78, 0.82], mat(bx, 0.84, -0.34)],
+        [box(0.14, 0.06, 0.22), [0.16, 0.16, 0.18], mat(bx, 0.76, 0.22)],
+      );
+    }
+    G.bikeRack = mergeParts(br);
+  }
+
+  // Painted parking bay with 2 parked 3D motorcycles/scooters
+  {
+    const mb = [
+      [box(2.8, 0.05, 2.1), [0.28, 0.30, 0.33], mat(0, 0.025, 0)],
+      [box(2.82, 0.06, 0.10), [0.94, 0.95, 0.96], mat(0, 0.03, -1.0)],
+      [box(2.82, 0.06, 0.10), [0.94, 0.95, 0.96], mat(0, 0.03, 1.0)],
+      [box(0.10, 0.06, 2.0), [0.94, 0.95, 0.96], mat(-1.36, 0.03, 0)],
+      [box(0.10, 0.06, 2.0), [0.94, 0.95, 0.96], mat(0, 0.03, 0)],
+      [box(0.10, 0.06, 2.0), [0.94, 0.95, 0.96], mat(1.36, 0.03, 0)],
+    ];
+    for (const [mx, col] of [[-0.68, [0.86, 0.16, 0.18]], [0.68, [0.18, 0.24, 0.34]]]) {
+      mb.push(
+        [cyl(0.28, 0.28, 0.14, 10), [0.14, 0.15, 0.16], mat(mx, 0.30, -0.58, 0, 0, Math.PI / 2)],
+        [cyl(0.28, 0.28, 0.14, 10), [0.14, 0.15, 0.16], mat(mx, 0.30, 0.58, 0, 0, Math.PI / 2)],
+        [box(0.38, 0.48, 1.25), col, mat(mx, 0.54, 0)],
+        [box(0.34, 0.16, 0.68), [0.16, 0.17, 0.19], mat(mx, 0.82, 0.10)],
+        [box(0.32, 0.52, 0.18), col, mat(mx, 0.78, -0.48, -0.25, 0, 0)],
+        [box(0.62, 0.06, 0.06), [0.76, 0.78, 0.80], mat(mx, 1.04, -0.42)],
+        [box(0.36, 0.30, 0.34), [0.22, 0.24, 0.26], mat(mx, 0.96, 0.62)],
+      );
+    }
+    G.motoBay = mergeParts(mb);
+  }
+
+  // Real OSM bus_stop / bus_station 3D glazed transit shelter with cantilevered roof, bench, route map panel & flag pole
+  G.realBusStop = mergeParts([
+    [box(4.4, 0.10, 1.85), [0.66, 0.68, 0.70], mat(0, 0.05, 0)],
+    [cyl(0.09, 0.09, 2.55, 8), [0.22, 0.25, 0.30], mat(-1.65, 1.32, -0.68)],
+    [cyl(0.09, 0.09, 2.55, 8), [0.22, 0.25, 0.30], mat(1.65, 1.32, -0.68)],
+    [box(3.50, 2.15, 0.06), [0.58, 0.76, 0.88], mat(0, 1.28, -0.68)],
+    [box(0.95, 2.15, 1.25), [0.18, 0.22, 0.28], mat(1.65, 1.28, -0.08)],
+    [box(1.01, 1.55, 0.95), [0.92, 0.95, 0.99], mat(1.65, 1.32, -0.08)],
+    [box(2.20, 0.10, 0.42), [0.68, 0.46, 0.24], mat(-0.25, 0.52, -0.42)],
+    [box(0.12, 0.45, 0.38), [0.24, 0.26, 0.30], mat(-1.10, 0.28, -0.42)],
+    [box(0.12, 0.45, 0.38), [0.24, 0.26, 0.30], mat(0.60, 0.28, -0.42)],
+    [box(4.20, 0.16, 1.75), [0.20, 0.23, 0.28], mat(0, 2.62, -0.04)],
+    [box(4.26, 0.08, 0.14), [0.14, 0.52, 0.92], mat(0, 2.64, 0.82)],
+    // Transit stop flag pole beside shelter
+    [cyl(0.05, 0.05, 2.95, 8), [0.75, 0.78, 0.82], mat(-2.05, 1.52, 0.55)],
+    [box(0.52, 0.62, 0.10), [0.12, 0.48, 0.88], mat(-2.05, 2.68, 0.55)],
+  ]);
+
+  // Security / parking boom barrier arm with orange/white control pedestal
+  G.liftGate = mergeParts([
+    [box(0.46, 1.15, 0.46), [0.92, 0.42, 0.12], mat(-1.65, 0.58, 0)],
+    [box(0.48, 0.26, 0.48), [0.18, 0.20, 0.24], mat(-1.65, 1.08, 0)],
+    [box(1.15, 0.11, 0.08), [0.92, 0.16, 0.16], mat(-0.90, 0.92, 0)],
+    [box(1.15, 0.11, 0.08), [0.96, 0.97, 0.98], mat(0.25, 0.92, 0)],
+    [box(1.15, 0.11, 0.08), [0.92, 0.16, 0.16], mat(1.40, 0.92, 0)],
+    [box(0.14, 0.92, 0.14), [0.85, 0.86, 0.88], mat(1.85, 0.46, 0)],
+  ]);
+
+  // Yellow/galvanized steel U-frame chicane cycle barrier
+  G.cycleBarrier = mergeParts([
+    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(-0.75, 0.51, -0.28)],
+    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(0.25, 0.51, -0.28)],
+    [box(1.06, 0.09, 0.09), [0.94, 0.76, 0.12], mat(-0.25, 0.98, -0.28)],
+    [box(0.88, 0.10, 0.10), [0.88, 0.16, 0.16], mat(-0.25, 0.62, -0.28)],
+    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(-0.25, 0.51, 0.28)],
+    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(0.75, 0.51, 0.28)],
+    [box(1.06, 0.09, 0.09), [0.94, 0.76, 0.12], mat(0.25, 0.98, 0.28)],
+    [box(0.88, 0.10, 0.10), [0.88, 0.16, 0.16], mat(0.25, 0.62, 0.28)],
+  ]);
+
+  // Trio of color-coded (blue paper, green glass, yellow plastic) domed recycling igloo bins
+  G.recyclingBank = mergeParts([
+    [box(2.90, 0.10, 1.15), [0.62, 0.64, 0.66], mat(0, 0.05, 0)],
+    // Blue bin
+    [cyl(0.42, 0.40, 1.10, 10), [0.14, 0.42, 0.84], mat(-0.92, 0.62, 0)],
+    [cone(0.42, 0.34, 10), [0.16, 0.48, 0.92], mat(-0.92, 1.34, 0)],
+    // Green bin
+    [cyl(0.42, 0.40, 1.10, 10), [0.16, 0.62, 0.32], mat(0, 0.62, 0)],
+    [cone(0.42, 0.34, 10), [0.20, 0.70, 0.36], mat(0, 1.34, 0)],
+    // Yellow bin
+    [cyl(0.42, 0.40, 1.10, 10), [0.92, 0.74, 0.12], mat(0.92, 0.62, 0)],
+    [cone(0.42, 0.34, 10), [0.96, 0.80, 0.16], mat(0.92, 1.34, 0)],
+  ]);
+
+  // Sleek silver/sage JCDecaux-style public restroom pod with curved roof and blue WC badge
+  G.toiletKiosk = mergeParts([
+    [cyl(1.38, 1.42, 0.16, 12), [0.46, 0.48, 0.50], mat(0, 0.08, 0)],
+    [cyl(1.22, 1.22, 2.45, 12), [0.68, 0.74, 0.70], mat(0, 1.35, 0)],
+    [box(0.88, 2.05, 0.18), [0.78, 0.82, 0.85], mat(0, 1.15, 1.16)],
+    [cyl(1.42, 1.35, 0.24, 12), [0.30, 0.34, 0.38], mat(0, 2.66, 0)],
+    [box(0.68, 0.36, 0.16), [0.12, 0.46, 0.88], mat(0, 2.38, 1.24)],
+    [box(0.44, 0.14, 0.18), [0.96, 0.98, 1.0], mat(0, 2.38, 1.25)],
+  ]);
+
+  // Pedestal park drinking fountain / bottle-filler station with chrome basin
+  G.waterFountain = mergeParts([
+    [cyl(0.34, 0.38, 0.12, 10), [0.58, 0.60, 0.62], mat(0, 0.06, 0)],
+    [cyl(0.14, 0.18, 0.98, 10), [0.18, 0.44, 0.34], mat(0, 0.58, 0)],
+    [cyl(0.28, 0.16, 0.18, 10), [0.84, 0.87, 0.90], mat(0, 1.10, 0)],
+    [box(0.18, 0.42, 0.12), [0.18, 0.44, 0.34], mat(0, 1.28, -0.14)],
+    [cyl(0.14, 0.12, 0.10, 8), [0.82, 0.85, 0.88], mat(0, 0.18, 0.22)],
+  ]);
+
+  // Iconic red/glazed street telephone kiosk booth
+  G.phoneBooth = mergeParts([
+    [box(1.06, 0.12, 1.06), [0.28, 0.30, 0.32], mat(0, 0.06, 0)],
+    [box(0.96, 2.25, 0.96), [0.84, 0.12, 0.14], mat(0, 1.22, 0)],
+    [box(1.00, 1.45, 0.72), [0.62, 0.78, 0.88], mat(0, 1.28, 0)],
+    [box(0.72, 1.45, 1.00), [0.62, 0.78, 0.88], mat(0, 1.28, 0)],
+    [box(0.98, 0.22, 0.98), [0.96, 0.97, 0.98], mat(0, 2.18, 0)],
+    [cone(0.72, 0.34, 4), [0.84, 0.12, 0.14], mat(0, 2.48, 0, 0, Math.PI / 4, 0)],
+  ]);
+
+  // Standalone illuminated street banking ATM totem kiosk
+  G.streetAtm = mergeParts([
+    [box(0.92, 0.14, 0.76), [0.30, 0.32, 0.36], mat(0, 0.07, 0)],
+    [box(0.82, 2.15, 0.58), [0.18, 0.24, 0.34], mat(0, 1.18, 0)],
+    [box(0.86, 0.38, 0.64), [0.12, 0.46, 0.88], mat(0, 2.12, 0)],
+    [box(0.56, 0.46, 0.62), [0.36, 0.88, 0.98], mat(0, 1.42, 0.04)],
+    [box(0.58, 0.10, 0.68), [0.76, 0.79, 0.82], mat(0, 1.12, 0.08)],
+  ]);
+
+  // Timber-framed glazed park/city map information board with pitched roof cap
+  G.infoBoard = mergeParts([
+    [cyl(0.08, 0.08, 2.25, 8), [0.46, 0.30, 0.18], mat(-0.88, 1.12, 0)],
+    [cyl(0.08, 0.08, 2.25, 8), [0.46, 0.30, 0.18], mat(0.88, 1.12, 0)],
+    [box(1.92, 1.18, 0.14), [0.52, 0.35, 0.20], mat(0, 1.48, 0)],
+    [box(1.68, 0.96, 0.18), [0.92, 0.94, 0.88], mat(0, 1.48, 0)],
+    [box(0.65, 0.58, 0.20), [0.28, 0.64, 0.42], mat(-0.36, 1.46, 0)],
+    [box(0.65, 0.32, 0.20), [0.22, 0.54, 0.82], mat(0.38, 1.60, 0)],
+    [box(2.25, 0.22, 0.68), [0.36, 0.24, 0.16], mat(0, 2.22, 0)],
+  ]);
+
+  // Wooden trail guidepost with 3 directional arrow sign blades
+  G.guidepost = mergeParts([
+    [cyl(0.22, 0.26, 0.28, 8), [0.52, 0.50, 0.48], mat(0, 0.14, 0)],
+    [cyl(0.075, 0.085, 2.65, 8), [0.48, 0.32, 0.18], mat(0, 1.42, 0)],
+    [box(0.95, 0.18, 0.06), [0.95, 0.78, 0.14], mat(0.38, 2.48, 0)],
+    [box(0.95, 0.18, 0.06), [0.96, 0.97, 0.95], mat(-0.32, 2.22, 0.18, 0, 0.65, 0)],
+    [box(0.88, 0.18, 0.06), [0.18, 0.58, 0.32], mat(0.24, 1.96, -0.24, 0, -0.75, 0)],
+  ]);
+
+  // ---------------- Batch 5: Religion Archetypes, Monuments, Public Art, Castles, Viewpoints & Cliffs ----------------
+  // Mosque: golden/emerald ribbed onion dome + slender cylindrical minaret tower with crescent finial
+  G.worshipMosque = mergeParts([
+    [box(3.4, 2.2, 3.4), [0.92, 0.89, 0.82], mat(0, 1.10, 0)],
+    [cyl(1.45, 1.55, 0.85, 12), [0.86, 0.83, 0.76], mat(0, 2.55, 0)],
+    [cyl(1.52, 1.25, 1.25, 12), [0.12, 0.58, 0.46], mat(0, 3.55, 0)],
+    [cone(1.52, 1.45, 12), [0.92, 0.74, 0.18], mat(0, 4.88, 0)],
+    [cyl(0.06, 0.06, 0.85, 6), [0.96, 0.80, 0.20], mat(0, 5.95, 0)],
+    // Slender minaret tower at corner
+    [cyl(0.36, 0.44, 6.4, 10), [0.92, 0.89, 0.82], mat(2.15, 3.20, 1.85)],
+    [cyl(0.54, 0.50, 0.34, 10), [0.14, 0.58, 0.46], mat(2.15, 5.35, 1.85)],
+    [cone(0.38, 1.35, 10), [0.92, 0.74, 0.18], mat(2.15, 7.05, 1.85)],
+  ]);
+
+  // Pagoda: 3-tiered curved vermilion/charcoal pagoda eaves + golden sorin finial spire
+  G.worshipPagoda = mergeParts([
+    [box(3.8, 0.65, 3.8), [0.68, 0.66, 0.62], mat(0, 0.325, 0)],
+    // Tier 1
+    [box(2.5, 1.45, 2.5), [0.78, 0.16, 0.14], mat(0, 1.35, 0)],
+    [box(4.1, 0.28, 4.1), [0.18, 0.20, 0.24], mat(0, 2.18, 0)],
+    [cone(2.95, 0.55, 4), [0.22, 0.24, 0.28], mat(0, 2.55, 0, 0, Math.PI / 4, 0)],
+    // Tier 2
+    [box(1.95, 1.25, 1.95), [0.78, 0.16, 0.14], mat(0, 3.35, 0)],
+    [box(3.3, 0.25, 3.3), [0.18, 0.20, 0.24], mat(0, 4.05, 0)],
+    [cone(2.38, 0.48, 4), [0.22, 0.24, 0.28], mat(0, 4.38, 0, 0, Math.PI / 4, 0)],
+    // Tier 3
+    [box(1.45, 1.10, 1.45), [0.78, 0.16, 0.14], mat(0, 5.05, 0)],
+    [box(2.55, 0.22, 2.55), [0.18, 0.20, 0.24], mat(0, 5.68, 0)],
+    [cone(1.85, 0.52, 4), [0.22, 0.24, 0.28], mat(0, 6.02, 0, 0, Math.PI / 4, 0)],
+    // Golden finial spire
+    [cyl(0.06, 0.14, 1.65, 8), [0.94, 0.78, 0.18], mat(0, 6.98, 0)],
+  ]);
+
+  // Synagogue: stepped limestone facade crown + copper dome + twin Decalogue tablets & Star emblem
+  G.worshipSynagogue = mergeParts([
+    [box(3.2, 2.5, 2.8), [0.90, 0.85, 0.74], mat(0, 1.25, 0)],
+    [box(2.4, 0.75, 0.65), [0.92, 0.87, 0.76], mat(0, 2.85, 1.10)],
+    [cyl(1.15, 1.22, 0.95, 10), [0.24, 0.54, 0.48], mat(0, 2.95, -0.15)],
+    [cone(1.15, 0.95, 10), [0.28, 0.60, 0.52], mat(0, 3.88, -0.15)],
+    // Twin tablets + blue/gold emblem on front gable
+    [box(0.62, 0.82, 0.18), [0.96, 0.95, 0.90], mat(0, 3.35, 1.38)],
+    [box(0.52, 0.52, 0.20), [0.14, 0.44, 0.86], mat(0, 2.15, 1.42, 0, 0, Math.PI / 4)],
+  ]);
+
+  // Hindu / Sikh Temple: colorful stepped pyramid Gopuram temple tower with golden Kalasha finial
+  G.worshipHindu = mergeParts([
+    [box(3.6, 0.75, 3.0), [0.84, 0.76, 0.64], mat(0, 0.38, 0)],
+    [box(3.1, 1.25, 2.5), [0.86, 0.44, 0.24], mat(0, 1.35, 0)],
+    [box(2.6, 1.15, 2.1), [0.22, 0.62, 0.68], mat(0, 2.52, 0)],
+    [box(2.1, 1.05, 1.7), [0.90, 0.66, 0.18], mat(0, 3.58, 0)],
+    [box(1.6, 0.95, 1.3), [0.82, 0.24, 0.28], mat(0, 4.55, 0)],
+    [cyl(0.55, 0.75, 0.65, 10), [0.94, 0.78, 0.18], mat(0, 5.32, 0)],
+    [cyl(0.12, 0.22, 0.75, 8), [0.98, 0.82, 0.20], mat(0, 5.95, 0)],
+  ]);
+
+  // Modern brushed-bronze/corten geometric abstract sculpture on a granite pedestal
+  G.artworkSculpture = mergeParts([
+    [box(1.85, 0.35, 1.85), [0.28, 0.30, 0.32], mat(0, 0.175, 0)],
+    [box(1.35, 0.85, 1.35), [0.36, 0.38, 0.42], mat(0, 0.75, 0)],
+    [box(0.38, 2.25, 0.38), [1.0, 1.0, 1.0], mat(-0.28, 2.15, 0, 0, 0, -0.38)],
+    [box(0.38, 2.35, 0.38), [1.0, 1.0, 1.0], mat(0.28, 2.25, 0, 0.32, 0, 0.38)],
+    [box(1.45, 0.36, 0.36), [0.94, 0.78, 0.24], mat(0, 3.05, 0, 0, 0.55, 0.22)],
+  ]);
+
+  // Tall stepped stone memorial obelisk on a classical plinth
+  G.monumentObelisk = mergeParts([
+    [box(3.8, 0.45, 3.8), [0.72, 0.71, 0.68], mat(0, 0.225, 0)],
+    [box(2.7, 0.65, 2.7), [0.78, 0.77, 0.73], mat(0, 0.75, 0)],
+    [box(1.75, 1.45, 1.75), [0.84, 0.82, 0.78], mat(0, 1.78, 0)],
+    [box(1.82, 0.65, 0.65), [0.46, 0.36, 0.22], mat(0, 1.78, 0)],
+    [box(0.65, 0.65, 1.82), [0.46, 0.36, 0.22], mat(0, 1.78, 0)],
+    [cyl(0.42, 0.72, 6.2, 4), [0.88, 0.86, 0.82], mat(0, 5.55, 0, 0, Math.PI / 4, 0)],
+    [cone(0.42, 0.92, 4), [0.95, 0.78, 0.20], mat(0, 9.10, 0, 0, Math.PI / 4, 0)],
+  ]);
+
+  // Crenellated medieval stone keep tower with battlements & corner turrets
+  {
+    const ck = [
+      [box(6.4, 6.2, 6.4), [0.68, 0.65, 0.58], mat(0, 3.10, 0)],
+      [box(6.8, 0.65, 6.8), [0.62, 0.59, 0.53], mat(0, 6.42, 0)],
+      [box(1.65, 2.45, 0.45), [0.22, 0.20, 0.18], mat(0, 1.22, 3.12)],
+    ];
+    for (const [tx, tz] of [[-3.1, -3.1], [3.1, -3.1], [-3.1, 3.1], [3.1, 3.1]]) {
+      ck.push(
+        [cyl(0.95, 1.05, 7.8, 8), [0.64, 0.61, 0.55], mat(tx, 3.90, tz)],
+        [cone(1.15, 1.65, 8), [0.28, 0.32, 0.38], mat(tx, 8.60, tz)],
+      );
+    }
+    G.castleKeep = mergeParts(ck);
+  }
+
+  // Timber observation deck platform with safety railing and chrome coin-operated binocular telescope
+  G.viewpointDeck = mergeParts([
+    [box(3.6, 0.28, 2.8), [0.58, 0.40, 0.24], mat(0, 0.24, 0)],
+    [box(3.6, 0.08, 0.08), [0.76, 0.79, 0.82], mat(0, 1.12, 1.34)],
+    [box(0.08, 0.85, 0.08), [0.76, 0.79, 0.82], mat(-1.72, 0.70, 1.34)],
+    [box(0.08, 0.85, 0.08), [0.76, 0.79, 0.82], mat(0, 0.70, 1.34)],
+    [box(0.08, 0.85, 0.08), [0.76, 0.79, 0.82], mat(1.72, 0.70, 1.34)],
+    // Coin-operated binocular telescope on pedestal
+    [cyl(0.08, 0.14, 1.18, 8), [0.72, 0.75, 0.78], mat(0, 0.88, 0.75)],
+    [box(0.32, 0.18, 0.46), [0.88, 0.90, 0.94], mat(0, 1.52, 0.82)],
+  ]);
+
+  // Stacked stone summit cairn + white trigonometric survey pillar + summit cross
+  G.summitCairn = mergeParts([
+    [cyl(1.35, 1.65, 0.55, 8), [0.54, 0.52, 0.48], mat(0, 0.275, 0)],
+    [cyl(0.95, 1.28, 0.55, 8), [0.60, 0.58, 0.54], mat(0, 0.80, 0)],
+    [cyl(0.58, 0.88, 0.50, 7), [0.66, 0.64, 0.60], mat(0, 1.30, 0)],
+    [box(0.38, 1.15, 0.38), [0.95, 0.96, 0.98], mat(0.68, 0.82, 0)],
+    [box(0.14, 2.35, 0.14), [0.46, 0.32, 0.18], mat(0, 2.55, 0)],
+    [box(0.98, 0.14, 0.14), [0.46, 0.32, 0.18], mat(0, 3.18, 0)],
+  ]);
+
+  // Jagged stratified grey/ochre 3D rock escarpment outcrop along cliff lines
+  G.cliffRock = mergeParts([
+    [box(9.5, 4.2, 3.6), [0.52, 0.50, 0.46], mat(0, 2.0, 0, 0.08, 0, -0.05)],
+    [box(7.8, 3.4, 2.8), [0.60, 0.57, 0.51], mat(-0.6, 4.4, -0.3, -0.06, 0.12, 0.06)],
+    [box(5.4, 2.6, 2.2), [0.46, 0.44, 0.41], mat(1.2, 6.0, 0.2, 0.05, -0.15, -0.08)],
+    [cone(3.2, 3.8, 6), [0.56, 0.53, 0.48], mat(-1.8, 5.8, 0.4, 0, 0.4, 0)],
+  ]);
+
+  // ---------------- Batch 6: Aviation Gates/Towers, Maritime Terminals, Industrial ----------------
+  // Articulated corrugated passenger boarding bridge (aeroway=gate) on wheeled hydraulic lift columns
+  G.jetbridge = mergeParts([
+    [cyl(2.1, 2.1, 5.2, 10), [0.82, 0.84, 0.86], mat(0, 2.6, -6.5)],
+    [box(2.5, 2.6, 13.5), [0.86, 0.88, 0.90], mat(0, 4.4, 0.5)],
+    [box(2.56, 1.05, 11.8), [0.24, 0.38, 0.52], mat(0, 4.55, 0.5)],
+    [cyl(0.22, 0.22, 4.2, 8), [0.52, 0.55, 0.58], mat(-1.05, 2.1, 4.8)],
+    [cyl(0.22, 0.22, 4.2, 8), [0.52, 0.55, 0.58], mat(1.05, 2.1, 4.8)],
+    [box(2.65, 0.38, 0.95), [0.20, 0.22, 0.24], mat(0, 0.25, 4.8)],
+    [box(2.75, 2.85, 1.35), [0.18, 0.20, 0.22], mat(0, 4.4, 7.4)],
+  ]);
+
+  // Tall 38m white flared Airport Control Tower (ATC) with 360-deg angled blue-glass cab & rooftop radar bar
+  G.atcTower = mergeParts([
+    [box(10.5, 4.8, 10.5), [0.84, 0.85, 0.87], mat(0, 2.4, 0)],
+    [cyl(2.3, 3.4, 24.5, 12), [0.92, 0.93, 0.95], mat(0, 16.8, 0)],
+    [cyl(4.4, 2.4, 3.2, 12), [0.88, 0.90, 0.92], mat(0, 30.2, 0)],
+    [cyl(4.8, 4.3, 3.6, 12), [0.18, 0.38, 0.58], mat(0, 33.4, 0)],
+    [cyl(5.1, 4.8, 0.85, 12), [0.94, 0.95, 0.97], mat(0, 35.5, 0)],
+    [cyl(0.35, 0.45, 2.2, 8), [0.75, 0.78, 0.80], mat(0, 36.8, 0)],
+    [box(3.8, 0.42, 0.55), [0.92, 0.22, 0.16], mat(0, 37.9, 0)],
+  ]);
+
+  // Blue-and-white maritime passenger waiting pavilion + covered boarding gangway arch
+  G.ferryCanopy = mergeParts([
+    [box(9.6, 0.35, 5.8), [0.72, 0.74, 0.76], mat(0, 0.18, 0)],
+    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(-3.8, 1.9, -2.0)],
+    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(3.8, 1.9, -2.0)],
+    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(-3.8, 1.9, 2.0)],
+    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(3.8, 1.9, 2.0)],
+    [box(10.4, 0.45, 6.6), [0.95, 0.97, 0.99], mat(0, 3.95, 0)],
+    [box(10.6, 0.32, 6.8), [0.12, 0.44, 0.82], mat(0, 4.30, 0)],
+    [box(3.2, 2.6, 4.2), [0.16, 0.52, 0.88], mat(0, 1.5, 4.4)],
+  ]);
+
+  // Timber floating finger-dock T-pontoon with white mooring cleats & twin sailboat masts
+  G.marinaPontoon = mergeParts([
+    [box(2.4, 0.36, 14.0), [0.62, 0.45, 0.28], mat(0, 0.22, 0)],
+    [box(9.2, 0.36, 2.2), [0.62, 0.45, 0.28], mat(0, 0.22, 5.8)],
+    // 2 moored white yacht hulls + aluminum masts
+    [box(2.4, 0.95, 7.2), [0.95, 0.96, 0.98], mat(-2.9, 0.45, -0.5)],
+    [box(1.8, 0.55, 2.8), [0.22, 0.46, 0.78], mat(-2.9, 1.05, -0.8)],
+    [cyl(0.06, 0.08, 9.2, 6), [0.90, 0.92, 0.95], mat(-2.9, 5.1, 0.2)],
+    [box(2.4, 0.95, 7.2), [0.95, 0.96, 0.98], mat(2.9, 0.45, -0.5)],
+    [box(1.8, 0.55, 2.8), [0.82, 0.22, 0.18], mat(2.9, 1.05, -0.8)],
+    [cyl(0.06, 0.08, 9.2, 6), [0.90, 0.92, 0.95], mat(2.9, 5.1, 0.2)],
+  ]);
+
+  // Twin cylindrical white/silver petrochemical storage tanks / grain silos with catwalk bridge
+  G.industrialSilo = mergeParts([
+    [box(12.5, 0.35, 6.8), [0.58, 0.60, 0.62], mat(0, 0.18, 0)],
+    [cyl(2.6, 2.6, 9.2, 12), [0.88, 0.90, 0.92], mat(-3.1, 4.7, 0)],
+    [cone(2.65, 1.2, 12), [0.76, 0.79, 0.82], mat(-3.1, 9.9, 0)],
+    [cyl(2.6, 2.6, 9.2, 12), [0.88, 0.90, 0.92], mat(3.1, 4.7, 0)],
+    [cone(2.65, 1.2, 12), [0.76, 0.79, 0.82], mat(3.1, 9.9, 0)],
+    [box(6.6, 0.45, 0.85), [0.42, 0.45, 0.48], mat(0, 9.4, 0)],
+  ]);
+
+  // Tall 36m yellow lattice Tower Crane with 28m horizontal jib, counterweight & hanging hook cable
+  G.towerCrane = mergeParts([
+    [box(4.2, 0.85, 4.2), [0.52, 0.54, 0.56], mat(0, 0.42, 0)],
+    [box(1.55, 32.0, 1.55), [0.94, 0.74, 0.10], mat(0, 16.4, 0)],
+    [box(2.2, 2.1, 2.2), [0.20, 0.24, 0.28], mat(0, 31.2, 0.6)],
+    [box(1.35, 1.35, 28.0), [0.94, 0.74, 0.10], mat(0, 32.8, 5.5)],
+    [box(2.1, 1.6, 3.2), [0.62, 0.64, 0.66], mat(0, 32.6, -7.2)],
+    [cone(0.95, 4.2, 4), [0.94, 0.74, 0.10], mat(0, 35.5, 0, 0, Math.PI / 4, 0)],
+    [box(1.4, 0.55, 1.6), [0.24, 0.26, 0.28], mat(0, 31.9, 13.5)],
+    [cyl(0.05, 0.05, 12.0, 6), [0.22, 0.24, 0.26], mat(0, 25.8, 13.5)],
+    [box(0.65, 0.85, 0.45), [0.92, 0.32, 0.12], mat(0, 19.6, 13.5)],
+  ]);
+
+  // White geodesic radome sphere on concrete pedestal inside military zones
+  G.radarDome = mergeParts([
+    [cyl(3.4, 3.8, 3.2, 10), [0.68, 0.70, 0.68], mat(0, 1.6, 0)],
+    [cyl(3.8, 3.6, 0.45, 10), [0.86, 0.24, 0.18], mat(0, 3.3, 0)],
+    [new THREE.IcosahedronGeometry(4.2, 1), [0.95, 0.97, 0.99], mat(0, 6.8, 0)],
+  ]);
+
   return G;
 }
 
@@ -358,6 +814,48 @@ const KINDS = {
   plane: [160, 3000, 'std', true],
   planeTail: [160, 3000, 'std', true],
   ship: [80, 3000, 'std', true],
+  // Batch 1: Civic, Emergency, Postal, Healthcare & Education
+  policeCruiser: [320, 750, 'std', true],
+  policeBeacon: [320, 700, 'sign', false],
+  fireTruck: [240, 850, 'std', true],
+  fireDoor: [240, 800, 'std', false],
+  postBox: [1200, 500, 'std', false],
+  parcelLocker: [400, 550, 'std', false],
+  clinicCross: [900, 700, 'sign', false],
+  flagpole: [900, 950, 'std', true],
+  watchtower: [120, 1400, 'std', true],
+  // Batch 4: Street Furniture, Micro-Mobility, Barriers, Sanitation & Wayfinding
+  bikeRack: [1800, 480, 'std', false],
+  motoBay: [800, 500, 'std', false],
+  realBusStop: [1400, 650, 'std', true],
+  liftGate: [1200, 520, 'std', false],
+  cycleBarrier: [600, 450, 'std', false],
+  recyclingBank: [1400, 480, 'std', false],
+  toiletKiosk: [800, 600, 'std', true],
+  waterFountain: [900, 450, 'std', false],
+  phoneBooth: [700, 520, 'std', false],
+  streetAtm: [700, 520, 'sign', false],
+  infoBoard: [900, 550, 'std', false],
+  guidepost: [900, 500, 'std', false],
+  // Batch 5: Religion Archetypes, Monuments, Public Art, Castles, Viewpoints & Cliffs
+  worshipMosque: [240, 1200, 'std', true],
+  worshipPagoda: [240, 1200, 'std', true],
+  worshipSynagogue: [200, 1100, 'std', true],
+  worshipHindu: [200, 1100, 'std', true],
+  artworkSculpture: [800, 650, 'std', true],
+  monumentObelisk: [320, 1100, 'std', true],
+  castleKeep: [160, 1600, 'std', true],
+  viewpointDeck: [400, 900, 'std', true],
+  summitCairn: [320, 1500, 'std', true],
+  cliffRock: [1200, 1400, 'std', true],
+  // Batch 6: Aviation Gates/Towers, Maritime Terminals, Industrial
+  jetbridge: [320, 1800, 'std', true],
+  atcTower: [80, 3000, 'std', true],
+  ferryCanopy: [240, 1300, 'std', true],
+  marinaPontoon: [320, 1300, 'std', true],
+  industrialSilo: [400, 1400, 'std', true],
+  towerCrane: [200, 2200, 'std', true],
+  radarDome: [160, 1800, 'std', true],
 };
 
 const LABEL_MAX = 14;
@@ -434,7 +932,17 @@ export class PlacesSystem {
     this._hudMicrotaskPending = false;
     this._runwayPlanes = [];
     this._skyPlanes = [];
+    this._planes = [];
+    this.hiddenPlanes = new Set();
     this._initSkyPlanes({ x: 0, y: 0, z: 0 });
+  }
+
+  hidePlaneAt(x, z) {
+    const key = `${Math.round(x)}_${Math.round(z)}`;
+    this.hiddenPlanes.add(key);
+    if (Number.isFinite(this.lastX) && Number.isFinite(this.lastZ)) {
+      this._rebuild(this.lastX, this.lastZ);
+    }
   }
 
   buildPlaneModel(tailHex = 0x003a70, scale = 1.0) {
@@ -454,17 +962,17 @@ export class PlacesSystem {
       new THREE.SphereGeometry(0.42, 6, 6),
       new THREE.MeshBasicMaterial({ color: 0xff2a1a })
     );
-    navPort.position.set(17.0, 2.5, 0.5);
+    navPort.position.set(21.6, 3.85, -3.5);
     const navStarboard = new THREE.Mesh(
       new THREE.SphereGeometry(0.42, 6, 6),
       new THREE.MeshBasicMaterial({ color: 0x18e65a })
     );
-    navStarboard.position.set(-17.0, 2.5, 0.5);
+    navStarboard.position.set(-21.6, 3.85, -3.5);
     const strobeTail = new THREE.Mesh(
       new THREE.SphereGeometry(0.45, 6, 6),
       new THREE.MeshBasicMaterial({ color: 0xffffff })
     );
-    strobeTail.position.set(0, 11.2, -17.2);
+    strobeTail.position.set(0, 10.75, -19.2);
     group.add(bodyMesh, tailMesh, navPort, navStarboard, strobeTail);
     group.scale.setScalar(scale);
     return group;
@@ -602,6 +1110,7 @@ export class PlacesSystem {
   _rebuild(px, pz) {
     const counts = {};
     for (const k of Object.keys(this.pools)) counts[k] = 0;
+    this._planes = [];
     let nBeacon = 0;
     const bArr = this.beaconGeom.attributes.position.array;
     const bCap = bArr.length / 3;
@@ -623,9 +1132,17 @@ export class PlacesSystem {
         const mArr = pool.instanceMatrix.array;
         const cArr = pool.instanceColor.array;
         let n = counts[kind];
+        const isPlaneKind = kind === 'plane' || kind === 'planeTail';
         for (let i = 0; i < a.length && n < cap; i += STRIDE) {
           const dx = a[i] - px, dz = a[i + 2] - pz;
           if (dx * dx + dz * dz > r2) continue;
+          if (isPlaneKind) {
+            const pKey = `${Math.round(a[i])}_${Math.round(a[i + 2])}`;
+            if (this.hiddenPlanes && this.hiddenPlanes.has(pKey)) continue;
+            if (kind === 'plane') {
+              this._planes.push({ x: a[i], y: a[i + 1], z: a[i + 2], yaw: a[i + 3], scale: a[i + 4], rgb: a[i + 7] | 0 });
+            }
+          }
           const c = Math.cos(a[i + 3]), s = Math.sin(a[i + 3]);
           const sx = a[i + 4], sy = a[i + 5], sz = a[i + 6];
           const o = n * 16;

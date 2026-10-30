@@ -135,6 +135,46 @@ export class Maritime {
     this._fxT = 0;
     this.pierStats = { chunks: 0, piers: 0, segs: 0, piles: 0 };
     this.hits = { shots: 0, sunk: 0 };
+    this.activeBoat = null;
+    this.boatSpeed = 0;
+    this._initBoatPrompt();
+  }
+
+  _initBoatPrompt() {
+    if (typeof document === 'undefined') return;
+    let el = document.getElementById('boat-board-prompt');
+    if (!el) {
+      el = document.createElement('button');
+      el.id = 'boat-board-prompt';
+      el.type = 'button';
+      el.style.cssText = [
+        'position:fixed',
+        'left:50%',
+        'bottom:158px',
+        'transform:translateX(-50%)',
+        'z-index:34',
+        'display:none',
+        'align-items:center',
+        'gap:10px',
+        'padding:9px 16px',
+        'border-radius:999px',
+        'border:1px solid rgba(56,189,248,0.55)',
+        'background:rgba(10,18,32,0.88)',
+        'backdrop-filter:blur(10px)',
+        'color:#f8fafc',
+        'font:600 13px/1.2 system-ui, -apple-system, sans-serif',
+        'box-shadow:0 8px 24px rgba(0,0,0,0.45)',
+        'cursor:pointer'
+      ].join(';');
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const px = this.app.pos.x, py = this.app.pos.y, pz = this.app.pos.z;
+        this.tryBoardNearest(px, py, pz, 30);
+      });
+      document.body.appendChild(el);
+    }
+    this.promptEl = el;
   }
 
   // ------------------------------------------------------------------ public
@@ -188,6 +228,177 @@ export class Maritime {
     this.uniforms.uLights.value = lightsLevel();
     this._step(dt);
     this._render();
+    this._updateBoatPrompt();
+  }
+
+  _updateBoatPrompt() {
+    if (!this.promptEl) return;
+    if (this.app.mode !== 'walk') {
+      this.promptEl.style.display = 'none';
+      return;
+    }
+    const cand = this.findNearestBoardable(this.app.pos.x, this.app.pos.z, 26);
+    if (!cand) {
+      this.promptEl.style.display = 'none';
+      return;
+    }
+    const labelMap = {
+      speedboat: 'Speedboat',
+      sailboat: 'Sailboat Yacht',
+      tug: 'Harbor Tugboat',
+      fishing: 'Fishing Trawler',
+      patrol: 'Coast Guard Patrol Boat',
+      ferry: 'Passenger Ferry',
+      carferry: 'Car Ferry',
+      cargo: 'Cargo Ship',
+      container: 'Container Ship',
+      tanker: 'Tanker Ship'
+    };
+    const bName = cand.v.name || labelMap[cand.v.type] || 'Vessel';
+    this.promptEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:6px;background:#38bdf8;color:#020617;font-weight:800">F / E</span><span>Board ${bName} (${Math.round(cand.dist)} m)</span>`;
+    this.promptEl.style.display = 'inline-flex';
+  }
+
+  /** Find nearest non-destroyed vessel within maxDist meters of (px, pz). */
+  findNearestBoardable(px, pz, maxDist = 26) {
+    let best = null;
+    let bestD = maxDist;
+    for (const v of this.vessels) {
+      if (!v || v.dead || v.wrecked || v.state === 'sink' || v.state === 'sunk') continue;
+      const spec = VESSEL_TYPES[v.type] || { length: 14, beam: 4 };
+      const halfL = spec.length * (v.sz || 1) * 0.42;
+      const centerDist = Math.hypot(v.x - px, v.z - pz);
+      const hullDist = Math.max(0, centerDist - halfL);
+      if (hullDist < bestD) {
+        bestD = hullDist;
+        best = { v, dist: hullDist, centerDist };
+      }
+    }
+    return best;
+  }
+
+  /** Board and pilot the nearest docked or water boat within maxDist meters. */
+  tryBoardNearest(px, py, pz, maxDist = 26) {
+    const cand = this.findNearestBoardable(px, pz, maxDist);
+    if (!cand) return false;
+    const v = cand.v;
+    this.activeBoat = v;
+    v.state = 'player';
+    v.path = null;
+    this.boatSpeed = 0;
+    v.v = 0;
+    this.app.pos.set(v.x, v.y + 1.8, v.z);
+    this.app.yaw = v.yaw;
+    this.app.camYaw = v.yaw;
+    this.app._enteringBoatDirectly = true;
+    this.app.setMode('boat');
+    this.app._enteringBoatDirectly = false;
+    const bName = v.name || (v.type.charAt(0).toUpperCase() + v.type.slice(1));
+    this.app._showToast?.(`Boarded ${bName} — W/S Throttle & Reverse • A/D Steer • F/E Disembark`, 3000);
+    return true;
+  }
+
+  /** Per-frame boat driving physics when app.mode === 'boat'. */
+  updatePlayerBoat(dt) {
+    const v = this.activeBoat;
+    if (!v || v.dead || v.wrecked || v.state === 'sink' || v.state === 'sunk') {
+      this.exitToWalk();
+      return;
+    }
+    const k = this.app.keys;
+    const fwd = k.has('KeyW') || k.has('ArrowUp');
+    const rev = k.has('KeyS') || k.has('ArrowDown');
+    const left = k.has('KeyA') || k.has('ArrowLeft');
+    const right = k.has('KeyD') || k.has('ArrowRight');
+    const boost = k.has('ShiftLeft') || k.has('ShiftRight');
+
+    const baseMax = v.type === 'speedboat' ? 24 : v.type === 'patrol' ? 20 : (v.type === 'ferry' || v.type === 'carferry') ? 15 : 13;
+    const maxSpd = baseMax * (boost ? 1.35 : 1.0);
+    const accel = v.type === 'speedboat' ? 14 : 8.5;
+
+    if (fwd) {
+      this.boatSpeed = Math.min(maxSpd, this.boatSpeed + accel * dt);
+    } else if (rev) {
+      if (this.boatSpeed > 1.0) this.boatSpeed = Math.max(0, this.boatSpeed - 16 * dt);
+      else this.boatSpeed = Math.max(-7.5, this.boatSpeed - 6.0 * dt);
+    } else {
+      // Water hydrodynamic drag
+      const drag = Math.min(1, dt * 1.8);
+      this.boatSpeed *= (1 - drag);
+      if (Math.abs(this.boatSpeed) < 0.08) this.boatSpeed = 0;
+    }
+
+    const steer = (left ? 1 : 0) - (right ? 1 : 0);
+    const turnAuth = v.type === 'speedboat' || v.type === 'sailboat' || v.type === 'patrol' ? 1.35 : 0.75;
+    const speedFactor = Math.min(1, Math.abs(this.boatSpeed) / 2.2 + 0.25);
+    const dirSign = this.boatSpeed >= -0.1 ? 1 : -1;
+    v.yaw += steer * turnAuth * speedFactor * dirSign * dt;
+
+    // Advance along bow (+sin(yaw), +cos(yaw))
+    const nx = v.x + Math.sin(v.yaw) * this.boatSpeed * dt;
+    const nz = v.z + Math.cos(v.yaw) * this.boatSpeed * dt;
+    const inWater = (this.region && typeof this.region.isWater === 'function')
+      ? this.region.isWater(nx, nz)
+      : (getBeijingTerrainElevation(nx, nz) <= 0.65);
+    if (inWater || getBeijingTerrainElevation(nx, nz) <= 0.55) {
+      v.x = nx;
+      v.z = nz;
+    } else {
+      this.boatSpeed *= -0.25;
+    }
+
+    v.v = Math.abs(this.boatSpeed);
+    v.roll = -steer * Math.min(0.22, Math.abs(this.boatSpeed) * 0.012);
+    v.pitch = -Math.min(0.10, Math.max(-0.04, this.boatSpeed * 0.004));
+
+    const water = this.app.water;
+    const wy = water ? water.getWaterSurfaceY(v.x, v.z) : getBeijingTerrainElevation(v.x, v.z) + 0.28;
+    v.y = wy;
+
+    const spec = VESSEL_TYPES[v.type] || { height: 4 };
+    this.app.pos.set(v.x, v.y + Math.min(4.5, spec.height * 0.55 + 1.2), v.z);
+    this.app.speed = this.boatSpeed;
+    this.app.heading = v.yaw + Math.PI;
+  }
+
+  /** Disembark from the active boat back onto the nearest pier or shoreline. */
+  exitToWalk() {
+    const v = this.activeBoat;
+    this.activeBoat = null;
+    this.boatSpeed = 0;
+    let ex = this.app.pos.x, ez = this.app.pos.z, ey = this.app.pos.y;
+    if (v) {
+      if (v.state === 'player') {
+        v.state = 'moored';
+        v.v = 0;
+      }
+      // Check loaded chunks for the nearest pier deck segment or dry land within 32 m
+      let bestPier = null, bestD = 34;
+      if (this.app.loadedChunks) {
+        for (const g of this.app.loadedChunks.values()) {
+          const segs = (g.userData && g.userData.deckSegments) || [];
+          for (const s of segs) {
+            const mx = (s.x1 + s.x2) * 0.5, mz = (s.z1 + s.z2) * 0.5;
+            const d = Math.hypot(mx - v.x, mz - v.z);
+            if (d < bestD) {
+              bestD = d;
+              bestPier = { x: mx, y: Math.max(s.y1 || 1.6, s.y2 || 1.6), z: mz };
+            }
+          }
+        }
+      }
+      if (bestPier) {
+        ex = bestPier.x; ey = bestPier.y; ez = bestPier.z;
+      } else {
+        const spec = VESSEL_TYPES[v.type] || { beam: 4 };
+        ex = v.x + Math.cos(v.yaw) * (spec.beam * 0.6 + 3.0);
+        ez = v.z - Math.sin(v.yaw) * (spec.beam * 0.6 + 3.0);
+        ey = Math.max(1.2, this.app.world.getHeightAt(ex, ez));
+      }
+    }
+    this.app.pos.set(ex, ey, ez);
+    this.app.walkVelY = 0;
+    this.app.setMode('walk');
   }
 
   /** Helicopter hook: nearest vessel hit along a ray (distance or Infinity). */
@@ -218,13 +429,22 @@ export class Maritime {
 
   /** On-foot weapons hook (walker_weapons._applyImpact): power = rocket-equivalent damage units x 100. */
   applyWeaponImpact(p, power) {
-    const u = (power || 0) / 100;
+    const u = Math.max(0.22, (power || 0) / 100);
     if (!p || u <= 0) return 0;
-    return this._damage(p.x, p.y, p.z, u >= 0.5 ? 10 + u * 2 : 3, u, u >= 0.5);
+    return this._damage(p.x, p.y, p.z, u >= 0.5 ? 12 + u * 2 : 5, u, u >= 0.5);
+  }
+
+  /** Universal weapon/explosion radius damage hook for all docked & moving boats. */
+  damageVesselsInRadius(wx, wz, radius = 6, damage = 45, wy = undefined) {
+    if (!Number.isFinite(wx) || !Number.isFinite(wz) || !(damage > 0)) return 0;
+    const u = damage > 5 ? damage / 75 : damage;
+    const y = Number.isFinite(wy) ? wy : 1.5;
+    return this._damage(wx, y, wz, Math.max(5.5, radius + 3.5), u, u >= 0.6);
   }
 
   _damage(x, y, z, R, dmg, big) {
     let hits = 0;
+    const fx = (this.app.kaiju && this.app.kaiju.fx) || (this.app.vehicleDamage && this.app.vehicleDamage._fx && this.app.vehicleDamage._fx());
     for (const v of this.vessels) {
       if (v.state === 'sink' || v.state === 'sunk') continue;
       const spec = VESSEL_TYPES[v.type];
@@ -233,11 +453,15 @@ export class Maritime {
       const rx = x - v.x, rz = z - v.z;
       const lx = rx * c - rz * s, lz = rx * s + rz * c;
       const dx = Math.max(0, Math.abs(lx) - B), dz = Math.max(0, Math.abs(lz) - L);
-      const dy = Math.max(0, (y - v.y) - H, -2 - (y - v.y));
+      const dy = Number.isFinite(y) ? Math.max(0, (y - v.y) - H - 4, -4 - (y - v.y)) : 0;
       if (dx * dx + dy * dy + dz * dz > R * R) continue;
       hits++;
       v.hp -= dmg;
-      v.burn = Math.max(v.burn || 0, big ? 6 : 1.5);
+      v.burn = Math.max(v.burn || 0, v.hp < v.hp0 * 0.5 ? 18 : (big ? 8 : 3.5));
+      if (fx && fx.spawn) {
+        fx.spawn('spark', _p.set(v.x, v.y + 1.5, v.z), { count: 8, scale: 0.9 });
+        if (v.hp < v.hp0 * 0.5) fx.spawn('fire', _p.set(v.x, v.y + 1.4, v.z), { scale: 0.7 });
+      }
       if (v.hp <= 0) this._sink(v);
     }
     if (hits) this.hits.shots += hits;
@@ -482,9 +706,23 @@ export class Maritime {
 
   _sink(v) {
     v.state = 'sink';
+    v.wrecked = true;
     v.sinkT = 0;
     v.hp = 0;
+    v.v = 0;
+    v.paint.setHex(0x1e1e22);
+    v.accent.setHex(0x141418);
     this.hits.sunk++;
+    const fx = (this.app.kaiju && this.app.kaiju.fx) || (this.app.vehicleDamage && this.app.vehicleDamage._fx && this.app.vehicleDamage._fx());
+    if (fx && fx.spawn) {
+      fx.spawn('explosion', _p.set(v.x, v.y + 1.8, v.z), { scale: 1.35 });
+      fx.spawn('fire', _p.set(v.x, v.y + 1.5, v.z), { scale: 1.1 });
+      fx.spawn('smoke', _p.set(v.x, v.y + 2.5, v.z), { count: 4, scale: 1.1, life: 5, speed: 3 });
+    }
+    try { this.app.audio?.playExplosion?.(1.1); } catch (_) {}
+    if (this.activeBoat === v && this.app.mode === 'boat') {
+      this.exitToWalk();
+    }
   }
 
   // ------------------------------------------------------------------ simulation
@@ -499,10 +737,15 @@ export class Maritime {
       if (v.state === 'sink') {
         v.sinkT += dt;
         const H = VESSEL_TYPES[v.type].height * v.sy;
-        v.roll = Math.min(0.5, v.sinkT * 0.05);
+        v.roll = Math.min(0.61, v.sinkT * 0.085);
         v.pitch = Math.min(0.18, v.sinkT * 0.02);
         v.sinkDepth = Math.min(H + 12, v.sinkT * v.sinkT * 0.08 * (1 + H / 20));
         if (v.sinkT > 22) { v.state = 'sunk'; v.dead = true; }
+      } else if (v.state === 'player') {
+        // Controlled by updatePlayerBoat(dt)
+      } else if (v.state === 'moored') {
+        v.v = 0;
+        v.yaw += Math.sin(v.phase * 0.03) * dt * 0.002;
       } else if (v.state === 'anchor') {
         v.yaw += Math.sin(v.phase * 0.02) * dt * 0.004;
       } else if (v.kind === 'ais') {
@@ -737,7 +980,7 @@ export class Maritime {
       _sph.radius = L * 0.6 + Hh;
       const inView = _frus.intersectsSphere(_sph);
       // Wake (also for vessels just off-screen: their foam trails into view).
-      const sp = v.state === 'move' || v.kind === 'ais' ? v.v : 0;
+      const sp = (v.state === 'move' || v.state === 'player' || v.kind === 'ais') ? v.v : 0;
       if (sp > 0.4 && nw < WAKE_CAP && v.state !== 'sink' && d < 9000) {
         const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
         _e.set(0, v.yaw, 0, 'YXZ');
@@ -858,8 +1101,40 @@ export class Maritime {
       if (st && best.userData.maritimePiers) {
         this.pierStats.chunks++;
         this.pierStats.piers += st.piers; this.pierStats.segs += st.segs; this.pierStats.piles += st.piles;
+        this._spawnPierBoats(best);
       }
     }).catch(() => {}).finally(() => { this._pierBusy--; });
+  }
+
+  /** Spawn docked/moored boats alongside real pier segments so players walking onto piers can board them. */
+  _spawnPierBoats(chunkGroup) {
+    if (this.shipsOff || !chunkGroup || !chunkGroup.userData) return;
+    const segs = (chunkGroup.userData.deckSegments || []).filter((s) => s.cls === 'pier');
+    if (!segs.length) return;
+    const dockedTypes = ['speedboat', 'sailboat', 'patrol', 'tug', 'fishing', 'ferry'];
+    let added = 0;
+    for (let i = 0; i < segs.length && added < 4; i++) {
+      const s = segs[i];
+      const dx = s.x2 - s.x1, dz = s.z2 - s.z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 12) continue;
+      const mx = (s.x1 + s.x2) * 0.5, mz = (s.z1 + s.z2) * 0.5;
+      // Avoid crowding existing docked boats
+      if (this.vessels.some((v) => Math.hypot(v.x - mx, v.z - mz) < 22)) continue;
+      const type = dockedTypes[(Math.abs(Math.round(mx + mz)) + i) % dockedTypes.length];
+      const spec = VESSEL_TYPES[type] || { beam: 4, length: 12 };
+      const nx = -dz / len, nz = dx / len;
+      const offset = (s.width || 3.5) * 0.5 + spec.beam * 0.55 + 2.2;
+      const bx = mx + nx * offset, bz = mz + nz * offset;
+      const v = this._vessel(type, 'docked', null, `pier_${Math.round(bx)}_${Math.round(bz)}`);
+      v.x = bx;
+      v.z = bz;
+      v.yaw = Math.atan2(dx, dz);
+      v.state = 'moored';
+      v.v = 0;
+      v.speed = 0;
+      added++;
+    }
   }
 }
 

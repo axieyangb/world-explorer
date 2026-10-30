@@ -27,6 +27,10 @@ const S = {
   menu2: { c: [0.85, 0.2, 0.1], r: 0.3, m: 0.0, e: 1.5 }, menu3: { c: [0.95, 0.92, 0.85], r: 0.3, m: 0.0, e: 1.5 },
   foamB: { c: [0.15, 0.35, 0.95], r: 0.7, m: 0.0, t: 0.8 }, foamR: { c: [0.95, 0.25, 0.55], r: 0.7, m: 0.0 },
   foamY: { c: [0.95, 0.85, 0.2], r: 0.7, m: 0.0 }, trailerW: { c: [1, 1, 1], r: 0.42, m: 0.25, t: 1 },
+  wood: { c: [0.36, 0.22, 0.12], r: 0.65, m: 0.05 }, woodLt: { c: [0.58, 0.40, 0.24], r: 0.58, m: 0.05 },
+  oak: { c: [0.28, 0.16, 0.08], r: 0.72, m: 0.05 }, brass: { c: [0.85, 0.68, 0.24], r: 0.22, m: 0.88 },
+  slate: { c: [0.08, 0.09, 0.10], r: 0.78, m: 0.0 }, velvet: { c: [0.68, 0.06, 0.08], r: 0.75, m: 0.0 },
+  lampWarm: { c: [1.0, 0.88, 0.62], r: 0.15, m: 0.0, e: 1.85 }, amber: { c: [0.95, 0.65, 0.15], r: 0.2, m: 0.0, e: 1.55 },
 };
 
 // ---------------------------------------------------------------- kit
@@ -429,7 +433,188 @@ function carFar() {
   return merge([box(1.85, 0.72, 4.5, S.tint, { y: 0.55 }), box(1.6, 0.52, 2.2, S.glassDk, { y: 1.15, z: -0.2 })]);
 }
 
-const BUILDERS = { pump, pumpFar, bollard, islandBin, iceChest, airPump, vacuum, payKiosk, brushV, brushH, atm, newsRack, shopBin, cart, lotLamp, lotLampFar, cartReturn, menuBoard, greenCross, trailer, trailerFar, carFar };
+function patioTable() {
+  const P = [];
+  // Weighted round umbrella base + central pole + round bistro tabletop
+  P.push(cyl(0.28, 0.32, 0.05, 14, S.steelDk, { y: 0.025 }));
+  P.push(cyl(0.032, 0.035, 2.38, 10, S.wood, { y: 1.19 }));
+  P.push(cyl(0.56, 0.56, 0.04, 18, S.woodLt, { y: 0.74 }));
+  P.push(cyl(0.57, 0.57, 0.032, 18, S.brass, { y: 0.74 }, true));
+  // Coffee cups + espresso saucer on tabletop
+  P.push(cyl(0.045, 0.038, 0.065, 10, S.white, { x: -0.18, y: 0.79, z: 0.12 }));
+  P.push(cyl(0.045, 0.038, 0.065, 10, S.white, { x: 0.2, y: 0.79, z: -0.1 }));
+  P.push(cyl(0.06, 0.06, 0.015, 10, S.brass, { x: 0.02, y: 0.768, z: -0.02 }));
+  // Market umbrella canopy (tinted fabric cone + scalloped valance + finial + ribs)
+  P.push(cyl(0.05, 1.38, 0.42, 16, S.tint, { y: 2.24 }));
+  P.push(cyl(1.38, 1.38, 0.09, 16, S.white, { y: 2.0 }, true));
+  P.push(sphere(0.055, 10, 6, S.brass, { y: 2.48 }));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    P.push(rod([0, 2.08, 0], [Math.cos(a) * 1.25, 2.04, Math.sin(a) * 1.25], 0.01, 6, S.wood));
+  }
+  // Warm fairy bulb under the umbrella hub (glows at night)
+  P.push(sphere(0.055, 8, 6, S.lampWarm, { y: 2.08 }));
+  // Two bistro chairs on -X and +X facing the table
+  for (const sx of [-1, 1]) {
+    const cx = sx * 0.76;
+    P.push(cyl(0.22, 0.22, 0.035, 12, S.wood, { x: cx, y: 0.45 }));
+    P.push(cyl(0.19, 0.19, 0.02, 12, S.tint, { x: cx, y: 0.472 }));
+    for (const lx of [-0.14, 0.14]) for (const lz of [-0.14, 0.14]) {
+      P.push(cyl(0.014, 0.012, 0.45, 6, S.steelDk, { x: cx + lx, y: 0.225, z: lz }));
+    }
+    P.push(box(0.03, 0.42, 0.36, S.steelDk, { x: cx + sx * 0.19, y: 0.67, rz: -sx * 0.1 }));
+    P.push(box(0.035, 0.16, 0.38, S.woodLt, { x: cx + sx * 0.2, y: 0.82, rz: -sx * 0.1 }));
+  }
+  return merge(P);
+}
+function menuAFrame() {
+  const P = [];
+  // Hinged wooden A-frame chalkboard easel on both faces (+-Z)
+  for (const sz of [-1, 1]) {
+    const z = sz * 0.16, rx = -sz * 0.18;
+    for (const sx of [-1, 1]) P.push(box(0.045, 1.18, 0.035, S.wood, { x: sx * 0.31, y: 0.57, z, rx }));
+    P.push(box(0.66, 0.05, 0.038, S.wood, { y: 1.13, z: sz * 0.06, rx }));
+    P.push(box(0.66, 0.045, 0.038, S.wood, { y: 0.22, z: sz * 0.25, rx }));
+    P.push(box(0.56, 0.84, 0.022, S.slate, { y: 0.68, z: z + sz * 0.008, rx }));
+    P.push(box(0.46, 0.09, 0.026, S.tintGlow, { y: 0.98, z: z + sz * 0.012, rx }));
+    for (let k = 0; k < 5; k++) {
+      const y = 0.82 - k * 0.11, dz = sz * (0.16 + (0.68 - y) * 0.18 + 0.014);
+      P.push(box(0.32, 0.022, 0.01, S.menu3, { x: -0.05, y, z: dz, rx }));
+      P.push(box(0.08, 0.022, 0.01, S.menu1, { x: 0.18, y, z: dz, rx }));
+    }
+  }
+  P.push(cyl(0.015, 0.015, 0.66, 8, S.brass, { y: 1.15, rz: Math.PI / 2 }));
+  P.push(box(0.02, 0.02, 0.42, S.brass, { x: -0.28, y: 0.38 }));
+  P.push(box(0.02, 0.02, 0.42, S.brass, { x: 0.28, y: 0.38 }));
+  return merge(P);
+}
+function pubBarrel() {
+  const P = [];
+  // Aged oak tavern barrel with belly bulge, wrought-iron hoops, brass tap, and pint glasses on top
+  P.push(cyl(0.30, 0.34, 0.48, 16, S.oak, { y: 0.72 }));
+  P.push(cyl(0.34, 0.30, 0.48, 16, S.oak, { y: 0.24 }));
+  P.push(cyl(0.285, 0.285, 0.025, 16, S.woodLt, { y: 0.96 }));
+  for (const [y, r] of [[0.09, 0.312], [0.33, 0.336], [0.63, 0.336], [0.88, 0.312]]) {
+    P.push(cyl(r, r, 0.04, 16, S.steelDk, { y }, true));
+  }
+  P.push(cyl(0.02, 0.02, 0.11, 8, S.brass, { y: 0.48, z: 0.36, rx: Math.PI / 2 }));
+  P.push(box(0.025, 0.07, 0.025, S.brass, { y: 0.52, z: 0.39 }));
+  for (const [mx, mz] of [[-0.1, 0.06], [0.11, -0.07]]) {
+    P.push(cyl(0.042, 0.036, 0.11, 10, S.amber, { x: mx, y: 1.025, z: mz }));
+    P.push(cyl(0.045, 0.042, 0.028, 10, S.white, { x: mx, y: 1.09, z: mz }));
+  }
+  return merge(P);
+}
+function beerBench() {
+  const P = [];
+  const L = 1.95;
+  P.push(box(0.76, 0.045, L, S.woodLt, { y: 0.75 }));
+  P.push(box(0.02, 0.048, L + 0.01, S.wood, { y: 0.752 }));
+  for (const sx of [-1, 1]) {
+    const bx = sx * 0.68;
+    P.push(box(0.28, 0.04, L, S.woodLt, { x: bx, y: 0.45 }));
+    for (const sz of [-0.68, 0.68]) {
+      P.push(rod([sx * 0.28, 0.73, sz], [sx * 0.42, 0.02, sz], 0.022, 6, S.steelDk));
+      P.push(rod([bx - 0.08, 0.43, sz], [bx + 0.08, 0.02, sz], 0.018, 6, S.steelDk));
+      P.push(box(1.48, 0.035, 0.04, S.steelDk, { y: 0.25, z: sz }));
+    }
+  }
+  P.push(cyl(0.06, 0.07, 0.15, 8, S.lampWarm, { y: 0.85, z: 0 }));
+  P.push(cyl(0.08, 0.05, 0.03, 8, S.steelDk, { y: 0.94, z: 0 }));
+  for (const [x, z] of [[-0.2, -0.45], [0.22, 0.38], [-0.18, 0.52]]) {
+    P.push(cyl(0.042, 0.038, 0.12, 8, S.amber, { x, y: 0.83, z }));
+    P.push(cyl(0.044, 0.042, 0.025, 8, S.white, { x, y: 0.90, z }));
+  }
+  return merge(P);
+}
+function bellhopCart() {
+  const P = [];
+  const W = 0.68, L = 1.16, y0 = 0.18, H = 1.78;
+  P.push(rslab(W, L, 0.06, 0.08, S.brass, { y: y0, rx: Math.PI / 2 }));
+  P.push(rslab(W - 0.06, L - 0.06, 0.02, 0.06, S.velvet, { y: y0 + 0.035, rx: Math.PI / 2 }));
+  P.push(rslab(W + 0.04, L + 0.04, 0.035, 0.09, S.rubber, { y: y0 - 0.01, rx: Math.PI / 2 }));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    P.push(cyl(0.065, 0.065, 0.04, 12, S.rubber, { x: sx * (W / 2 - 0.1), y: 0.065, z: sz * (L / 2 - 0.12), rz: Math.PI / 2 }));
+    P.push(cyl(0.035, 0.035, 0.045, 8, S.brass, { x: sx * (W / 2 - 0.1), y: 0.065, z: sz * (L / 2 - 0.12), rz: Math.PI / 2 }));
+  }
+  for (const sz of [-1, 1]) {
+    const zb = sz * (L / 2 - 0.08);
+    for (const sx of [-1, 1]) {
+      const xb = sx * (W / 2 - 0.08);
+      P.push(tube([[xb, y0 + 0.03, zb], [xb, 1.32, zb], [xb * 0.55, 1.66, zb * 0.45], [0, H, 0]], 0.02, 12, 8, S.brass));
+    }
+  }
+  P.push(cyl(0.016, 0.016, L - 0.3, 8, S.brass, { y: 1.52, rx: Math.PI / 2 }));
+  P.push(sphere(0.06, 12, 8, S.brass, { y: H + 0.04 }));
+  P.push(rslab(0.48, 0.64, 0.24, 0.03, S.wood, { x: -0.02, y: y0 + 0.16, z: -0.14, rx: Math.PI / 2 }));
+  P.push(box(0.5, 0.25, 0.03, S.brass, { x: -0.02, y: y0 + 0.16, z: -0.14 }));
+  P.push(rslab(0.42, 0.36, 0.54, 0.03, S.tint, { x: 0.04, y: y0 + 0.31, z: 0.26 }));
+  P.push(rslab(0.38, 0.44, 0.18, 0.03, S.velvet, { x: -0.02, y: y0 + 0.37, z: -0.14, rx: Math.PI / 2 }));
+  return merge(P);
+}
+function stanchion() {
+  const P = [];
+  for (const sz of [-0.85, 0.85]) {
+    P.push(cyl(0.16, 0.18, 0.035, 14, S.brass, { y: 0.018, z: sz }));
+    P.push(cyl(0.024, 0.024, 0.92, 10, S.brass, { y: 0.48, z: sz }));
+    P.push(sphere(0.048, 10, 8, S.brass, { y: 0.96, z: sz }));
+    P.push(cyl(0.034, 0.034, 0.04, 10, S.brass, { y: 0.86, z: sz }));
+  }
+  P.push(tube([[0, 0.86, -0.82], [0, 0.68, -0.4], [0, 0.62, 0], [0, 0.68, 0.4], [0, 0.86, 0.82]], 0.024, 14, 8, S.velvet));
+  return merge(P);
+}
+function tireRack() {
+  const P = [];
+  const W = 1.68, D = 0.52, H = 1.56;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) P.push(box(0.05, H, 0.05, S.tint, { x: sx * (W / 2 - 0.03), y: H / 2, z: sz * (D / 2 - 0.03) }));
+    P.push(box(0.04, 0.04, D, S.tint, { x: sx * (W / 2 - 0.03), y: 0.22 }));
+    P.push(box(0.04, 0.04, D, S.tint, { x: sx * (W / 2 - 0.03), y: 0.96 }));
+  }
+  for (const y of [0.22, 0.96]) {
+    for (const sz of [-0.16, 0.16]) P.push(box(W, 0.045, 0.045, S.steelDk, { y, z: sz }));
+    for (let i = 0; i < 5; i++) {
+      const x = -0.6 + i * 0.3;
+      P.push(cyl(0.31, 0.31, 0.22, 16, S.rubber, { x, y: y + 0.31, rz: Math.PI / 2 }));
+      P.push(cyl(0.18, 0.18, 0.225, 12, S.chrome, { x, y: y + 0.31, rz: Math.PI / 2 }));
+    }
+  }
+  P.push(box(W, 0.22, 0.05, S.tintGlow, { y: H - 0.06, z: D / 2 }));
+  return merge(P);
+}
+function marketCrate() {
+  const P = [];
+  const W = 1.72, D = 0.92;
+  for (const sx of [-1, 1]) {
+    P.push(box(0.05, 0.88, 0.05, S.wood, { x: sx * (W / 2 - 0.04), y: 0.44, z: -D * 0.28 }));
+    P.push(box(0.05, 0.56, 0.05, S.wood, { x: sx * (W / 2 - 0.04), y: 0.28, z: D * 0.32 }));
+    P.push(rod([sx * (W / 2 - 0.04), 0.52, D * 0.32], [sx * (W / 2 - 0.04), 0.84, -D * 0.28], 0.025, 6, S.wood));
+  }
+  const cols = [
+    { c: [0.85, 0.12, 0.08], r: 0.5, m: 0.0 },
+    { c: [0.95, 0.52, 0.05], r: 0.5, m: 0.0 },
+    { c: [0.18, 0.68, 0.16], r: 0.5, m: 0.0 },
+    { c: [0.95, 0.82, 0.08], r: 0.45, m: 0.0 },
+    { c: [0.68, 0.18, 0.75], r: 0.5, m: 0.0 },
+    { c: [0.92, 0.22, 0.48], r: 0.5, m: 0.0 },
+  ];
+  for (let row = 0; row < 2; row++) {
+    const y = row === 0 ? 0.54 : 0.82, z = row === 0 ? 0.18 : -0.18, rx = 0.36;
+    P.push(box(W, 0.04, 0.44, S.wood, { y: y - 0.08, z, rx }));
+    for (let i = 0; i < 3; i++) {
+      const cx = -0.54 + i * 0.54;
+      const col = cols[(row * 3 + i) % cols.length];
+      P.push(box(0.5, 0.14, 0.42, S.woodLt, { x: cx, y, z, rx }));
+      P.push(box(0.45, 0.11, 0.37, col, { x: cx, y: y + 0.05, z: z + 0.02, rx }));
+      for (const dx of [-0.12, 0, 0.12]) for (const dz of [-0.08, 0.08]) {
+        P.push(sphere(0.075, 8, 6, col, { x: cx + dx, y: y + 0.1 - dz * 0.35, z: z + dz }));
+      }
+    }
+  }
+  return merge(P);
+}
+
+const BUILDERS = { pump, pumpFar, bollard, islandBin, iceChest, airPump, vacuum, payKiosk, brushV, brushH, atm, newsRack, shopBin, cart, lotLamp, lotLampFar, cartReturn, menuBoard, greenCross, trailer, trailerFar, carFar, patioTable, menuAFrame, pubBarrel, beerBench, bellhopCart, stanchion, tireRack, marketCrate };
 
 const CACHE = new Map();
 /** Builds (once) and returns one model geometry; models are built lazily, on the first venue that needs them. */

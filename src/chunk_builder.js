@@ -1481,8 +1481,8 @@ function createSunkenTrenchChecker(roads) {
   const NON_VEH = new Set(['pedestrian', 'steps', 'service']);
 
   for (let rIdx = 0; rIdx < (roads || []).length; rIdx++) {
-    const [wid, cls, , , , widthM, , isBridge, , , flat] = roads[rIdx];
-    if (!flat || flat.length < 6 || NON_VEH.has(cls)) continue;
+    const [wid, cls, , , , widthM, , isBridge, isTunnel, , flat] = roads[rIdx];
+    if (!flat || flat.length < 6 || NON_VEH.has(cls) || isTunnel) continue;
     const hw = Math.max(2.0, (widthM || 8.0) * 0.5);
     const isLink = cls.endsWith('_link');
     const isMinor = cls === 'footway' || cls === 'cycleway' || cls === 'residential' || cls === 'unclassified' || cls === 'living_street';
@@ -2056,7 +2056,8 @@ function buildRoadsAndBridges(
   // Pre-collect named roads in this chunk so unnamed ramps/service ways can inherit nearby road names
   const namedChunkRoads = [];
   for (let i = 0; i < roads.length; i++) {
-    const [, rCls, rName, rRef, , , , , , , rFlat] = roads[i];
+    const [, rCls, rName, rRef, , , , , rTunnel, , rFlat] = roads[i];
+    if (rTunnel) continue;
     const baseName = rName || rRef;
     if (baseName && rFlat && rFlat.length >= 6) {
       const midIdx = Math.floor(rFlat.length / 6) * 3;
@@ -2104,10 +2105,65 @@ function buildRoadsAndBridges(
     return false;
   };
 
+  // Emit 3D concrete Tunnel Entrance Portals where a surface road transitions into an underground/underwater tunnel on land
+  const nonTunnelEndNodes = new Set();
+  for (let i = 0; i < roads.length; i++) {
+    const [, rCls, , , , , , rBridge, rTunnel, , rFlat] = roads[i];
+    if (rTunnel || rBridge || !rFlat || rFlat.length < 6) continue;
+    if (rCls === 'footway' || rCls === 'pedestrian' || rCls === 'steps' || rCls === 'cycleway' || rCls === 'path') continue;
+    const n = rFlat.length / 3;
+    nonTunnelEndNodes.add(`${Math.round(rFlat[0] / 2)},${Math.round(rFlat[2] / 2)}`);
+    nonTunnelEndNodes.add(`${Math.round(rFlat[(n - 1) * 3] / 2)},${Math.round(rFlat[(n - 1) * 3 + 2] / 2)}`);
+  }
+  const placedTunnelPortals = [];
+  for (let i = 0; i < roads.length; i++) {
+    const [, rCls, , , , rWidthM, , , rTunnel, , rFlat] = roads[i];
+    if (!rTunnel || !rFlat || rFlat.length < 6) continue;
+    if (rCls === 'footway' || rCls === 'pedestrian' || rCls === 'steps' || rCls === 'cycleway' || rCls === 'path') continue;
+    const n = rFlat.length / 3;
+    const ends = [
+      [rFlat[0], rFlat[2], rFlat[3] - rFlat[0], rFlat[5] - rFlat[2]],
+      [rFlat[(n - 1) * 3], rFlat[(n - 1) * 3 + 2], rFlat[(n - 2) * 3] - rFlat[(n - 1) * 3], rFlat[(n - 2) * 3 + 2] - rFlat[(n - 1) * 3 + 2]],
+    ];
+    for (const [px, pz, tdx, tdz] of ends) {
+      if (Math.abs(px) > 495 || Math.abs(pz) > 495) continue;
+      const key = `${Math.round(px / 2)},${Math.round(pz / 2)}`;
+      if (!nonTunnelEndNodes.has(key)) continue;
+      if (isPointInWater && isPointInWater(px, pz, 3.0)) continue;
+      if (placedTunnelPortals.some((p) => Math.hypot(p[0] - px, p[1] - pz) < 14.0)) continue;
+      placedTunnelPortals.push([px, pz]);
+      const tl = Math.hypot(tdx, tdz) || 1;
+      const tx = tdx / tl, tz = tdz / tl; // points into the tunnel
+      const nx = -tz, nz = tx;
+      const hw = Math.max(4.5, Math.min(11.0, (rWidthM || 9.0) * 0.55));
+      const terrY = Math.max(getBeijingTerrainElevation(ox + px, oz + pz), getChunkTerrainMeshElevation(ox + px, oz + pz) + 0.35);
+      const pH = 5.4, pierW = 1.35, lintelH = 1.45, portalD = 4.2;
+      // Left & right concrete portal piers + wing walls
+      for (const s of [-1, 1]) {
+        const bx = px + nx * s * (hw + pierW * 0.5) + tx * (portalD * 0.35);
+        const bz = pz + nz * s * (hw + pierW * 0.5) + tz * (portalD * 0.35);
+        pushBox(bPos, bx - pierW * 0.6, terrY - 0.4, bz - pierW * 0.6, bx + pierW * 0.6, terrY + pH, bz + pierW * 0.6);
+      }
+      // Overhead concrete portal lintel beam spanning across the carriageway
+      const lx0 = px - nx * (hw + pierW), lz0 = pz - nz * (hw + pierW);
+      const rx0 = px + nx * (hw + pierW), rz0 = pz + nz * (hw + pierW);
+      const lx1 = lx0 + tx * portalD, lz1 = lz0 + tz * portalD;
+      const rx1 = rx0 + tx * portalD, rz1 = rz0 + tz * portalD;
+      const yBot = terrY + pH - lintelH, yTop = terrY + pH + 0.35;
+      pushQuad(bPos, lx0, yTop, lz0, rx0, yTop, rz0, rx1, yTop, rz1, lx1, yTop, lz1);
+      pushQuad(bPos, lx0, yBot, lz0, rx0, yBot, rz0, rx0, yTop, rz0, lx0, yTop, lz0);
+      pushQuad(bPos, rx1, yBot, rz1, lx1, yBot, lz1, lx1, yTop, lz1, rx1, yTop, rz1);
+      // Dark shadowed tunnel bore opening quad inside the portal frame
+      const mx0 = px - nx * hw + tx * 0.8, mz0 = pz - nz * hw + tz * 0.8;
+      const mx1 = px + nx * hw + tx * 0.8, mz1 = pz + nz * hw + tz * 0.8;
+      pushColQuad(mx0, terrY + 0.05, mz0, mx1, terrY + 0.05, mz1, mx1, yBot, mz1, mx0, yBot, mz0, [0.04, 0.045, 0.055]);
+    }
+  }
+
   for (let rIdx = 0; rIdx < roads.length; rIdx++) {
     const r = roads[rIdx];
     const [wid, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flat] = r;
-    if (!flat || flat.length < 6) continue;
+    if (!flat || flat.length < 6 || isTunnel) continue;
 
     let resolvedRoadName = name || ref;
     let resolvedRoadNameZh = (name && r[12]) || ''; // [road-names-zh] only when it differs from the EN-first name
@@ -3231,10 +3287,70 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const bHash = (((osmId * 2654435761) ^ (i * 1597334677)) >>> 0);
         const hMicroOffset = (isPart ? 0.22 : 0.0) + ((bHash % 509) / 509.0) * 0.24;
         const wallOutOffset = (isPart ? 0.08 : 0.0) + (((bHash >> 9) % 257) / 257.0) * 0.06;
+        const curMinX = minX + ox, curMaxX = maxX + ox;
+        const curMinZ = minZ + oz, curMaxZ = maxZ + oz;
+        const curArea = Math.max(1.0, (curMaxX - curMinX) * (curMaxZ - curMinZ));
+        const matchedLm = regionTag === 'beijing' ? matchLandmarkForChunkBuilding(wx, wz, osmId) : null;
+
+        // Check duplicate footprints & validate elevated building parts BEFORE pushing to entityTable or buildingColliders
+        // so skipped footprints never create invisible ghost buildings or floating blocks in the air.
+        let overlapsExistingBldg = false;
+        let effRawMinH = rawMinH;
+        if (!matchedLm) {
+          if (rawMinH <= 2.0 && !isPart) {
+            for (let cIdx = 0; cIdx < buildingColliders.length; cIdx++) {
+              const bc = buildingColliders[cIdx];
+              const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
+              const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
+              const interArea = ix * iz;
+              if (interArea <= 0) continue;
+              const bcArea = Math.max(1.0, (bc.maxX - bc.minX) * (bc.maxZ - bc.minZ));
+              if (interArea > 0.32 * Math.min(curArea, bcArea)) {
+                // Allow stepped skyscraper tiers / tower-on-podium massing where height and footprint area differ significantly
+                const isSteppedTier =
+                  Math.abs(rawH - (bc.rawH || 0)) >= 15.0 &&
+                  Math.min(curArea, bcArea) < 0.80 * Math.max(curArea, bcArea);
+                if (!isSteppedTier) {
+                  overlapsExistingBldg = true;
+                  break;
+                }
+              }
+            }
+            if (overlapsExistingBldg) continue;
+          } else if (rawMinH > 0) {
+            let maxSupportRawH = 0;
+            for (let cIdx = 0; cIdx < buildingColliders.length; cIdx++) {
+              const bc = buildingColliders[cIdx];
+              const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
+              const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
+              const interArea = ix * iz;
+              if (interArea <= 0) continue;
+              const bcArea = Math.max(1.0, (bc.maxX - bc.minX) * (bc.maxZ - bc.minZ));
+              if (
+                interArea > 0.15 * Math.min(curArea, bcArea) ||
+                (bc.flatOuter && pointInRing2D(cx, cz, bc.flatOuter))
+              ) {
+                if ((bc.rawH || 0) > maxSupportRawH) maxSupportRawH = bc.rawH || 0;
+              }
+            }
+            if (maxSupportRawH > 0) {
+              if (effRawMinH > maxSupportRawH + 0.4) {
+                effRawMinH = Math.max(0, maxSupportRawH - 0.25);
+              }
+            } else if (effRawMinH <= 28.0) {
+              // Detached low canopy/entrance part with no supporting podium underneath: ground it so it never floats
+              effRawMinH = 0;
+            } else {
+              // Orphaned high-altitude block with no supporting tower underneath: skip so it never floats in mid-air
+              continue;
+            }
+          }
+        }
+
         // Extend foundation below the lowest downhill footprint corner on hills so sloped buildings never float
         const minH =
-          rawMinH > 0
-            ? topTerrainY + rawMinH + (isPart ? 0.05 : 0.0)
+          effRawMinH > 0
+            ? topTerrainY + effRawMinH + (isPart ? 0.05 : 0.0)
             : minCornerY < terrainY - 0.15
               ? minCornerY - 1.5
               : terrainY - (terrainY > 1.5 ? 2.2 : 0.05);
@@ -3310,7 +3426,6 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             ? `${typeLabel} (building=${btype})`
             : `${typeLabel} (building=yes)`;
 
-        const matchedLm = matchLandmarkForChunkBuilding(wx, wz, osmId);
         const entityIdx = entityTable.length;
         const entityRecord = {
           kind: 'building',
@@ -3324,16 +3439,16 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             : BUILDING_STYLE_ZH[style] || style,
           isPart: Boolean(isPart),
           height: rawH,
-          minHeight: rawMinH,
+          minHeight: effRawMinH,
           levels: lvl,
           style,
           colour: bColour,
           holesCount: holes.length,
           flatOuter,
-          minX: minX + ox,
-          maxX: maxX + ox,
-          minZ: minZ + oz,
-          maxZ: maxZ + oz,
+          minX: curMinX,
+          maxX: curMaxX,
+          minZ: curMinZ,
+          maxZ: curMaxZ,
           baseY: minH,
           topY: h,
           ox,
@@ -3342,28 +3457,14 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         };
         entityTable.push(entityRecord);
 
-        let overlapsExistingBldg = false;
-        if (rawMinH <= 2.0) { // fix/water: include ground-level parts (tiles flag any min_height > 0 as a part)
-          const curMinX = minX + ox, curMaxX = maxX + ox;
-          const curMinZ = minZ + oz, curMaxZ = maxZ + oz;
-          const curArea = Math.max(1.0, (curMaxX - curMinX) * (curMaxZ - curMinZ));
-          for (let cIdx = 0; !isPart && cIdx < buildingColliders.length; cIdx++) { // [integration] entrances' duplicate-footprint filter: whole buildings only
-            const bc = buildingColliders[cIdx];
-            const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
-            const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
-            const interArea = ix * iz;
-            const bcArea = Math.max(1.0, (bc.maxX - bc.minX) * (bc.maxZ - bc.minZ));
-            if (interArea > 0.32 * Math.min(curArea, bcArea)) {
-              overlapsExistingBldg = true;
-              break;
-            }
-          }
+        if (effRawMinH <= 2.0) { // fix/water: include ground-level parts (tiles flag any min_height > 0 as a part)
           buildingColliders.push({
             minX: curMinX,
             maxX: curMaxX,
             minZ: curMinZ,
             maxZ: curMaxZ,
             h,
+            rawH,
             flatOuter,
             ox,
             oz,
@@ -3372,7 +3473,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
 
         // Skip generic WFC extrusion if this footprint belongs to one of the 40 bespoke Beijing 3D landmarks
-        if (matchedLm || (overlapsExistingBldg && !isPart)) {
+        if (matchedLm) {
           continue;
         }
 
@@ -3385,7 +3486,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             btype,
             isPart: Boolean(isPart),
             height: rawH,
-            minHeight: rawMinH,
+            minHeight: effRawMinH,
             levels: lvl,
             style,
             colour: bColour,

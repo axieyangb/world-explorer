@@ -611,6 +611,7 @@ export function computeRoadLiftProfiles(roads, railways, ox, oz, terrainAt, worl
     // [elevated-roads] a street that merely shares a node with a lifted footway keeps the road envelope: the foot
     // envelope (UF) would otherwise hoist the street's vertex onto the footbridge (Hong Kong: Peel Street 9 m up)
     const foot = FOOT.has(roads[r][1]);
+    if (foot && !roads[r][7] && roads[r][1] !== 'steps') continue;
     for (let i = 0; i < ids.length; i++) {
       const u = foot ? U.get(ids[i]) : UM[ids[i]];
       if (Number.isFinite(u) && (roads[r][7] || u > nodeG[ids[i]] + 0.02)) { arr[i] = u; any = true; } else arr[i] = NaN;

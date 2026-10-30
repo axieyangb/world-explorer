@@ -34,6 +34,14 @@ const KINDS = {
   menuBoard: ['menuBoard', 170, null, 0, 24, true],
   greenCross: ['greenCross', 260, null, 0, 48, false],
   trailer: ['trailer', 280, 'trailerFar', 750, 16, true],
+  patioTable: ['patioTable', 130, null, 0, 96, true],
+  menuAFrame: ['menuAFrame', 85, null, 0, 64, false],
+  pubBarrel: ['pubBarrel', 95, null, 0, 64, false],
+  beerBench: ['beerBench', 120, null, 0, 48, true],
+  bellhopCart: ['bellhopCart', 110, null, 0, 32, true],
+  stanchion: ['stanchion', 95, null, 0, 64, false],
+  tireRack: ['tireRack', 120, null, 0, 48, true],
+  marketCrate: ['marketCrate', 120, null, 0, 64, true],
 };
 const CAR_NEAR = 110, CAR_FAR = 520, CAR_NEAR_MAX = 40;
 const SIGN_MAX = 64, SIGN_RANGE = 260;
@@ -108,6 +116,9 @@ export class PoiVenueSystem {
     this.nitroEmpty = false;
     this.pumpHp = new Map(); // key -> hp
     this.exploded = new Set(); // pump keys
+    this.claimedCars = new Set(); // car keys claimed by player to drive
+    this.wreckedCars = new Map(); // car key -> { tiltX, tiltZ, dropY }
+    this.parkedCarHp = new Map(); // car key -> hp (default 100)
     this.pendingBooms = [];
     this.fires = [];
     this.inFuel = null; this.fuelHinted = false; this.refillToast = false;
@@ -350,6 +361,7 @@ export class PoiVenueSystem {
       for (const [kind, a] of Object.entries(pv.inst)) {
         if (kind === 'car') {
           for (let i = 0; i < a.length; i += STRIDE) {
+            if (this.claimedCars.has(this._carKey(a[i], a[i + 1], a[i + 2]))) continue;
             const d2 = (a[i] - px) ** 2 + (a[i + 2] - pz) ** 2;
             if (d2 < CAR_NEAR * CAR_NEAR && cars && cars[a[i + 4] | 0]) nearCars.push([d2, a, i]);
             else if (d2 < CAR_FAR * CAR_FAR) this._pool('carFar').src.push(a, i);
@@ -388,14 +400,21 @@ export class PoiVenueSystem {
     const isCarFar = p.model === 'carFar';
     for (let k = 0; k < n; k++) {
       const a = p.src[k * 2], i = p.src[k * 2 + 1];
-      const rot = a[i + 3], c = Math.cos(rot), s = Math.sin(rot);
-      const sx = p.isCar || isCarFar ? 1 : a[i + 4], sy = p.isCar || isCarFar ? 1 : a[i + 5], sz = p.isCar || isCarFar ? 1 : a[i + 6];
+      const isCarPool = Boolean(p.isCar || isCarFar);
+      const carKey = isCarPool ? this._carKey(a[i], a[i + 1], a[i + 2]) : null;
+      const claimed = carKey && this.claimedCars.has(carKey);
+      const wreck = carKey ? this.wreckedCars.get(carKey) : null;
+      const rot = a[i + 3] + (wreck ? wreck.yawOff || 0 : 0), c = Math.cos(rot), s = Math.sin(rot);
+      const sx = claimed ? 0 : isCarPool ? 1 : a[i + 4];
+      const sy = claimed ? 0 : isCarPool ? (wreck ? 0.86 : 1) : a[i + 5];
+      const sz = claimed ? 0 : isCarPool ? 1 : a[i + 6];
       const o = k * 16;
-      mArr[o] = c * sx; mArr[o + 1] = 0; mArr[o + 2] = -s * sx; mArr[o + 3] = 0;
-      mArr[o + 4] = 0; mArr[o + 5] = sy; mArr[o + 6] = 0; mArr[o + 7] = 0;
-      mArr[o + 8] = s * sz; mArr[o + 9] = 0; mArr[o + 10] = c * sz; mArr[o + 11] = 0;
-      mArr[o + 12] = a[i]; mArr[o + 13] = a[i + 1]; mArr[o + 14] = a[i + 2]; mArr[o + 15] = 1;
-      const rgb = a[i + 7] | 0;
+      const ty = wreck ? wreck.tiltY || 0 : 0;
+      mArr[o] = c * sx; mArr[o + 1] = ty; mArr[o + 2] = -s * sx; mArr[o + 3] = 0;
+      mArr[o + 4] = -ty; mArr[o + 5] = sy; mArr[o + 6] = ty * 0.6; mArr[o + 7] = 0;
+      mArr[o + 8] = s * sz; mArr[o + 9] = -ty * 0.6; mArr[o + 10] = c * sz; mArr[o + 11] = 0;
+      mArr[o + 12] = a[i]; mArr[o + 13] = a[i + 1] - (wreck ? 0.14 : 0); mArr[o + 14] = a[i + 2]; mArr[o + 15] = 1;
+      const rgb = wreck ? 0x1e1e22 : (a[i + 7] | 0);
       const r = ((rgb >> 16) & 255) / 255, g = ((rgb >> 8) & 255) / 255, b = (rgb & 255) / 255;
       if (p.isCar) { tArr[k * 4] = r * r; tArr[k * 4 + 1] = g * g; tArr[k * 4 + 2] = b * b; tArr[k * 4 + 3] = 1; }
       else { tArr[k * 3] = r * r; tArr[k * 3 + 1] = g * g; tArr[k * 3 + 2] = b * b; }
@@ -405,6 +424,104 @@ export class PoiVenueSystem {
     (p.isCar ? p.iPaint : p.tint).needsUpdate = true;
   }
   _key(x, z) { return `${Math.round(x * 2)}|${Math.round(z * 2)}`; }
+  _carKey(x, y, z) { return `${Math.round(x * 2)}|${Math.round((y || 0) * 2)}|${Math.round(z * 2)}`; }
+
+  /**
+   * Claim the nearest unclaimed, unwrecked parked car within maxDist of (px, pz) so the player can enter and drive it.
+   * Zeroes its instanced mesh scale immediately and returns { x, y, z, yaw, colorHex, typeIdx } or null.
+   */
+  claimNearestParkedCar(px, pz, maxDist = 7.5, py = null) {
+    if (!Number.isFinite(px) || !Number.isFinite(pz)) return null;
+    let bestA = null, bestIdx = -1, bestKey = null, bestD2 = maxDist * maxDist;
+    for (const g of this.tracked) {
+      const pv = g.userData && g.userData.poiVenues;
+      const a = pv && pv.inst && pv.inst.car;
+      if (!a || !a.length) continue;
+      const { ox, oz } = g.userData;
+      if (Math.abs(px - ox) > 520 + maxDist || Math.abs(pz - oz) > 520 + maxDist) continue;
+      for (let i = 0; i < a.length; i += STRIDE) {
+        const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+        if (Number.isFinite(py) && Math.abs(cy - py) > 4.5) continue;
+        const d2 = (cx - px) * (cx - px) + (cz - pz) * (cz - pz);
+        if (d2 >= bestD2) continue;
+        const k = this._carKey(cx, cy, cz);
+        if (this.claimedCars.has(k) || this.wreckedCars.has(k)) continue;
+        bestD2 = d2;
+        bestA = a;
+        bestIdx = i;
+        bestKey = k;
+      }
+    }
+    if (!bestA || bestIdx < 0) return null;
+    this.claimedCars.add(bestKey);
+    const out = {
+      x: bestA[bestIdx],
+      y: bestA[bestIdx + 1],
+      z: bestA[bestIdx + 2],
+      yaw: bestA[bestIdx + 3],
+      typeIdx: bestA[bestIdx + 4] | 0,
+      colorHex: bestA[bestIdx + 7] | 0,
+    };
+    if (this.pools.carFar) this._writePool(this.pools.carFar);
+    if (this.carPools) for (const p of this.carPools) if (p) this._writePool(p);
+    this.lastX = Infinity;
+    return out;
+  }
+
+  /**
+   * Apply damage to parked cars within radius of (wx, wz). When a parked car's HP reaches <= 0,
+   * marks it wrecked, sets its color to charred black (0x1e1e22), tilts/drops its instance matrix,
+   * and returns the array of newly destroyed { x, y, z, yaw } positions.
+   */
+  damageParkedCarsInRadius(wx, wz, radius, damage = 100, wy = null) {
+    const destroyed = [];
+    if (!Number.isFinite(wx) || !Number.isFinite(wz) || !(radius > 0) || !(damage > 0)) return destroyed;
+    const r2 = radius * radius;
+    let dirty = false;
+    for (const g of this.tracked) {
+      const pv = g.userData && g.userData.poiVenues;
+      const a = pv && pv.inst && pv.inst.car;
+      if (!a || !a.length) continue;
+      const { ox, oz } = g.userData;
+      if (Math.abs(wx - ox) > 520 + radius || Math.abs(wz - oz) > 520 + radius) continue;
+      for (let i = 0; i < a.length; i += STRIDE) {
+        const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+        if (Number.isFinite(wy) && Math.abs(cy - wy) > Math.max(5.5, radius)) continue;
+        const d2 = (cx - wx) * (cx - wx) + (cz - wz) * (cz - wz);
+        if (d2 > r2) continue;
+        const k = this._carKey(cx, cy, cz);
+        if (this.claimedCars.has(k) || this.wreckedCars.has(k)) continue;
+        const distFactor = 1.0 - Math.sqrt(d2) / Math.max(radius * 1.35, 0.01);
+        const effDmg = Math.max(15, damage * Math.max(0.35, distFactor));
+        const hp = (this.parkedCarHp.has(k) ? this.parkedCarHp.get(k) : 100) - effDmg;
+        this.parkedCarHp.set(k, hp);
+        const fx = this._fx();
+        if (hp > 0) {
+          if (fx) fx.spawn('spark', _v.set(cx, cy + 0.9, cz), { count: 6, scale: 0.7 });
+          continue;
+        }
+        const seed = ((Math.round(cx * 3) * 73856093) ^ (Math.round(cz * 3) * 19349663)) >>> 0;
+        const tiltY = (((seed % 200) / 100) - 1.0) * 0.14;
+        const yawOff = ((((seed >> 8) % 200) / 100) - 1.0) * 0.16;
+        this.wreckedCars.set(k, { tiltY, yawOff });
+        a[i + 7] = 0x1e1e22;
+        dirty = true;
+        destroyed.push({ x: cx, y: cy, z: cz, yaw: a[i + 3] });
+        if (fx) {
+          fx.spawn('explosion', _v.set(cx, cy + 1.1, cz), { scale: 0.65 });
+          fx.spawn('spark', _v.set(cx, cy + 1.2, cz), { count: 16, scale: 1.0 });
+          fx.spawn('debris', _v.set(cx, cy + 1.0, cz), { count: 8, scale: 0.55 });
+        }
+        this.fires.push({ x: cx, y: cy, z: cz, t: 0, life: 10 + (seed % 5), acc: 0 });
+        if (this.fires.length > 14) this.fires.shift();
+      }
+    }
+    if (dirty) {
+      if (this.pools.carFar) this._writePool(this.pools.carFar);
+      if (this.carPools) for (const p of this.carPools) if (p) this._writePool(p);
+    }
+    return destroyed;
+  }
   _nearBoom(x, z, r) {
     for (const k of this.exploded) {
       const [a, b] = k.split('|');
@@ -476,6 +593,9 @@ export class PoiVenueSystem {
         this._queueBoom(p, src === 'pumpChain' ? 0.25 + Math.random() * 0.5 : 0.05);
       }
     }
+    const src = opts && typeof opts === 'object' ? opts.source : '';
+    const carDmg = src === 'pumpChain' ? 120 : Math.max(35, ((opts && opts.damage) || (/missile|rocket|stomp|tail|breath|kaijuBody|carExplosion|explosion/.test(src || '') ? 3 : 1)) * 45);
+    this.damageParkedCarsInRadius(x, z, radius, carDmg, y);
   }
   _queueBoom(p, delay) {
     const k = this._key(p[0], p[2]);

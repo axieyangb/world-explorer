@@ -500,6 +500,16 @@ export function computePlacesPayload(ctx) {
   const placedToll = [];
   const placedHosp = [];
   const placedWorship = [];
+  const placedByKind = {};
+  const canPlaceKind = (k, px, pz, cap, minDist) => {
+    const arr = placedByKind[k] || (placedByKind[k] = []);
+    if (arr.length >= cap) return false;
+    for (let i = 0; i < arr.length; i++) {
+      if (Math.hypot(arr[i][0] - px, arr[i][1] - pz) < minDist) return false;
+    }
+    arr.push([px, pz]);
+    return true;
+  };
 
   // Ground road segments (local) used to keep street furniture off the carriageway
   const groundSegs = [];
@@ -604,7 +614,8 @@ export function computePlacesPayload(ctx) {
 
   for (const q of (places && places.pois) || []) {
     let [px, pz, cls, sub, name, nameEn, rank] = q;
-    if (inWater(px, pz)) continue;
+    const isMaritime = cls === 'ferry_terminal' || sub === 'ferry_terminal' || cls === 'harbor' || sub === 'marina' || sub === 'dock';
+    if (!isMaritime && inWater(px, pz)) continue;
     const isFuel = cls === 'fuel' && sub !== 'charging_station';
     const isEv = sub === 'charging_station' || cls === 'charging_station';
     const isBike = cls === 'bicycle_rental' || sub === 'bicycle_rental';
@@ -710,34 +721,338 @@ export function computePlacesPayload(ctx) {
     }
 
     if (isWorship) {
-      if (placedWorship.length >= 12 || placedWorship.some((p) => Math.hypot(p[0] - px, p[1] - pz) < 55)) continue;
+      if (placedWorship.length >= 14 || placedWorship.some((p) => Math.hypot(p[0] - px, p[1] - pz) < 48)) continue;
       placedWorship.push([px, pz]);
-      const isEastAsian = sub === 'shinto' || sub === 'buddhist' || sub === 'taoist' || sub === 'confucian';
       const rInfo = nearestRoadInfo(px, pz, false);
       const rotY = rInfo ? Math.atan2(rInfo.ux, rInfo.uz) + Math.PI * 0.5 : rng() * Math.PI;
-      if (isEastAsian) {
+      const isShinto = sub === 'shinto';
+      const isPagoda = sub === 'buddhist' || sub === 'taoist' || sub === 'confucian';
+      const isMosque = sub === 'muslim' || sub === 'islam';
+      const isSynagogue = sub === 'jewish';
+      const isHindu = sub === 'hindu' || sub === 'sikh' || sub === 'jain';
+      const wKind = isShinto
+        ? 'worshipTorii'
+        : isPagoda
+          ? 'worshipPagoda'
+          : isMosque
+            ? 'worshipMosque'
+            : isSynagogue
+              ? 'worshipSynagogue'
+              : isHindu
+                ? 'worshipHindu'
+                : 'worshipSpire';
+      if (isShinto || isPagoda) {
         [px, pz] = pushOffRoad(px, pz, 3.2);
         const gy = terrainY(px, pz);
-        push('worshipTorii', ox + px, gy, oz + pz, rotY, 1.15, 1.15, 1.15, 0xffffff);
-        labelY = gy + 6.5;
+        push(wKind, ox + px, gy, oz + pz, rotY, 1.15, 1.15, 1.15, 0xffffff);
+        labelY = gy + 7.5;
       } else {
         const hostB = findHostBuilding(px, pz, 22);
         if (hostB && (hostB.e.height || 0) <= 36) {
           const cx = (hostB.minX + hostB.maxX) * 0.5, cz = (hostB.minZ + hostB.maxZ) * 0.5;
           const wy = hostB.e.topY - 0.15;
-          push('worshipSpire', ox + cx, wy, oz + cz, rotY, 1.2, 1.2, 1.2, 0xffffff);
+          push(wKind, ox + cx, wy, oz + cz, rotY, 1.15, 1.15, 1.15, 0xffffff);
           labelY = wy + 8.5;
         } else {
           [px, pz] = pushOffRoad(px, pz, 3.2);
           const gy = terrainY(px, pz);
-          push('worshipSpire', ox + px, gy, oz + pz, rotY, 1.0, 1.0, 1.0, 0xffffff);
+          push(wKind, ox + px, gy, oz + pz, rotY, 1.0, 1.0, 1.0, 0xffffff);
           labelY = gy + 8.0;
         }
       }
       if (name && labels.length < 360) {
-        const icon = isEastAsian ? '⛩ ' : '⛪ ';
+        const icon = isShinto ? '⛩ ' : isPagoda ? '🏯 ' : isMosque ? '🕌 ' : isSynagogue ? '🕍 ' : isHindu ? '🛕 ' : '⛪ ';
         labels.push([ox + px, labelY, oz + pz, icon + name, icon + (nameEn || name), 1]);
       }
+      continue;
+    }
+
+    // ---------------- Batch 1: Civic, Emergency, Postal, Healthcare & Education ----------------
+    if (cls === 'police' || sub === 'police') {
+      if (!canPlaceKind('police', px, pz, 6, 35)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      const gy = terrainY(cx, cz);
+      push('policeCruiser', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
+      const bx = cx - Math.sin(rotY) * 3.2, bz = cz - Math.cos(rotY) * 3.2;
+      push('policeBeacon', ox + bx, terrainY(bx, bz), oz + bz, rotY, 1, 1, 1, 0xffffff);
+      const nmZh = '🚓 ' + (name || '警察局');
+      const nmEn = '🚓 ' + (nameEn || name || 'Police Station');
+      geo.push([ox + cx, gy, oz + cz, 'police', 'police', nmZh, nmEn, 0]);
+      if (labels.length < 360) labels.push([ox + cx, gy + 5.8, oz + cz, nmZh, nmEn, 1]);
+      continue;
+    }
+
+    if (cls === 'fire_station' || sub === 'fire_station') {
+      if (!canPlaceKind('fire_station', px, pz, 5, 40)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 4.2);
+      const gy = terrainY(cx, cz);
+      push('fireTruck', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
+      const dx = cx - Math.sin(rotY) * 5.2, dz = cz - Math.cos(rotY) * 5.2;
+      push('fireDoor', ox + dx, terrainY(dx, dz), oz + dz, rotY, 1, 1, 1, 0xffffff);
+      const nmZh = '🚒 ' + (name || '消防站');
+      const nmEn = '🚒 ' + (nameEn || name || 'Fire Station');
+      geo.push([ox + cx, gy, oz + cz, 'fire_station', 'fire_station', nmZh, nmEn, 0]);
+      if (labels.length < 360) labels.push([ox + cx, gy + 6.2, oz + cz, nmZh, nmEn, 1]);
+      continue;
+    }
+
+    if (cls === 'post' || sub === 'post_box' || sub === 'parcel_locker' || sub === 'post_office') {
+      if (sub === 'parcel_locker') {
+        if (!canPlaceKind('parcelLocker', px, pz, 10, 22)) continue;
+        const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+        if (!inAnyBuilding(cx, cz, 0.6)) {
+          push('parcelLocker', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+        }
+        continue;
+      }
+      if (canPlaceKind('postBox', px, pz, 24, 24)) {
+        const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.2);
+        if (!inAnyBuilding(cx, cz, 0.5)) {
+          const boxTint = rng() < 0.55 ? 0x1d4ed8 : 0xdc2626;
+          push('postBox', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, boxTint);
+        }
+      }
+      if (sub !== 'post_office') continue;
+    }
+
+    if (
+      (cls === 'hospital' && sub !== 'hospital') ||
+      cls === 'doctors' || cls === 'dentist' || cls === 'veterinary' ||
+      sub === 'clinic' || sub === 'doctors' || sub === 'dentist' || sub === 'veterinary' || sub === 'nursing_home'
+    ) {
+      if (!canPlaceKind('clinicCross', px, pz, 18, 26)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      const gy = terrainY(cx, cz);
+      const tint = (cls === 'dentist' || sub === 'dentist' || cls === 'veterinary' || sub === 'veterinary') ? 0x38bdf8 : 0xffffff;
+      push('clinicCross', ox + cx, gy, oz + cz, rotY, 1, 1, 1, tint);
+      if (name && labels.length < 360) {
+        labels.push([ox + cx, gy + 5.2, oz + cz, '✚ ' + name, '✚ ' + (nameEn || name), 1]);
+      }
+      continue;
+    }
+
+    if (cls === 'prison' || sub === 'prison') {
+      if (!canPlaceKind('watchtower', px, pz, 6, 35)) continue;
+      const [cx, cz, rotY] = pushOffRoad(px, pz, 4.0);
+      const gy = terrainY(cx, cz);
+      push('watchtower', ox + cx, gy, oz + cz, rotY || 0, 1, 1, 1, 0xffffff);
+      beacons.push(ox + cx, gy + 11.8, oz + cz);
+      continue;
+    }
+
+    if (
+      cls === 'school' || sub === 'school' || sub === 'kindergarten' ||
+      cls === 'college' || sub === 'university' || sub === 'college' ||
+      cls === 'town_hall' || sub === 'townhall' || sub === 'town_hall' ||
+      sub === 'courthouse' || cls === 'courthouse' ||
+      sub === 'community_centre' || cls === 'community_centre' ||
+      sub === 'diplomatic' || sub === 'embassy' || cls === 'government' || sub === 'government' ||
+      cls === 'public_building' || cls === 'library' || sub === 'library' || cls === 'museum' || sub === 'museum'
+    ) {
+      if (canPlaceKind('flagpole', px, pz, 18, 32)) {
+        const [cx, cz, rotY] = placeRoadsideProp(px, pz, 3.6);
+        if (!inAnyBuilding(cx, cz, 0.8)) {
+          const gy = terrainY(cx, cz);
+          push('flagpole', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
+        }
+      }
+      if (cls !== 'library' && cls !== 'museum') {
+        if (name && labels.length < 360 && !q.venue) {
+          const gy = terrainY(px, pz);
+          const icon = (cls === 'school' || cls === 'college') ? '🎓 ' : '🏛️ ';
+          labels.push([ox + px, gy + 6.2, oz + pz, icon + name, icon + (nameEn || name), 1]);
+        }
+        continue;
+      }
+    }
+
+    // ---------------- Batch 4: Street Furniture, Micro-Mobility, Barriers, Sanitation & Wayfinding ----------------
+    if (cls === 'bicycle_parking' || sub === 'bicycle_parking') {
+      if (!canPlaceKind('bikeRack', px, pz, 28, 20)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.3);
+      if (!inAnyBuilding(cx, cz, 0.5)) {
+        push('bikeRack', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'motorcycle_parking' || sub === 'motorcycle_parking') {
+      if (!canPlaceKind('motoBay', px, pz, 16, 22)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.6);
+      if (!inAnyBuilding(cx, cz, 0.6)) {
+        push('motoBay', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'bus' || sub === 'bus_stop' || sub === 'bus_station') {
+      if (!canPlaceKind('realBusStop', px, pz, 24, 28)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      if (!inAnyBuilding(cx, cz, 0.8)) {
+        const gy = terrainY(cx, cz);
+        push('realBusStop', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
+        if (name && labels.length < 360) {
+          labels.push([ox + cx, gy + 4.2, oz + cz, '🚌 ' + name, '🚌 ' + (nameEn || name), 2]);
+        }
+      }
+      continue;
+    }
+
+    if (cls === 'gate' || sub === 'gate' || cls === 'lift_gate' || sub === 'lift_gate') {
+      if (!canPlaceKind('liftGate', px, pz, 22, 22)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.0);
+      if (!inAnyBuilding(cx, cz, 0.4)) {
+        push('liftGate', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'cycle_barrier' || sub === 'cycle_barrier' || cls === 'bollard' || sub === 'bollard') {
+      if (!canPlaceKind('cycleBarrier', px, pz, 16, 18)) continue;
+      const rInfo = nearestRoadInfo(px, pz, false);
+      const rotY = rInfo ? Math.atan2(rInfo.ux, rInfo.uz) : rng() * Math.PI;
+      if (!inAnyBuilding(px, pz, 0.4)) {
+        push('cycleBarrier', ox + px, terrainY(px, pz), oz + pz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'waste_basket' || sub === 'waste_basket' || cls === 'recycling' || sub === 'recycling') {
+      if (!canPlaceKind('recyclingBank', px, pz, 24, 22)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.2);
+      if (!inAnyBuilding(cx, cz, 0.5)) {
+        const sc = (cls === 'recycling' || sub === 'recycling') ? 1.0 : 0.78;
+        push('recyclingBank', ox + cx, terrainY(cx, cz), oz + cz, rotY, sc, sc, sc, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'toilets' || sub === 'toilets') {
+      if (!canPlaceKind('toiletKiosk', px, pz, 14, 28)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 3.0);
+      if (!inAnyBuilding(cx, cz, 0.8)) {
+        push('toiletKiosk', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'drinking_water' || sub === 'drinking_water') {
+      if (!canPlaceKind('waterFountain', px, pz, 16, 22)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.2);
+      if (!inAnyBuilding(cx, cz, 0.4)) {
+        push('waterFountain', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'telephone' || sub === 'telephone') {
+      if (!canPlaceKind('phoneBooth', px, pz, 14, 24)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.3);
+      if (!inAnyBuilding(cx, cz, 0.5)) {
+        push('phoneBooth', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (cls === 'atm' || sub === 'atm') {
+      if (!canPlaceKind('streetAtm', px, pz, 16, 22)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.4);
+      if (!inAnyBuilding(cx, cz, 0.5)) {
+        push('streetAtm', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    if (
+      cls === 'information' ||
+      sub === 'board' || sub === 'map' || sub === 'guidepost' ||
+      sub === 'terminal' || sub === 'visitor_centre' || sub === 'stele'
+    ) {
+      if (!canPlaceKind('information', px, pz, 20, 20)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.4);
+      if (!inAnyBuilding(cx, cz, 0.5)) {
+        const iKind = (sub === 'guidepost' || sub === 'terminal') ? 'guidepost' : 'infoBoard';
+        push(iKind, ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
+      }
+      continue;
+    }
+
+    // ---------------- Batch 5: Public Art, Monuments, Castles, Viewpoints ----------------
+    if ((cls === 'art_gallery' && sub === 'artwork') || cls === 'artwork' || sub === 'artwork' || sub === 'sculpture') {
+      if (!canPlaceKind('artworkSculpture', px, pz, 18, 22)) continue;
+      const [cx, cz] = pushOffRoad(px, pz, 2.6);
+      if (!inAnyBuilding(cx, cz, 0.6)) {
+        const artTint = [0xd97706, 0xc2410c, 0xeab308, 0x0d9488][Math.floor(rng() * 4)];
+        push('artworkSculpture', ox + cx, terrainY(cx, cz), oz + cz, rng() * Math.PI * 2, 1, 1, 1, artTint);
+      }
+      continue;
+    }
+
+    if (cls === 'monument' || sub === 'monument' || sub === 'memorial' || cls === 'historic' || sub === 'historic') {
+      if (!canPlaceKind('monumentObelisk', px, pz, 10, 32)) continue;
+      const [cx, cz] = pushOffRoad(px, pz, 3.2);
+      const gy = terrainY(cx, cz);
+      push('monumentObelisk', ox + cx, gy, oz + cz, rng() * Math.PI, 1, 1, 1, 0xffffff);
+      if (name && labels.length < 360) {
+        labels.push([ox + cx, gy + 10.2, oz + cz, '🏛 ' + name, '🏛 ' + (nameEn || name), 1]);
+      }
+      continue;
+    }
+
+    if (cls === 'castle' || sub === 'castle' || sub === 'ruins' || sub === 'fort' || sub === 'city_gate') {
+      if (!canPlaceKind('castleKeep', px, pz, 8, 40)) continue;
+      const [cx, cz] = pushOffRoad(px, pz, 4.0);
+      const gy = terrainY(cx, cz);
+      const sc = sub === 'ruins' ? 0.82 : 1.0;
+      const tint = sub === 'ruins' ? 0xcbd5e1 : 0xffffff;
+      push('castleKeep', ox + cx, gy, oz + cz, rng() * Math.PI * 0.5, sc, sc, sc, tint);
+      if (name && labels.length < 360) {
+        labels.push([ox + cx, gy + 10.5, oz + cz, '🏰 ' + name, '🏰 ' + (nameEn || name), 1]);
+      }
+      continue;
+    }
+
+    if (sub === 'viewpoint' || cls === 'viewpoint') {
+      if (!canPlaceKind('viewpointDeck', px, pz, 12, 28)) continue;
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      const gy = terrainY(cx, cz);
+      push('viewpointDeck', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
+      if (name && labels.length < 360) {
+        labels.push([ox + cx, gy + 4.5, oz + cz, '🔭 ' + name, '🔭 ' + (nameEn || name), 1]);
+      }
+      continue;
+    }
+
+    // ---------------- Batch 6: Maritime Terminals & Brownfield Construction ----------------
+    if (cls === 'ferry_terminal' || sub === 'ferry_terminal') {
+      if (!canPlaceKind('ferryCanopy', px, pz, 8, 35)) continue;
+      const gy = Math.max(0.25, terrainY(px, pz));
+      const rInfo = nearestRoadInfo(px, pz, false);
+      const rotY = rInfo ? Math.atan2(rInfo.ux, rInfo.uz) : rng() * Math.PI * 2;
+      push('ferryCanopy', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
+      const nmZh = '⛴ ' + (name || '轮渡码头');
+      const nmEn = '⛴ ' + (nameEn || name || 'Ferry Terminal');
+      geo.push([ox + px, gy, oz + pz, 'ferry', 'ferry_terminal', nmZh, nmEn, 0]);
+      if (labels.length < 360) labels.push([ox + px, gy + 6.5, oz + pz, nmZh, nmEn, 2]);
+      continue;
+    }
+
+    if (cls === 'harbor' || sub === 'marina' || sub === 'dock') {
+      if (!canPlaceKind('marinaPontoon', px, pz, 10, 35)) continue;
+      const gy = Math.max(0.20, terrainY(px, pz));
+      push('marinaPontoon', ox + px, gy, oz + pz, rng() * Math.PI * 2, 1, 1, 1, 0xffffff);
+      if (name && labels.length < 360) {
+        labels.push([ox + px, gy + 6.8, oz + pz, '⛵ ' + name, '⛵ ' + (nameEn || name), 1]);
+      }
+      continue;
+    }
+
+    if (cls === 'brownfield' || sub === 'brownfield') {
+      if (!canPlaceKind('towerCrane', px, pz, 6, 55)) continue;
+      const [cx, cz] = pushOffRoad(px, pz, 4.5);
+      const gy = terrainY(cx, cz);
+      push('towerCrane', ox + cx, gy, oz + cz, rng() * Math.PI * 2, 1, 1, 1, 0xffffff);
+      beacons.push(ox + cx, gy + 36.5, oz + cz);
       continue;
     }
 
@@ -800,13 +1115,40 @@ export function computePlacesPayload(ctx) {
     }
   }
 
-  for (const [px, pz, eleM, nameZh, nameEn] of (places && places.peaks) || []) {
+  for (const [px, pz, eleM, nameZh, nameEn, , peakCls] of (places && places.peaks) || []) {
     const wy = terrainY(px, pz);
-    const dispEle = eleM != null ? eleM : Math.max(10, Math.round(wy));
-    const txtZh = `▲ ${nameZh} · ${dispEle}m`;
-    const txtEn = `▲ ${nameEn} · ${dispEle}m`;
-    geo.push([ox + px, wy, oz + pz, 'peak', 'peak', txtZh, txtEn, dispEle]);
-    labels.push([ox + px, wy + 26, oz + pz, txtZh, txtEn, 4]);
+    if (canPlaceKind('summitCairn', px, pz, 16, 24)) {
+      push('summitCairn', ox + px, wy, oz + pz, hash2(ox + px, oz + pz, 19) % 6, 1, 1, 1, 0xffffff);
+    }
+    if (nameZh || nameEn) {
+      const dispEle = eleM != null ? eleM : Math.max(10, Math.round(wy));
+      const txtZh = `▲ ${nameZh || nameEn} · ${dispEle}m`;
+      const txtEn = `▲ ${nameEn || nameZh} · ${dispEle}m`;
+      geo.push([ox + px, wy, oz + pz, 'peak', peakCls || 'peak', txtZh, txtEn, dispEle]);
+      labels.push([ox + px, wy + 26, oz + pz, txtZh, txtEn, 4]);
+    }
+  }
+
+  // Stratified 3D rock escarpments along mountain_peak: cliff lines & points
+  let cliffCount = 0;
+  for (const flat of (places && places.cliffs) || []) {
+    if (cliffCount >= 36) break;
+    for (let i = 0; i + 3 < flat.length && cliffCount < 36; i += 2) {
+      const ax = flat[i], az = flat[i + 1], bx = flat[i + 2], bz = flat[i + 3];
+      const segLen = Math.hypot(bx - ax, bz - az);
+      if (segLen < 3) continue;
+      const dx = (bx - ax) / segLen, dz = (bz - az) / segLen;
+      const rot = Math.atan2(dx, dz);
+      for (let d = 4; d <= segLen && cliffCount < 36; d += 18) {
+        const rx = ax + dx * d, rz = az + dz * d;
+        if (Math.abs(rx) > 495 || Math.abs(rz) > 495 || inWater(rx, rz)) continue;
+        if (!canPlaceKind('cliffRock', rx, rz, 36, 14)) continue;
+        const sc = 0.85 + ((hash2(ox + rx, oz + rz, 41) % 50) / 100);
+        const tint = [0xd6d3d1, 0xcbd5e1, 0xe7e5e4][cliffCount % 3];
+        push('cliffRock', ox + rx, terrainY(rx, rz), oz + rz, rot, sc, sc, sc, tint);
+        cliffCount++;
+      }
+    }
   }
 
   for (const [px, pz, cls, nameZh, nameEn] of (places && places.waterNames) || []) {
@@ -944,32 +1286,32 @@ export function computePlacesPayload(ctx) {
     }
   }
 
-  // Parked planes on aprons
+  // Parked Boeing 787 / Airbus A350 wide-body airliners + GTA-style tarmac equipment on aprons
   let planeCount = 0;
   const planePts = [];
   for (const [cls, flat] of aeroPolys) {
-    if (cls !== 'apron' || planeCount >= 10) continue;
+    if (cls !== 'apron' || planeCount >= 14) continue;
     const area = ringArea(flat);
-    if (area < 6000) continue;
-    const maxN = Math.min(5, Math.floor(area / 9000) + 1);
+    if (area < 2400) continue;
+    const maxN = Math.min(7, Math.floor(area / 5200) + 1);
     const bb = ringBBox(flat);
     const edge = longestEdge(flat);
     const rng = mulberry32(hash2(ox + bb.minX, oz + bb.minZ, 101));
     let n = 0;
-    for (let tries = 0; tries < 40 && n < maxN && planeCount < 10; tries++) {
+    for (let tries = 0; tries < 65 && n < maxN && planeCount < 14; tries++) {
       const px = bb.minX + rng() * (bb.maxX - bb.minX);
       const pz = bb.minZ + rng() * (bb.maxZ - bb.minZ);
-      const wide = rng() < 0.3;
-      const r = wide ? 34 : 21;
+      const wide = rng() < 0.45;
+      const r = wide ? 24 : 16;
       if (!pointInRing(px, pz, flat)) continue;
       let ok = true;
       for (const [ddx, ddz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        if (!pointInRing(px + ddx * r, pz + ddz * r, flat)) { ok = false; break; }
+        if (!pointInRing(px + ddx * (r * 0.75), pz + ddz * (r * 0.75), flat)) { ok = false; break; }
       }
       if (!ok) continue;
-      for (const p of planePts) if (Math.hypot(p[0] - px, p[1] - pz) < p[2] + r + 6) { ok = false; break; }
+      for (const p of planePts) if (Math.hypot(p[0] - px, p[1] - pz) < p[2] + r + 5) { ok = false; break; }
       if (!ok) continue;
-      for (const rl of runwayLines) if (distToPolyline(px, pz, rl[1]) < 70) { ok = false; break; }
+      for (const rl of runwayLines) if (distToPolyline(px, pz, rl[1]) < 56) { ok = false; break; }
       if (!ok) continue;
       for (const B of blds) {
         if (px > B.minX - r && px < B.maxX + r && pz > B.minZ - r && pz < B.maxZ + r) { ok = false; break; }
@@ -981,11 +1323,31 @@ export function computePlacesPayload(ctx) {
       if (!ok) continue;
       planePts.push([px, pz, r]);
       const rot = edge.angle + Math.PI * 0.5 + (rng() < 0.5 ? 0 : Math.PI);
-      const s = wide ? 1.6 : 1.0;
+      const s = wide ? 1.28 : 1.0;
       const y = getChunkTerrainMeshElevation(ox + px, oz + pz) + 0.3;
-      const tail = [0xc8102e, 0x003a70, 0x0b6e4f, 0xf2a900, 0x5c2d91, 0x1d1d1d, 0x00a3e0][Math.floor(rng() * 7)];
+      const tail = [0x0a2e6e, 0xb91c1c, 0x065f46, 0xd97706, 0x0f172a, 0x0284c7, 0x5c2d91][Math.floor(rng() * 7)];
       push('plane', ox + px, y, oz + pz, rot, s, s, s, 0xffffff);
       push('planeTail', ox + px, y, oz + pz, rot, s, s, s, tail);
+
+      // Painted yellow gate lead-in line + red nosewheel stop bar
+      const fdx = Math.sin(rot), fdz = Math.cos(rot);
+      const rdx = fdz, rdz = -fdx;
+      pushRibbon(aeroMark, px - fdx * 22 * s, pz - fdz * 22 * s, px + fdx * 21 * s, pz + fdz * 21 * s, 0, 0.22, 0.35, ox, oz, YELLOW);
+      pushRibbon(aeroMark, px + fdx * 17.5 * s - rdx * 2.2, pz + fdz * 17.5 * s - rdz * 2.2, px + fdx * 17.5 * s + rdx * 2.2, pz + fdz * 17.5 * s + rdz * 2.2, 0, 0.25, 0.36, ox, oz, [0.92, 0.18, 0.16]);
+
+      // Tarmac GSE 1: Mobile passenger boarding airstairs truck parked beside forward port door
+      const stX = px + fdx * 11.5 * s + rdx * 4.2 * s;
+      const stZ = pz + fdz * 11.5 * s + rdz * 4.2 * s;
+      structs.box(stX, stZ, y, y + 1.4, fdx, fdz, 1.3, 3.2, [0.92, 0.94, 0.97]);
+      structs.box(stX - fdx * 0.6, stZ - fdz * 0.6, y + 1.4, y + 3.4, fdx, fdz, 1.1, 2.2, [0.15, 0.42, 0.78]);
+
+      // Tarmac GSE 2: Yellow baggage tug + 2 luggage carts on starboard side
+      const tugX = px - fdx * 4.5 * s - rdx * 5.2 * s;
+      const tugZ = pz - fdz * 4.5 * s - rdz * 5.2 * s;
+      structs.box(tugX, tugZ, y, y + 1.25, fdx, fdz, 0.95, 1.6, [0.94, 0.74, 0.12]);
+      structs.box(tugX - fdx * 3.6, tugZ - fdz * 3.6, y, y + 1.1, fdx, fdz, 0.9, 1.45, [0.82, 0.85, 0.88]);
+      structs.box(tugX - fdx * 7.0, tugZ - fdz * 7.0, y, y + 1.1, fdx, fdz, 0.9, 1.45, [0.82, 0.85, 0.88]);
+
       n++;
       planeCount++;
     }
@@ -1016,6 +1378,71 @@ export function computePlacesPayload(ctx) {
         structs.box(tx, tz, gy, gy + 6.5, ex, ez, L / 2, D / 2, [0.78, 0.78, 0.76]);
         structs.box(tx, tz, gy + 6.5, gy + 15.5, ex, ez, L / 2 - 1, D / 2 - 1, [0.32, 0.45, 0.55]);
         structs.box(tx, tz, gy + 15.5, gy + 17.0, ex, ez, L / 2 + 3, D / 2 + 3, [0.86, 0.86, 0.84]);
+      }
+    }
+  }
+
+  // 3b. Aviation Jetbridges (aeroway=gate) & Airport Control Towers (aeroway=aerodrome / heliport)
+  for (const [gx, gz] of (places && places.aeroGates) || []) {
+    if (inWater(gx, gz) || !canPlaceKind('jetbridge', gx, gz, 24, 18)) continue;
+    let rotY = (hash2(ox + gx, oz + gz, 61) % 360) * (Math.PI / 180);
+    const hostB = findHostBuilding(gx, gz, 38);
+    if (hostB) {
+      const cx = (hostB.minX + hostB.maxX) * 0.5, cz = (hostB.minZ + hostB.maxZ) * 0.5;
+      rotY = Math.atan2(gx - cx, gz - cz);
+    }
+    const gy = terrainY(gx, gz);
+    push('jetbridge', ox + gx, gy, oz + gz, rotY, 1, 1, 1, 0xffffff);
+  }
+
+  const towerCandidates = [
+    ...((places && places.aeroTowers) || []).map(([tx, tz, cls]) => [tx, tz, cls]),
+    ...((places && places.airports) || []).map(([tx, tz, , , , cls]) => [tx, tz, cls || 'aerodrome']),
+  ];
+  for (const [tx, tz, cls] of towerCandidates) {
+    if (!canPlaceKind('atcTower', tx, tz, 2, 180)) continue;
+    const [cx, cz] = pushOffRoad(tx, tz, 8.0);
+    let ok = !inWater(cx, cz) && !inAnyBuilding(cx, cz, 4.0);
+    if (ok) {
+      for (const rl of runwayLines) {
+        if (distToPolyline(cx, cz, rl[1]) < 68) { ok = false; break; }
+      }
+    }
+    const fx = ok ? cx : tx, fz = ok ? cz : tz;
+    const gy = terrainY(fx, fz);
+    const sc = cls === 'heliport' ? 0.65 : 1.0;
+    push('atcTower', ox + fx, gy, oz + fz, 0, sc, sc, sc, 0xffffff);
+    beacons.push(ox + fx, gy + 38.2 * sc, oz + fz);
+  }
+
+  // 3c. Landuse Industrial Silos, Construction Tower Cranes, Military Radar Domes & Campus Flagpoles
+  for (const [luCls, cx, cz] of (places && places.landuseZones) || []) {
+    if (inWater(cx, cz)) continue;
+    const [px, pz] = pushOffRoad(cx, cz, 4.5);
+    if (inAnyBuilding(px, pz, 2.0)) continue;
+    const gy = terrainY(px, pz);
+    const rotY = ((hash2(ox + px, oz + pz, 73) % 360) * Math.PI) / 180;
+    if (luCls === 'industrial' || luCls === 'railway') {
+      if (canPlaceKind('industrialSilo', px, pz, 10, 45)) {
+        push('industrialSilo', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
+      }
+    } else if (luCls === 'construction' || luCls === 'brownfield') {
+      if (canPlaceKind('towerCrane', px, pz, 6, 55)) {
+        push('towerCrane', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
+        beacons.push(ox + px, gy + 36.5, oz + pz);
+      }
+    } else if (luCls === 'military') {
+      if (canPlaceKind('radarDome', px, pz, 6, 50)) {
+        push('radarDome', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
+      }
+    } else if (luCls === 'prison') {
+      if (canPlaceKind('watchtower', px, pz, 6, 35)) {
+        push('watchtower', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
+        beacons.push(ox + px, gy + 11.8, oz + pz);
+      }
+    } else if (luCls === 'school' || luCls === 'kindergarten' || luCls === 'university' || luCls === 'college') {
+      if (canPlaceKind('flagpole', px, pz, 18, 32)) {
+        push('flagpole', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
       }
     }
   }

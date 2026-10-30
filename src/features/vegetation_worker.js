@@ -32,6 +32,8 @@ import {
   LC_FLOWERBED,
   LC_PLAZA,
   LC_STEPS,
+  LC_DAM,
+  LC_PARK_POI,
   LC_STYLE,
 } from './vegetation_extract.js';
 
@@ -589,6 +591,893 @@ function buildPlaygroundDetails(surfBuf, propsBuf, obb, topY) {
   pushObbBox3D(propsBuf, obb, 1.2, -0.45, 3.1, 0.45, topY, topY + 0.95, [0.90, 0.22, 0.20], pat, kind);
 }
 
+/** Pushes an arbitrary 3D quad in `(u, y, v)` OBB coordinates with computed face normal. */
+function pushObbQuad3D(buf, obb, u0, y0, v0, u1, y1, v1, u2, y2, v2, u3, y3, v3, rgb, pat, kind) {
+  const { cx, cz, ux, uz, vx, vz } = obb;
+  const x0 = cx + u0 * ux + v0 * vx, z0 = cz + u0 * uz + v0 * vz;
+  const x1 = cx + u1 * ux + v1 * vx, z1 = cz + u1 * uz + v1 * vz;
+  const x2 = cx + u2 * ux + v2 * vx, z2 = cz + u2 * uz + v2 * vz;
+  const x3 = cx + u3 * ux + v3 * vx, z3 = cz + u3 * uz + v3 * vz;
+  const ax = x1 - x0, ay = y1 - y0, az = z1 - z0;
+  const bx = x2 - x0, by = y2 - y0, bz = z2 - z0;
+  let nx = ay * bz - az * by;
+  let ny = az * bx - ax * bz;
+  let nz = ax * by - ay * bx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nx /= len; ny /= len; nz /= len;
+  if (ny < 0) {
+    nx = -nx; ny = -ny; nz = -nz;
+    pushTri(buf, x0, y0, z0, x2, y2, z2, x1, y1, z1, nx, ny, nz, rgb, pat, kind);
+    pushTri(buf, x0, y0, z0, x3, y3, z3, x2, y2, z2, nx, ny, nz, rgb, pat, kind);
+  } else {
+    pushTri(buf, x0, y0, z0, x1, y1, z1, x2, y2, z2, nx, ny, nz, rgb, pat, kind);
+    pushTri(buf, x0, y0, z0, x2, y2, z2, x3, y3, z3, nx, ny, nz, rgb, pat, kind);
+  }
+}
+
+/** Pushes a 3D sloped wedge/ramp in `(u, v)` from `yLow` to `yHigh` (`dir`: '+u', '-u', '+v', '-v'). */
+function pushObbRamp3D(buf, obb, u0, v0, u1, v1, yLow, yHigh, dir, rgb, pat, kind) {
+  const y00 = dir === '-u' || dir === '-v' ? yHigh : yLow;
+  const y10 = dir === '+u' || dir === '-v' ? yHigh : yLow;
+  const y11 = dir === '+u' || dir === '+v' ? yHigh : yLow;
+  const y01 = dir === '-u' || dir === '+v' ? yHigh : yLow;
+  pushObbQuad3D(buf, obb, u0, y00, v0, u1, y10, v0, u1, y11, v1, u0, y01, v1, rgb, pat, kind);
+  const sideCol = [rgb[0] * 0.86, rgb[1] * 0.86, rgb[2] * 0.86];
+  pushObbQuad3D(buf, obb, u0, yLow, v0, u1, yLow, v0, u1, y10, v0, u0, y00, v0, sideCol, pat, kind);
+  pushObbQuad3D(buf, obb, u1, yLow, v0, u1, yLow, v1, u1, y11, v1, u1, y10, v0, sideCol, pat, kind);
+  pushObbQuad3D(buf, obb, u1, yLow, v1, u0, yLow, v1, u0, y01, v1, u1, y11, v1, sideCol, pat, kind);
+  pushObbQuad3D(buf, obb, u0, yLow, v1, u0, yLow, v0, u0, y00, v0, u0, y01, v1, sideCol, pat, kind);
+}
+
+/** Pushes a 3D hipped/pyramid/A-frame roof over `(u0, v0)..(u1, v1)` from `yBase` to `yPeak`. */
+function pushObbHippedRoof3D(buf, obb, u0, v0, u1, v1, yBase, yPeak, ridgeFrac, rgb, pat, kind) {
+  const uc = (u0 + u1) * 0.5, vc = (v0 + v1) * 0.5;
+  const rHalf = (u1 - u0) * 0.5 * Math.max(0, Math.min(1, ridgeFrac));
+  const ru0 = uc - rHalf, ru1 = uc + rHalf;
+  const shadeA = [Math.min(1, rgb[0] * 1.04), Math.min(1, rgb[1] * 1.04), Math.min(1, rgb[2] * 1.04)];
+  const shadeB = [rgb[0] * 0.88, rgb[1] * 0.88, rgb[2] * 0.88];
+  pushObbQuad3D(buf, obb, u0, yBase, v0, u1, yBase, v0, ru1, yPeak, vc, ru0, yPeak, vc, shadeA, pat, kind);
+  pushObbQuad3D(buf, obb, u1, yBase, v1, u0, yBase, v1, ru0, yPeak, vc, ru1, yPeak, vc, shadeA, pat, kind);
+  pushObbQuad3D(buf, obb, u1, yBase, v0, u1, yBase, v1, ru1, yPeak, vc, ru1, yPeak, vc, shadeB, pat, kind);
+  pushObbQuad3D(buf, obb, u0, yBase, v1, u0, yBase, v0, ru0, yPeak, vc, ru0, yPeak, vc, shadeB, pat, kind);
+}
+
+/** Emits a skatepark (`skateboard`) with concrete half-pipe/quarter-pipe transition ramps, central pyramid funbox, steel grind rails, and coping bars. */
+export function buildSkateparkDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(5.5, Math.min(16.0, obb.hl * 0.88));
+  const hw = Math.max(3.5, Math.min(10.0, obb.hw * 0.86));
+  const deckCol = [0.68, 0.67, 0.64];
+  const rampCol = [0.60, 0.59, 0.56];
+  const bowlCol = [0.54, 0.53, 0.50];
+  const steelCol = [0.78, 0.80, 0.84];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.008, deckCol, pat, kind);
+  pushObbDisk(surfBuf, obb, -hl * 0.35, hw * 0.32, Math.min(2.6, hw * 0.38), 0, Math.PI * 2, 14, topY + 0.015, bowlCol, pat, kind);
+
+  // Quarter-pipe transition ramps + back decks + steel coping bars at both ends
+  const qDepth = Math.min(2.6, hl * 0.24);
+  const qH = 1.55;
+  const qHW = hw * 0.82;
+  pushObbBox3D(propsBuf, obb, -hl, -qHW, -hl + qDepth * 0.42, qHW, topY, topY + qH, rampCol, pat, kind);
+  pushObbRamp3D(propsBuf, obb, -hl + qDepth * 0.42, -qHW, -hl + qDepth, qHW, topY, topY + qH, '-u', rampCol, pat, kind);
+  pushObbBox3D(propsBuf, obb, -hl + qDepth * 0.38, -qHW, -hl + qDepth * 0.48, qHW, topY + qH - 0.05, topY + qH + 0.09, steelCol, pat, kind);
+
+  pushObbBox3D(propsBuf, obb, hl - qDepth * 0.42, -qHW, hl, qHW, topY, topY + qH, rampCol, pat, kind);
+  pushObbRamp3D(propsBuf, obb, hl - qDepth, -qHW, hl - qDepth * 0.42, qHW, topY, topY + qH, '+u', rampCol, pat, kind);
+  pushObbBox3D(propsBuf, obb, hl - qDepth * 0.48, -qHW, hl - qDepth * 0.38, qHW, topY + qH - 0.05, topY + qH + 0.09, steelCol, pat, kind);
+
+  // Central pyramid funbox + steel grind rail
+  const fbU = Math.min(2.8, hl * 0.28);
+  const fbV = Math.min(1.8, hw * 0.34);
+  const fbH = 0.82;
+  pushObbBox3D(propsBuf, obb, -fbU * 0.45, -fbV, fbU * 0.45, fbV, topY, topY + fbH, rampCol, pat, kind);
+  pushObbRamp3D(propsBuf, obb, -fbU, -fbV, -fbU * 0.45, fbV, topY, topY + fbH, '+u', rampCol, pat, kind);
+  pushObbRamp3D(propsBuf, obb, fbU * 0.45, -fbV, fbU, fbV, topY, topY + fbH, '-u', rampCol, pat, kind);
+
+  // Steel grind rail over the funbox
+  const railH = topY + fbH + 0.42;
+  pushObbBox3D(propsBuf, obb, -fbU * 0.85, -0.06, fbU * 0.85, 0.06, railH - 0.07, railH, steelCol, pat, kind);
+  for (const ru of [-fbU * 0.7, 0, fbU * 0.7]) {
+    pushObbBox3D(propsBuf, obb, ru - 0.05, -0.05, ru + 0.05, 0.05, topY, railH - 0.07, steelCol, pat, kind);
+  }
+  // Street grind ledge along -v side
+  const ledgeV = -hw * 0.55;
+  pushObbBox3D(propsBuf, obb, -fbU * 0.8, ledgeV - 0.35, fbU * 0.8, ledgeV + 0.35, topY, topY + 0.45, rampCol, pat, kind);
+  pushObbBox3D(propsBuf, obb, -fbU * 0.8, ledgeV + 0.26, fbU * 0.8, ledgeV + 0.36, topY + 0.42, topY + 0.48, steelCol, pat, kind);
+}
+
+/** Emits 3D outdoor blue-top ping-pong tables (`2.74m x 1.52m`, `y = 0.76m`) on dark steel legs with white net & lines. */
+export function buildTableTennisDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const padHL = Math.max(2.4, Math.min(8.5, obb.hl * 0.86));
+  const padHW = Math.max(1.8, Math.min(5.5, obb.hw * 0.84));
+  pushObbRect(surfBuf, obb, -padHL, -padHW, padHL, padHW, topY + 0.008, [0.22, 0.48, 0.38], pat, kind);
+
+  const tableBlue = [0.14, 0.38, 0.74];
+  const legCol = [0.18, 0.20, 0.23];
+  const white = [0.97, 0.97, 0.96];
+  const netCol = [0.88, 0.90, 0.92];
+  const offsets = obb.hl >= 5.2 ? [-2.2, 2.2] : [0];
+
+  for (const uOff of offsets) {
+    const thl = 1.37, thw = 0.76, ty = topY + 0.76;
+    // 4 dark steel legs
+    for (const lu of [-0.95, 0.95]) {
+      for (const lv of [-0.52, 0.52]) {
+        pushObbBox3D(propsBuf, obb, uOff + lu - 0.05, lv - 0.05, uOff + lu + 0.05, lv + 0.05, topY, ty - 0.05, legCol, pat, kind);
+      }
+    }
+    // Blue tabletop (2.74m x 1.52m)
+    pushObbBox3D(propsBuf, obb, uOff - thl, -thw, uOff + thl, thw, ty - 0.06, ty, tableBlue, pat, kind);
+    // White edge lines & center line
+    pushObbHollowRect(propsBuf, obb, uOff - thl + 0.04, -thw + 0.04, uOff + thl - 0.04, thw - 0.04, 0.04, ty + 0.006, white, pat, kind);
+    pushObbLine(propsBuf, obb, uOff - thl + 0.04, 0, uOff + thl - 0.04, 0, 0.03, ty + 0.006, white, pat, kind);
+    // 3D Center net + white top tape
+    pushObbBox3D(propsBuf, obb, uOff - 0.025, -thw - 0.08, uOff + 0.025, thw + 0.08, ty, ty + 0.155, netCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, uOff - 0.03, -thw - 0.08, uOff + 0.03, thw + 0.08, ty + 0.135, ty + 0.165, white, pat, kind);
+  }
+}
+
+/** Emits a terracotta-red athletics running track with white concentric lanes, starting blocks, hurdles, and high-jump mat. */
+export function buildAthleticsTrackDetails(surfBuf, propsBuf, obb, topY, holes) {
+  const pat = 5, kind = LC_TRACK;
+  const hl = Math.max(10.0, Math.min(95.0, obb.hl * 0.92));
+  const hw = Math.max(6.0, Math.min(55.0, obb.hw * 0.90));
+  const tartanRed = [0.76, 0.25, 0.19];
+  const white = [0.96, 0.96, 0.95];
+  const matBlue = [0.16, 0.44, 0.78];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.006, tartanRed, pat, kind);
+  for (const frac of [0.95, 0.89, 0.83, 0.77, 0.71]) {
+    pushObbHollowRect(surfBuf, obb, -hl * frac, -hw * frac, hl * frac, hw * frac, 0.12, topY + 0.016, white, pat, kind);
+  }
+  if (!holes || holes.length === 0) {
+    pushObbRect(surfBuf, obb, -hl * 0.66, -hw * 0.64, hl * 0.66, hw * 0.64, topY + 0.012, [0.20, 0.52, 0.24], pat, kind);
+  }
+
+  // White starting blocks at the straightaway (-hl * 0.55)
+  const uStart = -hl * 0.52;
+  for (let l = 0; l < 4; l++) {
+    const vLane = -hw * (0.73 + l * 0.06);
+    pushObbBox3D(propsBuf, obb, uStart - 0.32, vLane - 0.16, uStart + 0.32, vLane + 0.16, topY, topY + 0.22, white, pat, kind);
+  }
+
+  // Track hurdles along the +v straightaway
+  for (const uH of [-hl * 0.25, 0, hl * 0.25]) {
+    const vH0 = hw * 0.72, vH1 = hw * 0.92;
+    pushObbBox3D(propsBuf, obb, uH - 0.05, vH0, uH + 0.05, vH0 + 0.08, topY, topY + 0.92, [0.22, 0.24, 0.28], pat, kind);
+    pushObbBox3D(propsBuf, obb, uH - 0.05, vH1 - 0.08, uH + 0.05, vH1, topY, topY + 0.92, [0.22, 0.24, 0.28], pat, kind);
+    pushObbBox3D(propsBuf, obb, uH - 0.06, vH0, uH + 0.06, vH1, topY + 0.82, topY + 0.96, white, pat, kind);
+  }
+
+  // High-jump landing mat + upright standards in the infield
+  const hjU = hl * 0.38;
+  pushObbBox3D(propsBuf, obb, hjU - 1.8, -1.2, hjU + 1.8, 1.2, topY, topY + 0.68, matBlue, pat, kind);
+  pushObbBox3D(propsBuf, obb, hjU - 1.95, -1.35, hjU - 1.80, -1.20, topY, topY + 2.15, white, pat, kind);
+  pushObbBox3D(propsBuf, obb, hjU - 1.95, 1.20, hjU - 1.80, 1.35, topY, topY + 2.15, white, pat, kind);
+  pushObbBox3D(propsBuf, obb, hjU - 1.92, -1.30, hjU - 1.84, 1.30, topY + 1.92, topY + 2.00, [0.95, 0.80, 0.14], pat, kind);
+}
+
+/** Emits an American football / rugby pitch with striped turf, endzones, white 10-yard grid lines, and 2 yellow tuning-fork H-goalposts (postY = 6.5m). */
+export function buildFootballPitchDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(14.0, Math.min(54.0, obb.hl * 0.90));
+  const hw = Math.max(7.5, Math.min(28.0, obb.hw * 0.88));
+  const stripeDark = [0.16, 0.48, 0.21];
+  const stripeLight = [0.22, 0.56, 0.25];
+  const endzoneCol = [0.15, 0.34, 0.64];
+  const white = [0.97, 0.97, 0.96];
+  const yellow = [0.98, 0.84, 0.12];
+
+  const ezFrac = 0.82;
+  const playHL = hl * ezFrac;
+  // Endzones
+  pushObbRect(surfBuf, obb, -hl, -hw, -playHL, hw, topY + 0.008, endzoneCol, pat, kind);
+  pushObbRect(surfBuf, obb, playHL, -hw, hl, hw, topY + 0.008, endzoneCol, pat, kind);
+
+  // 10-yard turf stripes + white yard lines
+  const nSegments = 10;
+  const lw = Math.max(0.14, Math.min(0.24, hl * 0.0055));
+  const lineY = topY + 0.022;
+  for (let i = 0; i < nSegments; i++) {
+    const u0 = -playHL + (2 * playHL * i) / nSegments;
+    const u1 = -playHL + (2 * playHL * (i + 1)) / nSegments;
+    pushObbRect(surfBuf, obb, u0, -hw, u1, hw, topY + 0.008, (i & 1) ? stripeLight : stripeDark, pat, kind);
+    pushObbLine(surfBuf, obb, u0, -hw, u0, hw, lw, lineY, white, pat, kind);
+  }
+  pushObbLine(surfBuf, obb, playHL, -hw, playHL, hw, lw * 1.2, lineY, white, pat, kind);
+  pushObbHollowRect(surfBuf, obb, -hl, -hw, hl, hw, lw * 1.3, lineY, white, pat, kind);
+
+  // Inner hash mark lines along the field
+  const hashV = hw * 0.22;
+  pushObbLine(surfBuf, obb, -playHL, -hashV, playHL, -hashV, lw * 0.65, lineY, white, pat, kind);
+  pushObbLine(surfBuf, obb, -playHL, hashV, playHL, hashV, lw * 0.65, lineY, white, pat, kind);
+
+  // 2 iconic yellow tuning-fork H-goalposts (postY = topY + 6.5m) at both ends
+  const postHW = Math.min(2.8, hw * 0.24);
+  const crossY = topY + 3.05;
+  const postY = topY + 6.5;
+  for (const sgn of [-1, 1]) {
+    const uPost = sgn * hl;
+    const uBase = sgn * (hl + 0.65);
+    // Base pedestal & gooseneck arm
+    pushObbBox3D(propsBuf, obb, uBase - 0.14, -0.14, uBase + 0.14, 0.14, topY, crossY, yellow, pat, kind);
+    const uMin = Math.min(uPost, uBase), uMax = Math.max(uPost, uBase);
+    pushObbBox3D(propsBuf, obb, uMin - 0.12, -0.12, uMax + 0.12, 0.12, crossY - 0.18, crossY + 0.05, yellow, pat, kind);
+    // Horizontal crossbar
+    pushObbBox3D(propsBuf, obb, uPost - 0.12, -postHW - 0.12, uPost + 0.12, postHW + 0.12, crossY - 0.12, crossY + 0.12, yellow, pat, kind);
+    // Left and right tall vertical uprights up to 6.5m
+    pushObbBox3D(propsBuf, obb, uPost - 0.10, -postHW - 0.10, uPost + 0.10, -postHW + 0.10, crossY, postY, yellow, pat, kind);
+    pushObbBox3D(propsBuf, obb, uPost - 0.10, postHW - 0.10, uPost + 0.10, postHW + 0.10, crossY, postY, yellow, pat, kind);
+  }
+}
+
+/** Emits a golf putting green, curved white-sand bunker pit, 3D flagpole with red triangular pennant flag, and chain basket for disc_golf. */
+export function buildGolfDetails(surfBuf, propsBuf, obb, topY, sport) {
+  const pat = 5, kind = LC_PITCH;
+  const r = Math.max(3.5, Math.min(14.0, Math.min(obb.hl, obb.hw) * 0.78));
+  const greenCol = [0.22, 0.66, 0.30];
+  const fringeCol = [0.17, 0.50, 0.23];
+  const sandCol = [0.93, 0.89, 0.76];
+  const white = [0.96, 0.96, 0.96];
+  const flagRed = [0.92, 0.16, 0.18];
+
+  // Fringe apron + bright emerald putting green pad
+  pushObbDisk(surfBuf, obb, 0, 0, r, 0, Math.PI * 2, 18, topY + 0.008, fringeCol, pat, kind);
+  pushObbDisk(surfBuf, obb, -r * 0.12, 0, r * 0.76, 0, Math.PI * 2, 18, topY + 0.015, greenCol, pat, kind);
+
+  // Curved white-sand bunker pit alongside the green
+  pushObbDisk(surfBuf, obb, r * 0.52, r * 0.38, r * 0.38, 0, Math.PI * 2, 14, topY + 0.018, sandCol, 2, kind);
+  pushObbDisk(surfBuf, obb, r * 0.65, r * 0.12, r * 0.26, 0, Math.PI * 2, 12, topY + 0.018, sandCol, 2, kind);
+
+  // Golf cup + 3D flagpole + red pennant flag
+  const cupU = -r * 0.22, cupV = -r * 0.10;
+  pushObbDisk(surfBuf, obb, cupU, cupV, 0.22, 0, Math.PI * 2, 8, topY + 0.024, [0.15, 0.16, 0.16], pat, kind);
+  pushObbBox3D(propsBuf, obb, cupU - 0.04, cupV - 0.04, cupU + 0.04, cupV + 0.04, topY, topY + 2.25, white, pat, kind);
+  pushObbBox3D(propsBuf, obb, cupU, cupV - 0.03, cupU + 0.62, cupV + 0.03, topY + 1.82, topY + 2.22, flagRed, pat, kind);
+
+  if (sport === 'miniature_golf') {
+    const brickCol = [0.74, 0.28, 0.22];
+    pushObbHollowRect(propsBuf, obb, -r * 0.75, -r * 0.42, r * 0.75, r * 0.42, 0.22, topY + 0.18, brickCol, 7, kind);
+    // Mini-golf windmill tower obstacle
+    pushObbBox3D(propsBuf, obb, 0.4, -0.55, 1.5, 0.55, topY, topY + 1.85, brickCol, 7, kind);
+    pushObbHippedRoof3D(propsBuf, obb, 0.3, -0.65, 1.6, 0.65, topY + 1.85, topY + 2.45, 0, [0.95, 0.78, 0.16], pat, kind);
+  } else if (sport === 'disc_golf') {
+    // 3D Disc-golf chain target basket
+    const bU = r * 0.25, bV = -r * 0.22;
+    const steel = [0.78, 0.82, 0.86];
+    const bandYellow = [0.96, 0.80, 0.12];
+    pushObbBox3D(propsBuf, obb, bU - 0.05, bV - 0.05, bU + 0.05, bV + 0.05, topY, topY + 1.45, steel, pat, kind);
+    pushObbBox3D(propsBuf, obb, bU - 0.42, bV - 0.42, bU + 0.42, bV + 0.42, topY + 0.62, topY + 0.84, steel, pat, kind);
+    pushObbBox3D(propsBuf, obb, bU - 0.26, bV - 0.26, bU + 0.26, bV + 0.26, topY + 0.84, topY + 1.32, [0.70, 0.74, 0.78], pat, kind);
+    pushObbBox3D(propsBuf, obb, bU - 0.38, bV - 0.38, bU + 0.38, bV + 0.38, topY + 1.32, topY + 1.46, bandYellow, pat, kind);
+  }
+}
+
+/** Emits an ice rink with pale ice-blue surface, perimeter white dasher boards (1.1m high), red/blue lines & face-off circles, and 2 hockey goals. */
+export function buildIceRinkDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(8.0, Math.min(32.0, obb.hl * 0.88));
+  const hw = Math.max(4.5, Math.min(16.0, obb.hw * 0.86));
+  const iceCol = [0.86, 0.93, 0.98];
+  const boardWhite = [0.95, 0.96, 0.98];
+  const lineRed = [0.88, 0.16, 0.18];
+  const lineBlue = [0.16, 0.44, 0.82];
+  const kickYellow = [0.95, 0.80, 0.16];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.008, iceCol, pat, kind);
+
+  // Red center line, two blue lines, and red face-off circles
+  const lw = 0.16;
+  const lineY = topY + 0.020;
+  pushObbLine(surfBuf, obb, 0, -hw, 0, hw, lw * 1.2, lineY, lineRed, pat, kind);
+  pushObbLine(surfBuf, obb, -hl * 0.32, -hw, -hl * 0.32, hw, lw * 1.2, lineY, lineBlue, pat, kind);
+  pushObbLine(surfBuf, obb, hl * 0.32, -hw, hl * 0.32, hw, lw * 1.2, lineY, lineBlue, pat, kind);
+
+  const fcR = Math.min(3.2, hw * 0.28);
+  pushObbArc(surfBuf, obb, 0, 0, fcR, 0, Math.PI * 2, 16, lw, lineY, lineBlue, pat, kind);
+  for (const su of [-hl * 0.62, hl * 0.62]) {
+    for (const sv of [-hw * 0.44, hw * 0.44]) {
+      pushObbArc(surfBuf, obb, su, sv, fcR * 0.85, 0, Math.PI * 2, 14, lw, lineY, lineRed, pat, kind);
+    }
+  }
+
+  // Perimeter white dasher boards (1.1m high) + yellow kick plate + blue top rail
+  const bw = 0.22;
+  const bH = 1.10;
+  pushObbBox3D(propsBuf, obb, -hl - bw, -hw - bw, hl + bw, -hw, topY, topY + bH, boardWhite, pat, kind);
+  pushObbBox3D(propsBuf, obb, -hl - bw, hw, hl + bw, hw + bw, topY, topY + bH, boardWhite, pat, kind);
+  pushObbBox3D(propsBuf, obb, -hl - bw, -hw, -hl, hw, topY, topY + bH, boardWhite, pat, kind);
+  pushObbBox3D(propsBuf, obb, hl, -hw, hl + bw, hw, topY, topY + bH, boardWhite, pat, kind);
+  // Kick-plate & blue cap stripes
+  pushObbHollowRect(propsBuf, obb, -hl, -hw, hl, hw, bw * 1.15, topY + 0.14, kickYellow, pat, kind);
+  pushObbHollowRect(propsBuf, obb, -hl - bw * 0.5, -hw - bw * 0.5, hl + bw * 0.5, hw + bw * 0.5, bw * 1.1, topY + bH + 0.02, lineBlue, pat, kind);
+
+  // 2 3D Hockey Goals + blue goal creases at both ends
+  const gU = hl * 0.84;
+  for (const sgn of [-1, 1]) {
+    const uGoal = sgn * gU;
+    pushObbDisk(surfBuf, obb, uGoal, 0, 1.4, 0, Math.PI * 2, 12, lineY, [0.55, 0.80, 0.96], pat, kind);
+    pushObbBox3D(propsBuf, obb, uGoal - 0.45, -0.92, uGoal + 0.45, 0.92, topY, topY + 1.22, lineRed, pat, kind);
+    pushObbBox3D(propsBuf, obb, uGoal - 0.38, -0.82, uGoal + 0.38, 0.82, topY, topY + 1.14, boardWhite, pat, kind);
+  }
+}
+
+/** Emits 3D stone park chess tables (0.9m x 0.9m checkerboard top + 2 stone bench seats). */
+export function buildChessDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 7, kind = LC_PITCH;
+  const padHL = Math.max(1.8, Math.min(5.0, obb.hl * 0.86));
+  const padHW = Math.max(1.8, Math.min(5.0, obb.hw * 0.86));
+  const stoneLight = [0.84, 0.82, 0.78];
+  const stoneBase = [0.68, 0.66, 0.62];
+  const darkSq = [0.20, 0.21, 0.23];
+  const creamSq = [0.95, 0.93, 0.88];
+
+  pushObbRect(surfBuf, obb, -padHL, -padHW, padHL, padHW, topY + 0.008, [0.74, 0.71, 0.66], pat, kind);
+
+  const offsets = obb.hl >= 3.0 ? [-1.35, 1.35] : [0];
+  for (const uOff of offsets) {
+    // Stone pedestal + 0.9m x 0.9m tabletop
+    pushObbBox3D(propsBuf, obb, uOff - 0.20, -0.20, uOff + 0.20, 0.20, topY, topY + 0.74, stoneBase, pat, kind);
+    pushObbBox3D(propsBuf, obb, uOff - 0.46, -0.46, uOff + 0.46, 0.46, topY + 0.74, topY + 0.82, stoneLight, pat, kind);
+    // 4x4 Checkerboard top inlay
+    const sq = 0.18;
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) {
+        const su0 = uOff - 0.36 + r * sq;
+        const sv0 = -0.36 + c * sq;
+        pushObbRect(propsBuf, obb, su0, sv0, su0 + sq, sv0 + sq, topY + 0.826, ((r + c) & 1) ? darkSq : creamSq, 5, kind);
+      }
+    }
+    // 2 stone benches flanking the chess table
+    pushObbBox3D(propsBuf, obb, uOff - 0.44, -0.98, uOff + 0.44, -0.62, topY, topY + 0.46, stoneLight, pat, kind);
+    pushObbBox3D(propsBuf, obb, uOff - 0.44, 0.62, uOff + 0.44, 0.98, topY, topY + 0.46, stoneLight, pat, kind);
+  }
+}
+
+/** Emits a painted 4-square court grid on an asphalt pad. */
+export function buildFourSquareDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const s = Math.max(2.6, Math.min(5.5, Math.min(obb.hl, obb.hw) * 0.84));
+  const asphalt = [0.32, 0.34, 0.37];
+  const white = [0.97, 0.97, 0.96];
+  const yellow = [0.96, 0.82, 0.16];
+
+  pushObbRect(surfBuf, obb, -s * 1.12, -s * 1.12, s * 1.12, s * 1.12, topY + 0.008, asphalt, pat, kind);
+  // 4 painted quadrant squares
+  pushObbRect(surfBuf, obb, -s, -s, 0, 0, topY + 0.014, [0.82, 0.28, 0.24], pat, kind);
+  pushObbRect(surfBuf, obb, 0, -s, s, 0, topY + 0.014, [0.20, 0.48, 0.78], pat, kind);
+  pushObbRect(surfBuf, obb, -s, 0, 0, s, topY + 0.014, [0.22, 0.60, 0.36], pat, kind);
+  pushObbRect(surfBuf, obb, 0, 0, s, s, topY + 0.014, [0.88, 0.68, 0.16], pat, kind);
+
+  const lineY = topY + 0.022;
+  pushObbHollowRect(surfBuf, obb, -s, -s, s, s, 0.14, lineY, white, pat, kind);
+  pushObbLine(surfBuf, obb, -s, 0, s, 0, 0.12, lineY, white, pat, kind);
+  pushObbLine(surfBuf, obb, 0, -s, 0, s, 0.12, lineY, white, pat, kind);
+  pushObbArc(surfBuf, obb, s, s, s * 0.35, Math.PI, Math.PI * 1.5, 8, 0.10, lineY, yellow, pat, kind);
+}
+
+/** Emits an American handball / wallball court with a 3.6m tall x 6.0m wide concrete center strike wall on a blue/grey court. */
+export function buildHandballDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(5.5, Math.min(13.0, obb.hl * 0.88));
+  const hw = Math.max(3.5, Math.min(7.5, obb.hw * 0.86));
+  const courtBlue = [0.20, 0.46, 0.74];
+  const white = [0.97, 0.97, 0.96];
+  const wallConcrete = [0.80, 0.79, 0.76];
+  const faultOrange = [0.92, 0.36, 0.14];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.008, courtBlue, pat, kind);
+  const lineY = topY + 0.020;
+  pushObbHollowRect(surfBuf, obb, -hl, -hw, hl, hw, 0.13, lineY, white, pat, kind);
+  // Short lines & service lines on both sides of the strike wall
+  for (const sgn of [-1, 1]) {
+    pushObbLine(surfBuf, obb, sgn * hl * 0.46, -hw, sgn * hl * 0.46, hw, 0.12, lineY, white, pat, kind);
+    pushObbLine(surfBuf, obb, sgn * hl * 0.72, -hw, sgn * hl * 0.72, hw, 0.10, lineY, white, pat, kind);
+  }
+
+  // 3.6m tall x 6.0m wide concrete center strike wall
+  const wallHW = Math.min(3.1, hw * 0.92);
+  pushObbBox3D(propsBuf, obb, -0.24, -wallHW, 0.24, wallHW, topY, topY + 3.65, wallConcrete, 7, kind);
+  pushObbBox3D(propsBuf, obb, -0.26, -wallHW, 0.26, wallHW, topY + 0.82, topY + 0.96, faultOrange, pat, kind);
+}
+
+/** Emits a boules / petanque / bocce court with compacted sand-gravel lane and timber railroad-tie border frame. */
+export function buildBoulesDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(4.5, Math.min(12.0, obb.hl * 0.88));
+  const hw = Math.max(1.8, Math.min(4.2, obb.hw * 0.84));
+  const gravelCol = [0.83, 0.76, 0.58];
+  const timberCol = [0.46, 0.30, 0.18];
+  const white = [0.95, 0.95, 0.93];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.010, gravelCol, 2, kind);
+  pushObbArc(surfBuf, obb, -hl * 0.72, 0, 0.45, 0, Math.PI * 2, 12, 0.08, topY + 0.020, white, pat, kind);
+  pushObbArc(surfBuf, obb, hl * 0.72, 0, 0.45, 0, Math.PI * 2, 12, 0.08, topY + 0.020, white, pat, kind);
+
+  // Raised timber sleeper surround
+  const tw = 0.22, th = 0.24;
+  pushObbBox3D(propsBuf, obb, -hl - tw, -hw - tw, hl + tw, -hw, topY, topY + th, timberCol, 7, kind);
+  pushObbBox3D(propsBuf, obb, -hl - tw, hw, hl + tw, hw + tw, topY, topY + th, timberCol, 7, kind);
+  pushObbBox3D(propsBuf, obb, -hl - tw, -hw, -hl, hw, topY, topY + th, timberCol, 7, kind);
+  pushObbBox3D(propsBuf, obb, hl, -hw, hl + tw, hw, topY, topY + th, timberCol, 7, kind);
+}
+
+/** Emits a cricket oval with boundary rope, central tan clay wicket strip, and 3 wooden stumps at each end. */
+export function buildCricketDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const r = Math.max(12.0, Math.min(36.0, Math.min(obb.hl, obb.hw) * 0.88));
+  const turfCol = [0.21, 0.54, 0.25];
+  const clayCol = [0.80, 0.66, 0.44];
+  const stumpWood = [0.86, 0.70, 0.38];
+  const white = [0.97, 0.97, 0.96];
+
+  pushObbDisk(surfBuf, obb, 0, 0, r, 0, Math.PI * 2, 24, topY + 0.008, turfCol, pat, kind);
+  pushObbArc(surfBuf, obb, 0, 0, r * 0.92, 0, Math.PI * 2, 24, 0.20, topY + 0.018, white, pat, kind);
+  pushObbArc(surfBuf, obb, 0, 0, r * 0.52, 0, Math.PI * 2, 20, 0.14, topY + 0.018, white, pat, kind);
+
+  // Central tan clay wicket strip (20m x 3m) + white popping creases
+  const wHL = Math.min(10.0, r * 0.42);
+  const wHW = 1.55;
+  pushObbRect(surfBuf, obb, -wHL, -wHW, wHL, wHW, topY + 0.016, clayCol, 2, kind);
+  for (const sgn of [-1, 1]) {
+    const uStump = sgn * (wHL - 1.2);
+    pushObbLine(surfBuf, obb, uStump - sgn * 1.2, -wHW, uStump - sgn * 1.2, wHW, 0.12, topY + 0.024, white, pat, kind);
+    // 3 wooden stumps + top bail
+    for (const sv of [-0.22, 0, 0.22]) {
+      pushObbBox3D(propsBuf, obb, uStump - 0.05, sv - 0.05, uStump + 0.05, sv + 0.05, topY, topY + 0.78, stumpWood, pat, kind);
+    }
+    pushObbBox3D(propsBuf, obb, uStump - 0.06, -0.26, uStump + 0.06, 0.26, topY + 0.74, topY + 0.82, stumpWood, pat, kind);
+  }
+  // White sightscreen beyond boundary
+  pushObbBox3D(propsBuf, obb, -r * 0.96, -2.4, -r * 0.92, 2.4, topY, topY + 3.2, white, pat, kind);
+}
+
+/** Emits a sand equestrian riding arena with white dressage rail fence and painted red/white show-jumping hurdles. */
+export function buildEquestrianDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(8.0, Math.min(28.0, obb.hl * 0.88));
+  const hw = Math.max(5.0, Math.min(16.0, obb.hw * 0.86));
+  const sandCol = [0.85, 0.75, 0.54];
+  const white = [0.96, 0.96, 0.95];
+  const jumpRed = [0.88, 0.18, 0.18];
+  const jumpBlue = [0.16, 0.42, 0.82];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.010, sandCol, 2, kind);
+  // White perimeter dressage rail
+  pushObbHollowRect(propsBuf, obb, -hl, -hw, hl, hw, 0.18, topY + 0.95, white, pat, kind);
+
+  // 3 3D show-jumping hurdle rails across the arena
+  const jumps = [
+    [-hl * 0.45, -hw * 0.25, jumpRed],
+    [0, hw * 0.22, jumpBlue],
+    [hl * 0.45, -hw * 0.18, jumpRed],
+  ];
+  for (const [ju, jv, barCol] of jumps) {
+    const jHW = Math.min(2.1, hw * 0.34);
+    pushObbBox3D(propsBuf, obb, ju - 0.14, jv - jHW - 0.14, ju + 0.14, jv - jHW + 0.14, topY, topY + 1.45, white, pat, kind);
+    pushObbBox3D(propsBuf, obb, ju - 0.14, jv + jHW - 0.14, ju + 0.14, jv + jHW + 0.14, topY, topY + 1.45, white, pat, kind);
+    pushObbBox3D(propsBuf, obb, ju - 0.10, jv - jHW, ju + 0.10, jv + jHW, topY + 1.05, topY + 1.22, barCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, ju - 0.10, jv - jHW, ju + 0.10, jv + jHW, topY + 0.62, topY + 0.78, white, pat, kind);
+  }
+}
+
+/** Emits a 3D angled bouldering / climbing wall prism on a blue crash-mat pad with colorful climbing holds. */
+export function buildClimbingDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PITCH;
+  const hl = Math.max(3.2, Math.min(8.5, obb.hl * 0.84));
+  const hw = Math.max(2.4, Math.min(6.0, obb.hw * 0.82));
+  const matBlue = [0.16, 0.44, 0.74];
+  const wallRock = [0.64, 0.61, 0.56];
+  const wallFacet = [0.56, 0.53, 0.48];
+
+  // Thick blue safety crash-mat pad
+  pushObbBox3D(propsBuf, obb, -hl, -hw, hl, hw, topY, topY + 0.32, matBlue, pat, kind);
+
+  // Angled bouldering wall prism + sloped faces
+  const wU = Math.min(2.6, hl * 0.68);
+  const wV = Math.min(1.5, hw * 0.55);
+  const wH = 4.15;
+  pushObbBox3D(propsBuf, obb, -wU * 0.55, -wV * 0.65, wU * 0.55, wV * 0.65, topY + 0.32, topY + wH, wallRock, 7, kind);
+  pushObbRamp3D(propsBuf, obb, -wU, -wV * 0.65, -wU * 0.55, wV * 0.65, topY + 0.32, topY + wH, '+u', wallFacet, 7, kind);
+  pushObbRamp3D(propsBuf, obb, wU * 0.55, -wV * 0.65, wU, wV * 0.65, topY + 0.32, topY + wH, '-u', wallFacet, 7, kind);
+
+  // Colorful 3D climbing holds along the front & back faces
+  const holdColors = [
+    [0.94, 0.22, 0.20],
+    [0.96, 0.80, 0.12],
+    [0.20, 0.82, 0.36],
+    [0.18, 0.72, 0.94],
+    [0.92, 0.24, 0.68],
+  ];
+  for (let i = 0; i < 10; i++) {
+    const hu = -wU * 0.44 + (i % 5) * (wU * 0.22);
+    const hy = topY + 0.85 + ((i * 3) % 5) * 0.62;
+    const sgn = i < 5 ? 1 : -1;
+    const hv = sgn * (wV * 0.65 + 0.06);
+    const hc = holdColors[i % holdColors.length];
+    pushObbBox3D(propsBuf, obb, hu - 0.11, hv - 0.08, hu + 0.11, hv + 0.08, hy - 0.10, hy + 0.10, hc, pat, kind);
+  }
+}
+
+/** Emits rows of 3D granite/limestone headstones (0.65m x 0.95m x 0.16m), stone crosses, and memorial obelisks/crypts inside a cemetery. */
+export function buildCemeteryDetails(surfBuf, propsBuf, outer, holes, ox, oz, yOff, polySeed) {
+  const pat = 7, kind = LC_CEMETERY;
+  pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.34, 0.28, [0.58, 0.56, 0.53], pat, kind);
+
+  const obb = computePolyOBB(outer);
+  const bb = bboxOf(outer);
+  const rng = mulberry32(((polySeed * 6151 + 37) * 2654435761) ^ Math.round(ox + bb[0]));
+  const stonePalette = [
+    [0.74, 0.75, 0.77], // Light Granite
+    [0.62, 0.61, 0.58], // Weathered Limestone
+    [0.82, 0.80, 0.76], // Marble Cream
+    [0.50, 0.52, 0.55], // Dark Slate Granite
+  ];
+
+  const area = Math.max(100, (bb[2] - bb[0]) * (bb[3] - bb[1]));
+  const stepX = area > 8000 ? 5.2 : 3.6;
+  const stepZ = area > 8000 ? 6.4 : 4.4;
+  let graveCount = 0;
+
+  for (let gz = bb[1] + 1.8; gz <= bb[3] - 1.8 && graveCount < 84; gz += stepZ) {
+    for (let gx = bb[0] + 1.8; gx <= bb[2] - 1.8 && graveCount < 84; gx += stepX) {
+      const jx = gx + (rng() - 0.5) * 0.35;
+      const jz = gz + (rng() - 0.5) * 0.35;
+      if (!pointInRing(jx, jz, outer)) continue;
+      let inHole = false;
+      for (const h of holes || []) {
+        if (pointInRing(jx, jz, h)) { inHole = true; break; }
+      }
+      if (inHole) continue;
+
+      const gy = getBeijingTerrainElevation(ox + jx, oz + jz) + yOff;
+      const gObb = { cx: jx, cz: jz, ux: obb.ux, uz: obb.uz, vx: obb.vx, vz: obb.vz, hl: 1, hw: 1 };
+      const col = stonePalette[graveCount % stonePalette.length];
+      const baseCol = [col[0] * 0.86, col[1] * 0.86, col[2] * 0.86];
+
+      if (graveCount % 16 === 0) {
+        // Memorial Obelisk (stepped plinth + tall stone shaft + pyramidion cap)
+        pushObbBox3D(propsBuf, gObb, -0.52, -0.52, 0.52, 0.52, gy - 0.15, gy + 0.35, baseCol, pat, kind);
+        pushObbBox3D(propsBuf, gObb, -0.32, -0.32, 0.32, 0.32, gy + 0.35, gy + 2.25, col, pat, kind);
+        pushObbHippedRoof3D(propsBuf, gObb, -0.34, -0.34, 0.34, 0.34, gy + 2.25, gy + 2.75, 0, col, pat, kind);
+      } else if (graveCount % 19 === 7) {
+        // Family Crypt / Small Stone Mausoleum
+        pushObbBox3D(propsBuf, gObb, -1.05, -0.78, 1.05, 0.78, gy - 0.20, gy + 1.45, col, pat, kind);
+        pushObbHippedRoof3D(propsBuf, gObb, -1.15, -0.88, 1.15, 0.88, gy + 1.45, gy + 2.05, 0.65, baseCol, pat, kind);
+        pushObbBox3D(propsBuf, gObb, 1.02, -0.30, 1.09, 0.30, gy, gy + 1.18, [0.24, 0.22, 0.20], pat, kind);
+      } else if (graveCount % 5 === 2) {
+        // 3D Stone Cross Monument
+        pushObbBox3D(propsBuf, gObb, -0.36, -0.18, 0.36, 0.18, gy - 0.12, gy + 0.16, baseCol, pat, kind);
+        pushObbBox3D(propsBuf, gObb, -0.11, -0.09, 0.11, 0.09, gy + 0.16, gy + 1.28, col, pat, kind);
+        pushObbBox3D(propsBuf, gObb, -0.36, -0.09, 0.36, 0.09, gy + 0.82, gy + 1.02, col, pat, kind);
+      } else {
+        // Standard 3D Granite/Limestone Headstone Slab (0.65m x 0.95m x 0.16m) + plinth
+        const h = 0.88 + (graveCount % 3) * 0.08;
+        pushObbBox3D(propsBuf, gObb, -0.40, -0.15, 0.40, 0.15, gy - 0.12, gy + 0.14, baseCol, pat, kind);
+        pushObbBox3D(propsBuf, gObb, -0.325, -0.08, 0.325, 0.08, gy + 0.14, gy + h, col, pat, kind);
+      }
+      graveCount++;
+    }
+  }
+}
+
+/** Helper to emit a 3D wooden A-frame picnic table at `(uOff, vOff)` in `obb`. */
+function pushPicnicTable3D(propsBuf, obb, uOff, vOff, topY, pat, kind) {
+  const woodTop = [0.64, 0.40, 0.22];
+  const woodLeg = [0.46, 0.28, 0.15];
+  // Tabletop (1.8m x 0.82m at y = 0.76m)
+  pushObbBox3D(propsBuf, obb, uOff - 0.90, vOff - 0.42, uOff + 0.90, vOff + 0.42, topY + 0.70, topY + 0.78, woodTop, pat, kind);
+  // 2 attached side benches (y = 0.45m)
+  pushObbBox3D(propsBuf, obb, uOff - 0.90, vOff - 0.86, uOff + 0.90, vOff - 0.56, topY + 0.40, topY + 0.47, woodTop, pat, kind);
+  pushObbBox3D(propsBuf, obb, uOff - 0.90, vOff + 0.56, uOff + 0.90, vOff + 0.86, topY + 0.40, topY + 0.47, woodTop, pat, kind);
+  // A-frame support legs
+  for (const lu of [-0.65, 0.65]) {
+    pushObbBox3D(propsBuf, obb, uOff + lu - 0.07, vOff - 0.78, uOff + lu + 0.07, vOff + 0.78, topY, topY + 0.42, woodLeg, pat, kind);
+    pushObbBox3D(propsBuf, obb, uOff + lu - 0.07, vOff - 0.36, uOff + lu + 0.07, vOff + 0.36, topY + 0.42, topY + 0.70, woodLeg, pat, kind);
+  }
+}
+
+/** Emits a 3D timber-column Park Gazebo / Picnic Pavilion with hipped cedar roof (`shelter`). */
+export function buildShelterGazeboDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 7, kind = LC_PARK_POI;
+  const hl = Math.max(2.0, Math.min(4.2, obb.hl * 0.82));
+  const hw = Math.max(2.0, Math.min(4.2, obb.hw * 0.82));
+  const stonePad = [0.76, 0.73, 0.68];
+  const timberCol = [0.56, 0.35, 0.19];
+  const roofCedar = [0.46, 0.25, 0.14];
+
+  pushObbBox3D(propsBuf, obb, -hl, -hw, hl, hw, topY - 0.22, topY + 0.12, stonePad, pat, kind);
+  const colU = hl * 0.82, colV = hw * 0.82;
+  const eaveY = topY + 2.45;
+  for (const su of [-colU, colU]) {
+    for (const sv of [-colV, colV]) {
+      pushObbBox3D(propsBuf, obb, su - 0.14, sv - 0.14, su + 0.14, sv + 0.14, topY + 0.12, eaveY, timberCol, 5, kind);
+    }
+  }
+  // Hipped cedar shingle roof + picnic table inside
+  pushObbHippedRoof3D(propsBuf, obb, -hl * 1.08, -hw * 1.08, hl * 1.08, hw * 1.08, eaveY, eaveY + 1.15, 0.25, roofCedar, 5, kind);
+  pushPicnicTable3D(propsBuf, obb, 0, 0, topY + 0.12, 5, kind);
+}
+
+/** Emits 3D wooden A-frame picnic tables (`picnic_site`). */
+export function buildPicnicSiteDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PARK_POI;
+  pushObbRect(surfBuf, obb, -2.4, -2.0, 2.4, 2.0, topY + 0.008, [0.74, 0.70, 0.62], 7, kind);
+  pushPicnicTable3D(propsBuf, obb, 0, 0, topY, pat, kind);
+}
+
+/** Emits a black cast-iron pedestal park BBQ grill with glowing embers + companion wooden picnic bench (`bbq`). */
+export function buildBbqDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PARK_POI;
+  const castIron = [0.16, 0.17, 0.19];
+  const emberCol = [0.94, 0.34, 0.10];
+  const grateSteel = [0.78, 0.80, 0.84];
+
+  pushObbRect(surfBuf, obb, -2.0, -2.0, 2.0, 2.0, topY + 0.008, [0.72, 0.69, 0.64], 7, kind);
+  // Pedestal post + charcoal firebox + glowing embers + steel grate
+  pushObbBox3D(propsBuf, obb, -0.95, -0.09, -0.77, 0.09, topY, topY + 0.82, castIron, pat, kind);
+  pushObbBox3D(propsBuf, obb, -1.22, -0.30, -0.50, 0.30, topY + 0.82, topY + 1.08, castIron, pat, kind);
+  pushObbRect(propsBuf, obb, -1.16, -0.24, -0.56, 0.24, topY + 1.086, emberCol, pat, kind);
+  pushObbBox3D(propsBuf, obb, -1.18, -0.26, -0.54, 0.26, topY + 1.09, topY + 1.13, grateSteel, pat, kind);
+  // Companion picnic table beside the grill
+  pushPicnicTable3D(propsBuf, obb, 0.65, 0, topY, pat, kind);
+}
+
+/** Emits a dog park (`dog_park`) with a blue/yellow agility A-frame ramp, jump hurdle bar, and agility tunnel tube. */
+export function buildDogParkDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PARK_POI;
+  const hl = Math.max(4.5, Math.min(12.0, obb.hl * 0.86));
+  const hw = Math.max(3.5, Math.min(8.5, obb.hw * 0.84));
+  const turfCol = [0.28, 0.56, 0.26];
+  const agBlue = [0.16, 0.46, 0.84];
+  const agYellow = [0.96, 0.82, 0.14];
+  const white = [0.96, 0.96, 0.95];
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.008, turfCol, pat, kind);
+
+  // 1. Blue & Yellow Dog Agility A-Frame Ramp
+  const afU = -hl * 0.35;
+  pushObbRamp3D(propsBuf, obb, afU - 1.65, -0.55, afU, 0.55, topY, topY + 1.35, '+u', agBlue, pat, kind);
+  pushObbRamp3D(propsBuf, obb, afU, -0.55, afU + 1.65, 0.55, topY, topY + 1.35, '-u', agBlue, pat, kind);
+  // Yellow contact-zone bottom ends
+  pushObbRamp3D(propsBuf, obb, afU - 1.68, -0.56, afU - 1.10, 0.56, topY + 0.02, topY + 0.48, '+u', agYellow, pat, kind);
+  pushObbRamp3D(propsBuf, obb, afU + 1.10, -0.56, afU + 1.68, 0.56, topY + 0.02, topY + 0.48, '-u', agYellow, pat, kind);
+
+  // 2. Dog Agility Tunnel Tube
+  const tunU = hl * 0.25, tunV = -hw * 0.32;
+  pushObbBox3D(propsBuf, obb, tunU - 1.35, tunV - 0.45, tunU + 1.35, tunV + 0.45, topY, topY + 0.82, agYellow, pat, kind);
+  pushObbHippedRoof3D(propsBuf, obb, tunU - 1.35, tunV - 0.45, tunU + 1.35, tunV + 0.45, topY + 0.82, topY + 1.05, 1.0, agYellow, pat, kind);
+
+  // 3. Jump Hurdle Bar
+  const jU = hl * 0.28, jV = hw * 0.35;
+  pushObbBox3D(propsBuf, obb, jU - 0.08, jV - 0.75, jU + 0.08, jV - 0.62, topY, topY + 0.95, white, pat, kind);
+  pushObbBox3D(propsBuf, obb, jU - 0.08, jV + 0.62, jU + 0.08, jV + 0.75, topY, topY + 0.95, white, pat, kind);
+  pushObbBox3D(propsBuf, obb, jU - 0.06, jV - 0.70, jU + 0.06, jV + 0.70, topY + 0.52, topY + 0.64, [0.90, 0.22, 0.20], pat, kind);
+}
+
+/** Emits pitched colorful A-frame / dome camping tents + stone campfire ring (`campsite`). */
+export function buildCampsiteDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PARK_POI;
+  const hl = Math.max(4.5, Math.min(11.0, obb.hl * 0.86));
+  const hw = Math.max(3.8, Math.min(8.5, obb.hw * 0.84));
+
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.008, [0.42, 0.52, 0.30], pat, kind);
+
+  // 3 Pitched colorful A-frame & dome camping tents
+  const tents = [
+    [-hl * 0.42, -hw * 0.36, 1.45, 1.15, 1.55, [0.94, 0.44, 0.14]], // Sunrise Orange tent
+    [hl * 0.40, -hw * 0.32, 1.40, 1.10, 1.48, [0.18, 0.56, 0.84]],  // Alpine Blue tent
+    [-hl * 0.12, hw * 0.42, 1.50, 1.18, 1.58, [0.22, 0.62, 0.34]],  // Pine Green tent
+  ];
+  for (const [tu, tv, thl, thw, th, tCol] of tents) {
+    pushObbBox3D(propsBuf, obb, tu - thl, tv - thw, tu + thl, tv + thw, topY, topY + 0.28, [0.24, 0.26, 0.28], pat, kind);
+    pushObbHippedRoof3D(propsBuf, obb, tu - thl, tv - thw, tu + thl, tv + thw, topY + 0.28, topY + th, 0.85, tCol, pat, kind);
+  }
+
+  // Central stone campfire ring + glowing fire pit + log benches
+  const fireU = hl * 0.18, fireV = hw * 0.12;
+  pushObbDisk(surfBuf, obb, fireU, fireV, 0.95, 0, Math.PI * 2, 12, topY + 0.020, [0.58, 0.56, 0.54], 7, kind);
+  pushObbDisk(surfBuf, obb, fireU, fireV, 0.55, 0, Math.PI * 2, 10, topY + 0.028, [0.96, 0.42, 0.10], pat, kind);
+  pushObbHippedRoof3D(propsBuf, obb, fireU - 0.38, fireV - 0.38, fireU + 0.38, fireV + 0.38, topY, topY + 0.58, 0, [0.98, 0.64, 0.14], pat, kind);
+  pushObbBox3D(propsBuf, obb, fireU - 1.1, fireV - 1.65, fireU + 1.1, fireV - 1.32, topY, topY + 0.38, [0.48, 0.31, 0.18], 7, kind);
+}
+
+/** Emits a geodesic lattice aviary dome (`aviary`/`zoo`/`enclosure`) with habitat pond and stone enclosure curb. */
+export function buildZooAviaryDetails(surfBuf, propsBuf, obb, topY, poiKind) {
+  const pat = 5, kind = LC_PARK_POI;
+  const r = Math.max(4.5, Math.min(9.5, Math.min(obb.hl, obb.hw) * 0.82));
+  const glassCol = [0.54, 0.78, 0.86];
+  const strutCol = [0.88, 0.90, 0.94];
+  const stoneCol = [0.68, 0.65, 0.60];
+
+  // Habitat ground disk + turquoise watering pond
+  pushObbDisk(surfBuf, obb, 0, 0, r, 0, Math.PI * 2, 18, topY + 0.008, [0.32, 0.55, 0.28], pat, kind);
+  pushObbDisk(surfBuf, obb, r * 0.22, -r * 0.15, r * 0.38, 0, Math.PI * 2, 14, topY + 0.016, [0.16, 0.70, 0.80], 6, kind);
+  pushObbArc(surfBuf, obb, 0, 0, r, 0, Math.PI * 2, 18, 0.35, topY + 0.022, stoneCol, 7, kind);
+
+  if (poiKind === 'enclosure') {
+    // Open-air habitat viewing wall + boulder outcrop + timber shade shelter
+    pushObbBox3D(propsBuf, obb, -r * 0.55, -r * 0.45, -r * 0.10, -r * 0.05, topY, topY + 1.65, stoneCol, 7, kind);
+    pushObbBox3D(propsBuf, obb, r * 0.15, r * 0.15, r * 0.65, r * 0.55, topY, topY + 2.2, [0.54, 0.34, 0.18], pat, kind);
+    return;
+  }
+
+  // Geodesic lattice aviary dome (2-tier faceted dome + white steel lattice ribs)
+  const dR = r * 0.78;
+  const h1 = dR * 0.48;
+  const h2 = dR * 0.85;
+  const segs = 10;
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2;
+    const a1 = ((i + 1) / segs) * Math.PI * 2;
+    const c0 = Math.cos(a0), s0 = Math.sin(a0);
+    const c1 = Math.cos(a1), s1 = Math.sin(a1);
+    const rMid = dR * 0.68;
+    // Lower dome ring facet
+    pushObbQuad3D(
+      propsBuf, obb,
+      c0 * dR, topY, s0 * dR,
+      c1 * dR, topY, s1 * dR,
+      c1 * rMid, topY + h1, s1 * rMid,
+      c0 * rMid, topY + h1, s0 * rMid,
+      (i & 1) ? glassCol : strutCol, pat, kind
+    );
+    // Upper dome crown facet
+    pushObbQuad3D(
+      propsBuf, obb,
+      c0 * rMid, topY + h1, s0 * rMid,
+      c1 * rMid, topY + h1, s1 * rMid,
+      c1 * 0.4, topY + h2, s1 * 0.4,
+      c0 * 0.4, topY + h2, s0 * 0.4,
+      (i & 1) ? strutCol : glassCol, pat, kind
+    );
+  }
+  // Entry portal arch
+  pushObbBox3D(propsBuf, obb, dR - 0.4, -1.1, dR + 0.9, 1.1, topY, topY + 2.35, strutCol, 7, kind);
+}
+
+/** Emits an aquarium blue wave canopy with structural piers and a turquoise reef reflection pool (`aquarium`). */
+export function buildAquariumDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PARK_POI;
+  const hl = Math.max(5.5, Math.min(13.0, obb.hl * 0.86));
+  const hw = Math.max(4.5, Math.min(9.5, obb.hw * 0.84));
+  const waveDark = [0.12, 0.48, 0.80];
+  const waveCyan = [0.18, 0.74, 0.90];
+  const pierWhite = [0.94, 0.96, 0.98];
+
+  // Plaza deck + turquoise reef reflection pool
+  pushObbRect(surfBuf, obb, -hl, -hw, hl, hw, topY + 0.008, [0.78, 0.82, 0.86], 7, kind);
+  pushObbDisk(surfBuf, obb, hl * 0.42, 0, Math.min(3.6, hw * 0.58), 0, Math.PI * 2, 16, topY + 0.018, [0.13, 0.74, 0.84], 6, kind);
+
+  // Undulating 3-crest ocean-blue wave canopy
+  const wHL = hl * 0.68, wHW = hw * 0.72;
+  const baseH = 3.2;
+  pushObbBox3D(propsBuf, obb, -wHL, -wHW, wHL * 0.5, wHW, topY, topY + baseH, pierWhite, 7, kind);
+  const nWaves = 3;
+  const segSpan = (wHL * 1.65) / nWaves;
+  for (let w = 0; w < nWaves; w++) {
+    const u0 = -wHL * 1.05 + w * segSpan;
+    const u1 = u0 + segSpan;
+    const col = (w & 1) ? waveCyan : waveDark;
+    pushObbHippedRoof3D(propsBuf, obb, u0, -wHW * 1.08, u1, wHW * 1.08, topY + baseH, topY + baseH + 1.55, 0.35, col, pat, kind);
+  }
+}
+
+/** Emits a colorful water-park spiral flume slide tower + turquoise splash pool (`water_park`). */
+export function buildWaterParkDetails(surfBuf, propsBuf, obb, topY) {
+  const pat = 5, kind = LC_PARK_POI;
+  const hl = Math.max(6.5, Math.min(16.0, obb.hl * 0.88));
+  const hw = Math.max(5.0, Math.min(12.0, obb.hw * 0.86));
+  const poolWater = [0.13, 0.76, 0.86];
+  const copingWhite = [0.94, 0.93, 0.90];
+  const towerCol = [0.92, 0.94, 0.96];
+  const flumeMagenta = [0.92, 0.20, 0.58];
+  const flumeCyan = [0.16, 0.78, 0.94];
+  const flumeYellow = [0.96, 0.82, 0.14];
+
+  // Turquoise splash lagoon pool + white coping
+  pushObbDisk(surfBuf, obb, hl * 0.22, 0, Math.min(6.2, hw * 0.78), 0, Math.PI * 2, 18, topY + 0.012, copingWhite, 7, kind);
+  pushObbDisk(surfBuf, obb, hl * 0.22, 0, Math.min(5.5, hw * 0.70), 0, Math.PI * 2, 18, topY + 0.022, poolWater, 6, kind);
+
+  // 7.2m tall water-slide stair tower + yellow canopy roof
+  const tU = -hl * 0.45;
+  const tH = 6.8;
+  pushObbBox3D(propsBuf, obb, tU - 1.15, -1.15, tU + 1.15, 1.15, topY, topY + tH, towerCol, pat, kind);
+  pushObbHippedRoof3D(propsBuf, obb, tU - 1.55, -1.55, tU + 1.55, 1.55, topY + tH, topY + tH + 1.15, 0, flumeYellow, pat, kind);
+
+  // Spiraling / banked 3-stage flume slides descending from tower into the splash pool
+  pushObbRamp3D(propsBuf, obb, tU - 0.5, 1.15, tU + 2.4, 2.35, topY + 4.4, topY + 6.2, '-u', flumeMagenta, pat, kind);
+  pushObbRamp3D(propsBuf, obb, tU + 1.2, -2.35, tU + 3.8, 2.35, topY + 2.3, topY + 4.4, '+v', flumeCyan, pat, kind);
+  pushObbRamp3D(propsBuf, obb, tU + 1.8, -1.85, hl * 0.12, -0.65, topY + 0.25, topY + 2.3, '-u', flumeYellow, pat, kind);
+}
+
+/** Emits a sloped concrete gravity dam wall with white spillway water foam band (`LC_DAM`). */
+export function buildDamDetails(surfBuf, propsBuf, outer, obb, ox, oz, yOff) {
+  const pat = 7, kind = LC_DAM;
+  const { topY, botY } = sampleFlatCourtElev(obb, ox, oz, yOff);
+  const hl = Math.max(5.0, Math.min(85.0, obb.hl * 0.94));
+  const hw = Math.max(3.0, Math.min(28.0, obb.hw * 0.90));
+  const concreteCrest = [0.75, 0.74, 0.71];
+  const concreteFace = [0.62, 0.61, 0.58];
+  const spillwayFoam = [0.88, 0.96, 1.0];
+  const spillwayCyan = [0.28, 0.78, 0.90];
+
+  const damTopY = topY + 2.4;
+  const damBaseY = Math.min(botY, topY - 2.2);
+  // Concrete dam crest roadway + parapet walls
+  pushObbBox3D(propsBuf, obb, -hl, -hw * 0.42, hl, hw * 0.42, damBaseY, damTopY, concreteCrest, pat, kind);
+  pushObbBox3D(propsBuf, obb, -hl, -hw * 0.42, hl, -hw * 0.30, damTopY, damTopY + 0.85, concreteFace, pat, kind);
+  pushObbBox3D(propsBuf, obb, -hl, hw * 0.30, hl, hw * 0.42, damTopY, damTopY + 0.85, concreteFace, pat, kind);
+
+  // Sloped concrete gravity downstream apron + central white spillway water foam band
+  pushObbRamp3D(propsBuf, obb, -hl * 0.92, hw * 0.42, hl * 0.92, hw, damBaseY, damTopY - 0.15, '-v', concreteFace, pat, kind);
+  const spillHL = Math.min(14.0, hl * 0.42);
+  pushObbRamp3D(propsBuf, obb, -spillHL, hw * 0.40, spillHL, hw * 1.02, damBaseY + 0.08, damTopY - 0.05, '-v', spillwayCyan, 6, kind);
+  pushObbRamp3D(propsBuf, obb, -spillHL * 0.72, hw * 0.40, spillHL * 0.72, hw * 1.04, damBaseY + 0.14, damTopY - 0.02, '-v', spillwayFoam, 6, kind);
+}
+
+/** Dispatches any `LC_PITCH` sport to its specialized 3D court/field builder. */
+export function dispatchSportCourt(surfBuf, propsBuf, obb, topY, botY, sport, holes) {
+  if (sport === 'soccer') {
+    buildSoccerPitch(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'american_football') {
+    buildFootballPitchDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'baseball') {
+    buildBaseballDiamond(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'cricket') {
+    buildCricketDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'track' || sport === 'athletics') {
+    buildAthleticsTrackDetails(surfBuf, propsBuf, obb, topY, holes);
+  } else if (sport === 'skateboard') {
+    buildSkateparkDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'table_tennis') {
+    buildTableTennisDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'golf' || sport === 'miniature_golf' || sport === 'disc_golf') {
+    buildGolfDetails(surfBuf, propsBuf, obb, topY, sport);
+  } else if (sport === 'ice_rink') {
+    buildIceRinkDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'chess') {
+    buildChessDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'four_square') {
+    buildFourSquareDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'american_handball') {
+    buildHandballDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'boules') {
+    buildBoulesDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'equestrian') {
+    buildEquestrianDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'climbing') {
+    buildClimbingDetails(surfBuf, propsBuf, obb, topY);
+  } else if (sport === 'tennis' || sport === 'badminton' || sport === 'pickleball' || sport === 'volleyball') {
+    buildNetCourt(surfBuf, propsBuf, obb, topY, sport);
+  } else {
+    buildBasketballCourt(surfBuf, propsBuf, obb, topY, botY);
+  }
+}
+
+/** Dispatches any `LC_PARK_POI` outdoor leisure feature to its specialized 3D builder. */
+export function dispatchParkPoi(surfBuf, propsBuf, obb, topY, poiKind) {
+  if (poiKind === 'shelter') {
+    buildShelterGazeboDetails(surfBuf, propsBuf, obb, topY);
+  } else if (poiKind === 'picnic_site') {
+    buildPicnicSiteDetails(surfBuf, propsBuf, obb, topY);
+  } else if (poiKind === 'bbq') {
+    buildBbqDetails(surfBuf, propsBuf, obb, topY);
+  } else if (poiKind === 'dog_park') {
+    buildDogParkDetails(surfBuf, propsBuf, obb, topY);
+  } else if (poiKind === 'campsite') {
+    buildCampsiteDetails(surfBuf, propsBuf, obb, topY);
+  } else if (poiKind === 'water_park') {
+    buildWaterParkDetails(surfBuf, propsBuf, obb, topY);
+  } else if (poiKind === 'aquarium') {
+    buildAquariumDetails(surfBuf, propsBuf, obb, topY);
+  } else {
+    buildZooAviaryDetails(surfBuf, propsBuf, obb, topY, poiKind);
+  }
+}
+
 /** Emits a perimeter foundation curb/coping around `outer` from `botY` to `topY` with width `w`. */
 function pushRingPerimeterCurb(buf, outer, ox, oz, yOffTop, curbRise, width, rgb, pat, kind) {
   const n = outer.length;
@@ -793,13 +1682,19 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
 
     if (outer.length < 6) continue;
 
-    // Guard synthetic POI-only courts/pools against road or building overlap
+    // Guard synthetic POI-only courts/pools/park-amenities against road or building overlap
     if (meta?.synthetic) {
       const bb = bboxOf(outer);
       const mcx = (bb[0] + bb[2]) * 0.5;
       const mcz = (bb[1] + bb[3]) * 0.5;
-      if (roadClearance && roadClearance(mcx, mcz) < 1.5) continue;
-      if (nearBuilding && nearBuilding(mcx, mcz, 1.5)) continue;
+      const smallParkProp =
+        kind === LC_PARK_POI ||
+        meta?.sport === 'chess' ||
+        meta?.sport === 'table_tennis' ||
+        meta?.sport === 'four_square';
+      const minClear = smallParkProp ? 0.35 : 1.5;
+      if (roadClearance && roadClearance(mcx, mcz) < minClear) continue;
+      if (nearBuilding && nearBuilding(mcx, mcz, minClear)) continue;
       if (kind !== LC_SWIMMING_POOL && isPointInWater && isPointInWater(mcx, mcz, 1.0)) continue;
     }
 
@@ -809,7 +1704,14 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
     let polyRgb = baseRgb;
     let resolvedSport = meta?.sport || '';
     let obb = null;
-    if (kind === LC_PITCH || kind === LC_TRACK || kind === LC_PLAYGROUND || kind === LC_SWIMMING_POOL) {
+    if (
+      kind === LC_PITCH ||
+      kind === LC_TRACK ||
+      kind === LC_PLAYGROUND ||
+      kind === LC_SWIMMING_POOL ||
+      kind === LC_DAM ||
+      kind === LC_PARK_POI
+    ) {
       obb = computePolyOBB(outer);
       if (kind === LC_PITCH && !resolvedSport) {
         if (obb.hl >= 30 && obb.hw >= 18) resolvedSport = 'soccer';
@@ -821,7 +1723,10 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
         if (resolvedSport === 'basketball') polyRgb = [0.20, 0.44, 0.32];
         else if (resolvedSport === 'tennis' || resolvedSport === 'badminton' || resolvedSport === 'pickleball') polyRgb = [0.18, 0.46, 0.30];
         else if (resolvedSport === 'volleyball') polyRgb = [0.24, 0.48, 0.66];
-        else if (resolvedSport === 'skateboard') polyRgb = [0.62, 0.61, 0.58];
+        else if (resolvedSport === 'skateboard' || resolvedSport === 'american_handball' || resolvedSport === 'four_square') polyRgb = [0.62, 0.61, 0.58];
+        else if (resolvedSport === 'ice_rink') polyRgb = [0.82, 0.90, 0.96];
+        else if (resolvedSport === 'equestrian' || resolvedSport === 'boules') polyRgb = [0.78, 0.70, 0.52];
+        else if (resolvedSport === 'chess') polyRgb = [0.74, 0.71, 0.66];
         else polyRgb = [0.19, 0.50, 0.23];
       }
     }
@@ -933,26 +1838,29 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
           clusterCount++;
         }
       }
-    } else if (kind === LC_TRACK && obb && obb.hl <= 130) {
+    } else if (kind === LC_CEMETERY) {
+      buildCemeteryDetails(surfBuf, propsBuf, outer, holes, ox, oz, yOff, p);
+    } else if (kind === LC_DAM && obb) {
+      buildDamDetails(surfBuf, propsBuf, outer, obb, ox, oz, yOff);
+    } else if (kind === LC_PARK_POI && obb && obb.hl <= 120) {
+      const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.03, 0.28, [0.76, 0.73, 0.68], 7, kind);
+      dispatchParkPoi(surfBuf, propsBuf, obb, topY, meta?.poiKind || 'shelter');
+    } else if (kind === LC_TRACK && obb && obb.hl <= 140) {
       const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
       pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.02, 0.35, [0.78, 0.76, 0.72], 7, kind);
-      // White lane oval markings
-      const white = [0.96, 0.96, 0.95];
-      for (const frac of [0.92, 0.84, 0.76]) {
-        pushObbHollowRect(surfBuf, obb, -obb.hl * frac, -obb.hw * frac, obb.hl * frac, obb.hw * frac, 0.14, topY + 0.012, white, 5, kind);
-      }
-      if (!holes || holes.length === 0) {
-        pushObbRect(surfBuf, obb, -obb.hl * 0.68, -obb.hw * 0.62, obb.hl * 0.68, obb.hw * 0.62, topY + 0.006, [0.20, 0.52, 0.24], 5, kind);
-      }
+      buildAthleticsTrackDetails(surfBuf, propsBuf, obb, topY, holes);
     } else if (kind === LC_PLAYGROUND && obb && obb.hl <= 80) {
       const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
       pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.03, 0.30, [0.82, 0.80, 0.76], 7, kind);
       buildPlaygroundDetails(surfBuf, propsBuf, obb, topY);
-    } else if (kind === LC_PITCH && obb && obb.hl <= 120) {
+    } else if (kind === LC_PITCH && obb && obb.hl <= 130) {
       pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.02, 0.32, [0.76, 0.75, 0.72], 7, kind);
       const pois = meta?.pois || [];
       // If a compound multi-court enclosure contains multiple distinct court POIs, render each sub-court at its POI
-      const courtPois = pois.filter((pt) => pt[2] !== 'soccer' && pt[2] !== 'baseball');
+      const courtPois = pois.filter(
+        (pt) => pt[2] !== 'soccer' && pt[2] !== 'american_football' && pt[2] !== 'baseball' && pt[2] !== 'cricket'
+      );
       if (courtPois.length >= 2 && obb.hl * obb.hw * 4 > 750) {
         const subCourts = courtPois.slice(0, 6);
         const crossOriented = obb.hl > obb.hw * 1.25;
@@ -981,29 +1889,11 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
                 hw: Math.min(7.2, (obb.hw / subCourts.length) * 0.86),
               };
           const { topY, botY } = sampleFlatCourtElev(subObb, ox, oz, yOff);
-          if (sSport === 'tennis' || sSport === 'badminton' || sSport === 'pickleball' || sSport === 'volleyball' || sSport === 'table_tennis') {
-            buildNetCourt(surfBuf, propsBuf, subObb, topY, sSport);
-          } else {
-            buildBasketballCourt(surfBuf, propsBuf, subObb, topY, botY);
-          }
+          dispatchSportCourt(surfBuf, propsBuf, subObb, topY, botY, sSport, holes);
         }
       } else {
         const { topY, botY } = sampleFlatCourtElev(obb, ox, oz, yOff);
-        if (resolvedSport === 'soccer') {
-          buildSoccerPitch(surfBuf, propsBuf, obb, topY);
-        } else if (resolvedSport === 'baseball') {
-          buildBaseballDiamond(surfBuf, propsBuf, obb, topY);
-        } else if (
-          resolvedSport === 'tennis' ||
-          resolvedSport === 'badminton' ||
-          resolvedSport === 'pickleball' ||
-          resolvedSport === 'volleyball' ||
-          resolvedSport === 'table_tennis'
-        ) {
-          buildNetCourt(surfBuf, propsBuf, obb, topY, resolvedSport);
-        } else {
-          buildBasketballCourt(surfBuf, propsBuf, obb, topY, botY);
-        }
+        dispatchSportCourt(surfBuf, propsBuf, obb, topY, botY, resolvedSport, holes);
       }
     }
   }
@@ -1113,7 +2003,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   const courtGrid = createGrid(25);
   for (let p = 0; p < landPolys.length; p++) {
     const [kind, outer] = landPolys[p];
-    if (kind === LC_PITCH || kind === LC_TRACK || kind === LC_PLAYGROUND || kind === LC_SWIMMING_POOL || kind === LC_PLAZA) {
+    if (kind === LC_PITCH || kind === LC_TRACK || kind === LC_PLAYGROUND || kind === LC_SWIMMING_POOL || kind === LC_PLAZA || kind === LC_DAM || kind === LC_PARK_POI) {
       if (!outer || outer.length < 6) continue;
       const bb = bboxOf(outer);
       courtGrid.insert(bb[0] - 2.5, bb[1] - 2.5, bb[2] + 2.5, bb[3] + 2.5, { bb, outer });

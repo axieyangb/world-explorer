@@ -62,6 +62,9 @@ export class PlacesInfoSystem {
     this._initSigns();
     this.tracked = new Set();
     this.lastX = Infinity;
+    this.claimedCars = new Set();
+    this.wreckedCars = new Set();
+    this.carHp = new Map();
     this.lastZ = Infinity;
     this.signTimer = 0;
     this.lang = getLang();
@@ -148,9 +151,14 @@ export class PlacesInfoSystem {
         const mArr = pool.instanceMatrix.array;
         const cArr = pool.instanceColor.array;
         let n = counts[kind];
+        const isCarKind = kind === 'car' || kind === 'policeCar' || kind === 'fireTruck';
         for (let i = 0; i < a.length && n < cap; i += STRIDE) {
           const dx = a[i] - px, dz = a[i + 2] - pz;
           if (dx * dx + dz * dz > r2) continue;
+          if (isCarKind) {
+            const cKey = `${Math.round(a[i] * 2)}|${Math.round(a[i + 2] * 2)}`;
+            if (this.claimedCars.has(cKey)) continue;
+          }
           const c = Math.cos(a[i + 3]), s = Math.sin(a[i + 3]);
           const sx = a[i + 4], sy = a[i + 5], sz = a[i + 6];
           const o = n * 16;
@@ -172,6 +180,74 @@ export class PlacesInfoSystem {
       pool.instanceMatrix.needsUpdate = true;
       pool.instanceColor.needsUpdate = true;
     }
+  }
+
+  _carKey(x, z) { return `${Math.round(x * 2)}|${Math.round(z * 2)}`; }
+
+  claimNearestParkedCar(px, pz, maxDist = 7.5) {
+    let best = null, bestD2 = maxDist * maxDist;
+    const carKinds = ['pi_car', 'pi_policeCar', 'pi_fireTruck'];
+    for (const g of this.tracked) {
+      const pl = g.userData && g.userData.places;
+      if (!pl || !pl.inst) continue;
+      for (const key of carKinds) {
+        const a = pl.inst[key];
+        if (!a) continue;
+        for (let i = 0; i < a.length; i += STRIDE) {
+          const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+          const cKey = this._carKey(cx, cz);
+          if (this.claimedCars.has(cKey) || this.wreckedCars.has(cKey)) continue;
+          const d2 = (cx - px) * (cx - px) + (cz - pz) * (cz - pz);
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            best = { cKey, x: cx, y: cy, z: cz, yaw: a[i + 3], colorHex: a[i + 7] | 0, kind: key };
+          }
+        }
+      }
+    }
+    if (!best) return null;
+    this.claimedCars.add(best.cKey);
+    if (Number.isFinite(this.lastX) && Number.isFinite(this.lastZ)) this._rebuild(this.lastX, this.lastZ);
+    return best;
+  }
+
+  damageParkedCarsInRadius(wx, wz, radius = 5, damage = 45, app = null) {
+    const r2 = (radius + 2.2) * (radius + 2.2);
+    const carKinds = ['pi_car', 'pi_policeCar', 'pi_fireTruck'];
+    let hits = 0;
+    for (const g of this.tracked) {
+      const pl = g.userData && g.userData.places;
+      if (!pl || !pl.inst) continue;
+      for (const key of carKinds) {
+        const a = pl.inst[key];
+        if (!a) continue;
+        for (let i = 0; i < a.length; i += STRIDE) {
+          const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+          const cKey = this._carKey(cx, cz);
+          if (this.claimedCars.has(cKey) || this.wreckedCars.has(cKey)) continue;
+          const d2 = (cx - wx) * (cx - wx) + (cz - wz) * (cz - wz);
+          if (d2 <= r2) {
+            const hp = (this.carHp.has(cKey) ? this.carHp.get(cKey) : 80) - damage;
+            this.carHp.set(cKey, hp);
+            hits++;
+            if (hp <= 0) {
+              this.wreckedCars.add(cKey);
+              a[i + 7] = 0x1e1e22; // Charred dark hull
+              const fx = app?.vehicleDamage?._fx?.();
+              if (fx) {
+                fx.spawn('explosion', new THREE.Vector3(cx, cy + 1.0, cz), { scale: 0.9 });
+                fx.spawn('smoke', new THREE.Vector3(cx, cy + 1.6, cz), { count: 3, scale: 0.45, life: 4 });
+              }
+              app?.vehicleDamage?._sfx?.('explosion', cx, cy, cz, 0.8);
+            }
+          }
+        }
+      }
+    }
+    if (hits > 0 && Number.isFinite(this.lastX) && Number.isFinite(this.lastZ)) {
+      this._rebuild(this.lastX, this.lastZ);
+    }
+    return hits;
   }
 
   // ------------------------------------------------------------------ storefront name signs

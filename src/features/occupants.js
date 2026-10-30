@@ -29,8 +29,7 @@ function kindMat(kind, tone) {
 function limbBox(a, b, w) {
   const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
   const len = A.distanceTo(B);
-  const g = new THREE.CylinderGeometry(w * 0.7, w * 0.7, len, 4, 1, true);
-  g.rotateY(Math.PI / 4);
+  const g = new THREE.CylinderGeometry(w * 0.56, w * 0.46, len, 7, 1, true);
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize());
   g.applyQuaternion(q);
   g.translate((A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2);
@@ -69,7 +68,8 @@ function head(parent, seat, x, y, z, r, cap) {
 export function addPerson(parent, x, y, z, seat, { wheel = false, uniform = false, scale = 1, hand = null } = {}) {
   const s = scale;
   const shirt = uniform ? KIND.UNIFORM : KIND.SHIRT;
-  const torso = new THREE.BoxGeometry(0.36 * s, 0.5 * s, 0.22 * s);
+  const torso = new THREE.CylinderGeometry(0.185 * s, 0.145 * s, 0.5 * s, 8, 1);
+  torso.scale(1.0, 1.0, 0.62);
   torso.translate(0, 0.27 * s, 0);
   torso.rotateX(-0.12);
   add(parent, torso, shirt, seat, x, y, z - 0.02);
