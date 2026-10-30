@@ -878,8 +878,28 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     (Boolean(famousInfo && famousInfo.archFeatures.colonnadePortico) ||
       btype === 'government' || btype === 'civic' || btype === 'public' || CIVIC_GOV_RE.test(name));
 
+  let maxSpan = Number(bldgInfo.span) || 0;
+  if (!maxSpan && bldgInfo.flatOuter && bldgInfo.flatOuter.length >= 6) {
+    let bx0 = Infinity, bx1 = -Infinity, bz0 = Infinity, bz1 = -Infinity;
+    const fo = bldgInfo.flatOuter;
+    for (let i = 0; i < fo.length; i += 2) {
+      const x = fo[i], z = fo[i + 1];
+      if (x < bx0) bx0 = x;
+      if (x > bx1) bx1 = x;
+      if (z < bz0) bz0 = z;
+      if (z > bz1) bz1 = z;
+    }
+    maxSpan = Math.max(bx1 - bx0, bz1 - bz0);
+  }
+  const isResType = btype === 'house' || btype === 'detached' || btype === 'semidetached_house' || btype === 'terrace' || btype === 'bungalow' || btype === 'villa' || btype === 'residential' || btype === 'apartments' || btype === 'dormitory';
+  const isOfficeOrCommercial =
+    btype === 'office' || btype === 'commercial' || btype === 'tech_campus' || btype === 'research' || btype === 'laboratory' ||
+    btype === 'university' || btype === 'college' || btype === 'school' || btype === 'hospital' || btype === 'hotel' ||
+    btype === 'supermarket' || btype === 'mall' || btype === 'department_store' ||
+    (!isResType && maxSpan >= 28.0 && btype !== 'parking' && btype !== 'garages');
+
   let pool;
-  const archPool = !famousInfo && !isTechCampus && !isCivicBuilding && bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
+  const archPool = !famousInfo && !isTechCampus && !isCivicBuilding && !isOfficeOrCommercial && bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
     ? archFacadePool(bldgInfo.arch, h, btype) : null; // [roofs]
   if (famousInfo && famousInfo.facadeLayers && famousInfo.facadeLayers.length > 0) {
     pool = famousInfo.facadeLayers;
@@ -887,14 +907,16 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     pool = (techBrand === 'apple' || techBrand === 'nvidia') ? [1, 13, 0, 2] : [0, 2, 1, 13];
   } else if (isCivicBuilding) {
     pool = [7, 4, 9];
-  } else if (archPool) {
-    pool = archPool;
   } else if (btype === 'parking' || btype === 'garages') {
     pool = [18, 18, 23];
   } else if (btype === 'industrial' || btype === 'warehouse' || btype === 'manufacture') {
-    pool = region === 'nyc' || region === 'london' ? [8, 23, 8, 18] : [23, 23, 18, 8];
+    pool = region === 'nyc' || region === 'london' ? [8, 4, 8, 3] : [3, 4, 13, 20, 8, 22];
   } else if (btype === 'retail' && h <= 10.5) {
-    pool = [17, 22];
+    pool = [17, 22, 4, 20];
+  } else if (isOfficeOrCommercial) {
+    pool = h >= 28 ? [0, 1, 2, 5, 4, 3, 13] : [0, 2, 3, 4, 13, 20, 22, 8];
+  } else if (archPool) {
+    pool = archPool;
   } else if (region === 'paris') {
     if (h >= 48) {
       pool = [0, 1, 2, 4, 5];
@@ -996,10 +1018,19 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     clampC(avg[1] * 0.88 + shift),
     clampC(avg[2] * 0.88 + shift),
   ];
+  const ROOF_DECK_PALETTE = [
+    [0.68, 0.66, 0.62], // warm architectural gravel / limestone ballast
+    [0.62, 0.57, 0.51], // warm sandstone / tan TPO membrane
+    [0.56, 0.58, 0.61], // cool light slate architectural membrane
+    [0.64, 0.54, 0.47], // warm terracotta-taupe deck
+    [0.72, 0.71, 0.68], // solar-reflective cool white/cream commercial roof
+    [0.54, 0.52, 0.49], // weathered warm concrete deck
+  ];
+  const rdBase = ROOF_DECK_PALETTE[((seed >>> 6) ^ (seed >>> 14)) % ROOF_DECK_PALETTE.length];
   const roofDeck = [
-    clampC(avg[0] * 0.52),
-    clampC(avg[1] * 0.52),
-    clampC(avg[2] * 0.54),
+    clampC(rdBase[0] * 0.72 + avg[0] * 0.28 + shift * 0.5),
+    clampC(rdBase[1] * 0.72 + avg[1] * 0.28 + shift * 0.5),
+    clampC(rdBase[2] * 0.72 + avg[2] * 0.28 + shift * 0.5),
   ];
 
   // Blend 45% toward real OpenStreetMap building colour (`building.tags.colour`) when present
@@ -2185,7 +2216,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     // 4. Worker-Built 3D Rooftop Greebles (routed into near-LOD roofDetail sink)
     const spanX = maxX - minX;
     const spanZ = maxZ - minZ;
-    if (isTopTier && holes.length === 0 && totalSpan >= 10.0 && spanX >= 9.0 && spanZ >= 9.0) {
+    if (isTopTier && holes.length === 0 && totalSpan >= 4.2 && spanX >= 9.0 && spanZ >= 9.0) {
       const inOuter = (px, pz) => {
         let inside = false;
         const r = tier.flatOuter;
@@ -2275,7 +2306,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // 4d. Rooftop Solar Panel Array Banks & Tech Campus Landscaped Sky-Terrace Planters
-        if (facadeSel.isTechCampus || (totalSpan >= 10.0 && totalSpan <= 36.0 && ((seed >>> 6) & 1) === 1)) {
+        if (facadeSel.isTechCampus || (totalSpan >= 4.2 && totalSpan <= 36.0 && ((seed >>> 6) & 1) === 1)) {
           const pvCol = [0.09, 0.15, 0.26];
           const rackCol = [0.60, 0.62, 0.65];
           const pvW = Math.min(facadeSel.isTechCampus ? 6.4 : 4.2, spanX * 0.26);

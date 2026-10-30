@@ -49,7 +49,7 @@ export function appendInfillBuilding(b, ox, oz, getY, region, out) {
 
   const wx = ox + cx, wz = oz + cz;
   const seed = ((Math.round(wx * 13.7) * 73856093) ^ (Math.round(wz * 13.7) * 19349663) ^ ((Number(osmId) || 0) * 83492791)) >>> 0;
-  const sel = selectFacadeForBuilding({ height: rawH, btype, style, name: '', arch: rc ? rc.arch : null }, seed, region);
+  const sel = selectFacadeForBuilding({ height: rawH, btype, style, name: '', arch: rc ? rc.arch : null, span: Math.max(maxX - minX, maxZ - minZ) }, seed, region);
   const spec = sel.spec;
   // [roofs] cheap pitched roof for small residential infill (walls stop at the eaves)
   let ring = null, plan = null;

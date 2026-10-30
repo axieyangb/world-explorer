@@ -1228,6 +1228,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
       if (stage === 0) {
         isPointInWater = createWaterMaskChecker(data);
         root.userData.waterMask = buildWaterMask(data); // fix/water: bit raster for car/walk/heli water physics
+        normalizeChunkTunnels(data.roads, data.road_context, isPointInWater);
         isPointInSunkenTrench = createSunkenTrenchChecker(data.roads || []);
 
         // 0. 3D Heightfield Terrain Mesh for this 1km x 1km chunk (with open-trench cutouts for sunken roads)
@@ -1472,6 +1473,84 @@ function createWaterMaskChecker(data) {
  * e.g. 北四环西路 main road) so the chunk terrain mesh and park polygons cut open above the sunken road trench,
  * and cross-bridges (e.g. 保福寺桥, 中关村一桥, 中关村二桥) can suppress trench top parapets directly underneath their decks.
  */
+const DEEP_TUNNEL_NAME_RE = /tunnel|隧道|隧|tube|holland|lincoln|midtown|battery|callahan|sumner|ted\s*williams|yerba\s*buena|posey|webster|caldecott|robin\s*williams|devil.?s\s*slide|harbour|harbor|mont\s*blanc|gotthard|seikan|kanmon|aqua.?line|rotherhithe|blackwall|dartford|clyde|mersey|tyne|elbtunnel|ijtunnel|maastunnel/i;
+const MINOR_TUNNEL_CLS = new Set(['footway', 'pedestrian', 'steps', 'cycleway', 'path', 'service', 'residential', 'unclassified', 'living_street']);
+
+/**
+ * Distinguishes true underground/underwater/named tunnels from short dry-land road underpasses (< 220m, e.g. avenues
+ * dipping under railway tracks or highway overpasses in Sunnyvale). Connected tunnel ways are chained so land approach
+ * pieces of cross-river or long tunnels stay part of the tunnel, while short land underpasses are restored to surface
+ * roads so avenues stay continuous and bridge/rail clearance solvers see them.
+ */
+function normalizeChunkTunnels(roads, roadContext, isPointInWater) {
+  const all = [];
+  if (Array.isArray(roads)) for (let i = 0; i < roads.length; i++) if (roads[i] && roads[i][8]) all.push(roads[i]);
+  if (Array.isArray(roadContext)) for (let i = 0; i < roadContext.length; i++) if (roadContext[i] && roadContext[i][8]) all.push(roadContext[i]);
+  if (all.length === 0) return;
+
+  const n = all.length;
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+
+  const nodeMap = new Map();
+  const wayLen = new Float64Array(n);
+  const wayTrue = new Uint8Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const r = all[i];
+    const [, cls, name, ref, , , , , , layer, flat] = r;
+    if (!flat || flat.length < 6) continue;
+    const pts = flat.length / 3;
+    const k0 = `${Math.round(flat[0] / 3)},${Math.round(flat[2] / 3)}`;
+    const k1 = `${Math.round(flat[(pts - 1) * 3] / 3)},${Math.round(flat[(pts - 1) * 3 + 2] / 3)}`;
+    for (const k of [k0, k1]) {
+      const prev = nodeMap.get(k);
+      if (prev !== undefined) union(i, prev);
+      else nodeMap.set(k, i);
+    }
+    let len = 0;
+    let overWater = false;
+    for (let j = 0; j < pts; j++) {
+      const px = flat[j * 3], pz = flat[j * 3 + 2];
+      if (!overWater && isPointInWater && isPointInWater(px, pz, 1.5)) overWater = true;
+      if (j > 0) {
+        const vx = flat[(j - 1) * 3], vz = flat[(j - 1) * 3 + 2];
+        len += Math.hypot(px - vx, pz - vz);
+        if (!overWater && isPointInWater && isPointInWater((px + vx) * 0.5, (pz + vz) * 0.5, 1.5)) overWater = true;
+      }
+    }
+    wayLen[i] = len;
+    const label = `${name || ''} ${ref || ''} ${r[12] || ''}`;
+    if (overWater || (layer || 0) <= -2 || DEEP_TUNNEL_NAME_RE.test(label)) {
+      wayTrue[i] = 1;
+    }
+  }
+
+  const compLen = new Map();
+  const compTrue = new Set();
+  for (let i = 0; i < n; i++) {
+    const rootId = find(i);
+    const nextLen = (compLen.get(rootId) || 0) + wayLen[i];
+    compLen.set(rootId, nextLen);
+    if (wayTrue[i] || (nextLen >= 220.0 && !MINOR_TUNNEL_CLS.has(all[i][1]))) {
+      compTrue.add(rootId);
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    if (compTrue.has(find(i))) continue;
+    const r = all[i];
+    r[8] = 0;
+    if ((r[9] || 0) < 0) r[9] = 0;
+    const flat = r[10];
+    if (flat) {
+      for (let k = 1; k < flat.length; k += 3) flat[k] = 0.0;
+    }
+  }
+}
+
 function createSunkenTrenchChecker(roads) {
   const sunkenSegs = [];
   const mainSunkenSegs = [];
@@ -2110,7 +2189,7 @@ function buildRoadsAndBridges(
   for (let i = 0; i < roads.length; i++) {
     const [, rCls, , , , , , rBridge, rTunnel, , rFlat] = roads[i];
     if (rTunnel || rBridge || !rFlat || rFlat.length < 6) continue;
-    if (rCls === 'footway' || rCls === 'pedestrian' || rCls === 'steps' || rCls === 'cycleway' || rCls === 'path') continue;
+    if (MINOR_TUNNEL_CLS.has(rCls)) continue;
     const n = rFlat.length / 3;
     nonTunnelEndNodes.add(`${Math.round(rFlat[0] / 2)},${Math.round(rFlat[2] / 2)}`);
     nonTunnelEndNodes.add(`${Math.round(rFlat[(n - 1) * 3] / 2)},${Math.round(rFlat[(n - 1) * 3 + 2] / 2)}`);
@@ -2119,7 +2198,7 @@ function buildRoadsAndBridges(
   for (let i = 0; i < roads.length; i++) {
     const [, rCls, , , , rWidthM, , , rTunnel, , rFlat] = roads[i];
     if (!rTunnel || !rFlat || rFlat.length < 6) continue;
-    if (rCls === 'footway' || rCls === 'pedestrian' || rCls === 'steps' || rCls === 'cycleway' || rCls === 'path') continue;
+    if (MINOR_TUNNEL_CLS.has(rCls)) continue;
     const n = rFlat.length / 3;
     const ends = [
       [rFlat[0], rFlat[2], rFlat[3] - rFlat[0], rFlat[5] - rFlat[2]],
@@ -2142,7 +2221,7 @@ function buildRoadsAndBridges(
       for (const s of [-1, 1]) {
         const bx = px + nx * s * (hw + pierW * 0.5) + tx * (portalD * 0.35);
         const bz = pz + nz * s * (hw + pierW * 0.5) + tz * (portalD * 0.35);
-        pushBox(bPos, bx - pierW * 0.6, terrY - 0.4, bz - pierW * 0.6, bx + pierW * 0.6, terrY + pH, bz + pierW * 0.6);
+        pushOrientedBox(bPos, bx, terrY - 0.4, bz, tx, tz, portalD * 0.72, pierW, pH + 0.4);
       }
       // Overhead concrete portal lintel beam spanning across the carriageway
       const lx0 = px - nx * (hw + pierW), lz0 = pz - nz * (hw + pierW);

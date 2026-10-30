@@ -35,8 +35,8 @@ export function archRegionFor(worldOrigin) {
   const box = (a0, a1, o0, o1) => lat >= a0 && lat <= a1 && lon >= o0 && lon <= o1;
   // North America
   if (box(40.45, 41.0, -74.3, -73.65)) return 'nyc';
-  if (box(37.2, 38.1, -122.7, -121.7)) return 'sf';
-  if (box(32.4, 35.0, -119.5, -114.0) || box(31.0, 37.5, -115.0, -104.0)) return 'la'; // SoCal + desert southwest
+  if (box(37.70, 37.84, -122.53, -122.35)) return 'sf'; // San Francisco city proper (flat-roofed rowhouses)
+  if (box(32.4, 38.6, -123.0, -114.0) || box(31.0, 37.5, -115.0, -104.0)) return 'la'; // California (Silicon Valley, Bay Area suburbs, SoCal) + Southwest
   if (box(24.0, 50.0, -126.0, -66.0) || box(42.0, 60.0, -130.0, -52.0)) return 'us';
   if (box(14.0, 33.0, -118.0, -86.0) || box(-56.0, 14.0, -92.0, -33.0) || box(9.0, 24.0, -86.0, -59.0)) return 'latam';
   // Europe
@@ -278,11 +278,12 @@ export function planRoof(info) {
       // 'yes' / residential / apartments: size, height, land use and region
       if (rawH > R.hMax || area > R.aMax || area < 14) return null;
       if (holes && region !== 'med' && region !== 'eu') return null;
-      if ((info.flav ?? 0.5) < -0.35) return null; // industrial / works yards
-      if (btype === 'yes' && (info.flav ?? 0.5) < 0.25) return null; // commercial / office / institutional campus (flav <= 0.2)
+      const isHouseSized = area >= 35 && area <= 320 && rawH <= 9.8 && obb.len <= 28;
+      if ((info.flav ?? 0.5) < -0.35 && !isHouseSized) return null; // industrial / works yards
+      if (btype === 'yes' && !isHouseSized && (info.flav ?? 0.5) < 0.25) return null; // commercial / office / institutional campus (flav <= 0.2)
       if (region === 'us' || region === 'la' || region === 'sf') {
         // a big low box in a dense commercial strip is a store/office, not a house
-        if (area > 240 && (info.flav ?? 0.5) < 0.3) return null;
+        if (area > 320 && (info.flav ?? 0.5) < 0.3) return null;
       }
       if (rnd(seed, 11) > R.p) return null;
       shape = 'pitch';
