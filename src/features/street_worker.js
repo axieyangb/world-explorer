@@ -414,7 +414,7 @@ const CURB_FACE = [0.6, 0.6, 0.59];
  * Main entry, called once per chunk after roads/buildings are built.
  * @param {THREE.Group} root chunk root with userData.{roadSegments, buildingColliders, subGroups}
  */
-export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
+export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats, isPointInWater = null) {
   const tStart = Date.now();
   const origin = worldOrigin || currentOrigin;
   const region = resolveStreetRegion(origin);
@@ -1135,11 +1135,12 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
         fn(s.x1 + (s.x2 - s.x1) * t, s.y1 + (s.y2 - s.y1) * t, s.z1 + (s.z2 - s.z1) * t, k);
       }
     };
-    const ok = (x, z, pad = 10.0, refY = null) => {
+    const ok = (x, z, pad = 10.0, refY = null, roadPad = 1.65) => {
       dbg.tries++;
       if (!inChunk(x, z)) return false;
+      if (isPointInWater && isPointInWater(x, z, 2.5)) return false;
       if (nearNode(x, z, pad)) return (dbg.node++, false);
-      if (onOtherRoad(x, z, s.id, 1.45, refY)) return (dbg.road++, false);
+      if (onOtherRoad(x, z, s.id, roadPad, refY)) return (dbg.road++, false);
       if (inBuilding(x, z)) return (dbg.bldg++, false);
       if (!isFree(x, z)) return (dbg.occ++, false);
       return true;
@@ -1325,9 +1326,10 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     if (style.hydrant > 0) {
       place(90, 17, (cx, cy, cz, k) => {
         if (hash2(cx, cz) > style.hydrant) return;
-        const side = k % 2 === 0 ? -1 : 1;
+        let side = k % 2 === 0 ? -1 : 1;
+        if (s.oneway) side = style.left ? -1 : 1;
         const x = cx + rx * side * (s.hw + 1.45), z = cz + rz * side * (s.hw + 1.45);
-        if (!ok(x, z, 10.0)) return;
+        if (!ok(x, z, 10.0, cy, 1.4)) return;
         push('hydrant', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));
         occupy(x, z);
       });
@@ -1337,10 +1339,11 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
 
     // Trash bins at the back of the sidewalk
     place(64, 11, (cx, cy, cz, k) => {
-      const side = k % 2 === 0 ? 1 : -1;
+      let side = k % 2 === 0 ? 1 : -1;
+      if (s.oneway) side = style.left ? -1 : 1;
       const off = s.hw + swW - 0.4;
       const x = cx + rx * side * off, z = cz + rz * side * off;
-      if (!ok(x, z, 2.0)) return;
+      if (!ok(x, z, 4.0, cy, 1.5)) return;
       push('bin', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));
       occupy(x, z);
     });
@@ -1348,10 +1351,11 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
     // Benches facing the road (primary/secondary)
     if (s.cls === 'primary' || s.cls === 'secondary') {
       place(130, 47, (cx, cy, cz, k) => {
-        const side = k % 2 === 0 ? -1 : 1;
+        let side = k % 2 === 0 ? -1 : 1;
+        if (s.oneway) side = style.left ? -1 : 1;
         const off = s.hw + swW - 0.45;
         const x = cx + rx * side * off, z = cz + rz * side * off;
-        if (!ok(x, z, 4.0)) return;
+        if (!ok(x, z, 8.0, cy, 1.8)) return;
         push('bench', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));
         occupy(x, z);
       });
@@ -1360,11 +1364,11 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats) {
       place(360, 150, (cx, cy, cz, k) => {
         let side = k % 2 === 0 ? 1 : -1;
         if (s.oneway) side = style.left ? -1 : 1;
-        const off = s.hw + swW - 0.75;
+        const off = s.hw + swW + 0.35;
         const x = cx + rx * side * off, z = cz + rz * side * off;
-        if (!ok(x, z, 12.0, cy)) return;
-        const e1x = x + s.dx * 2.2, e1z = z + s.dz * 2.2, e2x = x - s.dx * 2.2, e2z = z - s.dz * 2.2;
-        if (!ok(e1x, e1z, 12.0) || !ok(e2x, e2z, 12.0)) return;
+        if (!ok(x, z, 14.0, cy, 2.2)) return;
+        const e1x = x + s.dx * 2.5, e1z = z + s.dz * 2.5, e2x = x - s.dx * 2.5, e2z = z - s.dz * 2.5;
+        if (!ok(e1x, e1z, 14.0, cy, 2.2) || !ok(e2x, e2z, 14.0, cy, 2.2)) return;
         push('busStop', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));
         occupy(x, z);
         occupy(e1x, e1z);

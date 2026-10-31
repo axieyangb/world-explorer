@@ -320,6 +320,7 @@ export function computePlacesPayload(ctx) {
   const places = data && data.places;
   const out = {};
   const push = (kind, x, y, z, rot, sx, sy, sz, rgb = 0xffffff) => {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
     (out[kind] || (out[kind] = [])).push(x, y, z, rot, sx, sy, sz, rgb);
   };
   const beacons = [];
@@ -328,7 +329,7 @@ export function computePlacesPayload(ctx) {
   const rails = [];
   const runways = [];
   const terrainY = (lx, lz) => getBeijingTerrainElevation(ox + lx, oz + lz);
-  const inWater = (lx, lz) => Boolean(isPointInWater && isPointInWater(lx, lz, 0));
+  const inWater = (lx, lz, pad = 2.5) => Boolean(isPointInWater && isPointInWater(lx, lz, pad));
   const lat = places ? places.lat : 0;
   const lon = places ? places.lon : 0;
   const nyc = isNycRegion(lat, lon);
@@ -512,18 +513,40 @@ export function computePlacesPayload(ctx) {
   };
 
   // Ground road segments (local) used to keep street furniture off the carriageway
+  const NON_CAR_CLS = new Set(['footway', 'pedestrian', 'path', 'steps', 'cycleway', 'track', 'corridor']);
   const groundSegs = [];
+  const carSegs = [];
   const allSegs = [];
   for (const s of roadSegments) {
     if (s.tunnel) continue;
     const lx1 = s.x1 - ox, lz1 = s.z1 - oz, lx2 = s.x2 - ox, lz2 = s.z2 - oz;
     const hw = (s.width || 6) * 0.5;
-    allSegs.push([lx1, lz1, lx2, lz2, hw, s.y1 || 0, s.y2 || 0, Boolean(s.bridge)]);
-    if (!s.bridge) groundSegs.push([lx1, lz1, lx2, lz2, hw]);
+    const y1 = s.y1 || 0, y2 = s.y2 || 0;
+    allSegs.push([lx1, lz1, lx2, lz2, hw, y1, y2, Boolean(s.bridge), s.cls || '']);
+    if (!s.bridge || Math.min(y1, y2) < 5.0) {
+      groundSegs.push([lx1, lz1, lx2, lz2, hw]);
+      if (!s.bridge && !NON_CAR_CLS.has(s.cls || '')) {
+        carSegs.push([lx1, lz1, lx2, lz2, hw]);
+      }
+    }
   }
 
-  const pushOffRoad = (x, z, extraClearance = 2.2) => {
-    for (let iter = 0; iter < 3; iter++) {
+  const onAnyRoad = (x, z, extraClearance = 1.6) => {
+    for (const [ax, az, bx, bz, hw] of groundSegs) {
+      const pad = hw + extraClearance;
+      if (x < Math.min(ax, bx) - pad || x > Math.max(ax, bx) + pad || z < Math.min(az, bz) - pad || z > Math.max(az, bz) + pad) continue;
+      const dx = bx - ax, dz = bz - az;
+      const l2 = dx * dx + dz * dz;
+      if (l2 < 1e-6) continue;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+      const qx = ax + dx * t, qz = az + dz * t;
+      if (Math.hypot(x - qx, z - qz) < pad) return true;
+    }
+    return false;
+  };
+
+  const pushOffRoad = (x, z, extraClearance = 2.6) => {
+    for (let iter = 0; iter < 5; iter++) {
       let moved = false;
       for (const [ax, az, bx, bz, hw] of groundSegs) {
         const pad = hw + extraClearance + 1.0;
@@ -534,12 +557,12 @@ export function computePlacesPayload(ctx) {
         const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
         const qx = ax + dx * t, qz = az + dz * t;
         const d = Math.hypot(x - qx, z - qz);
-        if (d < hw + extraClearance * 0.75) {
+        if (d < hw + extraClearance * 0.9) {
           const l = Math.sqrt(l2);
           let nx = -dz / l, nz = dx / l;
           if ((x - qx) * nx + (z - qz) * nz < 0) { nx = -nx; nz = -nz; }
-          x = qx + nx * (hw + extraClearance);
-          z = qz + nz * (hw + extraClearance);
+          x = qx + nx * (hw + extraClearance + 0.35);
+          z = qz + nz * (hw + extraClearance + 0.35);
           moved = true;
         }
       }
@@ -548,8 +571,8 @@ export function computePlacesPayload(ctx) {
     return [x, z];
   };
 
-  const nearestRoadInfo = (x, z, includeBridges = false) => {
-    const list = includeBridges ? allSegs : groundSegs;
+  const nearestRoadInfo = (x, z, includeBridges = false, carOnly = false) => {
+    const list = includeBridges ? allSegs : (carOnly && carSegs.length ? carSegs : groundSegs);
     let best = null;
     for (const seg of list) {
       const [ax, az, bx, bz, hw] = seg;
@@ -571,6 +594,7 @@ export function computePlacesPayload(ctx) {
   };
 
   const inAnyBuilding = (x, z, pad = 1.5) => {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return true;
     for (const B of blds) {
       if (x < B.minX - pad || x > B.maxX + pad || z < B.minZ - pad || z > B.maxZ + pad) continue;
       if (pointInRing(x, z, B.flat)) return true;
@@ -578,21 +602,45 @@ export function computePlacesPayload(ctx) {
     return false;
   };
 
-  const placeRoadsideProp = (px, pz, curbClearance = 3.5) => {
-    const rInfo = nearestRoadInfo(px, pz, false);
-    if (rInfo && rInfo.d < 48) {
+  // Orient local +Z toward the road (-nx*s, -nz*s) and local X parallel to road (ux, uz),
+  // verifying that the full (halfAlong x halfDepth) footprint is clear of all roads, buildings, and water.
+  const placeRoadsideProp = (px, pz, curbClearance = 3.5, halfAlong = 0.8, halfDepth = 0.8) => {
+    const rInfo = nearestRoadInfo(px, pz, false, true) || nearestRoadInfo(px, pz, false, false);
+    const footprintClear = (cx, cz, ux, uz, nx, nz) => {
+      if (Math.abs(cx) > 490 || Math.abs(cz) > 490) return false;
+      for (const a of [-1, 0, 1]) {
+        for (const b of [-1, 0, 1]) {
+          const tx = cx + ux * halfAlong * a + nx * halfDepth * b;
+          const tz = cz + uz * halfAlong * a + nz * halfDepth * b;
+          if (inWater(tx, tz, 2.5) || inAnyBuilding(tx, tz, 1.0) || onAnyRoad(tx, tz, 1.45)) return false;
+        }
+      }
+      return true;
+    };
+    if (rInfo && rInfo.d < 52) {
       const nx = -rInfo.uz, nz = rInfo.ux;
       const side = (px - rInfo.qx) * nx + (pz - rInfo.qz) * nz >= 0 ? 1 : -1;
-      for (const s of [side, -side]) {
-        const cx = rInfo.qx + nx * s * (rInfo.hw + curbClearance);
-        const cz = rInfo.qz + nz * s * (rInfo.hw + curbClearance);
-        if (!inAnyBuilding(cx, cz, 1.2) && !inWater(cx, cz)) {
-          return [cx, cz, Math.atan2(rInfo.ux, rInfo.uz), rInfo.qx, rInfo.qz];
+      const effClear = Math.max(curbClearance, halfDepth + 1.55);
+      for (const along of [0, 4.5, -4.5, 9.0, -9.0, 14.0, -14.0]) {
+        for (const s of [side, -side]) {
+          const cx = rInfo.qx + rInfo.ux * along + nx * s * (rInfo.hw + effClear);
+          const cz = rInfo.qz + rInfo.uz * along + nz * s * (rInfo.hw + effClear);
+          if (footprintClear(cx, cz, rInfo.ux, rInfo.uz, nx * s, nz * s)) {
+            const rotY = Math.atan2(-nx * s, -nz * s);
+            return [cx, cz, rotY, rInfo.qx + rInfo.ux * along, rInfo.qz + rInfo.uz * along];
+          }
         }
       }
     }
-    const [ox2, oz2] = pushOffRoad(px, pz, curbClearance);
-    return [ox2, oz2, rInfo ? Math.atan2(rInfo.ux, rInfo.uz) : 0, rInfo ? rInfo.qx : ox2, rInfo ? rInfo.qz : oz2];
+    const [ox2, oz2] = pushOffRoad(px, pz, Math.max(curbClearance, halfDepth + 1.8));
+    const ux = rInfo ? rInfo.ux : 0, uz = rInfo ? rInfo.uz : 1;
+    const nx = -uz, nz = ux;
+    if (footprintClear(ox2, oz2, ux, uz, nx, nz)) {
+      const s = rInfo && ((ox2 - rInfo.qx) * nx + (oz2 - rInfo.qz) * nz < 0) ? -1 : 1;
+      const rotY = rInfo ? Math.atan2(-nx * s, -nz * s) : 0;
+      return [ox2, oz2, rotY, rInfo ? rInfo.qx : ox2, rInfo ? rInfo.qz : oz2];
+    }
+    return [NaN, NaN, 0, NaN, NaN];
   };
 
   const findHostBuilding = (x, z, maxDist = 26) => {
@@ -614,7 +662,7 @@ export function computePlacesPayload(ctx) {
 
   for (const q of (places && places.pois) || []) {
     let [px, pz, cls, sub, name, nameEn, rank] = q;
-    const isMaritime = cls === 'ferry_terminal' || sub === 'ferry_terminal' || cls === 'harbor' || sub === 'marina' || sub === 'dock';
+    const isMaritime = cls === 'harbor' || sub === 'marina' || sub === 'dock';
     if (!isMaritime && inWater(px, pz)) continue;
     const isFuel = cls === 'fuel' && sub !== 'charging_station';
     const isEv = sub === 'charging_station' || cls === 'charging_station';
@@ -707,7 +755,8 @@ export function computePlacesPayload(ctx) {
           geo.push([ox + cx, padY, oz + cz, 'helipad', 'H', '医院停机坪 H', 'Hospital Helipad H', Math.round(padY)]);
         }
       } else {
-        [px, pz] = pushOffRoad(px, pz, 3.0);
+        [px, pz] = pushOffRoad(px, pz, 3.2);
+        if (inWater(px, pz) || onAnyRoad(px, pz, 1.6) || inAnyBuilding(px, pz, 0.8)) continue;
         hy = terrainY(px, pz);
         push('hospitalCross', ox + px, hy, oz + pz, rng() * Math.PI, 1.0, 1.0, 1.0, 0xffffff);
       }
@@ -743,6 +792,7 @@ export function computePlacesPayload(ctx) {
                 : 'worshipSpire';
       if (isShinto || isPagoda) {
         [px, pz] = pushOffRoad(px, pz, 3.2);
+        if (inWater(px, pz) || onAnyRoad(px, pz, 1.6) || inAnyBuilding(px, pz, 0.8)) continue;
         const gy = terrainY(px, pz);
         push(wKind, ox + px, gy, oz + pz, rotY, 1.15, 1.15, 1.15, 0xffffff);
         labelY = gy + 7.5;
@@ -755,6 +805,7 @@ export function computePlacesPayload(ctx) {
           labelY = wy + 8.5;
         } else {
           [px, pz] = pushOffRoad(px, pz, 3.2);
+          if (inWater(px, pz) || onAnyRoad(px, pz, 1.6) || inAnyBuilding(px, pz, 0.8)) continue;
           const gy = terrainY(px, pz);
           push(wKind, ox + px, gy, oz + pz, rotY, 1.0, 1.0, 1.0, 0xffffff);
           labelY = gy + 8.0;
@@ -770,11 +821,14 @@ export function computePlacesPayload(ctx) {
     // ---------------- Batch 1: Civic, Emergency, Postal, Healthcare & Education ----------------
     if (cls === 'police' || sub === 'police') {
       if (!canPlaceKind('police', px, pz, 6, 35)) continue;
-      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 3.0, 2.2, 1.2);
+      if (!Number.isFinite(cx)) continue;
       const gy = terrainY(cx, cz);
       push('policeCruiser', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
       const bx = cx - Math.sin(rotY) * 3.2, bz = cz - Math.cos(rotY) * 3.2;
-      push('policeBeacon', ox + bx, terrainY(bx, bz), oz + bz, rotY, 1, 1, 1, 0xffffff);
+      if (!onAnyRoad(bx, bz, 1.4) && !inAnyBuilding(bx, bz, 0.8)) {
+        push('policeBeacon', ox + bx, terrainY(bx, bz), oz + bz, rotY, 1, 1, 1, 0xffffff);
+      }
       const nmZh = '🚓 ' + (name || '警察局');
       const nmEn = '🚓 ' + (nameEn || name || 'Police Station');
       geo.push([ox + cx, gy, oz + cz, 'police', 'police', nmZh, nmEn, 0]);
@@ -784,11 +838,14 @@ export function computePlacesPayload(ctx) {
 
     if (cls === 'fire_station' || sub === 'fire_station') {
       if (!canPlaceKind('fire_station', px, pz, 5, 40)) continue;
-      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 4.2);
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 4.4, 2.5, 2.0);
+      if (!Number.isFinite(cx)) continue;
       const gy = terrainY(cx, cz);
       push('fireTruck', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
       const dx = cx - Math.sin(rotY) * 5.2, dz = cz - Math.cos(rotY) * 5.2;
-      push('fireDoor', ox + dx, terrainY(dx, dz), oz + dz, rotY, 1, 1, 1, 0xffffff);
+      if (!onAnyRoad(dx, dz, 1.4)) {
+        push('fireDoor', ox + dx, terrainY(dx, dz), oz + dz, rotY, 1, 1, 1, 0xffffff);
+      }
       const nmZh = '🚒 ' + (name || '消防站');
       const nmEn = '🚒 ' + (nameEn || name || 'Fire Station');
       geo.push([ox + cx, gy, oz + cz, 'fire_station', 'fire_station', nmZh, nmEn, 0]);
@@ -822,6 +879,7 @@ export function computePlacesPayload(ctx) {
     ) {
       if (!canPlaceKind('clinicCross', px, pz, 18, 26)) continue;
       const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      if (!Number.isFinite(cx)) continue;
       const gy = terrainY(cx, cz);
       const tint = (cls === 'dentist' || sub === 'dentist' || cls === 'veterinary' || sub === 'veterinary') ? 0x38bdf8 : 0xffffff;
       push('clinicCross', ox + cx, gy, oz + cz, rotY, 1, 1, 1, tint);
@@ -834,6 +892,7 @@ export function computePlacesPayload(ctx) {
     if (cls === 'prison' || sub === 'prison') {
       if (!canPlaceKind('watchtower', px, pz, 6, 35)) continue;
       const [cx, cz, rotY] = pushOffRoad(px, pz, 4.0);
+      if (inWater(cx, cz) || onAnyRoad(cx, cz, 2.0) || inAnyBuilding(cx, cz, 1.0)) continue;
       const gy = terrainY(cx, cz);
       push('watchtower', ox + cx, gy, oz + cz, rotY || 0, 1, 1, 1, 0xffffff);
       beacons.push(ox + cx, gy + 11.8, oz + cz);
@@ -887,8 +946,8 @@ export function computePlacesPayload(ctx) {
 
     if (cls === 'bus' || sub === 'bus_stop' || sub === 'bus_station') {
       if (!canPlaceKind('realBusStop', px, pz, 24, 28)) continue;
-      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
-      if (!inAnyBuilding(cx, cz, 0.8)) {
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 3.1, 2.4, 1.1);
+      if (Number.isFinite(cx) && !inAnyBuilding(cx, cz, 1.0)) {
         const gy = terrainY(cx, cz);
         push('realBusStop', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
         if (name && labels.length < 360) {
@@ -900,8 +959,8 @@ export function computePlacesPayload(ctx) {
 
     if (cls === 'gate' || sub === 'gate' || cls === 'lift_gate' || sub === 'lift_gate') {
       if (!canPlaceKind('liftGate', px, pz, 22, 22)) continue;
-      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.0);
-      if (!inAnyBuilding(cx, cz, 0.4)) {
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.4, 1.6, 0.6);
+      if (Number.isFinite(cx) && !inAnyBuilding(cx, cz, 0.6)) {
         push('liftGate', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
       }
       continue;
@@ -909,10 +968,9 @@ export function computePlacesPayload(ctx) {
 
     if (cls === 'cycle_barrier' || sub === 'cycle_barrier' || cls === 'bollard' || sub === 'bollard') {
       if (!canPlaceKind('cycleBarrier', px, pz, 16, 18)) continue;
-      const rInfo = nearestRoadInfo(px, pz, false);
-      const rotY = rInfo ? Math.atan2(rInfo.ux, rInfo.uz) : rng() * Math.PI;
-      if (!inAnyBuilding(px, pz, 0.4)) {
-        push('cycleBarrier', ox + px, terrainY(px, pz), oz + pz, rotY, 1, 1, 1, 0xffffff);
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.2, 0.8, 0.5);
+      if (Number.isFinite(cx) && !inAnyBuilding(cx, cz, 0.5)) {
+        push('cycleBarrier', ox + cx, terrainY(cx, cz), oz + cz, rotY, 1, 1, 1, 0xffffff);
       }
       continue;
     }
@@ -980,8 +1038,8 @@ export function computePlacesPayload(ctx) {
     // ---------------- Batch 5: Public Art, Monuments, Castles, Viewpoints ----------------
     if ((cls === 'art_gallery' && sub === 'artwork') || cls === 'artwork' || sub === 'artwork' || sub === 'sculpture') {
       if (!canPlaceKind('artworkSculpture', px, pz, 18, 22)) continue;
-      const [cx, cz] = pushOffRoad(px, pz, 2.6);
-      if (!inAnyBuilding(cx, cz, 0.6)) {
+      const [cx, cz] = pushOffRoad(px, pz, 2.8);
+      if (!inWater(cx, cz) && !onAnyRoad(cx, cz, 1.6) && !inAnyBuilding(cx, cz, 0.8)) {
         const artTint = [0xd97706, 0xc2410c, 0xeab308, 0x0d9488][Math.floor(rng() * 4)];
         push('artworkSculpture', ox + cx, terrainY(cx, cz), oz + cz, rng() * Math.PI * 2, 1, 1, 1, artTint);
       }
@@ -990,7 +1048,8 @@ export function computePlacesPayload(ctx) {
 
     if (cls === 'monument' || sub === 'monument' || sub === 'memorial' || cls === 'historic' || sub === 'historic') {
       if (!canPlaceKind('monumentObelisk', px, pz, 10, 32)) continue;
-      const [cx, cz] = pushOffRoad(px, pz, 3.2);
+      const [cx, cz] = pushOffRoad(px, pz, 3.4);
+      if (inWater(cx, cz) || onAnyRoad(cx, cz, 1.8) || inAnyBuilding(cx, cz, 1.0)) continue;
       const gy = terrainY(cx, cz);
       push('monumentObelisk', ox + cx, gy, oz + cz, rng() * Math.PI, 1, 1, 1, 0xffffff);
       if (name && labels.length < 360) {
@@ -1001,7 +1060,8 @@ export function computePlacesPayload(ctx) {
 
     if (cls === 'castle' || sub === 'castle' || sub === 'ruins' || sub === 'fort' || sub === 'city_gate') {
       if (!canPlaceKind('castleKeep', px, pz, 8, 40)) continue;
-      const [cx, cz] = pushOffRoad(px, pz, 4.0);
+      const [cx, cz] = pushOffRoad(px, pz, 4.2);
+      if (inWater(cx, cz) || onAnyRoad(cx, cz, 2.2) || inAnyBuilding(cx, cz, 1.2)) continue;
       const gy = terrainY(cx, cz);
       const sc = sub === 'ruins' ? 0.82 : 1.0;
       const tint = sub === 'ruins' ? 0xcbd5e1 : 0xffffff;
@@ -1014,7 +1074,8 @@ export function computePlacesPayload(ctx) {
 
     if (sub === 'viewpoint' || cls === 'viewpoint') {
       if (!canPlaceKind('viewpointDeck', px, pz, 12, 28)) continue;
-      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 2.8);
+      const [cx, cz, rotY] = placeRoadsideProp(px, pz, 3.0, 1.8, 1.4);
+      if (!Number.isFinite(cx)) continue;
       const gy = terrainY(cx, cz);
       push('viewpointDeck', ox + cx, gy, oz + cz, rotY, 1, 1, 1, 0xffffff);
       if (name && labels.length < 360) {
@@ -1025,9 +1086,10 @@ export function computePlacesPayload(ctx) {
 
     // ---------------- Batch 6: Maritime Terminals & Brownfield Construction ----------------
     if (cls === 'ferry_terminal' || sub === 'ferry_terminal') {
+      if (inWater(px, pz, 8.0) || onAnyRoad(px, pz, 3.5) || inAnyBuilding(px, pz, 2.5)) continue;
       if (!canPlaceKind('ferryCanopy', px, pz, 8, 35)) continue;
       const gy = Math.max(0.25, terrainY(px, pz));
-      const rInfo = nearestRoadInfo(px, pz, false);
+      const rInfo = nearestRoadInfo(px, pz, false, true) || nearestRoadInfo(px, pz, false, false);
       const rotY = rInfo ? Math.atan2(rInfo.ux, rInfo.uz) : rng() * Math.PI * 2;
       push('ferryCanopy', ox + px, gy, oz + pz, rotY, 1, 1, 1, 0xffffff);
       const nmZh = '⛴ ' + (name || '轮渡码头');
@@ -1050,6 +1112,7 @@ export function computePlacesPayload(ctx) {
     if (cls === 'brownfield' || sub === 'brownfield') {
       if (!canPlaceKind('towerCrane', px, pz, 6, 55)) continue;
       const [cx, cz] = pushOffRoad(px, pz, 4.5);
+      if (inWater(cx, cz) || onAnyRoad(cx, cz, 2.2) || inAnyBuilding(cx, cz, 1.2)) continue;
       const gy = terrainY(cx, cz);
       push('towerCrane', ox + cx, gy, oz + cz, rng() * Math.PI * 2, 1, 1, 1, 0xffffff);
       beacons.push(ox + cx, gy + 36.5, oz + cz);
@@ -1057,7 +1120,8 @@ export function computePlacesPayload(ctx) {
     }
 
     if (isTransit) {
-      [px, pz] = pushOffRoad(px, pz);
+      [px, pz] = pushOffRoad(px, pz, 2.8);
+      if (inWater(px, pz) || onAnyRoad(px, pz, 1.6) || inAnyBuilding(px, pz, 0.8)) continue;
       push('transit', ox + px, terrainY(px, pz), oz + pz, rng() * Math.PI * 2, 1, 1, 1, sub === 'subway' || sub === 'subway_entrance' ? 0x1f5fbf : 0x2f7d4a);
       labelY = terrainY(px, pz) + 4.4;
     } else if (isStore && !q.venue) { // [venues-poi] claimed shops get a full storefront + sign instead

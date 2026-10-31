@@ -1479,7 +1479,7 @@ export function dispatchParkPoi(surfBuf, propsBuf, obb, topY, poiKind) {
 }
 
 /** Emits a perimeter foundation curb/coping around `outer` from `botY` to `topY` with width `w`. */
-function pushRingPerimeterCurb(buf, outer, ox, oz, yOffTop, curbRise, width, rgb, pat, kind) {
+function pushRingPerimeterCurb(buf, outer, ox, oz, yOffTop, curbRise, width, rgb, pat, kind, isPointInWater = null) {
   const n = outer.length;
   if (n < 6) return;
   const sideCol = [rgb[0] * 0.86, rgb[1] * 0.86, rgb[2] * 0.86];
@@ -1498,6 +1498,13 @@ function pushRingPerimeterCurb(buf, outer, ox, oz, yOffTop, curbRise, width, rgb
     const x1 = outer[j], z1 = outer[j + 1];
     // Skip artificial chunk-clip boundary seams so multi-chunk pools/courts have no seam curb down the middle
     if ((Math.abs(x0) >= 499.5 && Math.abs(x1) >= 499.5) || (Math.abs(z0) >= 499.5 && Math.abs(z1) >= 499.5)) continue;
+    if (
+      kind !== LC_SWIMMING_POOL &&
+      isPointInWater &&
+      (isPointInWater(x0, z0, 0.5) || isPointInWater(x1, z1, 0.5) || isPointInWater((x0 + x1) * 0.5, (z0 + z1) * 0.5, 0.5))
+    ) {
+      continue;
+    }
     const dx = x1 - x0, dz = z1 - z0;
     const len = Math.hypot(dx, dz);
     if (len < 0.2) continue;
@@ -1566,7 +1573,7 @@ function pushFlowerCluster3D(buf, x, y, z, r, h, flowerRgb, pat, kind, rng) {
 }
 
 /** Emits 3D stepped stone staircase treads and flanking cheek walls along a `steps` polyline. */
-function buildStepsPolyline3D(propsBuf, flatLine, widthM, ox, oz) {
+function buildStepsPolyline3D(propsBuf, flatLine, widthM, ox, oz, isPointInWater = null) {
   const pat = 7, kind = LC_STEPS;
   const treadRgb = [0.83, 0.80, 0.75];
   const riserRgb = [0.54, 0.51, 0.47];
@@ -1580,6 +1587,7 @@ function buildStepsPolyline3D(propsBuf, flatLine, widthM, ox, oz) {
     const dx = x1 - x0, dz = z1 - z0;
     const segLen = Math.hypot(dx, dz);
     if (segLen < 0.8) continue;
+    if (isPointInWater && (isPointInWater(x0, z0, 0.5) || isPointInWater(x1, z1, 0.5) || isPointInWater((x0 + x1) * 0.5, (z0 + z1) * 0.5, 0.5))) continue;
 
     const ux = dx / segLen, uz = dz / segLen;
     const vx = -uz, vz = ux;
@@ -1675,7 +1683,7 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
     // 3D Hillside Steps (`LC_STEPS` is a polyline `[x0, z0, x1, z1, ...]`)
     if (kind === LC_STEPS) {
       if (outer.length >= 4) {
-        buildStepsPolyline3D(propsBuf, outer, meta?.width || 3.2, ox, oz);
+        buildStepsPolyline3D(propsBuf, outer, meta?.width || 3.2, ox, oz, isPointInWater);
       }
       continue;
     }
@@ -1759,7 +1767,13 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
       const ax = sub[i], az = sub[i + 1], bx = sub[i + 2], bz = sub[i + 3], cx = sub[i + 4], cz = sub[i + 5];
       const mx = (ax + bx + cx) / 3, mz = (az + bz + cz) / 3;
       // Swimming pools intentionally sit on `water` polygons, so do not skip when `isPointInWater` is true
-      if (kind !== LC_SWIMMING_POOL && isPointInWater && isPointInWater(mx, mz, 0)) continue;
+      if (
+        kind !== LC_SWIMMING_POOL &&
+        isPointInWater &&
+        (isPointInWater(mx, mz, 0) || isPointInWater(ax, az, 0) || isPointInWater(bx, bz, 0) || isPointInWater(cx, cz, 0))
+      ) {
+        continue;
+      }
       if (
         isPointInSunkenTrench &&
         (isPointInSunkenTrench(mx, mz) || isPointInSunkenTrench(ax, az) || isPointInSunkenTrench(bx, bz) || isPointInSunkenTrench(cx, cz))
@@ -1812,10 +1826,10 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
       }
     } else if (kind === LC_PLAZA) {
       // Warm stone perimeter curb around pedestrian plazas
-      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.04, 0.32, [0.82, 0.79, 0.73], 7, kind);
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.04, 0.32, [0.82, 0.79, 0.73], 7, kind, isPointInWater);
     } else if (kind === LC_FLOWERBED) {
       // Low stone garden edging + vibrant red/yellow/magenta/violet 3D floral cluster mounds
-      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.06, 0.25, [0.68, 0.65, 0.60], 7, kind);
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.06, 0.25, [0.68, 0.65, 0.60], 7, kind, isPointInWater);
       const bb = bboxOf(outer);
       const rng = mulberry32(((p * 4999 + 19) * 2654435761) ^ Math.round(ox + bb[0]));
       const step = 2.6;
@@ -1825,6 +1839,7 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
           const fx = gx + (rng() - 0.5) * 1.4;
           const fz = gz + (rng() - 0.5) * 1.4;
           if (!pointInRing(fx, fz, outer)) continue;
+          if (isPointInWater && isPointInWater(fx, fz, 0.5)) continue;
           let inHole = false;
           for (const h of holes || []) {
             if (pointInRing(fx, fz, h)) { inHole = true; break; }
@@ -1839,23 +1854,31 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
         }
       }
     } else if (kind === LC_CEMETERY) {
-      buildCemeteryDetails(surfBuf, propsBuf, outer, holes, ox, oz, yOff, p);
+      if (!isPointInWater || !obb || !isPointInWater(obb.cx, obb.cz, 1.0)) {
+        buildCemeteryDetails(surfBuf, propsBuf, outer, holes, ox, oz, yOff, p);
+      }
     } else if (kind === LC_DAM && obb) {
       buildDamDetails(surfBuf, propsBuf, outer, obb, ox, oz, yOff);
     } else if (kind === LC_PARK_POI && obb && obb.hl <= 120) {
-      const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
-      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.03, 0.28, [0.76, 0.73, 0.68], 7, kind);
-      dispatchParkPoi(surfBuf, propsBuf, obb, topY, meta?.poiKind || 'shelter');
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.03, 0.28, [0.76, 0.73, 0.68], 7, kind, isPointInWater);
+      if (!isPointInWater || !isPointInWater(obb.cx, obb.cz, 1.0)) {
+        const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
+        dispatchParkPoi(surfBuf, propsBuf, obb, topY, meta?.poiKind || 'shelter');
+      }
     } else if (kind === LC_TRACK && obb && obb.hl <= 140) {
-      const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
-      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.02, 0.35, [0.78, 0.76, 0.72], 7, kind);
-      buildAthleticsTrackDetails(surfBuf, propsBuf, obb, topY, holes);
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.02, 0.35, [0.78, 0.76, 0.72], 7, kind, isPointInWater);
+      if (!isPointInWater || !isPointInWater(obb.cx, obb.cz, 1.0)) {
+        const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
+        buildAthleticsTrackDetails(surfBuf, propsBuf, obb, topY, holes);
+      }
     } else if (kind === LC_PLAYGROUND && obb && obb.hl <= 80) {
-      const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
-      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.03, 0.30, [0.82, 0.80, 0.76], 7, kind);
-      buildPlaygroundDetails(surfBuf, propsBuf, obb, topY);
-    } else if (kind === LC_PITCH && obb && obb.hl <= 130) {
-      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.02, 0.32, [0.76, 0.75, 0.72], 7, kind);
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.03, 0.30, [0.82, 0.80, 0.76], 7, kind, isPointInWater);
+      if (!isPointInWater || !isPointInWater(obb.cx, obb.cz, 1.0)) {
+        const { topY } = sampleFlatCourtElev(obb, ox, oz, yOff);
+        buildPlaygroundDetails(surfBuf, propsBuf, obb, topY);
+      }
+    } else if (kind === LC_PITCH && obb && obb.hl <= 130 && (!isPointInWater || !isPointInWater(obb.cx, obb.cz, 1.0))) {
+      pushRingPerimeterCurb(propsBuf, outer, ox, oz, yOff, 0.02, 0.32, [0.76, 0.75, 0.72], 7, kind, isPointInWater);
       const pois = meta?.pois || [];
       // If a compound multi-court enclosure contains multiple distinct court POIs, render each sub-court at its POI
       const courtPois = pois.filter(

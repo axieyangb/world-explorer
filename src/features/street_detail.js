@@ -220,8 +220,10 @@ function roadIndex(chunk) {
   if (idx) return idx;
   const allSegs = chunk.userData.roadSegments || [];
   const segs = allSegs.filter((s) => CAR.has(s.cls) && !s.tunnel && !s.bridge);
+  const footSegs = allSegs.filter((s) => !CAR.has(s.cls) && !s.tunnel && !s.bridge);
   const bridgeSegs = allSegs.filter((s) => !s.tunnel && s.bridge);
   const grid = new Map();
+  const footGrid = new Map();
   const bridgeGrid = new Map();
   const ends = new Map();
   const C = 25;
@@ -265,9 +267,48 @@ function roadIndex(chunk) {
   const signalNodes = new PointGrid(30);
   const sn = chunk.userData.street && chunk.userData.street.signalNodes;
   if (sn) for (let i = 0; i < sn.length; i += 4) signalNodes.add(sn[i] + chunk.userData.ox, sn[i + 1] + chunk.userData.oz);
-  idx = { segs, bridgeSegs, grid, bridgeGrid, C, junctions, signalNodes };
+  for (let i = 0; i < footSegs.length; i++) {
+    const s = footSegs[i];
+    const pad = (s.width || 2.5) * 0.5 + 6;
+    const x0 = Math.floor((Math.min(s.x1, s.x2) - pad) / C), x1 = Math.floor((Math.max(s.x1, s.x2) + pad) / C);
+    const z0 = Math.floor((Math.min(s.z1, s.z2) - pad) / C), z1 = Math.floor((Math.max(s.z1, s.z2) + pad) / C);
+    for (let gz = z0; gz <= z1; gz++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const k = (gx + 4096) * 8192 + gz + 4096;
+        let a = footGrid.get(k);
+        if (!a) footGrid.set(k, (a = []));
+        a.push(i);
+      }
+    }
+  }
+  idx = { segs, footSegs, bridgeSegs, grid, footGrid, bridgeGrid, C, junctions, signalNodes };
   roadIndexCache.set(chunk, idx);
   return idx;
+}
+
+function nearestFootway(idx, x, z, maxD) {
+  if (!idx || !idx.footGrid) return null;
+  const a = idx.footGrid.get((Math.floor(x / idx.C) + 4096) * 8192 + Math.floor(z / idx.C) + 4096);
+  if (!a) return null;
+  let best = null, bestScore = Infinity;
+  for (const i of a) {
+    const s = idx.footSegs[i];
+    const ex = s.x2 - s.x1, ez = s.z2 - s.z1;
+    const L2 = ex * ex + ez * ez;
+    if (L2 < 1e-4) continue;
+    let t = ((x - s.x1) * ex + (z - s.z1) * ez) / L2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const fx = s.x1 + ex * t, fz = s.z1 + ez * t;
+    const d = Math.hypot(x - fx, z - fz);
+    const hw = (s.width || 2.5) * 0.5;
+    const score = d - hw;
+    if (score < bestScore && score < maxD) {
+      bestScore = score;
+      const L = Math.sqrt(L2);
+      best = { s, d, hw, y: s.y1 + (s.y2 - s.y1) * t, dx: ex / L, dz: ez / L, fx, fz };
+    }
+  }
+  return best;
 }
 
 function nearBridge(idx, x, z, extraClear = 3.8) {
@@ -628,8 +669,25 @@ export class StreetDetail {
     const ground = (x, z, minOff, maxD = 10) => {
       const idx = ctx(x, z);
       if (!idx) return null;
-      const r = nearestRoad(idx, x, z, maxD);
-      if (!r) return [x, getBeijingTerrainElevation(x, z), z, null, idx];
+      let r = nearestRoad(idx, x, z, maxD);
+      if (!r) {
+        const f = nearestFootway(idx, x, z, 4);
+        if (f) {
+          if (f.d < f.hw + minOff) {
+            let nx = x - f.fx, nz = z - f.fz;
+            const L = Math.hypot(nx, nz);
+            if (L < 0.05) { nx = -f.dz; nz = f.dx; } else { nx /= L; nz /= L; }
+            x = f.fx + nx * (f.hw + minOff);
+            z = f.fz + nz * (f.hw + minOff);
+            f.d = f.hw + minOff;
+            const f2 = nearestFootway(idx, x, z, 4);
+            if (f2 && f2.d < f2.hw + minOff * 0.8) return null;
+          }
+          if (nearBridge(idx, x, z, 2.4)) return null;
+          return [x, Math.max(getBeijingTerrainElevation(x, z), f.y + 0.02), z, f, idx];
+        }
+        return [x, getBeijingTerrainElevation(x, z), z, null, idx];
+      }
       if (r.d < r.hw + minOff) {
         // OSM point falls on our (approximate-width) asphalt: push it onto the sidewalk
         let nx = x - r.fx, nz = z - r.fz;
@@ -638,7 +696,22 @@ export class StreetDetail {
         x = r.fx + nx * (r.hw + minOff);
         z = r.fz + nz * (r.hw + minOff);
         r.d = r.hw + minOff;
+        // Verify nudged point did not land onto an adjacent carriageway or intersection
+        const r2 = nearestRoad(idx, x, z, maxD);
+        if (r2 && r2.d < r2.hw + minOff * 0.85) return null;
       }
+      const fCheck = nearestFootway(idx, x, z, 3);
+      if (fCheck && fCheck.d < fCheck.hw + 0.55) {
+        let nx = x - fCheck.fx, nz = z - fCheck.fz;
+        const L = Math.hypot(nx, nz);
+        if (L < 0.05) { nx = -fCheck.dz; nz = fCheck.dx; } else { nx /= L; nz /= L; }
+        x = fCheck.fx + nx * (fCheck.hw + 0.65);
+        z = fCheck.fz + nz * (fCheck.hw + 0.65);
+        const r3 = nearestRoad(idx, x, z, maxD);
+        const f3 = nearestFootway(idx, x, z, 3);
+        if ((r3 && r3.d < r3.hw + minOff * 0.8) || (f3 && f3.d < f3.hw + 0.5)) return null;
+      }
+      if (nearBridge(idx, x, z, 2.4)) return null;
       const terrY = getBeijingTerrainElevation(x, z);
       const swW = r.s.cls === 'residential' ? 1.8 : 2.5;
       const edgeD = Math.max(0, r.d - r.hw);

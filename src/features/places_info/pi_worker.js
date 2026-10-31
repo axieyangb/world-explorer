@@ -65,7 +65,7 @@ function build(places, ctx) {
   const bump = (k) => (count[k] = (count[k] || 0) + 1);
   const full = (k) => (count[k] || 0) >= CAP[k];
   const ty = (x, z) => getBeijingTerrainElevation(ox + x, oz + z);
-  const inWater = (x, z) => Boolean(isPointInWater && isPointInWater(x, z, 0));
+  const inWater = (x, z, pad = 2.5) => Boolean(isPointInWater && isPointInWater(x, z, pad));
 
   // Ground-level building footprints (local coords)
   const blds = [];
@@ -90,14 +90,20 @@ function build(places, ctx) {
     return false;
   };
 
+  const NON_CAR_CLS = new Set(['footway', 'pedestrian', 'path', 'steps', 'cycleway', 'track', 'corridor']);
   const segs = [];
+  const carSegs = [];
   for (const s of roadSegments) {
-    if (s.tunnel || s.bridge) continue;
-    segs.push([s.x1 - ox, s.z1 - oz, s.x2 - ox, s.z2 - oz, (s.width || 6) * 0.5]);
+    if (s.tunnel) continue;
+    if (s.bridge && Math.min(s.y1 || 0, s.y2 || 0) >= 5.0) continue;
+    const rec = [s.x1 - ox, s.z1 - oz, s.x2 - ox, s.z2 - oz, (s.width || 6) * 0.5];
+    segs.push(rec);
+    if (!s.bridge && !NON_CAR_CLS.has(s.cls || '')) carSegs.push(rec);
   }
   const nearestRoad = (x, z, maxD = 60) => {
+    const list = carSegs.length ? carSegs : segs;
     let best = null;
-    for (const [ax, az, bx, bz, hw] of segs) {
+    for (const [ax, az, bx, bz, hw] of list) {
       if (x < Math.min(ax, bx) - maxD || x > Math.max(ax, bx) + maxD || z < Math.min(az, bz) - maxD || z > Math.max(az, bz) + maxD) continue;
       const dx = bx - ax, dz = bz - az;
       const l2 = dx * dx + dz * dz;
@@ -188,6 +194,12 @@ function build(places, ctx) {
 
   const notable = [];
   const realShelters = []; // local x,z of shelters placed at real bus_stop POIs
+  const existingBusStops = places.inst && places.inst.realBusStop;
+  if (existingBusStops) {
+    for (let i = 0; i + 2 < existingBusStops.length; i += 8) {
+      realShelters.push(existingBusStops[i] - ox, existingBusStops[i + 2] - oz);
+    }
+  }
   const pois = src.pois || [];
   for (const q of pois) {
     const [px, pz, cls, sub, name, nameEn] = q;
@@ -294,15 +306,22 @@ function build(places, ctx) {
       if (full('busPole') || tooClose('bus', px, pz, 22)) continue;
       const r = nearestRoad(px, pz, 30);
       if (!r) continue;
-      const bx = r.qx + r.nx * (r.hw + 0.55), bz = r.qz + r.nz * (r.hw + 0.55);
-      if (!inChunk(bx, bz) || inBld(bx, bz, 0.2) || inWater(bx, bz)) continue;
+      const bx = r.qx + r.nx * (r.hw + 1.15), bz = r.qz + r.nz * (r.hw + 1.15);
+      if (!inChunk(bx, bz) || inBld(bx, bz, 0.4) || !roadClear(bx, bz, 0.9) || inWater(bx, bz)) continue;
       push('busPole', bx, ty(bx, bz), bz, Math.atan2(r.ux, r.uz));
       mark('bus', px, pz);
       bump('busPole');
-      if (!full('shelter')) {
-        for (const a of [3.4, -3.4]) {
-          const sx = r.qx + r.nx * (r.hw + 1.75) + r.ux * a, sz = r.qz + r.nz * (r.hw + 1.75) + r.uz * a;
-          if (!inChunk(sx, sz) || !rectFree(sx, sz, r.ux, r.uz, 2.3, 0.7, 0.15, 0.3)) continue;
+      let nearExistingShelter = false;
+      for (let j = 0; j < realShelters.length; j += 2) {
+        if (Math.hypot(bx - realShelters[j], bz - realShelters[j + 1]) < 28) {
+          nearExistingShelter = true;
+          break;
+        }
+      }
+      if (!full('shelter') && !nearExistingShelter) {
+        for (const a of [3.6, -3.6, 7.0, -7.0]) {
+          const sx = r.qx + r.nx * (r.hw + 2.45) + r.ux * a, sz = r.qz + r.nz * (r.hw + 2.45) + r.uz * a;
+          if (!inChunk(sx, sz) || !rectFree(sx, sz, r.ux, r.uz, 2.4, 0.9, 0.5, 1.35)) continue;
           push('shelter', sx, ty(sx, sz), sz, Math.atan2(-r.nx, -r.nz));
           realShelters.push(sx, sz);
           bump('shelter');

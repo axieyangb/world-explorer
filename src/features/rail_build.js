@@ -636,13 +636,28 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
         while (nextPole <= d.ss[i + 1]) {
           if (nextPole >= d.ss[i]) {
             const u = (nextPole - d.ss[i]) / segL;
-            const side = st ? 4.6 : 3.0;
-            const px = d.xs[i] + (d.xs[i + 1] - d.xs[i]) * u + nxs[i] * side;
-            const pz = d.zs[i] + (d.zs[i + 1] - d.zs[i]) * u + nzs[i] * side;
+            const bx = d.xs[i] + (d.xs[i + 1] - d.xs[i]) * u;
+            const bz = d.zs[i] + (d.zs[i + 1] - d.zs[i]) * u;
             const py = ys[i] + (ys[i + 1] - ys[i]) * u;
-            sink.box(px - ox, pz - oz, py - 0.3, py + top + 7.0, txs[i], tzs[i], 0.12, 0.12, C.pole);
-            const ax = px - nxs[i] * (side / 2 + 0.1), az = pz - nzs[i] * (side / 2 + 0.1);
-            sink.box(ax - ox, az - oz, py + top + 6.15, py + top + 6.3, nzs[i], -nxs[i], side / 2 + 0.15, 0.05, C.pole);
+            let chosenSide = st ? 0 : 3.0;
+            if (st) {
+              for (const cand of [5.8, -5.8, 7.2, -7.2, 8.8, -8.8]) {
+                const tx = bx + nxs[i] * cand, tz = bz + nzs[i] * cand;
+                if (roadAt(tx, tz, py + 0.6) === null) {
+                  chosenSide = cand;
+                  break;
+                }
+              }
+            }
+            if (chosenSide !== 0) {
+              const px = bx + nxs[i] * chosenSide;
+              const pz = bz + nzs[i] * chosenSide;
+              const absSide = Math.abs(chosenSide);
+              const sgn = chosenSide >= 0 ? 1 : -1;
+              sink.box(px - ox, pz - oz, py - 0.3, py + top + 7.0, txs[i], tzs[i], 0.12, 0.12, C.pole);
+              const ax = px - nxs[i] * sgn * (absSide / 2 + 0.1), az = pz - nzs[i] * sgn * (absSide / 2 + 0.1);
+              sink.box(ax - ox, az - oz, py + top + 6.15, py + top + 6.3, nzs[i] * sgn, -nxs[i] * sgn, absSide / 2 + 0.15, 0.05, C.pole);
+            }
           }
           nextPole += st ? 32 : 45;
         }

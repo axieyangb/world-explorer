@@ -1323,7 +1323,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
 
         // 6. 3D Traffic Facilities (Traffic Signals, Motorway Exit Gantries, Crosswalks, Subway/Bus Stations)
         buildFacilities(data.facilities || [], ox, oz, subGroups.facilities, mats);
-        root.userData.street = computeStreetFeatures(root, data, ox, oz, worldOrigin, mats); // [feature/street]
+        root.userData.street = computeStreetFeatures(root, data, ox, oz, worldOrigin, mats, isPointInWater); // [feature/street]
 
         // feature/places: rooftop detail, POIs, airports, ships, stadiums, bridge steel, train rails
         root.userData.places = computePlacesPayload({
@@ -2248,6 +2248,17 @@ function buildRoadsAndBridges(
     const r = roads[rIdx];
     const [wid, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flat] = r;
     if (!flat || flat.length < 6 || isTunnel) continue;
+    if (
+      isBridge &&
+      isPointInWater &&
+      (cls === 'footway' || cls === 'pedestrian' || cls === 'path' || cls === 'steps' || cls === 'cycleway' || cls === 'service' || cls === 'track')
+    ) {
+      const fx0 = flat[0], fz0 = flat[2];
+      const fx1 = flat[flat.length - 3], fz1 = flat[flat.length - 1];
+      const end0InWater = Math.abs(fx0) < 480 && Math.abs(fz0) < 480 && isPointInWater(fx0, fz0, 0);
+      const end1InWater = Math.abs(fx1) < 480 && Math.abs(fz1) < 480 && isPointInWater(fx1, fz1, 0);
+      if (end0InWater || end1InWater) continue;
+    }
 
     let resolvedRoadName = name || ref;
     let resolvedRoadNameZh = (name && r[12]) || ''; // [road-names-zh] only when it differs from the EN-first name
@@ -2574,7 +2585,10 @@ function buildRoadsAndBridges(
           isPointInWater &&
           (isPointInWater(cx1, cz1, 0) || isPointInWater(cx2, cz2, 0) || isPointInWater((cx1 + cx2) * 0.5, (cz1 + cz2) * 0.5, 0))
         );
-        if (segInWater && (cls === 'footway' || cls === 'pedestrian' || cls === 'path' || cls === 'steps' || cls === 'cycleway' || cls === 'track')) {
+        if (
+          segInWater &&
+          (cls === 'footway' || cls === 'pedestrian' || cls === 'path' || cls === 'steps' || cls === 'cycleway' || cls === 'track' || cls === 'service' || cls === 'residential' || cls === 'unclassified' || cls === 'living_street')
+        ) {
           continue;
         }
 
@@ -2756,8 +2770,7 @@ function buildRoadsAndBridges(
         if (
           isScenicArchBridge ||
           isBridge ||
-          isViaduct ||
-          (onWater && cls !== 'pedestrian' && cls !== 'footway' && cls !== 'cycleway')
+          isViaduct
         ) {
           const deckDepth = isScenicArchBridge ? 0.32 : isHighPedOverpass ? 0.5 : 0.85;
           const railH = isScenicArchBridge ? 0.52 : isHighPedOverpass ? 1.05 : 0.78;
