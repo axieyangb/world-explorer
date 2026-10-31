@@ -50,6 +50,28 @@ export function getBeijingDemState() {
 /**
  * Evaluates the exact rendered triangle height of the 24x24 chunk terrain mesh at world (wx, wz).
  */
+export function getHorizonTerrainMeshElevation(wx, wz) {
+  const segs = 240;
+  const step = 40000.0 / segs;
+  const half = 20000.0;
+  const fx = THREE.MathUtils.clamp((wx + half) / step, 0, segs - 0.0001);
+  const fz = THREE.MathUtils.clamp((wz + half) / step, 0, segs - 0.0001);
+  const ix = Math.floor(fx);
+  const iz = Math.floor(fz);
+  const tx = fx - ix;
+  const tz = fz - iz;
+  const x0 = -half + ix * step;
+  const z0 = -half + iz * step;
+  const ha = getBeijingTerrainElevation(x0, z0) - 0.35;
+  const hb = getBeijingTerrainElevation(x0 + step, z0) - 0.35;
+  const hc = getBeijingTerrainElevation(x0, z0 + step) - 0.35;
+  const hd = getBeijingTerrainElevation(x0 + step, z0 + step) - 0.35;
+  if (tx + tz <= 1.0) {
+    return ha + tx * (hb - ha) + tz * (hc - ha);
+  }
+  return hd + (1.0 - tx) * (hc - hd) + (1.0 - tz) * (hb - hd);
+}
+
 export function getChunkTerrainMeshElevation(wx, wz) {
   const cx = Math.max(0, Math.min(39, Math.floor((wx + 20000.0) / 1000.0)));
   const cz = Math.max(0, Math.min(39, Math.floor((wz + 20000.0) / 1000.0)));
@@ -337,20 +359,26 @@ export function buildChunkTerrainMesh(ox, oz, terrainMat, isPointInSunkenTrench 
  */
 export function buildGlobalHorizonTerrain(terrainMat) {
   const size = 40000;
-  const segs = 80; // 2x2 cells per 1km chunk
+  const cellsPerChunk = 6; // 6x6 cells per 1km chunk (~166.7m step matching DEM grid)
+  const segs = 40 * cellsPerChunk;
   const step = size / segs;
   const half = size * 0.5;
 
   const pos = [];
   const col = [];
   const uv = [];
+  const isCoastal = Boolean(demState && !demState.isBeijing && (demState.baseAslM || 0) < 5.0);
 
   const defaultUrbanSampler = (wx, wz) => {
+    const elev = getBeijingTerrainElevation(wx, wz);
+    if (isCoastal && elev <= 0.12) {
+      return [0.09, 0.31, 0.43, 0.0, 0.0];
+    }
     const d = Math.hypot(wx, wz);
-    const radial = 1.0 - THREE.MathUtils.smoothstep(d, 3500.0, 16500.0);
-    const built = Math.max(0, Math.min(0.85, radial * 0.82));
-    const flav = 0.22;
-    const uCol = [0.46, 0.45, 0.42];
+    const radial = 1.0 - THREE.MathUtils.smoothstep(d, 4500.0, 17500.0);
+    const built = Math.max(0, Math.min(0.95, radial * 0.92));
+    const flav = 0.15;
+    const uCol = [0.55, 0.54, 0.52];
     return [
       GROUND_MEADOW[0] + (uCol[0] - GROUND_MEADOW[0]) * built,
       GROUND_MEADOW[1] + (uCol[1] - GROUND_MEADOW[1]) * built,
@@ -366,15 +394,17 @@ export function buildGlobalHorizonTerrain(terrainMat) {
       const wx = -half + ix * step;
       const edgeDist = Math.max(Math.abs(wx), Math.abs(wz));
       const edgeT = THREE.MathUtils.smoothstep(edgeDist, half - 3500.0, half);
-      const rawH = getBeijingTerrainElevation(wx, wz) - 0.38;
-      const h = THREE.MathUtils.lerp(rawH, -0.6, edgeT);
+      const rawElev = getBeijingTerrainElevation(wx, wz);
+      const baseOff = isCoastal && rawElev <= 0.12 ? -0.75 : -0.35;
+      const rawH = rawElev + baseOff;
+      const h = THREE.MathUtils.lerp(rawH, -0.75, edgeT);
       const hL = getBeijingTerrainElevation(Math.max(-half, wx - 40.0), wz);
       const hR = getBeijingTerrainElevation(Math.min(half, wx + 40.0), wz);
       const hD = getBeijingTerrainElevation(wx, Math.max(-half, wz - 40.0));
       const hU = getBeijingTerrainElevation(wx, Math.min(half, wz + 40.0));
       const slope = Math.hypot(hR - hL, hU - hD) / 80.0;
       pos.push(wx, h, wz);
-      const rgb = sampleTerrainBiomeColor(wx, wz, rawH + 0.35, slope, defaultUrbanSampler);
+      const rgb = sampleTerrainBiomeColor(wx, wz, rawElev, slope, defaultUrbanSampler);
       col.push(rgb[0], rgb[1], rgb[2]);
       uv.push(rgb[3] || 0, rgb[4] || 0);
     }
@@ -385,17 +415,18 @@ export function buildGlobalHorizonTerrain(terrainMat) {
   geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   geom.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
 
-  // Pre-build per-chunk index slices (2x2 cells = 24 indices per chunk) and reusable Uint32Array index buffer
+  // Pre-build per-chunk index slices (6x6 cells = 216 indices per chunk) and reusable Uint32Array index buffer
   const stride = segs + 1;
+  const indicesPerChunk = cellsPerChunk * cellsPerChunk * 6;
   const chunkIndexSlices = [];
   for (let cz = 0; cz < 40; cz++) {
     for (let cx = 0; cx < 40; cx++) {
-      const slice = new Uint32Array(24);
+      const slice = new Uint32Array(indicesPerChunk);
       let ptr = 0;
-      for (let dz = 0; dz < 2; dz++) {
-        const iz = cz * 2 + dz;
-        for (let dx = 0; dx < 2; dx++) {
-          const ix = cx * 2 + dx;
+      for (let dz = 0; dz < cellsPerChunk; dz++) {
+        const iz = cz * cellsPerChunk + dz;
+        for (let dx = 0; dx < cellsPerChunk; dx++) {
+          const ix = cx * cellsPerChunk + dx;
           const a = iz * stride + ix;
           const b = a + 1;
           const c = (iz + 1) * stride + ix;
@@ -444,7 +475,7 @@ export function updateGlobalHorizonTerrainCutout(mesh, loadedChunks) {
     const item = chunkIndexSlices[i];
     if (loadedChunks.has(item.key)) continue;
     dst.set(item.slice, writePos);
-    writePos += 24;
+    writePos += item.slice.length;
   }
 
   indexAttr.needsUpdate = true;
@@ -460,23 +491,54 @@ export function applyHorizonGround(mesh, sampler) {
   const pos = mesh.geometry.attributes.position, col = mesh.geometry.attributes.color, uv = mesh.geometry.attributes.uv;
   if (!pos || !col || !uv) return;
   const P = pos.array, n = pos.count;
-  const segs = mesh.userData.segs || 80, stride = segs + 1;
+  const segs = mesh.userData.segs || 240, stride = segs + 1;
+  const step = 40000 / segs;
+  const isCoastal = Boolean(demState && !demState.isBeijing && (demState.baseAslM || 0) < 5.0);
+  const wrappedSampler = (wx, wz) => {
+    const rawElev = getBeijingTerrainElevation(wx, wz);
+    const s = sampler(wx, wz);
+    if (isCoastal && rawElev <= 0.12 && (!s || (s[3] || 0) < 0.18)) {
+      return [0.09, 0.31, 0.43, 0.0, 0.0];
+    }
+    if (s) {
+      const isMeadowDefault = Math.abs(s[0] - GROUND_MEADOW[0]) < 0.02 && Math.abs(s[1] - GROUND_MEADOW[1]) < 0.02 && (s[3] || 0) < 0.08;
+      if (isMeadowDefault && rawElev > 0.20 && rawElev < 85.0) {
+        const d = Math.hypot(wx, wz);
+        if (d < 14000.0) {
+          const urbanFloor = (1.0 - THREE.MathUtils.smoothstep(d, 4500.0, 14000.0)) * (1.0 - THREE.MathUtils.smoothstep(rawElev, 45.0, 85.0)) * 0.90;
+          if (urbanFloor > (s[3] || 0)) {
+            const uCol = [0.55, 0.54, 0.52];
+            return [
+              GROUND_MEADOW[0] + (uCol[0] - GROUND_MEADOW[0]) * urbanFloor,
+              GROUND_MEADOW[1] + (uCol[1] - GROUND_MEADOW[1]) * urbanFloor,
+              GROUND_MEADOW[2] + (uCol[2] - GROUND_MEADOW[2]) * urbanFloor,
+              urbanFloor,
+              0.15,
+            ];
+          }
+        }
+      }
+    }
+    return s;
+  };
   for (let i = 0; i < n; i++) {
     const wx = P[i * 3], h = P[i * 3 + 1], wz = P[i * 3 + 2];
     const ix = i % stride, iz = (i / stride) | 0;
     const hL = P[(iz * stride + Math.max(0, ix - 1)) * 3 + 1], hR = P[(iz * stride + Math.min(segs, ix + 1)) * 3 + 1];
     const hD = P[(Math.max(0, iz - 1) * stride + ix) * 3 + 1], hU = P[(Math.min(segs, iz + 1) * stride + ix) * 3 + 1];
-    const step = 40000 / segs;
     const slope = Math.hypot(hR - hL, hU - hD) / (2 * step);
-    const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.8, slope, sampler);
+    const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.35, slope, wrappedSampler);
+    if (rgb[2] > rgb[0] + 0.10 && (rgb[3] || 0) < 0.05) {
+      P[i * 3 + 1] = getBeijingTerrainElevation(wx, wz) - 1.5;
+    }
     col.setXYZ(i, rgb[0], rgb[1], rgb[2]);
     uv.setXY(i, rgb[3] || 0, rgb[4] || 0);
   }
+  pos.needsUpdate = true;
   col.needsUpdate = true;
   uv.needsUpdate = true;
 }
 
-/** [ground] Fetches/builds the overview's land-use grid, then recolours `mesh` (resolves when done). */
 export async function applyHorizonGroundAsync(mesh, overview, worldOrigin, horizonRoot = null, mats = null) {
   try {
     await null; // let the caller finish building the horizon layer
@@ -550,22 +612,14 @@ export function createHorizonSkirtMesh(skyUniforms) {
         float n3 = hNoise(xz * 0.0032 + 9.7);
         float macro = n1 * 0.55 + n2 * 0.30 + n3 * 0.15;
 
-        float lightLvl = clamp(0.18 + uSunIntensity * 0.82, 0.12, 1.05);
-        vec3 meadow = vec3(0.33, 0.40, 0.25) * lightLvl;
-        vec3 earth = vec3(0.43, 0.42, 0.38) * lightLvl;
-        vec3 forest = vec3(0.24, 0.32, 0.19) * lightLvl;
-        vec3 baseLand = mix(meadow, earth, smoothstep(0.38, 0.68, macro));
-        baseLand = mix(baseLand, forest, smoothstep(0.62, 0.88, n2));
-
-        // Subtle arterial/field grid texture at mid-range
-        vec2 gridUv = abs(fract(xz / 1200.0) - 0.5);
-        float gridLine = 1.0 - smoothstep(0.0, 0.035, min(gridUv.x, gridUv.y));
-        baseLand = mix(baseLand, earth * 0.92, gridLine * 0.18 * (1.0 - smoothstep(18000.0, 55000.0, radialDist)));
+        float lightLvl = clamp(uSunIntensity, 0.04, 1.05);
+        vec3 coastalEarth = vec3(0.44, 0.45, 0.46) * lightLvl;
+        vec3 distantSlate = vec3(0.34, 0.38, 0.43) * lightLvl;
+        vec3 baseLand = mix(coastalEarth, distantSlate, smoothstep(0.35, 0.72, macro));
 
         // Aerial perspective atmospheric scatter toward horizon
-        float hazeT = smoothstep(8000.0, 78000.0, radialDist);
-        float outerRimT = smoothstep(85000.0, 118000.0, radialDist);
-        vec3 col = mix(baseLand, uHorizonColor, clamp(hazeT * 0.88 + outerRimT * 0.12, 0.0, 1.0));
+        float hazeT = smoothstep(6000.0, 28000.0, radialDist);
+        vec3 col = mix(baseLand, uHorizonColor, clamp(0.55 + hazeT * 0.45, 0.0, 1.0));
         gl_FragColor = vec4(col, 1.0);
       }
     `,

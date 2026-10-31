@@ -350,6 +350,98 @@ function buildFuselageConformingPatch(zStart, zEnd, zSteps, phiMin, phiMax, phiS
 }
 
 /**
+ * Evaluates a 100% flush conformal vertex on the parabolic nose cone for the wrap-around cockpit windscreen visor.
+ * `signedS` in [-1..1] wraps horizontally from left aft side window (-1) across the nose centerline (0) to right aft side window (+1).
+ * `v` in [0..1] spans vertically from bottom sill (0) to top brow (1).
+ * Because `sc = s * s` matches the quadratic crown curvature `1 - cos(phi) ~ phi^2 / 2`, `x` is linear in `s` across `x = 0`
+ * (C1-smooth horizontal wrap with zero V-kink) and every vertex lies at exact normal offset `radialOffset` from the fuselage skin.
+ */
+function evalCockpitVisorVertex(signedS, v, radialOffset = 0.018) {
+  const side = signedS < 0 ? -1 : 1;
+  const s = Math.min(1.06, Math.abs(signedS));
+  const z0 = (1.0 - v) * 21.68 + v * 20.78;
+  const st0 = sampleFuselageStation(z0);
+  const y0 = st0.yc + st0.ry;
+
+  const sc = Math.pow(s, 1.45);
+  const z1 = (1.0 - v) * 17.55 + v * 17.35;
+  const z = z0 + (z1 - z0) * sc;
+
+  const y1 = (1.0 - v) * 3.94 + v * 4.48;
+  const yTarget = y0 + (y1 - y0) * sc;
+
+  const st = sampleFuselageStation(z);
+  const cp = Math.max(-0.98, Math.min(1.0, (yTarget - st.yc) / st.ry));
+  const sp = Math.abs(signedS) < 1e-6 ? 0.0 : Math.sqrt(Math.max(0.0, 1.0 - cp * cp));
+
+  const stP = sampleFuselageStation(z - 0.05);
+  const stN = sampleFuselageStation(z + 0.05);
+  const drx_dz = (stN.rx - stP.rx) / 0.10;
+  const dry_dz = (stN.ry - stP.ry) / 0.10;
+  const dyc_dz = (stN.yc - stP.yc) / 0.10;
+
+  let nx = (side * sp) / Math.max(0.08, st.rx);
+  let ny = cp / Math.max(0.08, st.ry);
+  let nz = -(drx_dz * sp * Math.abs(nx) + (dyc_dz + dry_dz * cp) * ny);
+  const nl = Math.hypot(nx, ny, nz) || 1.0;
+  nx /= nl;
+  ny /= nl;
+  nz /= nl;
+
+  const x = side * st.rx * sp + nx * radialOffset;
+  const y = st.yc + st.ry * cp + ny * radialOffset;
+  const zOut = z + nz * radialOffset;
+  return { x, y, z: zOut, nx, ny, nz };
+}
+
+function buildConformalCockpitVisorPatch(s0, s1, sSteps, v0, v1, vSteps, radialOffset = 0.018, mirrorBothSides = true) {
+  const parts = [];
+  const sides = mirrorBothSides ? [-1, 1] : [1];
+  for (const side of sides) {
+    const stride = vSteps + 1;
+    const numVerts = (sSteps + 1) * stride;
+    const pos = new Float32Array(numVerts * 3);
+    const nrm = new Float32Array(numVerts * 3);
+    for (let is = 0; is <= sSteps; is++) {
+      const us = is / sSteps;
+      const signedS = side * (s0 + (s1 - s0) * us);
+      for (let iv = 0; iv <= vSteps; iv++) {
+        const uv = iv / vSteps;
+        const v = v0 + (v1 - v0) * uv;
+        const pt = evalCockpitVisorVertex(signedS, v, radialOffset);
+        const idx = (is * stride + iv) * 3;
+        pos[idx] = pt.x;
+        pos[idx + 1] = pt.y;
+        pos[idx + 2] = pt.z;
+        nrm[idx] = pt.nx;
+        nrm[idx + 1] = pt.ny;
+        nrm[idx + 2] = pt.nz;
+      }
+    }
+    const indices = [];
+    for (let is = 0; is < sSteps; is++) {
+      for (let iv = 0; iv < vSteps; iv++) {
+        const a = is * stride + iv;
+        const b = a + stride;
+        const c = b + 1;
+        const d = a + 1;
+        if (side > 0) {
+          indices.push(a, b, d, b, c, d);
+        } else {
+          indices.push(a, d, b, b, d, c);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+    g.setIndex(indices);
+    parts.push([g, [1, 1, 1], null]);
+  }
+  return mergeParts(parts);
+}
+
+/**
  * Evaluates a supercritical NACA airfoil profile at parameter s in [0..1] (0 = trailing edge top -> 0.5 = leading edge -> 1.0 = trailing edge bottom).
  * Returns { uChord, yLocal, nyLocal, nzLocal } where uChord in [0 (LE) .. 1 (TE)].
  */
@@ -662,13 +754,10 @@ export function buildAirlinerInstancedGeometries() {
 
   // 1. Continuous Smooth Lofted Widebody Fuselage + Multi-Pane Framed Cockpit Windscreen & Cheatline
   bodyParts.push([buildLoftedFuselageGeometry(40, 28), [1, 1, 1], null]);
-  // 6 distinct cockpit window panes separated by crisp white structural mullions
-  for (let w = 0; w < 3; w++) {
-    const p0 = 0.04 + w * 0.31;
-    const p1 = p0 + 0.25;
-    const z0 = 20.05 - w * 1.15;
-    const z1 = z0 - 0.98;
-    bodyParts.push([buildFuselageConformingPatch(z1, z0, 3, p0, p1, 4, 0.020, true), darkGlass, null]);
+  // 6 distinct flush conformal cockpit window panes separated by crisp structural mullions
+  bodyParts.push([buildConformalCockpitVisorPatch(-1.01, 1.01, 18, -0.08, 1.08, 4, 0.013, false), chrome, null]);
+  for (const [s0, s1] of [[0.032, 0.335], [0.368, 0.665], [0.698, 0.982]]) {
+    bodyParts.push([buildConformalCockpitVisorPatch(s0, s1, 5, 0.0, 1.0, 4, 0.019, true), darkGlass, null]);
   }
   bodyParts.push([buildFuselageConformingPatch(-15.8, 15.4, 20, 1.48, 1.62, 3, 0.015, true), [0.0, 0.64, 0.88], null]);
 
@@ -837,11 +926,9 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
   chromeMat.userData = { envProbe: true };
 
   const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x0d1f33,
+    color: 0x0b192c,
     roughness: 0.06,
-    metalness: 0.38,
-    transparent: true,
-    opacity: 0.76,
+    metalness: 0.44,
   });
   glassMat.userData = { envProbe: true };
 
@@ -895,92 +982,46 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
   fuseMesh.receiveShadow = true;
   airframe.add(fuseMesh);
 
-  // --- Multi-Pane Framed Cockpit Windscreen + Interior Flight Deck & Pilots ---
+  // --- Flush Conformal Multi-Pane Framed Cockpit Windscreen Visor ---
   // Signature A350 curved black mask bezel surround (or 787 silver window surround)
-  if (isA350) {
-    const maskGeo = buildFuselageConformingPatch(16.05, 20.25, 10, -1.04, 1.04, 18, 0.014, false);
-    const mPos = maskGeo.attributes.position;
-    for (let i = 0; i < mPos.count; i++) {
-      const z = mPos.getZ(i);
-      const u = (z - 16.05) / (20.25 - 16.05);
-      const yCenter = 3.88 - 0.26 * u;
-      const halfH = 0.33 * (1.0 - 0.25 * u);
-      const curY = mPos.getY(i);
-      mPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
-    }
-    airframe.add(new THREE.Mesh(maskGeo, maskMat));
-  }
+  const maskGeo = buildConformalCockpitVisorPatch(
+    -1.02,
+    1.02,
+    24,
+    isA350 ? -0.18 : -0.07,
+    isA350 ? 1.18 : 1.07,
+    6,
+    0.013,
+    false
+  );
+  airframe.add(new THREE.Mesh(maskGeo, isA350 ? maskMat : chromeMat));
 
-  // 6 distinct angled cockpit glazing panes (3 per side) separated by crisp structural window posts
-  const paneSpecs = [
-    { z0: 19.05, z1: 20.08, p0: 0.045, p1: 0.33, yOff: 0.0 },
-    { z0: 17.80, z1: 18.92, p0: 0.37, p1: 0.66, yOff: 0.02 },
-    { z0: 16.48, z1: 17.68, p0: 0.70, p1: 0.98, yOff: 0.03 },
+  // 6 distinct flush conformal cockpit glazing panes (3 per side) separated by crisp structural window posts
+  const paneParts = [
+    [buildConformalCockpitVisorPatch(0.032, 0.335, 7, 0.0, 1.0, 5, 0.019, true), [1, 1, 1], null],
+    [buildConformalCockpitVisorPatch(0.368, 0.665, 7, 0.0, 1.0, 5, 0.019, true), [1, 1, 1], null],
+    [buildConformalCockpitVisorPatch(0.698, 0.982, 7, 0.0, 1.0, 5, 0.019, true), [1, 1, 1], null],
   ];
-  const paneParts = [];
-  const postParts = [];
-  // Center windshield structural divider post
-  postParts.push([buildFuselageConformingPatch(18.95, 20.12, 4, -0.042, 0.042, 2, 0.028, false), [1, 1, 1], null]);
-
-  for (const ps of paneSpecs) {
-    const gPane = buildFuselageConformingPatch(ps.z0, ps.z1, 4, ps.p0, ps.p1, 5, 0.021, true);
-    const pPos = gPane.attributes.position;
-    for (let i = 0; i < pPos.count; i++) {
-      const z = pPos.getZ(i);
-      const u = (z - 16.2) / (20.1 - 16.2);
-      const yCenter = 3.88 - 0.26 * u + ps.yOff;
-      const halfH = 0.25 * (1.0 - 0.22 * u);
-      const curY = pPos.getY(i);
-      pPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
-    }
-    paneParts.push([gPane, [1, 1, 1], null]);
-
-    // Structural window post mullion aft of each pane
-    const gPost = buildFuselageConformingPatch(ps.z0 - 0.11, ps.z0 + 0.02, 2, ps.p0 - 0.03, ps.p1 + 0.03, 3, 0.028, true);
-    const mPos = gPost.attributes.position;
-    for (let i = 0; i < mPos.count; i++) {
-      const z = mPos.getZ(i);
-      const u = (z - 16.2) / (20.1 - 16.2);
-      const yCenter = 3.88 - 0.26 * u + ps.yOff;
-      const halfH = 0.27 * (1.0 - 0.22 * u);
-      const curY = mPos.getY(i);
-      mPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
-    }
-    postParts.push([gPost, [1, 1, 1], null]);
-  }
+  const postParts = [
+    [buildConformalCockpitVisorPatch(-0.030, 0.030, 2, -0.04, 1.04, 4, 0.023, false), [1, 1, 1], null],
+    [buildConformalCockpitVisorPatch(0.335, 0.368, 2, -0.04, 1.04, 4, 0.023, true), [1, 1, 1], null],
+    [buildConformalCockpitVisorPatch(0.665, 0.698, 2, -0.04, 1.04, 4, 0.023, true), [1, 1, 1], null],
+    [buildConformalCockpitVisorPatch(0.982, 1.015, 2, -0.04, 1.04, 4, 0.023, true), [1, 1, 1], null],
+  ];
   airframe.add(new THREE.Mesh(mergeParts(paneParts), glassMat));
-  airframe.add(new THREE.Mesh(mergeParts(postParts), isA350 ? chromeMat : whiteMat));
+  airframe.add(new THREE.Mesh(mergeParts(postParts), isA350 ? maskMat : whiteMat));
 
-  // Subtle interior flight-deck glareshield console & twin pilot silhouettes behind cockpit glass
-  const flightDeck = new THREE.Group();
-  flightDeck.position.set(0, 3.56, 18.55);
-  const glareshield = new THREE.Mesh(box(1.55, 0.18, 0.95), maskMat);
-  glareshield.position.set(0, 0.04, 0.45);
-  flightDeck.add(glareshield);
-  for (const sx of [-0.42, 0.42]) {
-    const pilotTorso = new THREE.Mesh(cyl(0.16, 0.19, 0.36, 10), maskMat);
-    pilotTorso.position.set(sx, 0.02, -0.10);
-    const pilotHead = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), strutMat);
-    pilotHead.position.set(sx, 0.26, -0.08);
-    flightDeck.add(pilotTorso, pilotHead);
-  }
-  airframe.add(flightDeck);
-
-  // Twin windshield wipers, chrome pitot probes & AOA vane sensors on forward fuselage
+  // Flush conformal pitot probes & AOA vane sensors mounted directly on the nose skin
   for (const sx of [-1, 1]) {
-    const wiperArm = new THREE.Mesh(box(0.34, 0.025, 0.03), maskMat);
-    wiperArm.position.set(sx * 0.28, 3.44, 19.95);
-    wiperArm.rotation.z = sx * -0.18;
-    wiperArm.rotation.y = sx * -0.25;
-    airframe.add(wiperArm);
-
-    const pitot = new THREE.Mesh(cyl(0.012, 0.018, 0.38, 8), chromeMat);
+    const stPitot = sampleFuselageStation(20.55);
+    const pitot = new THREE.Mesh(cyl(0.010, 0.015, 0.32, 8), chromeMat);
     pitot.rotation.x = Math.PI / 2;
-    pitot.position.set(sx * 1.18, 3.12, 20.55);
+    pitot.position.set(sx * (stPitot.rx + 0.02), stPitot.yc - 0.08, 20.55);
     airframe.add(pitot);
 
-    const aoaVane = new THREE.Mesh(box(0.08, 0.04, 0.14), chromeMat);
-    aoaVane.position.set(sx * 1.38, 3.24, 19.15);
+    const stAoa = sampleFuselageStation(19.15);
+    const aoaVane = new THREE.Mesh(box(0.06, 0.03, 0.12), chromeMat);
+    aoaVane.position.set(sx * (stAoa.rx + 0.02), stAoa.yc + 0.04, 19.15);
     airframe.add(aoaVane);
   }
 

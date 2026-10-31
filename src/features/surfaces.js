@@ -33,6 +33,10 @@ export const SURFACE_UNIFORMS = {
   uSwell: { value: new THREE.Vector4(0.94, 0.34, 0.06, 0.03) },
   uWhitecap: { value: 0 },
   uPaving: { value: 0 }, // [street-props] 0 = concrete flags, 1 = block pavers (set from the street region)
+  uChunkCenter: { value: new THREE.Vector2(0, 0) },
+  uChunkFadeInner: { value: 850.0 },
+  uChunkFadeOuter: { value: 1450.0 },
+  uCamAlt: { value: 20.0 },
 };
 
 const NOISE_GLSL = `
@@ -42,6 +46,38 @@ float atmoNoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(atmoHash(i), atmoHash(i + vec2(1.0, 0.0)), u.x),
              mix(atmoHash(i + vec2(0.0, 1.0)), atmoHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+`;
+
+const MACRO_CARPET_GLSL = `
+uniform vec2 uChunkCenter;
+uniform float uChunkFadeInner;
+uniform float uChunkFadeOuter;
+uniform float uCamAlt;
+vec3 evalMacroUrbanCarpet(vec2 wp) {
+  float fpw = max(length(fwidth(wp)), 0.05);
+  vec2 warp = (vec2(atmoNoise(wp * 0.0022), atmoNoise(wp * 0.0022 + 5.7)) - 0.5) * 16.0;
+  vec2 bp = wp + warp;
+  vec2 cell = vec2(105.0, 130.0);
+  vec2 bid = floor(bp / cell);
+  vec2 bf = abs(fract(bp / cell) - 0.5) * cell;
+  float edgeD = min(cell.x * 0.5 - bf.x, cell.y * 0.5 - bf.y);
+  float gridFade = 1.0 - smoothstep(1.8, 12.0, fpw);
+  float streetMask = (1.0 - smoothstep(4.8 - fpw * 0.5, 5.8 + fpw * 0.5, edgeD)) * gridFade;
+  float sidewalkMask = (smoothstep(4.5, 5.5, edgeD) * (1.0 - smoothstep(8.2 - fpw * 0.5, 9.5 + fpw * 0.5, edgeD))) * gridFade;
+  vec2 lotP = bp / vec2(26.0, 22.0);
+  vec2 lotId = floor(lotP);
+  float lotH = atmoHash(lotId + bid * 3.17);
+  float lotFade = 1.0 - smoothstep(0.6, 4.5, fpw);
+  vec3 blockBase = mix(vec3(0.53, 0.52, 0.50), vec3(0.61, 0.60, 0.58), smoothstep(0.25, 0.85, lotH));
+  blockBase = mix(vec3(0.56, 0.55, 0.53), blockBase, lotFade * 0.75);
+  float macroMottle = atmoNoise(wp * 0.0035) * 0.6 + atmoNoise(wp * 0.014 + 2.3) * 0.4;
+  blockBase *= 0.92 + 0.16 * macroMottle;
+  vec3 sidewalkCol = vec3(0.63, 0.64, 0.65) * (0.95 + 0.10 * macroMottle);
+  vec3 streetCol = vec3(0.35, 0.36, 0.38) * (0.94 + 0.12 * macroMottle);
+  vec3 col = mix(blockBase, sidewalkCol, sidewalkMask * 0.75);
+  col = mix(col, streetCol, streetMask * 0.82);
+  return col;
 }
 `;
 
@@ -55,6 +91,7 @@ uniform float uLightLevel;
 uniform float uNightGlow;
 varying vec3 vAtmoWorld;
 ${NOISE_GLSL}
+${MACRO_CARPET_GLSL}
 vec3 atmoSky(vec3 r) {
   return mix(uSkyHorizon, uSkyZenith, pow(clamp(r.y, 0.0, 1.0), 0.5));
 }
@@ -486,6 +523,17 @@ float rdRough = 0.0;
       }
     }
   }
+  {
+    float chunkCheb = max(abs(wp.x - uChunkCenter.x), abs(wp.y - uChunkCenter.y));
+    float chunkRad = length(wp - uChunkCenter);
+    float perimDist = mix(chunkRad, chunkCheb, 0.65);
+    float isChunkStreetOrWalk = (abs(vRoadUv.y) > 0.1 || lum > 0.45) ? 1.0 : 0.45;
+    float roadPerimFade = clamp(max(smoothstep(uChunkFadeInner, uChunkFadeOuter, perimDist), smoothstep(260.0, 520.0, uCamAlt) * (abs(vRoadUv.y) > 0.1 && vRoadUv.y < 0.5 ? 1.0 : 0.76)), 0.0, 1.0) * isChunkStreetOrWalk;
+    if (roadPerimFade > 0.001) {
+      diffuseColor.rgb = mix(diffuseColor.rgb, evalMacroUrbanCarpet(wp), roadPerimFade);
+      rdRough = mix(rdRough, 0.14, roadPerimFade);
+    }
+  }
 }
 `;
 
@@ -606,7 +654,7 @@ function patchGrass(mat, key, isPark = false) {
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
-          `#include <common>\nvarying vec3 vAtmoWorld;\nvarying vec3 vWorldNorm;\n${NOISE_GLSL}\nfloat grFbm(vec2 p) { return atmoNoise(p) * 0.5 + atmoNoise(p * 2.03 + 1.7) * 0.3 + atmoNoise(p * 4.07 + 3.1) * 0.2; }`
+          `#include <common>\nvarying vec3 vAtmoWorld;\nvarying vec3 vWorldNorm;\n${NOISE_GLSL}\n${MACRO_CARPET_GLSL}\nfloat grFbm(vec2 p) { return atmoNoise(p) * 0.5 + atmoNoise(p * 2.03 + 1.7) * 0.3 + atmoNoise(p * 4.07 + 3.1) * 0.2; }`
         )
         .replace(
           '#include <color_fragment>',
@@ -711,9 +759,10 @@ const makeTerrainDetail = (isPark) => `
   }
   // Coastal ground near water level (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2): wind-blown sand ripples + wet-sand shoreline
   if (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2 && tFade > 0.0) {
+    float isWaterVertex = smoothstep(0.02, 0.08, diffuseColor.b - max(diffuseColor.r, diffuseColor.g * 0.92));
     float coastElev = smoothstep(-0.5, 0.05, vAtmoWorld.y) * (1.0 - smoothstep(1.5, 3.2, vAtmoWorld.y));
     float flatMask = smoothstep(0.72, 0.93, ny);
-    float coastMask = coastElev * flatMask * tFade * tNat * ${isPark ? "0.35" : "1.0"};
+    float coastMask = coastElev * flatMask * tFade * tNat * (1.0 - isWaterVertex) * ${isPark ? "0.35" : "1.0"};
     if (coastMask > 0.001) {
       float rippleCoord = dot(wp, vec2(0.85, 0.52)) * 4.2 + atmoNoise(wp * 0.8) * 2.2;
       float sandRipple = (0.5 + 0.5 * sin(rippleCoord)) * clamp(1.0 - fpw * 10.0, 0.0, 1.0);
@@ -829,11 +878,17 @@ const URBAN_GROUND = `
     c *= 0.92 + 0.16 * atmoNoise(wp * 0.011 + 3.7);
     diffuseColor.rgb = mix(diffuseColor.rgb, c, gBuilt * gFade);
   }
-  if (gBuilt > 0.004 && gFade < 1.0) {
-    // far city: block-scale mottling so the distant urban carpet is not one flat tone
+  if (gBuilt > 0.004) {
     vec2 wq = vAtmoWorld.xz;
-    float m = atmoNoise(wq * 0.0045) * 0.6 + atmoNoise(wq * 0.017 + 2.3) * 0.4;
-    diffuseColor.rgb *= 1.0 + (m - 0.5) * 0.28 * gBuilt * (1.0 - gFade);
+    float chunkCheb = max(abs(wq.x - uChunkCenter.x), abs(wq.y - uChunkCenter.y));
+    float chunkRad = length(wq - uChunkCenter);
+    float perimDist = mix(chunkRad, chunkCheb, 0.65);
+    float perimFade = clamp(max(smoothstep(uChunkFadeInner, uChunkFadeOuter, perimDist), smoothstep(240.0, 520.0, uCamAlt)), 0.0, 1.0);
+    float macroBlend = max(1.0 - gFade, perimFade);
+    if (macroBlend > 0.001) {
+      float effBuilt = mix(gBuilt, smoothstep(0.04, 0.28, gBuilt), perimFade);
+      diffuseColor.rgb = mix(diffuseColor.rgb, evalMacroUrbanCarpet(wq), effBuilt * macroBlend);
+    }
   }
 }
 `;
@@ -842,6 +897,10 @@ function patchUrbanGround(mat) {
   chainCompile(
     mat,
     (shader) => {
+      shader.uniforms.uChunkCenter = SURFACE_UNIFORMS.uChunkCenter;
+      shader.uniforms.uChunkFadeInner = SURFACE_UNIFORMS.uChunkFadeInner;
+      shader.uniforms.uChunkFadeOuter = SURFACE_UNIFORMS.uChunkFadeOuter;
+      shader.uniforms.uCamAlt = SURFACE_UNIFORMS.uCamAlt;
       // vAtmoWorld + atmoNoise/atmoHash come from patchGrass on the same material
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vGroundInfo;')
@@ -850,7 +909,7 @@ function patchUrbanGround(mat) {
         .replace('#include <common>', '#include <common>\nvarying vec2 vGroundInfo;')
         .replace('#include <color_fragment>', `#include <color_fragment>\n${URBAN_GROUND}`);
     },
-    '-urban-ground-1'
+    '-urban-ground-2'
   );
 }
 

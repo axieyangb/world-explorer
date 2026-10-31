@@ -1740,8 +1740,17 @@ export async function buildGlobalOverviewFromTiles(worldOrigin) {
           const [wx, wz] = toWorldXZ(poly.outer[i][0], poly.outer[i][1]);
           flat.push(wx, wz);
         }
+        const holes = [];
+        for (const h of poly.holes || []) {
+          const hf = [];
+          for (let i = 0; i < h.length; i++) {
+            const [hx, hz] = toWorldXZ(h[i][0], h[i][1]);
+            hf.push(hx, hz);
+          }
+          if (hf.length >= 6) holes.push(hf);
+        }
         if (flat.length >= 6) {
-          water.push([seq++, f.tags.name || "", "poly", 0, flat]);
+          water.push([seq++, f.tags.name || "", "poly", 0, flat, holes]);
         }
       }
     }

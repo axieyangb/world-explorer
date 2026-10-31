@@ -1903,8 +1903,8 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     return false;
   };
 
-  const SEA_DRAPE_MAX_M = 3.0; // [terrain-roads]
-  const seaWaterY = (t) => (t > 1.6 ? t : Math.min(0.42, t)); // sea level, or draped over low marsh/salt-pond ground
+  const SEA_DRAPE_MAX_M = 45.0; // [terrain-roads] allow coastal DEM bleed from nearby bluffs/hills without culling Bay water
+  const seaWaterY = (t) => t; // always drape +0.28m above local DEM so terrain (t - 0.35m) never pokes through water
   for (let wIdx = 0; wIdx < (data.water_polys || []).length; wIdx++) {
     const wp = data.water_polys[wIdx];
     const [osmId, , flatOuter, flatHoles] = wp;
@@ -1966,14 +1966,14 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     }
     if (keptSubTris.length === 0) continue;
 
-    const wyOff = 0.28 + ((osmId || wIdx) % 19) * 0.002;
+    const wyOff = isSeaLevelPoly ? 0.28 : 0.28 + ((osmId || wIdx) % 19) * 0.002;
     for (let i = 0; i < keptSubTris.length; i += 6) {
       const ax = keptSubTris[i], az = keptSubTris[i + 1];
       const bx = keptSubTris[i + 2], bz = keptSubTris[i + 3];
       const cx = keptSubTris[i + 4], cz = keptSubTris[i + 5];
-      const ta = getBeijingTerrainElevation(ox + ax, oz + az);
-      const tb = getBeijingTerrainElevation(ox + bx, oz + bz);
-      const tc = getBeijingTerrainElevation(ox + cx, oz + cz);
+      const ta = Math.max(getBeijingTerrainElevation(ox + ax, oz + az), getChunkTerrainMeshElevation(ox + ax, oz + az) + 0.35);
+      const tb = Math.max(getBeijingTerrainElevation(ox + bx, oz + bz), getChunkTerrainMeshElevation(ox + bx, oz + bz) + 0.35);
+      const tc = Math.max(getBeijingTerrainElevation(ox + cx, oz + cz), getChunkTerrainMeshElevation(ox + cx, oz + cz) + 0.35);
       const ya = (isSeaLevelPoly ? seaWaterY(ta) : ta) + wyOff;
       const yb = (isSeaLevelPoly ? seaWaterY(tb) : tb) + wyOff;
       const yc = (isSeaLevelPoly ? seaWaterY(tc) : tc) + yOffWater(wyOff);

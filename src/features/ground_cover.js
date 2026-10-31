@@ -23,6 +23,7 @@
 const K_RESIDENTIAL = 1, K_COMMERCIAL = 2, K_INDUSTRIAL = 3, K_INSTITUTION = 4, K_CEMETERY = 5, K_FARMLAND = 6;
 const K_GRASS = 7, K_SCRUB = 8, K_WETLAND = 9, K_SAND = 10, K_ROCK = 11, K_ICE = 12, K_WOOD = 13, K_ORCHARD = 14;
 const K_PARK = 100; // chunk `parks` polygons (OMT park / grass / garden landuse)
+const K_WATER = 101; // ocean / bay / river water on the overview grid
 
 // Natural ground colours (albedo, same range as LC_STYLE so overlays and terrain agree)
 const NATURAL = {
@@ -37,6 +38,7 @@ const NATURAL = {
   [K_WOOD]: [0.20, 0.27, 0.14],
   [K_ORCHARD]: [0.42, 0.46, 0.28],
   [K_PARK]: [0.30, 0.45, 0.23],
+  [K_WATER]: [0.09, 0.31, 0.43],
 };
 const MEADOW = [0.33, 0.40, 0.25]; // untagged open land
 const CLIFF = [0.47, 0.45, 0.42];
@@ -45,10 +47,10 @@ const CLIFF = [0.47, 0.45, 0.42];
 export function urbanGroundColor(flav) {
   if (flav >= 0) {
     const t = flav;
-    return [0.49 + (0.38 - 0.49) * t, 0.48 + (0.42 - 0.48) * t, 0.45 + (0.31 - 0.45) * t];
+    return [0.56 + (0.50 - 0.56) * t, 0.55 + (0.49 - 0.55) * t, 0.53 + (0.46 - 0.53) * t];
   }
   const t = -flav;
-  return [0.49 + (0.47 - 0.49) * t, 0.48 + (0.46 - 0.48) * t, 0.45 + (0.43 - 0.45) * t];
+  return [0.56 + (0.52 - 0.56) * t, 0.55 + (0.51 - 0.55) * t, 0.53 + (0.49 - 0.53) * t];
 }
 
 function lerp3(a, b, t) {
@@ -184,6 +186,17 @@ export function chunkGroundSampler(data) {
     if (!flat || flat.length < 6 || p[2] === 'pitch') continue;
     polys.push([K_PARK, flat, ringBox(flat), ringArea(flat), []]);
   }
+  const allWaterHoles = [...(data.island_holes || [])];
+  for (const wp of data.water_polys || []) {
+    for (const fh of wp[3] || []) {
+      if (fh && fh.length >= 6) allWaterHoles.push(fh);
+    }
+  }
+  for (const wp of data.water_polys || []) {
+    const flat = wp[2];
+    if (!flat || flat.length < 6) continue;
+    polys.push([K_WATER, flat, ringBox(flat), ringArea(flat), allWaterHoles]);
+  }
 
   return (lx, lz) => {
     // 1. tagged land use / land cover at this point: the most specific (smallest) natural polygon wins
@@ -202,17 +215,22 @@ export function chunkGroundSampler(data) {
       }
     }
 
-    // 2. building / road coverage in a ~100 m window (and a tighter ~50 m one for the local mix)
+    // 2. building / road coverage in a ~100 m window (plus ~230 m street-grid context window)
     const cx = toCell(lx), cz = toCell(lz);
     const R = 6, n = (2 * R + 1) * (2 * R + 1);
+    const Rw = 14, nw = (2 * Rw + 1) * (2 * Rw + 1);
     const bCov = satBox(bS, W, cx - R, cz - R, cx + R, cz + R) / n;
     const rCov = satBox(rS, W, cx - R, cz - R, cx + R, cz + R) / n;
+    const rCovWide = satBox(rS, W, cx - Rw, cz - Rw, cx + Rw, cz + Rw) / nw;
     const cnt = satBox(cS, W, cx - 9, cz - 9, cx + 9, cz + 9);
     const bArea = satBox(bS, W, cx - 9, cz - 9, cx + 9, cz + 9) * CELL * CELL;
     const meanFoot = cnt > 0 ? bArea / cnt : 0;
     const meanH = cnt > 0 ? satBox(hS, W, cx - 9, cz - 9, cx + 9, cz + 9) / cnt : 0;
-    const density = bCov + 0.5 * rCov;
+    const density = bCov + 0.85 * rCov + 0.65 * rCovWide;
 
+    if (nat === K_WATER && (bCov > 0.002 || rCov > 0.005 || rCovWide > 0.015)) {
+      nat = 0;
+    }
     if (nat && nat !== K_CEMETERY) {
       // natural cover follows its tag; a park or lawn wedged between dense blocks still reads green
       const c = NATURAL[nat];
@@ -226,7 +244,7 @@ export function chunkGroundSampler(data) {
       else if (urb === K_RESIDENTIAL) flav = 1 - smooth(0.28, 0.5, bCov) * 0.85; // packed blocks: little room for lawns
       else flav = 0.2 * (1 - smooth(0.2, 0.4, bCov)); // commercial / institutional grounds: mostly paved
     } else {
-      built = smooth(0.07, 0.19, density);
+      built = smooth(0.035, 0.12, density);
       // house-sized footprints with gaps -> gardens; big low footprints -> yards of a works / warehouses
       const houses = 0.85 * smooth(450, 200, meanFoot) * (1 - smooth(0.22, 0.4, bCov));
       const works = smooth(1800, 4000, meanFoot) * (1 - smooth(14, 24, meanH));
@@ -268,15 +286,25 @@ export function buildOverviewGround(tiles, toWorldXZ) {
   const urbFlav = new Float32Array(n).fill(NaN);
   const nat = new Uint8Array(n);
   const natArea = new Float32Array(n).fill(Infinity);
+  const waterMask = new Uint8Array(n);
   const toCell = (v) => Math.floor((v + OV_HALF) / OV_CELL);
 
-  const fillPoly = (ringLL, cb) => {
+  const fillPoly = (ringLL, holesLL, cb) => {
     const ring = [];
     for (let i = 0; i < ringLL.length; i++) {
       const [x, z] = toWorldXZ(ringLL[i][0], ringLL[i][1]);
       ring.push(x, z);
     }
     if (ring.length < 6) return;
+    const holes = [];
+    for (const hLL of holesLL || []) {
+      const hr = [];
+      for (let i = 0; i < hLL.length; i++) {
+        const [hx, hz] = toWorldXZ(hLL[i][0], hLL[i][1]);
+        hr.push(hx, hz);
+      }
+      if (hr.length >= 6) holes.push(hr);
+    }
     const [x0, z0, x1, z1] = ringBox(ring);
     if (x1 < -OV_HALF || x0 > OV_HALF || z1 < -OV_HALF || z0 > OV_HALF) return;
     const area = ringArea(ring);
@@ -285,12 +313,29 @@ export function buildOverviewGround(tiles, toWorldXZ) {
     for (let cz = cz0; cz <= cz1; cz++) {
       const pz = -OV_HALF + (cz + 0.5) * OV_CELL;
       for (let cx = cx0; cx <= cx1; cx++) {
-        if (pointInRing(-OV_HALF + (cx + 0.5) * OV_CELL, pz, ring)) cb(cz * OV_W + cx, area);
+        const px = -OV_HALF + (cx + 0.5) * OV_CELL;
+        if (!pointInRing(px, pz, ring)) continue;
+        let inHole = false;
+        for (let h = 0; h < holes.length; h++) {
+          if (pointInRing(px, pz, holes[h])) {
+            inHole = true;
+            break;
+          }
+        }
+        if (!inHole) cb(cz * OV_W + cx, area);
       }
     }
   };
 
   for (const t of tiles) {
+    for (const f of t.water || []) {
+      if (f.type !== 3) continue;
+      for (const poly of f.geom) {
+        fillPoly(poly.outer, poly.holes, (i) => {
+          waterMask[i] = 1;
+        });
+      }
+    }
     for (const layer of ['landuse', 'landcover', 'park']) {
       for (const f of t[layer] || []) {
         if (f.type !== 3) continue;
@@ -300,7 +345,7 @@ export function buildOverviewGround(tiles, toWorldXZ) {
         const uf = layer === 'landuse' ? OV_URBAN[cls] : undefined;
         if (!nk && uf === undefined) continue;
         for (const poly of f.geom) {
-          fillPoly(poly.outer, (i, area) => {
+          fillPoly(poly.outer, poly.holes, (i, area) => {
             if (nk) {
               if (area < natArea[i]) { natArea[i] = area; nat[i] = nk; }
             } else if (Number.isNaN(urbFlav[i]) || uf < urbFlav[i]) {
@@ -313,16 +358,18 @@ export function buildOverviewGround(tiles, toWorldXZ) {
     for (const f of t.transportation || []) {
       if (f.type !== 2) continue;
       const cls = f.tags.class || '';
-      const w = cls === 'motorway' || cls === 'trunk' ? 22 : cls === 'primary' || cls === 'secondary' ? 16
-        : cls === 'tertiary' ? 13 : cls === 'minor' ? 11 : cls === 'service' ? 6 : 0;
-      if (!w || f.tags.brunnel === 'tunnel') continue;
+      // At Zoom 12 only arterials (motorway/trunk/primary/secondary) are present; each arterial represents
+      // a surrounding urban street-grid corridor of ~140-170m effective block width.
+      const w = cls === 'motorway' || cls === 'trunk' ? 75 : cls === 'primary' || cls === 'secondary' ? 165
+        : cls === 'tertiary' ? 145 : cls === 'minor' || cls === 'residential' ? 120 : cls === 'service' ? 55 : 0;
+      if (!w || f.tags.brunnel === 'tunnel' || f.tags.brunnel === 'bridge') continue;
       for (const line of f.geom) {
         let prev = null;
         for (let i = 0; i < line.length; i++) {
           const p = toWorldXZ(line[i][0], line[i][1]);
           if (prev) {
             const len = Math.hypot(p[0] - prev[0], p[1] - prev[1]);
-            const steps = Math.max(1, Math.ceil(len / 60));
+            const steps = Math.max(1, Math.ceil(len / 50));
             for (let s = 0; s < steps; s++) {
               const u = (s + 0.5) / steps;
               const cx = toCell(prev[0] + (p[0] - prev[0]) * u), cz = toCell(prev[1] + (p[1] - prev[1]) * u);
@@ -335,27 +382,33 @@ export function buildOverviewGround(tiles, toWorldXZ) {
     }
   }
 
-  // 3x3 blur of road coverage so the street grid reads as a continuous urban area
+  // 5x5 Gaussian/radial blur of road coverage so the city grid between z12 arterials reads as continuous urban fabric
   const built = new Float32Array(n);
   const flav = new Float32Array(n);
   for (let cz = 0; cz < OV_W; cz++) {
     for (let cx = 0; cx < OV_W; cx++) {
       let s = 0, k = 0;
-      for (let dz = -1; dz <= 1; dz++) {
-        for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        for (let dx = -2; dx <= 2; dx++) {
           const x = cx + dx, z = cz + dz;
           if (x < 0 || z < 0 || x >= OV_W || z >= OV_W) continue;
-          s += roadArea[z * OV_W + x] * (dx || dz ? 0.5 : 1);
-          k += dx || dz ? 0.5 : 1;
+          const d2 = dx * dx + dz * dz;
+          const wgt = d2 === 0 ? 1.0 : d2 === 1 ? 0.75 : d2 === 2 ? 0.55 : d2 <= 5 ? 0.32 : 0.18;
+          s += roadArea[z * OV_W + x] * wgt;
+          k += wgt;
         }
       }
       const cov = s / k / (OV_CELL * OV_CELL);
       const i = cz * OV_W + cx;
       const tagged = !Number.isNaN(urbFlav[i]);
-      let b = Math.max(tagged ? 1 : 0, smooth(0.07, 0.16, cov));
-      // tagged residential is often dense apartment blocks: gardens only where the street grid is sparse
-      let f = tagged ? (urbFlav[i] > 0.5 ? 0.75 - 0.6 * smooth(0.1, 0.2, cov) : urbFlav[i]) : 0.6 * (1 - smooth(0.12, 0.22, cov));
-      if (nat[i] && nat[i] !== K_CEMETERY) b = 0;
+      let b = Math.max(tagged ? 1 : 0, smooth(0.012, 0.068, cov));
+      let f = tagged ? (urbFlav[i] > 0.5 ? 0.55 - 0.45 * smooth(0.08, 0.20, cov) : urbFlav[i]) : 0.35 * (1 - smooth(0.08, 0.22, cov));
+      if (nat[i] && nat[i] !== K_CEMETERY) {
+        b = 0;
+      } else if (waterMask[i] && !tagged && roadArea[i] < 1200) {
+        nat[i] = K_WATER;
+        b = 0;
+      }
       built[i] = b;
       flav[i] = f;
     }

@@ -15,6 +15,7 @@ import {
   getBeijingDemState,
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
+  getHorizonTerrainMeshElevation,
   buildGlobalHorizonTerrain,
   updateGlobalHorizonTerrainCutout,
   createAtmosphericSkyDome,
@@ -38,6 +39,7 @@ import { CityTraffic } from "./features/city_traffic.js"; // [feature/traffic]
 import { CAR_TYPES } from "./features/traffic_models.js"; // [feature/vehicles]
 import { playVehicleHornOrSiren, stopVehicleSirenAudio, showVehicleToast } from "./features/vehicles.js"; // [feature/vehicles]
 import { VegetationSystem } from "./features/vegetation.js"; // [feature/vegetation]
+import { SURFACE_UNIFORMS } from "./features/surfaces.js";
 import { createWaterwayMaterial } from "./features/waterways.js"; // [terrain-roads]
 import { MapSystem } from "./map_modal.js";
 import { StreetFeatures } from "./features/street_furniture.js"; // [feature/street]
@@ -99,11 +101,11 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r4"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r5"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
-import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r4"; // [feature/space-launch]
+import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r5"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -871,40 +873,40 @@ class WorldExplorerApp {
     if (!this.overview) return;
     applyHorizonGroundAsync(this.horizonTerrainMesh, this.overview, this.worldOrigin, this.horizonRoot, this.mats); // [ground] land-use colours
 
+    const chunkKeyAt = (wx, wz) => {
+      const [cx, cz] = this.worldToChunk(wx, wz);
+      return `${cx},${cz}`;
+    };
+
     // 1. Parks & Forests: [id, kind, flatXZ, name]
     const parkVerts = [];
+    const parkCols = [];
     const parkChunkKeys = [];
     for (const p of this.overview.parks || []) {
       const pts = Array.isArray(p[2]) ? p[2] : Array.isArray(p[1]) ? p[1] : null;
       if (!pts || pts.length < 6) continue;
-      let cxSum = 0, czSum = 0;
-      const nPts = pts.length / 2;
-      for (let i = 0; i < pts.length; i += 2) {
-        cxSum += pts[i];
-        czSum += pts[i + 1];
-      }
-      const [pcx, pcz] = this.worldToChunk(cxSum / nPts, czSum / nPts);
-      const pKey = `${pcx},${pcz}`;
       const shapePts = [];
       for (let i = 0; i < pts.length; i += 2) {
         shapePts.push(new THREE.Vector2(pts[i], pts[i + 1]));
       }
       const tris = THREE.ShapeUtils.triangulateShape(shapePts, []);
-      const subTris = subdivideTriangles2D(shapePts, [], tris, 220.0);
-      for (let tIdx = 0; tIdx < subTris.length; tIdx += 3) {
-        const ax = subTris[tIdx][0], az = subTris[tIdx][1];
-        const bx = subTris[tIdx + 1][0], bz = subTris[tIdx + 1][1];
-        const cx = subTris[tIdx + 2][0], cz = subTris[tIdx + 2][1];
-        const ay = getBeijingTerrainElevation(ax, az) + 0.015;
-        const by = getBeijingTerrainElevation(bx, bz) + 0.015;
-        const cy = getBeijingTerrainElevation(cx, cz) + 0.015;
+      const subTris = subdivideTriangles2D(shapePts, tris, 150.0);
+      for (let tIdx = 0; tIdx < subTris.length; tIdx += 6) {
+        const ax = subTris[tIdx], az = subTris[tIdx + 1];
+        const bx = subTris[tIdx + 2], bz = subTris[tIdx + 3];
+        const cx = subTris[tIdx + 4], cz = subTris[tIdx + 5];
+        const ay = getBeijingTerrainElevation(ax, az) - 0.32;
+        const by = getBeijingTerrainElevation(bx, bz) - 0.32;
+        const cy = getBeijingTerrainElevation(cx, cz) - 0.32;
         parkVerts.push(ax, ay, az, cx, cy, cz, bx, by, bz);
-        parkChunkKeys.push(pKey);
+        parkCols.push(0.29, 0.43, 0.24, 0.29, 0.43, 0.24, 0.29, 0.43, 0.24);
+        parkChunkKeys.push([chunkKeyAt(ax, az), chunkKeyAt(bx, bz), chunkKeyAt(cx, cz)]);
       }
     }
     if (parkVerts.length > 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(parkVerts, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(parkCols, 3));
       g.computeVertexNormals();
       const m = new THREE.Mesh(g, this.mats.parkMat);
       m.receiveShadow = true;
@@ -912,38 +914,57 @@ class WorldExplorerApp {
       this.horizonRoot.add(m);
     }
 
-    // 2. Water polygons & lines: [id, name, "poly"|"line", width, flatXZ]
+    // 2. Water polygons & lines: [id, name, "poly"|"line", width, flatXZ, holes]
     const waterVerts = [];
+    const waterNorms = [];
+    const waterUvs = [];
     const waterChunkKeys = [];
+    const sampleHorizonWaterY = (wx, wz) =>
+      Math.max(getBeijingTerrainElevation(wx, wz), getHorizonTerrainMeshElevation(wx, wz) + 0.35) + 0.24;
     for (const w of this.overview.water || []) {
       const kind = w[2];
       const width = Math.max(w[3] || 12, 10);
       const pts = w[4];
       if (!Array.isArray(pts)) continue;
       if (kind === "poly" && pts.length >= 6) {
-        let cxSum = 0, czSum = 0;
-        const nPts = pts.length / 2;
-        for (let i = 0; i < pts.length; i += 2) {
-          cxSum += pts[i];
-          czSum += pts[i + 1];
-        }
-        const [wcx, wcz] = this.worldToChunk(cxSum / nPts, czSum / nPts);
-        const wKey = `${wcx},${wcz}`;
         const shapePts = [];
+        let minPolyTerr = Infinity;
         for (let i = 0; i < pts.length; i += 2) {
-          shapePts.push(new THREE.Vector2(pts[i], pts[i + 1]));
+          const wx = pts[i], wz = pts[i + 1];
+          const tElev = getBeijingTerrainElevation(wx, wz);
+          if (tElev < minPolyTerr) minPolyTerr = tElev;
+          shapePts.push(new THREE.Vector2(wx, wz));
         }
-        const tris = THREE.ShapeUtils.triangulateShape(shapePts, []);
-        const subTris = subdivideTriangles2D(shapePts, [], tris, 220.0);
-        for (let tIdx = 0; tIdx < subTris.length; tIdx += 3) {
-          const ax = subTris[tIdx][0], az = subTris[tIdx][1];
-          const bx = subTris[tIdx + 1][0], bz = subTris[tIdx + 1][1];
-          const cx = subTris[tIdx + 2][0], cz = subTris[tIdx + 2][1];
-          const ay = getBeijingTerrainElevation(ax, az) + 0.03;
-          const by = getBeijingTerrainElevation(bx, bz) + 0.03;
-          const cy = getBeijingTerrainElevation(cx, cz) + 0.03;
+        const holeRings = Array.isArray(w[5]) ? w[5] : [];
+        const holes = [];
+        for (const hr of holeRings) {
+          if (Array.isArray(hr) && hr.length >= 6) {
+            const hpts = [];
+            for (let i = 0; i < hr.length; i += 2) {
+              hpts.push(new THREE.Vector2(hr[i], hr[i + 1]));
+            }
+            holes.push(hpts);
+          }
+        }
+        const allPts = [...shapePts];
+        for (const h of holes) allPts.push(...h);
+        const tris = THREE.ShapeUtils.triangulateShape(shapePts, holes);
+        const subTris = subdivideTriangles2D(allPts, tris, 110.0);
+        const isSeaLevelPoly = minPolyTerr <= 1.2;
+        for (let tIdx = 0; tIdx < subTris.length; tIdx += 6) {
+          const ax = subTris[tIdx], az = subTris[tIdx + 1];
+          const bx = subTris[tIdx + 2], bz = subTris[tIdx + 3];
+          const cx = subTris[tIdx + 4], cz = subTris[tIdx + 5];
+          const mx = (ax + bx + cx) / 3.0;
+          const mz = (az + bz + cz) / 3.0;
+          if (isSeaLevelPoly && getBeijingTerrainElevation(mx, mz) > 45.0) continue;
+          const ay = sampleHorizonWaterY(ax, az);
+          const by = sampleHorizonWaterY(bx, bz);
+          const cy = sampleHorizonWaterY(cx, cz);
           waterVerts.push(ax, ay, az, cx, cy, cz, bx, by, bz);
-          waterChunkKeys.push(wKey);
+          waterNorms.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
+          waterUvs.push(0, 41, 0, 41, 0, 41);
+          waterChunkKeys.push([chunkKeyAt(ax, az), chunkKeyAt(bx, bz), chunkKeyAt(cx, cz)]);
         }
       } else if (pts.length >= 4) {
         const halfW = width * 0.5;
@@ -953,12 +974,12 @@ class WorldExplorerApp {
           const dx = x2 - x1, dz = z2 - z1;
           const len = Math.hypot(dx, dz);
           if (len < 0.5) continue;
-          const [wcx, wcz] = this.worldToChunk((x1 + x2) * 0.5, (z1 + z2) * 0.5);
-          const wKey = `${wcx},${wcz}`;
+          const k1 = chunkKeyAt(x1, z1);
+          const k2 = chunkKeyAt(x2, z2);
           const nx = (-dz / len) * halfW;
           const nz = (dx / len) * halfW;
-          const y1 = getBeijingTerrainElevation(x1, z1) + 0.03;
-          const y2 = getBeijingTerrainElevation(x2, z2) + 0.03;
+          const y1 = sampleHorizonWaterY(x1, z1);
+          const y2 = sampleHorizonWaterY(x2, z2);
           waterVerts.push(
             x1 + nx, y1, z1 + nz,
             x2 + nx, y2, z2 + nz,
@@ -967,21 +988,63 @@ class WorldExplorerApp {
             x2 - nx, y2, z2 - nz,
             x1 - nx, y1, z1 - nz
           );
-          waterChunkKeys.push(wKey, wKey);
+          waterNorms.push(
+            0, 1, 0, 0, 1, 0, 0, 1, 0,
+            0, 1, 0, 0, 1, 0, 0, 1, 0
+          );
+          waterUvs.push(0, 41, 0, 41, 0, 41, 0, 41, 0, 41, 0, 41);
+          waterChunkKeys.push([k1, k2, k2], [k1, k2, k1]);
+        }
+      }
+    }
+    // Outer coastal sea-level ocean/bay water sheet beyond z12 overview tile boundary
+    const demSt = getBeijingDemState();
+    if (!this.worldOrigin?.isBeijing && (demSt?.baseAslM || 0) < 5.0) {
+      const seaStep = 500;
+      const seaHalf = 20000;
+      for (let wz = -seaHalf; wz < seaHalf; wz += seaStep) {
+        for (let wx = -seaHalf; wx < seaHalf; wx += seaStep) {
+          const x0 = wx, z0 = wz, x1 = wx + seaStep, z1 = wz + seaStep;
+          const xm = wx + seaStep * 0.5, zm = wz + seaStep * 0.5;
+          if (Math.abs(xm) < 14500 && Math.abs(zm) < 14500) continue;
+          if (
+            getBeijingTerrainElevation(x0, z0) <= 0.08 &&
+            getBeijingTerrainElevation(x1, z0) <= 0.08 &&
+            getBeijingTerrainElevation(x0, z1) <= 0.08 &&
+            getBeijingTerrainElevation(x1, z1) <= 0.08 &&
+            getBeijingTerrainElevation(xm, zm) <= 0.08
+          ) {
+            const cKey = chunkKeyAt(xm, zm);
+            const wy = 0.24;
+            waterVerts.push(
+              x0, wy, z0, x0, wy, z1, x1, wy, z0,
+              x1, wy, z0, x0, wy, z1, x1, wy, z1
+            );
+            waterNorms.push(
+              0, 1, 0, 0, 1, 0, 0, 1, 0,
+              0, 1, 0, 0, 1, 0, 0, 1, 0
+            );
+            waterUvs.push(0, 41, 0, 41, 0, 41, 0, 41, 0, 41, 0, 41);
+            waterChunkKeys.push(cKey, cKey);
+          }
         }
       }
     }
     if (waterVerts.length > 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(waterVerts, 3));
-      g.computeVertexNormals();
+      g.setAttribute("normal", new THREE.Float32BufferAttribute(waterNorms, 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(waterUvs, 2));
       const m = new THREE.Mesh(g, this.mats.waterMat);
+      m.receiveShadow = true;
       this._registerHorizonCutoutMesh(m, waterChunkKeys);
       this.horizonRoot.add(m);
     }
 
     // 3. Macro arterial road ribbons: [id, cls, name, widthM, isBridge, isTunnel, layer, flatXYZ]
     const roadVerts = [];
+    const roadCols = [];
+    const roadUvs = [];
     const roadChunkKeys = [];
     for (const r of this.overview.arterials || []) {
       const cls = r[1];
@@ -994,12 +1057,12 @@ class WorldExplorerApp {
         const dx = x2 - x1, dz = z2 - z1;
         const len = Math.hypot(dx, dz);
         if (len < 1.0) continue;
-        const [rcx, rcz] = this.worldToChunk((x1 + x2) * 0.5, (z1 + z2) * 0.5);
-        const rKey = `${rcx},${rcz}`;
+        const k1 = chunkKeyAt(x1, z1);
+        const k2 = chunkKeyAt(x2, z2);
         const nx = (-dz / len) * halfW;
         const nz = (dx / len) * halfW;
-        const y1 = getBeijingTerrainElevation(x1, z1) + 0.06;
-        const y2 = getBeijingTerrainElevation(x2, z2) + 0.06;
+        const y1 = getBeijingTerrainElevation(x1, z1) - 0.30;
+        const y2 = getBeijingTerrainElevation(x2, z2) - 0.30;
         roadVerts.push(
           x1 + nx, y1, z1 + nz,
           x2 + nx, y2, z2 + nz,
@@ -1008,12 +1071,19 @@ class WorldExplorerApp {
           x2 - nx, y2, z2 - nz,
           x1 - nx, y1, z1 - nz
         );
-        roadChunkKeys.push(rKey, rKey);
+        roadCols.push(
+          0.36, 0.37, 0.38, 0.36, 0.37, 0.38, 0.36, 0.37, 0.38,
+          0.36, 0.37, 0.38, 0.36, 0.37, 0.38, 0.36, 0.37, 0.38
+        );
+        roadUvs.push(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        roadChunkKeys.push([k1, k2, k2], [k1, k2, k1]);
       }
     }
     if (roadVerts.length > 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(roadVerts, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(roadCols, 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(roadUvs, 2));
       g.computeVertexNormals();
       const m = new THREE.Mesh(g, this.mats.roadMat);
       m.receiveShadow = true;
@@ -1175,15 +1245,30 @@ class WorldExplorerApp {
 
   _registerHorizonCutoutMesh(mesh, triChunkKeys) {
     const byChunk = new Map();
+    const straddleTris = [];
     for (let t = 0; t < triChunkKeys.length; t++) {
-      const cKey = triChunkKeys[t];
-      let arr = byChunk.get(cKey);
-      if (!arr) {
-        arr = [];
-        byChunk.set(cKey, arr);
-      }
+      const entry = triChunkKeys[t];
       const v = t * 3;
-      arr.push(v, v + 1, v + 2);
+      if (Array.isArray(entry)) {
+        const [k0, k1, k2] = entry;
+        if (k0 === k1 && k1 === k2) {
+          let arr = byChunk.get(k0);
+          if (!arr) {
+            arr = [];
+            byChunk.set(k0, arr);
+          }
+          arr.push(v, v + 1, v + 2);
+        } else {
+          straddleTris.push({ k0, k1, k2, v });
+        }
+      } else {
+        let arr = byChunk.get(entry);
+        if (!arr) {
+          arr = [];
+          byChunk.set(entry, arr);
+        }
+        arr.push(v, v + 1, v + 2);
+      }
     }
     const chunkSlices = [];
     for (const [key, arr] of byChunk.entries()) {
@@ -1202,6 +1287,7 @@ class WorldExplorerApp {
       }
     }
     mesh.userData.chunkSlices = chunkSlices;
+    mesh.userData.straddleTris = straddleTris;
     mesh.userData.indexAttr = indexAttr;
     this.horizonCutoutMeshes.push(mesh);
   }
@@ -1213,7 +1299,7 @@ class WorldExplorerApp {
     }
     if (this.horizonCutoutMeshes) {
       for (const mesh of this.horizonCutoutMeshes) {
-        const { chunkSlices, indexAttr } = mesh.userData;
+        const { chunkSlices, straddleTris, indexAttr } = mesh.userData;
         if (!chunkSlices || !indexAttr) continue;
         const dst = indexAttr.array;
         if (!dst) continue;
@@ -1223,6 +1309,15 @@ class WorldExplorerApp {
           if (this.loadedChunks.has(item.key)) continue;
           dst.set(item.slice, writePos);
           writePos += item.slice.length;
+        }
+        if (straddleTris && straddleTris.length > 0) {
+          for (let i = 0; i < straddleTris.length; i++) {
+            const st = straddleTris[i];
+            if (this.loadedChunks.has(st.k0) && this.loadedChunks.has(st.k1) && this.loadedChunks.has(st.k2)) continue;
+            dst[writePos++] = st.v;
+            dst[writePos++] = st.v + 1;
+            dst[writePos++] = st.v + 2;
+          }
         }
         indexAttr.needsUpdate = true;
         mesh.geometry.setDrawRange(0, writePos);
@@ -3681,25 +3776,57 @@ class WorldExplorerApp {
     if (this.horizonSkirtMesh) {
       this.horizonSkirtMesh.position.x = this.camera.position.x;
       this.horizonSkirtMesh.position.z = this.camera.position.z;
-      if (this.horizonSkirtMesh.material?.uniforms?.uCamPos) {
-        this.horizonSkirtMesh.material.uniforms.uCamPos.value.copy(this.camera.position);
+      const su = this.horizonSkirtMesh.material?.uniforms;
+      if (su) {
+        if (su.uCamPos) su.uCamPos.value.copy(this.camera.position);
+        if (su.uHorizonColor) su.uHorizonColor.value.copy(SURFACE_UNIFORMS.uSkyHorizon.value);
+        if (su.uSunIntensity) su.uSunIntensity.value = SURFACE_UNIFORMS.uLightLevel.value;
       }
     }
     if (this.skylineInstanced) {
       this.skylineInstanced.visible = camAlt <= 620;
     }
-    if (camAlt > 320 && this.loadedChunks) {
-      const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
+    const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
+    const centerOx = -HALF_WORLD + pcx * CHUNK_SIZE + 500;
+    const centerOz = -HALF_WORLD + pcz * CHUNK_SIZE + 500;
+    SURFACE_UNIFORMS.uChunkCenter.value.set(centerOx, centerOz);
+    SURFACE_UNIFORMS.uCamAlt.value = camAlt;
+
+    let ring2Complete = LOAD_RADIUS >= 2;
+    if (ring2Complete && this.loadedChunks) {
+      for (let dx = -2; dx <= 2 && ring2Complete; dx++) {
+        for (let dz = -2; dz <= 2; dz++) {
+          if (Math.abs(dx) < 2 && Math.abs(dz) < 2) continue;
+          const cx = pcx + dx, cz = pcz + dz;
+          if (cx >= 0 && cx < GRID_DIM && cz >= 0 && cz < GRID_DIM && !this.loadedChunks.has(`${cx},${cz}`)) {
+            ring2Complete = false;
+            break;
+          }
+        }
+      }
+    }
+    const maxR = ring2Complete ? 2500.0 : 1500.0;
+    SURFACE_UNIFORMS.uChunkFadeInner.value = maxR * 0.54;
+    SURFACE_UNIFORMS.uChunkFadeOuter.value = maxR * 0.94;
+
+    if (this.loadedChunks) {
       for (const group of this.loadedChunks.values()) {
         const ud = group.userData;
         const sg = ud && ud.subGroups;
         if (!sg) continue;
         const cheb = Math.max(Math.abs((ud.cx ?? pcx) - pcx), Math.abs((ud.cz ?? pcz) - pcz));
-        if (sg.facilities) sg.facilities.visible = false;
-        if (sg.markings) sg.markings.visible = false;
-        if (sg.vegetation) sg.vegetation.visible = false;
-        if (sg.buildings && (camAlt > 600 || cheb >= 2)) {
-          sg.buildings.visible = false;
+        if (camAlt > 320) {
+          if (sg.facilities) sg.facilities.visible = false;
+          if (sg.markings) sg.markings.visible = false;
+          if (sg.vegetation) sg.vegetation.visible = false;
+          if (sg.buildings && (camAlt > 600 || cheb >= 2)) {
+            sg.buildings.visible = false;
+          }
+          if (sg.roads) {
+            sg.roads.visible = ring2Complete || cheb <= 1;
+          }
+        } else if (sg.roads && !sg.roads.visible) {
+          sg.roads.visible = true;
         }
       }
     }
