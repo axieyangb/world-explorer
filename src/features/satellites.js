@@ -184,16 +184,21 @@ export class Satellites {
         }
         float fbm(vec2 p) {
           float s = 0.0, a = 0.5;
-          for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
+          mat2 rot = mat2(0.80, -0.60, 0.60, 0.80);
+          for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = rot * p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
           return s;
         }
         void main() {
           vec3 dir = normalize(mix(position, aB, uF) + vec3(0.0, 1e-6, 0.0));
           float a = mix(aVis.x, aVis.y, uF) * aKind.y * uOpacity;
           a *= smoothstep(0.0, 0.08, dir.y) * (1.0 - uFogMix); // horizon extinction
-          if (uCloudCover > 0.01 && a > 0.0) { // same cloud layer as sky.js
-            vec2 cuv = dir.xz / (max(dir.y, 0.0) + 0.09) * 0.55 + vec2(uTime * 0.006, uTime * 0.002);
-            float cov = smoothstep(1.02 - uCloudCover, 1.28 - uCloudCover * 0.9, fbm(cuv) + 0.12);
+          if (uCloudCover > 0.01 && a > 0.0) { // same domain-warped cloud layer as sky.js
+            float domeY = sqrt(max(dir.y, 0.0) * max(dir.y, 0.0) + 0.035) + 0.04;
+            vec2 cuv = dir.xz / domeY * 0.62 + vec2(uTime * 0.0055, uTime * 0.0018);
+            vec2 q = cuv + 0.55 * vec2(fbm(cuv), fbm(cuv + vec2(5.2, 1.3)));
+            float n = fbm(cuv + 0.85 * vec2(fbm(q * 1.9 + vec2(1.7, 9.2)), fbm(q * 1.9 + vec2(2.8, 8.3))));
+            float thresh = 0.76 - uCloudCover * 0.58;
+            float cov = smoothstep(thresh, thresh + 0.32, n - 0.12 * (1.0 - 0.52 * uCloudCover));
             a *= 1.0 - cov * 0.98;
           }
           vA = a;

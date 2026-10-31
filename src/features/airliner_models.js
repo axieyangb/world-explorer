@@ -1,6 +1,6 @@
 // High-detail Commercial Airliner 3D Models (Boeing 787-9 Dreamliner & Airbus A350-1000 XWB)
 // Provides:
-//   1. buildAirlinerInstancedGeometries() -> { plane, planeTail } for PlacesSystem & LiveSky InstancedMesh pools
+//   1. buildAirlinerInstancedGeometries() / buildStaticAirlinerGeometries() -> { plane, planeTail } for PlacesSystem & LiveSky InstancedMesh pools
 //   2. createHeroAirlinerModel(liveryIdx, scale) -> articulated Three.js Group for player flight & interactive airport gates
 //   3. charAirlinerModel(group) -> scorches airliner materials on destruction
 
@@ -86,11 +86,10 @@ export const AIRLINER_LIVERIES = [
   },
 ];
 
-const _m4 = new THREE.Matrix4();
+const _m3 = new THREE.Matrix3();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _v = new THREE.Vector3();
-const _s = new THREE.Vector3();
 
 function mat(tx, ty, tz, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
   _e.set(rx, ry, rz);
@@ -102,22 +101,35 @@ function mat(tx, ty, tz, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
   );
 }
 
+/**
+ * Merges geometry parts while preserving smooth analytical vertex normals!
+ * Never calls computeVertexNormals() AFTER toNonIndexed() (which would destroy smooth normals into flat facets).
+ */
 function mergeParts(parts) {
   const pos = [];
   const nrm = [];
   const col = [];
   for (const [geom, rgb, m] of parts) {
+    if (!geom.attributes.normal) {
+      geom.computeVertexNormals();
+    }
     const g = geom.index ? geom.toNonIndexed() : geom.clone();
-    if (m) g.applyMatrix4(m);
-    g.computeVertexNormals();
+    if (m) {
+      g.applyMatrix4(m);
+    }
     const p = g.attributes.position.array;
     const n = g.attributes.normal.array;
-    for (let i = 0; i < p.length; i++) {
-      pos.push(p[i]);
-      nrm.push(n[i]);
-    }
-    for (let i = 0; i < p.length / 3; i++) {
-      col.push(rgb[0], rgb[1], rgb[2]);
+    const cAttr = g.attributes.color ? g.attributes.color.array : null;
+    for (let i = 0; i < p.length; i += 3) {
+      pos.push(p[i], p[i + 1], p[i + 2]);
+      const nx = n[i], ny = n[i + 1], nz = n[i + 2];
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nrm.push(nx / nl, ny / nl, nz / nl);
+      if (cAttr) {
+        col.push(cAttr[i] * rgb[0], cAttr[i + 1] * rgb[1], cAttr[i + 2] * rgb[2]);
+      } else {
+        col.push(rgb[0], rgb[1], rgb[2]);
+      }
     }
     g.dispose();
     geom.dispose();
@@ -131,92 +143,460 @@ function mergeParts(parts) {
 }
 
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const cyl = (rt, rb, h, seg = 16) => new THREE.CylinderGeometry(rt, rb, h, seg);
-const cone = (r, h, seg = 16) => new THREE.ConeGeometry(r, h, seg);
+const cyl = (rt, rb, h, seg = 24) => new THREE.CylinderGeometry(rt, rb, h, seg);
+const cone = (r, h, seg = 24) => new THREE.ConeGeometry(r, h, seg);
 
 /**
- * Builds a swept, tapered 3D airfoil wing panel (port or starboard) from root to tip.
+ * Evaluates fuselage cross-section parameters at axial coordinate z (nose tip at +24.2m, APU tail tip at -24.2m).
  */
-function buildSweptWingGeometry(side, rootX, tipX, rootZ, tipZ, rootChord, tipChord, rootThick, tipThick, yRoot, yTip) {
-  const g = new THREE.BufferGeometry();
-  const s = side >= 0 ? 1 : -1;
-  const x0 = s * rootX;
-  const x1 = s * tipX;
-  const rzf = rootZ + rootChord * 0.45;
-  const rzb = rootZ - rootChord * 0.55;
-  const tzf = tipZ + tipChord * 0.45;
-  const tzb = tipZ - tipChord * 0.55;
+function sampleFuselageStation(z) {
+  const R = 2.24;
+  let rx = R;
+  let ry = R * 1.03;
+  let yc = 3.46;
 
-  const rt = rootThick * 0.5;
-  const tt = tipThick * 0.5;
-
-  // 8 vertices of the tapered swept wing box
-  const v = [
-    [x0, yRoot + rt, rzf], // 0: root top leading
-    [x0, yRoot + rt, rzb], // 1: root top trailing
-    [x0, yRoot - rt * 0.7, rzf], // 2: root bot leading
-    [x0, yRoot - rt * 0.7, rzb], // 3: root bot trailing
-    [x1, yTip + tt, tzf], // 4: tip top leading
-    [x1, yTip + tt, tzb], // 5: tip top trailing
-    [x1, yTip - tt * 0.7, tzf], // 6: tip bot leading
-    [x1, yTip - tt * 0.7, tzb], // 7: tip bot trailing
-  ];
-
-  const tris = s > 0
-    ? [
-        [0, 1, 5], [0, 5, 4], // top
-        [2, 6, 7], [2, 7, 3], // bottom
-        [0, 4, 6], [0, 6, 2], // leading edge
-        [1, 3, 7], [1, 7, 5], // trailing edge
-        [4, 5, 7], [4, 7, 6], // tip cap
-      ]
-    : [
-        [0, 5, 1], [0, 4, 5], // top
-        [2, 7, 6], [2, 3, 7], // bottom
-        [0, 6, 4], [0, 2, 6], // leading edge
-        [1, 7, 3], [1, 5, 7], // trailing edge
-        [4, 7, 5], [4, 6, 7], // tip cap
-      ];
-
-  const pos = [];
-  for (const [a, b, c] of tris) {
-    pos.push(v[a][0], v[a][1], v[a][2], v[b][0], v[b][1], v[b][2], v[c][0], v[c][1], v[c][2]);
+  if (z > 13.0) {
+    // Nose section (z = +13.0 .. +24.2m): authentic drooped parabolic Boeing 787 / Airbus A350 nose radome profile
+    const t = Math.min(1, Math.max(0, (24.2 - z) / (24.2 - 13.0)));
+    const theta = t * (Math.PI * 0.5);
+    const prof = Math.pow(Math.max(0, Math.sin(theta)), 0.65);
+    rx = R * prof;
+    ry = R * 1.03 * prof;
+    const u = 1.0 - t;
+    yc = 3.46 - 0.62 * Math.pow(u, 1.55);
+  } else if (z < -10.5) {
+    // Tail section (z = -10.5 .. -24.2m): smooth upturned boat-tail taper toward silver APU exhaust cone
+    const u = Math.min(1, Math.max(0, (-10.5 - z) / (24.2 - 10.5)));
+    const s = u * u * (3 - 2 * u);
+    const taper = 1.0 - 0.88 * Math.pow(u, 1.28);
+    rx = R * taper;
+    ry = R * 1.03 * (1.0 - 0.85 * Math.pow(u, 1.22));
+    yc = 3.46 + 0.66 * s;
   }
-  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.computeVertexNormals();
+
+  // Wing-to-body aerodynamic belly fairing bulge around wing box (z = -5.5 .. +7.5m)
+  const bellyEnv = Math.max(0, 1.0 - Math.pow((z - 1.0) / 7.2, 2));
+  return { z, rx, ry, yc, bellyEnv };
+}
+
+/**
+ * Builds a single continuous smooth lofted widebody fuselage (44 radial segments × 32 axial stations)
+ * with analytical smooth normals and vertex-baked cockpit A350/787 visor, cheatline stripe, doors, and cabin windows.
+ */
+function buildLoftedFuselageGeometry(radSegs = 44, zSegs = 32, colors = null) {
+  const pal = colors || {
+    white: [0.97, 0.98, 1.0],
+    belly: [0.86, 0.89, 0.93],
+    stripe: [0.0, 0.64, 0.88],
+    glass: [0.06, 0.10, 0.16],
+    win: [0.14, 0.22, 0.34],
+    chrome: [0.76, 0.80, 0.86],
+    apu: [0.24, 0.27, 0.32],
+  };
+
+  const zMin = -24.2;
+  const zMax = 24.2;
+  const stations = [];
+  for (let i = 0; i <= zSegs; i++) {
+    // Cosine-clustered spacing near nose & tail for ultra-smooth curvature where radius changes rapidly
+    const u = i / zSegs;
+    const z = zMin + (zMax - zMin) * (0.5 - 0.5 * Math.cos(u * Math.PI));
+    stations.push(sampleFuselageStation(z));
+  }
+
+  const stride = radSegs + 1;
+  const numVerts = (zSegs + 1) * stride;
+  const pos = new Float32Array(numVerts * 3);
+  const nrm = new Float32Array(numVerts * 3);
+  const col = new Float32Array(numVerts * 3);
+
+  for (let iz = 0; iz <= zSegs; iz++) {
+    const st = stations[iz];
+    const stPrev = stations[Math.max(0, iz - 1)];
+    const stNext = stations[Math.min(zSegs, iz + 1)];
+    const dz = Math.max(1e-4, stNext.z - stPrev.z);
+    const drx_dz = (stNext.rx - stPrev.rx) / dz;
+    const dry_dz = (stNext.ry - stPrev.ry) / dz;
+    const dyc_dz = (stNext.yc - stPrev.yc) / dz;
+
+    for (let ir = 0; ir <= radSegs; ir++) {
+      const phi = (ir / radSegs) * Math.PI * 2;
+      const sp = Math.sin(phi);
+      const cp = Math.cos(phi);
+
+      // Add subtle lower-lobe wing-to-body fairing flare when cp < -0.25
+      let rx = st.rx;
+      let ry = st.ry;
+      if (st.bellyEnv > 0 && cp < -0.15) {
+        const bFactor = Math.pow(Math.min(1, (-cp - 0.15) / 0.85), 1.4) * st.bellyEnv;
+        rx += 0.26 * bFactor;
+        ry += 0.22 * bFactor;
+      }
+
+      const x = rx * sp;
+      const y = st.yc + ry * cp;
+      const z = st.z;
+
+      // Smooth analytical surface normal (handles nose tip & tail cone smoothly)
+      let nx = sp / Math.max(0.08, rx);
+      let ny = cp / Math.max(0.08, ry);
+      let nz = -(drx_dz * sp * nx + (dyc_dz + dry_dz * cp) * ny);
+      if (iz === zSegs) {
+        nx = sp * 0.15; ny = cp * 0.15; nz = 1.0;
+      } else if (iz === 0) {
+        nx = sp * 0.25; ny = cp * 0.25; nz = -1.0;
+      }
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+
+      // Keep fuselage vertex colors strictly aligned to radial rings (cp) or nose/tail tips so zero diagonal quad bleeding occurs
+      let rgb = pal.white;
+      if (z < -23.1) {
+        // Metallic APU tailcone exhaust tip
+        rgb = pal.apu;
+      } else if (cp < -0.28 && z > -14.5 && z < 15.5) {
+        // Pearl-grey aerodynamic belly fairing & lower fuselage
+        rgb = pal.belly;
+      }
+
+      const idx = (iz * stride + ir) * 3;
+      pos[idx] = x;
+      pos[idx + 1] = y;
+      pos[idx + 2] = z;
+      nrm[idx] = nx;
+      nrm[idx + 1] = ny;
+      nrm[idx + 2] = nz;
+      col[idx] = rgb[0];
+      col[idx + 1] = rgb[1];
+      col[idx + 2] = rgb[2];
+    }
+  }
+
+  const indices = [];
+  for (let iz = 0; iz < zSegs; iz++) {
+    for (let ir = 0; ir < radSegs; ir++) {
+      const a = iz * stride + ir;
+      const b = a + stride;
+      const c = b + 1;
+      const d = a + 1;
+      indices.push(a, d, b, b, d, c);
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  g.setIndex(indices);
+  g.computeBoundingSphere();
   return g;
 }
 
 /**
- * Builds a swept vertical stabilizer fin (trapezoidal airfoil profile).
+ * Builds a razor-sharp, smooth-normal lofted surface patch conforming directly to the fuselage station profile
+ * at a small outward radial offset (`radialOffset = 0.016m`), eliminating any vertex-color stair-stepping.
  */
-function buildSweptTailFinGeometry(baseZFront, baseZRear, topZFront, topZRear, yBase, yTop, thickBase, thickTip) {
-  const g = new THREE.BufferGeometry();
-  const hb = thickBase * 0.5;
-  const ht = thickTip * 0.5;
-  const v = [
-    [hb, yBase, baseZFront],
-    [hb, yBase, baseZRear],
-    [-hb, yBase, baseZFront],
-    [-hb, yBase, baseZRear],
-    [ht, yTop, topZFront],
-    [ht, yTop, topZRear],
-    [-ht, yTop, topZFront],
-    [-ht, yTop, topZRear],
-  ];
-  const tris = [
-    [0, 1, 5], [0, 5, 4], // +X side
-    [2, 6, 7], [2, 7, 3], // -X side
-    [0, 4, 6], [0, 6, 2], // leading edge
-    [1, 3, 7], [1, 7, 5], // trailing rudder edge
-    [4, 5, 7], [4, 7, 6], // top cap
-  ];
-  const pos = [];
-  for (const [a, b, c] of tris) {
-    pos.push(v[a][0], v[a][1], v[a][2], v[b][0], v[b][1], v[b][2], v[c][0], v[c][1], v[c][2]);
+function buildFuselageConformingPatch(zStart, zEnd, zSteps, phiMin, phiMax, phiSteps, radialOffset = 0.016, mirrorBothSides = true) {
+  const parts = [];
+  const sides = mirrorBothSides ? [-1, 1] : [1];
+  for (const side of sides) {
+    const stride = phiSteps + 1;
+    const numVerts = (zSteps + 1) * stride;
+    const pos = new Float32Array(numVerts * 3);
+    const nrm = new Float32Array(numVerts * 3);
+    for (let iz = 0; iz <= zSteps; iz++) {
+      const uz = iz / zSteps;
+      const z = zStart + (zEnd - zStart) * uz;
+      const st = sampleFuselageStation(z);
+      for (let ip = 0; ip <= phiSteps; ip++) {
+        const up = ip / phiSteps;
+        const phi = side * (phiMin + (phiMax - phiMin) * up);
+        const sp = Math.sin(phi);
+        const cp = Math.cos(phi);
+        const x = (st.rx + radialOffset) * sp;
+        const y = st.yc + (st.ry + radialOffset) * cp;
+        const nx = sp;
+        const ny = cp;
+        const idx = (iz * stride + ip) * 3;
+        pos[idx] = x;
+        pos[idx + 1] = y;
+        pos[idx + 2] = z;
+        nrm[idx] = nx;
+        nrm[idx + 1] = ny;
+        nrm[idx + 2] = 0;
+      }
+    }
+    const indices = [];
+    for (let iz = 0; iz < zSteps; iz++) {
+      for (let ip = 0; ip < phiSteps; ip++) {
+        const a = iz * stride + ip;
+        const b = a + stride;
+        const c = b + 1;
+        const d = a + 1;
+        if (side > 0) {
+          indices.push(a, b, d, b, c, d);
+        } else {
+          indices.push(a, d, b, b, d, c);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+    g.setIndex(indices);
+    parts.push([g, [1, 1, 1], null]);
   }
+  return mergeParts(parts);
+}
+
+/**
+ * Evaluates a supercritical NACA airfoil profile at parameter s in [0..1] (0 = trailing edge top -> 0.5 = leading edge -> 1.0 = trailing edge bottom).
+ * Returns { uChord, yLocal, nyLocal, nzLocal } where uChord in [0 (LE) .. 1 (TE)].
+ */
+function evalSupercriticalAirfoil(s) {
+  const theta = s * Math.PI * 2;
+  // u = 0 at leading edge (s = 0.5), u = 1 at trailing edge (s = 0 or 1)
+  const u = 0.5 * (1.0 + Math.cos(theta));
+  const yt = 5.0 * (
+    0.2969 * Math.sqrt(Math.max(1e-5, u)) -
+    0.1260 * u -
+    0.3516 * u * u +
+    0.2843 * u * u * u -
+    0.1015 * u * u * u * u
+  );
+  // Supercritical camber: flatter upper surface, aft reflex camber
+  const yc = 0.022 * (1.0 - u) * u * (1.4 - 0.8 * u);
+  const sign = s < 0.5 ? 1 : -1;
+  const yLocal = yc + sign * yt * (s < 0.5 ? 1.05 : 0.82);
+
+  // Analytical 2D profile normal (pointing outward from airfoil)
+  const nzLocal = -Math.cos(theta * 0.5);
+  const nyLocal = sign * Math.max(0.25, Math.sin(theta * 0.5));
+  const nl = Math.hypot(nyLocal, nzLocal) || 1;
+  return { u, yLocal, nyLocal: nyLocal / nl, nzLocal: nzLocal / nl };
+}
+
+/**
+ * Builds a multi-station lofted supercritical airfoil wing + blended upturned sharklet / raked wingtip
+ * with smooth analytical normals across all spanwise stations and airfoil loop vertices.
+ * Can build inner+outer wing (startStation..endStation) so main wing and livery sharklet share a seamless boundary!
+ */
+function buildLoftedAirfoilWingGeometry(side, stationList, profSegs = 22) {
+  const sSign = side >= 0 ? 1 : -1;
+  const nStat = stationList.length;
+  const stride = profSegs + 1;
+  const pos = [];
+  const nrm = [];
+
+  const profile = [];
+  for (let ip = 0; ip <= profSegs; ip++) {
+    profile.push(evalSupercriticalAirfoil(ip / profSegs));
+  }
+
+  for (let is = 0; is < nStat; is++) {
+    const st = stationList[is];
+    const stPrev = stationList[Math.max(0, is - 1)];
+    const stNext = stationList[Math.min(nStat - 1, is + 1)];
+    const dxSpan = (stNext.x - stPrev.x) * sSign;
+    const dySpan = stNext.y - stPrev.y;
+    const spanLen = Math.hypot(dxSpan, dySpan) || 1;
+    // Outward normal rotation in (X, Y) plane for canted sharklet tips
+    const upX = (-dySpan / spanLen) * sSign;
+    const upY = (dxSpan * sSign) / spanLen;
+
+    const zLE = st.z + st.chord * 0.46;
+    const zTE = st.z - st.chord * 0.54;
+
+    for (let ip = 0; ip <= profSegs; ip++) {
+      const pf = profile[ip];
+      const z = zLE + (zTE - zLE) * pf.u;
+      const offsetThick = pf.yLocal * st.thick;
+      const x = sSign * st.x + upX * offsetThick;
+      const y = st.y + upY * offsetThick;
+
+      const nx = upX * pf.nyLocal;
+      const ny = upY * pf.nyLocal;
+      const nz = pf.nzLocal;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+
+      pos.push(x, y, z);
+      nrm.push(nx / nl, ny / nl, nz / nl);
+    }
+  }
+
+  const indices = [];
+  for (let is = 0; is < nStat - 1; is++) {
+    for (let ip = 0; ip < profSegs; ip++) {
+      const a = is * stride + ip;
+      const b = (is + 1) * stride + ip;
+      const c = b + 1;
+      const d = a + 1;
+      if (sSign > 0) {
+        indices.push(a, b, d, b, c, d);
+      } else {
+        indices.push(a, d, b, b, d, c);
+      }
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.computeVertexNormals();
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(indices);
+  g.computeBoundingSphere();
+  return g;
+}
+
+const MAIN_WING_STATIONS = [
+  { x: 1.85, y: 2.48, z: 2.65, chord: 7.40, thick: 0.92 },
+  { x: 4.20, y: 2.62, z: 1.65, chord: 6.20, thick: 0.76 },
+  { x: 7.20, y: 2.82, z: 0.40, chord: 5.10, thick: 0.62 },
+  { x: 10.60, y: 3.06, z: -1.05, chord: 4.15, thick: 0.48 },
+  { x: 14.20, y: 3.36, z: -2.65, chord: 3.25, thick: 0.36 },
+  { x: 17.60, y: 3.70, z: -4.25, chord: 2.40, thick: 0.26 },
+  { x: 20.60, y: 4.12, z: -5.75, chord: 1.65, thick: 0.18 },
+];
+
+const SHARKLET_STATIONS = [
+  { x: 20.60, y: 4.12, z: -5.75, chord: 1.65, thick: 0.18 },
+  { x: 21.45, y: 4.58, z: -6.45, chord: 1.28, thick: 0.14 },
+  { x: 22.15, y: 5.18, z: -7.12, chord: 0.96, thick: 0.11 },
+  { x: 22.65, y: 5.86, z: -7.75, chord: 0.64, thick: 0.08 },
+];
+
+const HSTAB_STATIONS = [
+  { x: 0.65, y: 3.92, z: -18.10, chord: 3.55, thick: 0.38 },
+  { x: 3.20, y: 4.08, z: -19.35, chord: 2.65, thick: 0.28 },
+  { x: 5.60, y: 4.25, z: -20.65, chord: 1.85, thick: 0.19 },
+  { x: 7.65, y: 4.44, z: -21.85, chord: 1.15, thick: 0.11 },
+];
+
+/**
+ * Builds a smooth symmetrical-airfoil vertical stabilizer tail fin with curved dorsal fillet and analytical normals.
+ */
+function buildLoftedVerticalTailFinGeometry(stations, profSegs = 22) {
+  const nStat = stations.length;
+  const stride = profSegs + 1;
+  const pos = [];
+  const nrm = [];
+
+  for (let is = 0; is < nStat; is++) {
+    const st = stations[is];
+    for (let ip = 0; ip <= profSegs; ip++) {
+      const s = ip / profSegs;
+      const theta = s * Math.PI * 2;
+      const u = 0.5 * (1.0 + Math.cos(theta));
+      const yt = 5.0 * (
+        0.2969 * Math.sqrt(Math.max(1e-5, u)) -
+        0.1260 * u -
+        0.3516 * u * u +
+        0.2843 * u * u * u -
+        0.1015 * u * u * u * u
+      );
+      const sign = s < 0.5 ? 1 : -1;
+      const x = sign * yt * st.thick;
+      const z = st.zFront + (st.zRear - st.zFront) * u;
+      const y = st.y;
+
+      const nx = sign * Math.max(0.25, Math.sin(theta * 0.5));
+      const nz = -Math.cos(theta * 0.5);
+      const ny = is === nStat - 1 ? 0.25 : 0.04;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+
+      pos.push(x, y, z);
+      nrm.push(nx / nl, ny / nl, nz / nl);
+    }
+  }
+
+  const indices = [];
+  for (let is = 0; is < nStat - 1; is++) {
+    for (let ip = 0; ip < profSegs; ip++) {
+      const a = is * stride + ip;
+      const b = (is + 1) * stride + ip;
+      const c = b + 1;
+      const d = a + 1;
+      indices.push(a, d, b, b, d, c);
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(indices);
+  g.computeBoundingSphere();
+  return g;
+}
+
+const VFIN_STATIONS = [
+  { y: 4.10, zFront: -9.20, zRear: -19.40, thick: 0.42 },
+  { y: 5.05, zFront: -12.60, zRear: -19.75, thick: 0.56 },
+  { y: 7.40, zFront: -14.85, zRear: -20.55, thick: 0.46 },
+  { y: 10.10, zFront: -16.95, zRear: -21.40, thick: 0.34 },
+  { y: 12.65, zFront: -18.75, zRear: -22.25, thick: 0.20 },
+];
+
+const RUDDER_STRIPE_STATIONS = [
+  { y: 4.50, zFront: -18.20, zRear: -19.55, thick: 0.58 },
+  { y: 8.50, zFront: -19.65, zRear: -20.95, thick: 0.42 },
+  { y: 12.55, zFront: -21.10, zRear: -22.28, thick: 0.22 },
+];
+
+/**
+ * Builds a smooth barrel-curved outer engine nacelle cowling (thicker mid-chord, tapered intake & exhaust)
+ * with analytical smooth normals.
+ */
+function buildBarrelNacelleGeometry(rIntake, rMax, rExhaust, length, radSegs = 36, zSegs = 14) {
+  const pos = [];
+  const nrm = [];
+  const stride = radSegs + 1;
+
+  const evalR = (u) => {
+    // u = 0 (exhaust rear) .. 1 (intake front)
+    const arch = Math.sin(u * Math.PI);
+    const base = rExhaust + (rIntake - rExhaust) * u;
+    return base + (rMax - Math.max(rIntake, rExhaust)) * Math.pow(arch, 0.85);
+  };
+
+  for (let iz = 0; iz <= zSegs; iz++) {
+    const u = iz / zSegs;
+    const z = (u - 0.5) * length;
+    const r = evalR(u);
+    const rPrev = evalR(Math.max(0, u - 0.05));
+    const rNext = evalR(Math.min(1, u + 0.05));
+    const dr_dz = (rNext - rPrev) / (0.10 * length);
+
+    for (let ir = 0; ir <= radSegs; ir++) {
+      const phi = (ir / radSegs) * Math.PI * 2;
+      const sp = Math.sin(phi);
+      const cp = Math.cos(phi);
+      const x = r * sp;
+      const y = r * cp;
+
+      let nx = sp;
+      let ny = cp;
+      let nz = -dr_dz;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      pos.push(x, y, z);
+      nrm.push(nx / nl, ny / nl, nz / nl);
+    }
+  }
+
+  const indices = [];
+  for (let iz = 0; iz < zSegs; iz++) {
+    for (let ir = 0; ir < radSegs; ir++) {
+      const a = iz * stride + ir;
+      const b = a + stride;
+      const c = b + 1;
+      const d = a + 1;
+      indices.push(a, d, b, b, d, c);
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(indices);
+  g.computeBoundingSphere();
   return g;
 }
 
@@ -225,137 +605,77 @@ function buildSweptTailFinGeometry(baseZFront, baseZRear, topZFront, topZRear, y
  * Represents a sleek Boeing 787 / Airbus A350 wide-body airliner (nose +Z, wheels at y=0).
  */
 export function buildAirlinerInstancedGeometries() {
-  const white = [0.96, 0.97, 0.99];
-  const pearl = [0.89, 0.91, 0.94];
-  const wingGrey = [0.82, 0.85, 0.89];
-  const chrome = [0.76, 0.80, 0.85];
-  const darkGlass = [0.09, 0.12, 0.17];
+  const white = [0.97, 0.98, 1.0];
+  const pearl = [0.88, 0.90, 0.94];
+  const wingGrey = [0.84, 0.87, 0.91];
+  const chrome = [0.78, 0.82, 0.88];
+  const darkGlass = [0.08, 0.11, 0.16];
   const tireDark = [0.11, 0.12, 0.13];
-  const strutSteel = [0.58, 0.62, 0.67];
-  const exhaustDark = [0.22, 0.24, 0.28];
-  const cheatBlue = [0.05, 0.38, 0.72];
+  const strutSteel = [0.60, 0.64, 0.70];
+  const exhaustDark = [0.22, 0.25, 0.30];
 
   const bodyParts = [];
 
-  // 1. Multi-stage Fuselage (nose +Z, length ~43m at scale=1, ~65m at widebody scale=1.5)
-  // Main cylindrical pressurized cabin
-  bodyParts.push([cyl(2.18, 2.18, 26.5, 18), white, mat(0, 3.45, 1.0, Math.PI / 2, 0, 0)]);
-  // Aerodynamic Belly Wing-to-Body Fairing
-  bodyParts.push([cyl(1.95, 2.05, 15.0, 14), pearl, mat(0, 2.35, 0.8, Math.PI / 2, 0, 0, 1.18, 0.65, 1.0)]);
-  // Forward tapered nose section + drooped radome cone (Boeing 787 / Airbus A350 profile)
-  bodyParts.push([cyl(1.42, 2.18, 4.6, 18), white, mat(0, 3.30, 16.5, Math.PI / 2, 0, 0)]);
-  bodyParts.push([cyl(0.68, 1.42, 2.8, 16), white, mat(0, 3.05, 20.1, Math.PI / 2, 0, 0)]);
-  bodyParts.push([cone(0.68, 1.7, 16), pearl, mat(0, 2.95, 22.3, Math.PI / 2, 0, 0)]);
+  // 1. Continuous Smooth Lofted Widebody Fuselage + Conforming Visor & Cheatline
+  bodyParts.push([buildLoftedFuselageGeometry(40, 28), [1, 1, 1], null]);
+  bodyParts.push([buildFuselageConformingPatch(16.2, 20.1, 8, -0.95, 0.95, 14, 0.018, false), darkGlass, null]);
+  bodyParts.push([buildFuselageConformingPatch(-15.8, 15.4, 20, 1.48, 1.62, 3, 0.015, true), [0.0, 0.64, 0.88], null]);
 
-  // Cockpit wrap-around "Zorro mask" / Dreamliner 4-panel dark glass visor
-  bodyParts.push([cyl(1.48, 1.96, 2.5, 14), darkGlass, mat(0, 3.78, 17.6, Math.PI / 2, 0, 0, 0.96, 0.56, 1.0)]);
-  bodyParts.push([box(2.15, 0.52, 1.85), darkGlass, mat(0, 4.18, 17.3, 0.18, 0, 0)]);
-
-  // Airline Cheatline Stripe & Cabin Window Strip along both sides of the fuselage
+  // 2. Smooth Lofted Supercritical Airfoil Wings + Horizontal Stabilizers + Flap Fairings + Turbofan Nacelles
   for (const s of [-1, 1]) {
-    bodyParts.push([box(0.08, 0.34, 26.8), darkGlass, mat(s * 2.16, 3.82, 1.2)]);
-    bodyParts.push([box(0.09, 0.22, 27.2), cheatBlue, mat(s * 2.17, 3.35, 1.2)]);
-    // Passenger doors (L1, L2, L3)
-    for (const dz of [12.5, 2.2, -9.5]) {
-      bodyParts.push([box(0.11, 1.05, 0.62), pearl, mat(s * 2.16, 3.65, dz)]);
-    }
-  }
+    bodyParts.push([buildLoftedAirfoilWingGeometry(s, MAIN_WING_STATIONS, 20), wingGrey, null]);
+    bodyParts.push([buildLoftedAirfoilWingGeometry(s, HSTAB_STATIONS, 16), wingGrey, null]);
 
-  // Rear tapered tailcone rising toward APU exhaust
-  bodyParts.push([cyl(2.18, 1.25, 7.2, 18), white, mat(0, 3.62, -15.8, Math.PI / 2, 0, 0)]);
-  bodyParts.push([cyl(1.25, 0.38, 3.8, 14), white, mat(0, 3.92, -21.2, Math.PI / 2, 0, 0)]);
-  bodyParts.push([cyl(0.36, 0.26, 0.8, 12), exhaustDark, mat(0, 4.02, -23.3, Math.PI / 2, 0, 0)]);
-
-  // 2. Swept Supercritical Wings (36-deg sweep, inner + outer sections + flap track fairings)
-  for (const s of [-1, 1]) {
-    // Inner wing section (root to mid-span)
-    bodyParts.push([
-      buildSweptWingGeometry(s, 1.9, 10.8, 2.4, -0.8, 6.6, 4.2, 0.58, 0.38, 2.55, 2.95),
-      wingGrey,
-      null,
-    ]);
-    // Outer wing section (mid-span to wingtip)
-    bodyParts.push([
-      buildSweptWingGeometry(s, 10.8, 20.8, -0.8, -5.6, 4.2, 1.65, 0.38, 0.18, 2.95, 3.65),
-      wingGrey,
-      null,
-    ]);
-    // Under-wing flap track fairings (3 streamlined canoes per wing)
+    // Streamlined teardrop flap-track fairings under trailing edge
     for (const [fx, fy, fz, fl] of [
-      [5.2, 2.38, -0.8, 2.6],
-      [9.4, 2.68, -2.2, 2.2],
-      [13.8, 3.05, -4.0, 1.7],
+      [5.2, 2.40, -0.8, 2.6],
+      [9.4, 2.70, -2.2, 2.2],
+      [13.8, 3.08, -4.0, 1.7],
     ]) {
-      bodyParts.push([cyl(0.16, 0.08, fl, 8), pearl, mat(s * fx, fy, fz, Math.PI / 2, 0, 0)]);
+      bodyParts.push([buildBarrelNacelleGeometry(0.06, 0.17, 0.04, fl, 14, 6), pearl, mat(s * fx, fy, fz)]);
     }
 
-    // 3. Swept Horizontal Stabilizers (Tailplane)
-    bodyParts.push([
-      buildSweptWingGeometry(s, 0.8, 7.4, -18.2, -21.4, 3.2, 1.35, 0.28, 0.12, 3.95, 4.35),
-      wingGrey,
-      null,
-    ]);
-
-    // 4. High-Bypass Turbofan Engines (GE GEnx / Trent XWB under-wing pods)
-    const ex = s * 6.8;
+    // High-Bypass Turbofan Engine Pods (Trent XWB / GEnx barrel-curved cowlings)
+    const ex = s * 6.9;
     const ey = 1.68;
-    const ez = 3.4;
-    // Aerodynamic engine pylon strut
-    bodyParts.push([box(0.32, 0.95, 2.8), pearl, mat(ex, ey + 0.88, ez - 0.5, 0.12, 0, 0)]);
-    // Main nacelle cowling
-    bodyParts.push([cyl(1.18, 1.12, 3.5, 16), white, mat(ex, ey, ez, Math.PI / 2, 0, 0)]);
-    // Silver metallic intake lip ring
-    bodyParts.push([cyl(1.18, 1.10, 0.55, 16), chrome, mat(ex, ey, ez + 1.95, Math.PI / 2, 0, 0)]);
-    // Dark fan intake throat + spinner cone
-    bodyParts.push([cyl(1.02, 1.02, 0.25, 14), darkGlass, mat(ex, ey, ez + 1.85, Math.PI / 2, 0, 0)]);
-    bodyParts.push([cone(0.34, 0.75, 12), tireDark, mat(ex, ey, ez + 2.05, Math.PI / 2, 0, 0)]);
-    // Rear bypass duct & titanium exhaust nozzle cone
-    bodyParts.push([cyl(1.10, 0.78, 1.1, 14), chrome, mat(ex, ey, ez - 2.15, Math.PI / 2, 0, 0)]);
-    bodyParts.push([cone(0.55, 1.25, 12), exhaustDark, mat(ex, ey, ez - 2.85, -Math.PI / 2, 0, 0)]);
+    const ez = 3.45;
+    bodyParts.push([box(0.30, 0.96, 2.85), pearl, mat(ex, ey + 0.88, ez - 0.5, 0.12, 0, 0)]);
+    bodyParts.push([buildBarrelNacelleGeometry(1.14, 1.28, 1.06, 3.65, 32, 12), white, mat(ex, ey, ez)]);
+    bodyParts.push([cyl(1.16, 1.12, 0.52, 32), chrome, mat(ex, ey, ez + 1.98, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cyl(1.04, 1.04, 0.22, 24), darkGlass, mat(ex, ey, ez + 1.82, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cone(0.36, 0.78, 20), tireDark, mat(ex, ey, ez + 2.02, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cyl(1.04, 0.76, 1.05, 24), chrome, mat(ex, ey, ez - 2.15, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cone(0.54, 1.25, 20), exhaustDark, mat(ex, ey, ez - 2.85, -Math.PI / 2, 0, 0)]);
   }
 
-  // 5. Complete Tricycle Landing Gear (resting at y = 0)
-  // Nose landing gear (z = +15.8m)
-  bodyParts.push([cyl(0.14, 0.12, 1.65, 10), strutSteel, mat(0, 1.25, 15.8)]);
+  // 3. Complete Tricycle Landing Gear (resting at y = 0)
+  bodyParts.push([cyl(0.14, 0.12, 1.65, 14), strutSteel, mat(0, 1.25, 15.8)]);
   bodyParts.push([box(0.28, 0.45, 0.22), strutSteel, mat(0, 1.15, 16.0, 0.35, 0, 0)]);
   for (const s of [-1, 1]) {
-    bodyParts.push([cyl(0.44, 0.44, 0.24, 12), tireDark, mat(s * 0.28, 0.44, 15.8, 0, 0, Math.PI / 2)]);
-    bodyParts.push([cyl(0.20, 0.20, 0.26, 10), chrome, mat(s * 0.28, 0.44, 15.8, 0, 0, Math.PI / 2)]);
+    bodyParts.push([cyl(0.44, 0.44, 0.24, 18), tireDark, mat(s * 0.28, 0.44, 15.8, 0, 0, Math.PI / 2)]);
+    bodyParts.push([cyl(0.20, 0.20, 0.26, 14), chrome, mat(s * 0.28, 0.44, 15.8, 0, 0, Math.PI / 2)]);
   }
-  // Main landing gear 4-wheel bogies (x = ±3.6m, z = -0.4m)
   for (const s of [-1, 1]) {
     const gx = s * 3.65;
     const gz = -0.4;
-    // Main oleo strut & side brace
-    bodyParts.push([cyl(0.20, 0.18, 2.05, 10), strutSteel, mat(gx, 1.55, gz)]);
+    bodyParts.push([cyl(0.20, 0.18, 2.05, 14), strutSteel, mat(gx, 1.55, gz)]);
     bodyParts.push([box(1.1, 0.14, 0.14), strutSteel, mat(gx - s * 0.45, 1.85, gz, 0, 0, s * 0.55)]);
-    // Bogie beam
     bodyParts.push([box(0.26, 0.22, 1.85), strutSteel, mat(gx, 0.58, gz)]);
-    // 4 main tires (2x2 tandem bogie)
     for (const wx of [-0.42, 0.42]) {
       for (const wz of [-0.62, 0.62]) {
-        bodyParts.push([cyl(0.58, 0.58, 0.34, 12), tireDark, mat(gx + wx, 0.58, gz + wz, 0, 0, Math.PI / 2)]);
-        bodyParts.push([cyl(0.26, 0.26, 0.36, 10), chrome, mat(gx + wx, 0.58, gz + wz, 0, 0, Math.PI / 2)]);
+        bodyParts.push([cyl(0.58, 0.58, 0.34, 18), tireDark, mat(gx + wx, 0.58, gz + wz, 0, 0, Math.PI / 2)]);
+        bodyParts.push([cyl(0.26, 0.26, 0.36, 14), chrome, mat(gx + wx, 0.58, gz + wz, 0, 0, Math.PI / 2)]);
       }
     }
   }
 
-  // 6. Tinted Livery Tail Fin + Blended Sharklet Winglets (`planeTail`)
+  // 4. Tinted Livery Tail Fin + Blended Sharklet Winglets (`planeTail`)
   const tailParts = [
-    // Tall swept vertical stabilizer fin
-    [buildSweptTailFinGeometry(-12.8, -19.2, -18.2, -21.8, 4.4, 12.2, 0.52, 0.18), [1, 1, 1], null],
-    // Dorsal fin fillet
-    [buildSweptTailFinGeometry(-9.2, -12.8, -12.8, -14.5, 4.2, 5.8, 0.36, 0.26), [1, 1, 1], null],
+    [buildLoftedVerticalTailFinGeometry(VFIN_STATIONS, 22), [1, 1, 1], null],
   ];
-  // Blended upturned Sharklet / Dreamliner raked winglets
   for (const s of [-1, 1]) {
-    tailParts.push([
-      buildSweptWingGeometry(s, 20.6, 22.1, -5.6, -7.2, 1.65, 0.72, 0.18, 0.10, 3.65, 5.55),
-      [1, 1, 1],
-      null,
-    ]);
-    // Engine nacelle accent ring
-    tailParts.push([cyl(1.20, 1.16, 1.4, 16), [1, 1, 1], mat(s * 6.8, 1.68, 3.7, Math.PI / 2, 0, 0)]);
+    tailParts.push([buildLoftedAirfoilWingGeometry(s, SHARKLET_STATIONS, 18), [1, 1, 1], null]);
+    tailParts.push([buildBarrelNacelleGeometry(1.24, 1.29, 1.22, 1.25, 32, 6), [1, 1, 1], mat(s * 6.9, 1.68, 3.65)]);
   }
 
   return {
@@ -363,6 +683,8 @@ export function buildAirlinerInstancedGeometries() {
     planeTail: mergeParts(tailParts),
   };
 }
+
+export const buildStaticAirlinerGeometries = buildAirlinerInstancedGeometries;
 
 /**
  * Creates a full articulated Three.js Group for the playable Boeing 787 / Airbus A350 airliner
@@ -378,219 +700,190 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
   group.name = `airliner_${livery.id}`;
   group.rotation.order = "YXZ";
 
-  const whiteMat = new THREE.MeshStandardMaterial({
-    color: 0xf7f9fc,
-    roughness: 0.26,
-    metalness: 0.14,
+  const cBelly = new THREE.Color(livery.bellyHex || 0xdce3ec);
+  const cStripe = new THREE.Color(livery.stripeHex || 0x00a3e0);
+
+  // Glossy aviation paint materials with envProbe reflections
+  const fuseMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.18,
+    metalness: 0.15,
   });
+  fuseMat.userData = { envProbe: true };
+
+  const whiteMat = new THREE.MeshStandardMaterial({
+    color: 0xf8faff,
+    roughness: 0.18,
+    metalness: 0.15,
+  });
+  whiteMat.userData = { envProbe: true };
+
   const bellyMat = new THREE.MeshStandardMaterial({
     color: livery.bellyHex || 0xdce3ec,
-    roughness: 0.34,
-    metalness: 0.22,
+    roughness: 0.22,
+    metalness: 0.20,
   });
+  bellyMat.userData = { envProbe: true };
+
   const wingMat = new THREE.MeshStandardMaterial({
-    color: 0xe3e7ee,
-    roughness: 0.32,
+    color: 0xe6ebf2,
+    roughness: 0.22,
     metalness: 0.24,
   });
+  wingMat.userData = { envProbe: true };
+
   const liveryMat = new THREE.MeshStandardMaterial({
     color: livery.tailHex,
-    roughness: 0.28,
+    roughness: 0.18,
     metalness: 0.22,
   });
+  liveryMat.userData = { envProbe: true };
+
   const stripeMat = new THREE.MeshStandardMaterial({
     color: livery.stripeHex,
-    roughness: 0.25,
-    metalness: 0.3,
-  });
-  const chromeMat = new THREE.MeshStandardMaterial({
-    color: 0xd8e0e8,
     roughness: 0.18,
-    metalness: 0.82,
+    metalness: 0.28,
   });
+  stripeMat.userData = { envProbe: true };
+
+  const chromeMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.14,
+    metalness: 0.86,
+  });
+  chromeMat.userData = { envProbe: true };
+
   const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x0b1320,
-    roughness: 0.12,
-    metalness: 0.65,
+    color: 0x09111e,
+    roughness: 0.08,
+    metalness: 0.72,
   });
+  glassMat.userData = { envProbe: true };
+
   const cabinWinMat = new THREE.MeshStandardMaterial({
     color: 0x182638,
     emissive: 0xffdfa8,
     emissiveIntensity: 0.35,
-    roughness: 0.2,
+    roughness: 0.16,
   });
   const tireMat = new THREE.MeshStandardMaterial({
-    color: 0x17191c,
-    roughness: 0.88,
-    metalness: 0.05,
+    color: 0x15171a,
+    roughness: 0.85,
+    metalness: 0.06,
   });
   const strutMat = new THREE.MeshStandardMaterial({
-    color: 0x9aa2ac,
-    roughness: 0.35,
-    metalness: 0.68,
+    color: 0xa4acb6,
+    roughness: 0.28,
+    metalness: 0.72,
   });
   const exhaustMat = new THREE.MeshStandardMaterial({
     color: 0x2c3038,
-    roughness: 0.45,
-    metalness: 0.65,
+    roughness: 0.38,
+    metalness: 0.68,
   });
 
-  // --- 1. Airframe Group (Fuselage, Wings, Tail, Nacelles) ---
+  // --- 1. Airframe Group (Lofted Fuselage, Supercritical Airfoil Wings, Tail, Nacelles) ---
   const airframe = new THREE.Group();
   airframe.name = "airframe";
   group.add(airframe);
 
-  // Main Fuselage & Nose Cone
-  const fuseMain = new THREE.Mesh(cyl(2.22, 2.22, 27.0, 24), whiteMat);
-  fuseMain.rotation.x = Math.PI / 2;
-  fuseMain.position.set(0, 3.45, 1.0);
-  fuseMain.castShadow = true;
-  fuseMain.receiveShadow = true;
-  airframe.add(fuseMain);
+  // Continuous Smooth Lofted Fuselage (48 radial segments × 32 axial stations)
+  const fuseGeo = buildLoftedFuselageGeometry(48, 32, {
+    white: [0.98, 0.99, 1.0],
+    belly: [cBelly.r, cBelly.g, cBelly.b],
+    stripe: [cStripe.r, cStripe.g, cStripe.b],
+    glass: [0.05, 0.09, 0.15],
+    win: [0.14, 0.22, 0.34],
+    chrome: [0.80, 0.84, 0.90],
+    apu: [0.22, 0.25, 0.30],
+  });
+  const fuseMesh = new THREE.Mesh(fuseGeo, fuseMat);
+  fuseMesh.castShadow = true;
+  fuseMesh.receiveShadow = true;
+  airframe.add(fuseMesh);
 
-  const bellyFairing = new THREE.Mesh(cyl(1.98, 2.08, 15.6, 18), bellyMat);
-  bellyFairing.rotation.x = Math.PI / 2;
-  bellyFairing.scale.set(1.18, 1.0, 0.68);
-  bellyFairing.position.set(0, 2.32, 0.8);
-  bellyFairing.castShadow = true;
-  airframe.add(bellyFairing);
-
-  const noseMid = new THREE.Mesh(cyl(1.44, 2.22, 4.8, 24), whiteMat);
-  noseMid.rotation.x = Math.PI / 2;
-  noseMid.position.set(0, 3.30, 16.8);
-  noseMid.castShadow = true;
-  airframe.add(noseMid);
-
-  const noseFwd = new THREE.Mesh(cyl(0.68, 1.44, 2.8, 20), whiteMat);
-  noseFwd.rotation.x = Math.PI / 2;
-  noseFwd.position.set(0, 3.05, 20.5);
-  noseFwd.castShadow = true;
-  airframe.add(noseFwd);
-
-  const radome = new THREE.Mesh(cone(0.68, 1.75, 20), whiteMat);
-  radome.rotation.x = Math.PI / 2;
-  radome.position.set(0, 2.94, 22.75);
-  airframe.add(radome);
-
-  // Cockpit Windshield Mask (Airbus A350 curved mask / Boeing 787 visor)
-  const visorMask = new THREE.Mesh(cyl(1.50, 1.98, 2.6, 18), glassMat);
-  visorMask.rotation.x = Math.PI / 2;
-  visorMask.scale.set(0.97, 1.0, 0.58);
-  visorMask.position.set(0, 3.80, 17.8);
-  airframe.add(visorMask);
-
-  const visorTop = new THREE.Mesh(box(2.12, 0.52, 1.95), glassMat);
-  visorTop.rotation.x = 0.2;
-  visorTop.position.set(0, 4.18, 17.45);
-  airframe.add(visorTop);
-
-  // Tailcone + APU nozzle
-  const tailCone1 = new THREE.Mesh(cyl(2.22, 1.26, 7.4, 22), whiteMat);
-  tailCone1.rotation.x = Math.PI / 2;
-  tailCone1.position.set(0, 3.62, -16.1);
-  tailCone1.castShadow = true;
-  airframe.add(tailCone1);
-
-  const tailCone2 = new THREE.Mesh(cyl(1.26, 0.36, 3.9, 18), whiteMat);
-  tailCone2.rotation.x = Math.PI / 2;
-  tailCone2.position.set(0, 3.92, -21.7);
-  tailCone2.castShadow = true;
-  airframe.add(tailCone2);
-
-  const apuExhaust = new THREE.Mesh(cyl(0.35, 0.25, 0.85, 14), exhaustMat);
-  apuExhaust.rotation.x = Math.PI / 2;
-  apuExhaust.position.set(0, 4.02, -23.9);
-  airframe.add(apuExhaust);
-
-  // Cheatline stripes, cabin windows & passenger doors
-  for (const s of [-1, 1]) {
-    const stripe = new THREE.Mesh(box(0.09, 0.26, 28.0), stripeMat);
-    stripe.position.set(s * 2.21, 3.35, 1.0);
-    airframe.add(stripe);
-
-    const winBand = new THREE.Mesh(box(0.08, 0.32, 26.2), cabinWinMat);
-    winBand.position.set(s * 2.20, 3.84, 1.2);
-    airframe.add(winBand);
-
-    for (const dz of [13.2, 4.8, -3.5, -11.2]) {
-      const door = new THREE.Mesh(box(0.11, 1.12, 0.66), bellyMat);
-      door.position.set(s * 2.21, 3.62, dz);
-      airframe.add(door);
-    }
+  // Conforming wrap-around A350 / 787 dark metallic cockpit windshield visor
+  const visorGeo = buildFuselageConformingPatch(16.2, 20.1, 10, -1.08, 1.08, 18, 0.018, false);
+  const vPos = visorGeo.attributes.position;
+  for (let i = 0; i < vPos.count; i++) {
+    const z = vPos.getZ(i);
+    const u = (z - 16.2) / (20.1 - 16.2);
+    const yCenter = 3.88 - 0.26 * u;
+    const halfH = 0.30 * (1.0 - 0.28 * u);
+    const curY = vPos.getY(i);
+    vPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
   }
+  const visorMesh = new THREE.Mesh(visorGeo, glassMat);
+  airframe.add(visorMesh);
 
-  // Swept Supercritical Wings + Sharklet Winglets + Horizontal Stabilizers
-  for (const s of [-1, 1]) {
-    const wingInner = new THREE.Mesh(
-      buildSweptWingGeometry(s, 1.9, 11.2, 2.5, -0.9, 6.8, 4.3, 0.60, 0.40, 2.55, 2.98),
-      wingMat
-    );
-    wingInner.castShadow = true;
-    wingInner.receiveShadow = true;
-    airframe.add(wingInner);
+  // Razor-sharp conforming airline cheatline ribbon along both sides of the fuselage
+  const cheatGeo = buildFuselageConformingPatch(-16.0, 15.6, 24, 1.48, 1.62, 4, 0.015, true);
+  const cheatMesh = new THREE.Mesh(cheatGeo, stripeMat);
+  airframe.add(cheatMesh);
 
-    const wingOuter = new THREE.Mesh(
-      buildSweptWingGeometry(s, 11.2, 21.4, -0.9, -5.8, 4.3, 1.65, 0.40, 0.18, 2.98, 3.70),
-      wingMat
-    );
-    wingOuter.castShadow = true;
-    wingOuter.receiveShadow = true;
-    airframe.add(wingOuter);
+  // Individual conforming dark-glass passenger cabin windows along port & starboard sides
+  const winParts = [];
+  for (let wz = -13.6; wz <= 13.8; wz += 0.82) {
+    if (Math.abs(wz - 6.5) < 0.45 || Math.abs(wz + 4.8) < 0.45) continue;
+    winParts.push([buildFuselageConformingPatch(wz - 0.19, wz + 0.19, 2, 1.32, 1.41, 2, 0.016, true), [1, 1, 1], null]);
+  }
+  const winMesh = new THREE.Mesh(mergeParts(winParts), cabinWinMat);
+  airframe.add(winMesh);
 
-    const sharklet = new THREE.Mesh(
-      buildSweptWingGeometry(s, 21.2, 22.8, -5.8, -7.6, 1.65, 0.68, 0.18, 0.10, 3.70, 5.75),
-      liveryMat
-    );
-    sharklet.castShadow = true;
-    airframe.add(sharklet);
+  // Swept Supercritical NACA Airfoil Wings + Blended Sharklets + Horizontal Stabilizers
+  const wingGeoPos = buildLoftedAirfoilWingGeometry(1, MAIN_WING_STATIONS, 24);
+  const wingGeoNeg = buildLoftedAirfoilWingGeometry(-1, MAIN_WING_STATIONS, 24);
+  const sharkGeoPos = buildLoftedAirfoilWingGeometry(1, SHARKLET_STATIONS, 20);
+  const sharkGeoNeg = buildLoftedAirfoilWingGeometry(-1, SHARKLET_STATIONS, 20);
+  const hStabGeoPos = buildLoftedAirfoilWingGeometry(1, HSTAB_STATIONS, 18);
+  const hStabGeoNeg = buildLoftedAirfoilWingGeometry(-1, HSTAB_STATIONS, 18);
 
-    // Flap track fairings
+  for (const [s, wGeo, shGeo, hsGeo] of [
+    [1, wingGeoPos, sharkGeoPos, hStabGeoPos],
+    [-1, wingGeoNeg, sharkGeoNeg, hStabGeoNeg],
+  ]) {
+    const wingMesh = new THREE.Mesh(wGeo, wingMat);
+    wingMesh.castShadow = true;
+    wingMesh.receiveShadow = true;
+    airframe.add(wingMesh);
+
+    const sharkletMesh = new THREE.Mesh(shGeo, liveryMat);
+    sharkletMesh.castShadow = true;
+    airframe.add(sharkletMesh);
+
+    const hStabMesh = new THREE.Mesh(hsGeo, wingMat);
+    hStabMesh.castShadow = true;
+    airframe.add(hStabMesh);
+
+    // Smooth teardrop flap-track fairings under trailing edge
     for (const [fx, fy, fz, fl] of [
-      [5.2, 2.38, -0.8, 2.7],
-      [9.6, 2.68, -2.3, 2.3],
-      [14.2, 3.05, -4.1, 1.8],
-      [17.8, 3.35, -5.2, 1.3],
+      [5.2, 2.40, -0.8, 2.7],
+      [9.6, 2.70, -2.3, 2.3],
+      [14.2, 3.08, -4.1, 1.8],
+      [17.8, 3.38, -5.2, 1.3],
     ]) {
-      const pod = new THREE.Mesh(cyl(0.16, 0.08, fl, 10), bellyMat);
-      pod.rotation.x = Math.PI / 2;
+      const pod = new THREE.Mesh(buildBarrelNacelleGeometry(0.06, 0.17, 0.04, fl, 16, 8), bellyMat);
       pod.position.set(s * fx, fy, fz);
       airframe.add(pod);
     }
-
-    // Horizontal stabilizer
-    const hStab = new THREE.Mesh(
-      buildSweptWingGeometry(s, 0.8, 7.6, -18.4, -21.8, 3.3, 1.35, 0.30, 0.12, 3.96, 4.40),
-      wingMat
-    );
-    hStab.castShadow = true;
-    airframe.add(hStab);
   }
 
-  // Swept Vertical Stabilizer Tail Fin + Dorsal Fillet
-  const tailFin = new THREE.Mesh(
-    buildSweptTailFinGeometry(-12.8, -19.5, -18.5, -22.2, 4.4, 12.6, 0.54, 0.18),
-    liveryMat
-  );
+  // Smooth Lofted Airfoil Vertical Stabilizer Tail Fin + Rudder Accent Stripe
+  const tailFin = new THREE.Mesh(buildLoftedVerticalTailFinGeometry(VFIN_STATIONS, 24), liveryMat);
   tailFin.castShadow = true;
   airframe.add(tailFin);
 
-  const dorsalFin = new THREE.Mesh(
-    buildSweptTailFinGeometry(-9.0, -12.8, -12.8, -14.6, 4.2, 5.9, 0.38, 0.26),
-    liveryMat
-  );
-  airframe.add(dorsalFin);
-
-  // Rudder accent stripe on tail fin
-  const rudderStripe = new THREE.Mesh(
-    buildSweptTailFinGeometry(-18.2, -19.5, -21.2, -22.2, 4.6, 12.4, 0.56, 0.20),
-    stripeMat
-  );
+  const rudderStripe = new THREE.Mesh(buildLoftedVerticalTailFinGeometry(RUDDER_STRIPE_STATIONS, 18), stripeMat);
   airframe.add(rudderStripe);
 
-  // --- 2. Twin Under-Wing High-Bypass Turbofan Engines with Spinning Fans & Plumes ---
+  // --- 2. Twin Under-Wing High-Bypass Turbofan Engines (Trent XWB / GEnx) ---
   const fans = [];
   const plumes = [];
   const engineFires = [];
+
+  const cowlGeo = buildBarrelNacelleGeometry(1.16, 1.30, 1.08, 3.70, 36, 14);
+  const cowlBandGeo = buildBarrelNacelleGeometry(1.26, 1.315, 1.24, 1.25, 36, 6);
 
   for (const s of [-1, 1]) {
     const ex = s * 7.0;
@@ -601,63 +894,70 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     engGroup.position.set(ex, ey, ez);
     airframe.add(engGroup);
 
-    // Pylon strut
-    const pylon = new THREE.Mesh(box(0.34, 1.0, 2.9), bellyMat);
-    pylon.position.set(0, 0.90, -0.5);
-    pylon.rotation.x = 0.12;
+    // Swept aerodynamic pylon strut
+    const pylon = new THREE.Mesh(
+      buildLoftedVerticalTailFinGeometry([
+        { y: 0.45, zFront: 1.25, zRear: -1.95, thick: 0.22 },
+        { y: 1.35, zFront: 0.65, zRear: -2.25, thick: 0.18 },
+      ], 14),
+      bellyMat
+    );
     engGroup.add(pylon);
 
-    // Outer nacelle cowling
-    const cowl = new THREE.Mesh(cyl(1.22, 1.15, 3.6, 22), whiteMat);
-    cowl.rotation.x = Math.PI / 2;
+    // Barrel-curved outer nacelle cowling
+    const cowl = new THREE.Mesh(cowlGeo, whiteMat);
     cowl.castShadow = true;
     engGroup.add(cowl);
 
     // Livery band on engine nacelle
-    const cowlBand = new THREE.Mesh(cyl(1.23, 1.20, 1.2, 22), liveryMat);
-    cowlBand.rotation.x = Math.PI / 2;
+    const cowlBand = new THREE.Mesh(cowlBandGeo, liveryMat);
     cowlBand.position.z = 0.35;
     engGroup.add(cowlBand);
 
-    // Chrome intake lip
-    const lip = new THREE.Mesh(cyl(1.22, 1.12, 0.58, 22), chromeMat);
+    // Polished chrome intake lip ring
+    const lip = new THREE.Mesh(cyl(1.18, 1.12, 0.56, 36), chromeMat);
     lip.rotation.x = Math.PI / 2;
     lip.position.z = 2.02;
     engGroup.add(lip);
 
-    // Spinning Turbofan Rotor Assembly (`fanGroup`)
+    // Spinning Turbofan Rotor Assembly (`fanGroup` with 22 twisted titanium fan blades + conical spinner)
     const fanGroup = new THREE.Group();
     fanGroup.position.z = 1.92;
     engGroup.add(fanGroup);
 
-    const throatDisc = new THREE.Mesh(cyl(1.08, 1.08, 0.16, 18), glassMat);
+    const throatDisc = new THREE.Mesh(cyl(1.10, 1.10, 0.16, 28), glassMat);
     throatDisc.rotation.x = Math.PI / 2;
     fanGroup.add(throatDisc);
 
-    const spinner = new THREE.Mesh(cone(0.36, 0.82, 16), tireMat);
+    const spinner = new THREE.Mesh(cone(0.36, 0.85, 24), tireMat);
     spinner.rotation.x = Math.PI / 2;
-    spinner.position.z = 0.32;
+    spinner.position.z = 0.34;
     fanGroup.add(spinner);
 
-    // 12 radial titanium fan blades
-    const bladeGeo = box(0.14, 0.96, 0.04);
-    for (let b = 0; b < 12; b++) {
-      const ang = (b / 12) * Math.PI * 2;
+    const spinnerTip = new THREE.Mesh(cone(0.14, 0.32, 16), chromeMat);
+    spinnerTip.rotation.x = Math.PI / 2;
+    spinnerTip.position.z = 0.62;
+    fanGroup.add(spinnerTip);
+
+    // 22 twisted metallic fan blades
+    const bladeGeo = box(0.13, 0.98, 0.035);
+    for (let b = 0; b < 22; b++) {
+      const ang = (b / 22) * Math.PI * 2;
       const blade = new THREE.Mesh(bladeGeo, chromeMat);
-      blade.position.set(Math.cos(ang) * 0.54, Math.sin(ang) * 0.54, 0.10);
-      blade.rotation.z = ang + 0.35;
-      blade.rotation.y = 0.42;
+      blade.position.set(Math.cos(ang) * 0.55, Math.sin(ang) * 0.55, 0.10);
+      blade.rotation.z = ang + 0.32;
+      blade.rotation.y = 0.46;
       fanGroup.add(blade);
     }
     fans.push(fanGroup);
 
-    // Rear bypass duct & core exhaust cone
-    const nozzle = new THREE.Mesh(cyl(1.12, 0.80, 1.15, 18), chromeMat);
+    // Stepped rear bypass duct & core exhaust nozzle cone
+    const nozzle = new THREE.Mesh(cyl(1.08, 0.78, 1.15, 28), chromeMat);
     nozzle.rotation.x = Math.PI / 2;
     nozzle.position.z = -2.25;
     engGroup.add(nozzle);
 
-    const coreCone = new THREE.Mesh(cone(0.56, 1.35, 16), exhaustMat);
+    const coreCone = new THREE.Mesh(cone(0.54, 1.38, 24), exhaustMat);
     coreCone.rotation.x = -Math.PI / 2;
     coreCone.position.z = -2.95;
     engGroup.add(coreCone);
@@ -666,7 +966,7 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     const plumeGroup = new THREE.Group();
     plumeGroup.position.z = -2.85;
     plumeGroup.visible = false;
-    const outerPlumeGeo = cone(0.88, 6.5, 14);
+    const outerPlumeGeo = cone(0.88, 6.5, 16);
     outerPlumeGeo.rotateX(-Math.PI / 2);
     outerPlumeGeo.translate(0, 0, -3.25);
     const outerPlumeMat = new THREE.MeshBasicMaterial({
@@ -676,7 +976,7 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    const innerPlumeGeo = cone(0.52, 4.2, 12);
+    const innerPlumeGeo = cone(0.52, 4.2, 14);
     innerPlumeGeo.rotateX(-Math.PI / 2);
     innerPlumeGeo.translate(0, 0, -2.1);
     const innerPlumeMat = new THREE.MeshBasicMaterial({
@@ -729,7 +1029,7 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
   noseGearPivot.position.set(0, 2.15, 15.8);
   gearGroup.add(noseGearPivot);
 
-  const noseStrut = new THREE.Mesh(cyl(0.15, 0.13, 1.75, 12), strutMat);
+  const noseStrut = new THREE.Mesh(cyl(0.15, 0.13, 1.75, 16), strutMat);
   noseStrut.position.set(0, -0.85, 0);
   noseGearPivot.add(noseStrut);
 
@@ -738,28 +1038,35 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
   noseTorque.rotation.x = 0.35;
   noseGearPivot.add(noseTorque);
 
-  // Twin Nose Tires + Hubs
+  // Open nose gear bay doors
+  for (const s of [-1, 1]) {
+    const nDoor = new THREE.Mesh(box(0.08, 0.72, 1.35), bellyMat);
+    nDoor.position.set(s * 0.48, -0.25, 0.05);
+    noseGearPivot.add(nDoor);
+  }
+
+  // Twin Nose Tires + Alloy Hubs
   const allWheels = [];
   for (const s of [-1, 1]) {
-    const nw = new THREE.Mesh(cyl(0.46, 0.46, 0.25, 16), tireMat);
+    const nw = new THREE.Mesh(cyl(0.46, 0.46, 0.25, 22), tireMat);
     nw.rotation.z = Math.PI / 2;
     nw.position.set(s * 0.30, -1.69, 0);
-    const nh = new THREE.Mesh(cyl(0.22, 0.22, 0.27, 12), chromeMat);
+    const nh = new THREE.Mesh(cyl(0.22, 0.22, 0.27, 16), chromeMat);
     nh.rotation.z = Math.PI / 2;
     nw.add(nh);
     noseGearPivot.add(nw);
     allWheels.push(nw);
   }
 
-  // Nose-gear taxi/landing spotlight bulb
+  // Nose-gear dual taxi/landing spotlight bulbs
   const taxiLamp = new THREE.Mesh(
-    new THREE.SphereGeometry(0.18, 8, 8),
+    new THREE.SphereGeometry(0.18, 12, 12),
     new THREE.MeshBasicMaterial({ color: 0xfff8dc })
   );
   taxiLamp.position.set(0, -0.65, 0.22);
   noseGearPivot.add(taxiLamp);
 
-  // Port & Starboard 4-Wheel Main Landing Gear Bogies (x = ±3.7m, z = -0.4m)
+  // Port & Starboard Main Landing Gear Bogies (x = ±3.7m, z = -0.4m)
   const mainGearLeft = new THREE.Group();
   const mainGearRight = new THREE.Group();
   for (const [s, mg] of [
@@ -769,7 +1076,7 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     mg.position.set(s * 3.7, 2.45, -0.4);
     gearGroup.add(mg);
 
-    const mStrut = new THREE.Mesh(cyl(0.21, 0.19, 1.95, 12), strutMat);
+    const mStrut = new THREE.Mesh(cyl(0.21, 0.19, 1.95, 16), strutMat);
     mStrut.position.set(0, -0.95, 0);
     mg.add(mStrut);
 
@@ -778,7 +1085,7 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     sideBrace.rotation.z = s * 0.55;
     mg.add(sideBrace);
 
-    const bogieBeam = new THREE.Mesh(box(0.28, 0.24, 1.90), strutMat);
+    const bogieBeam = new THREE.Mesh(box(0.28, 0.24, 1.95), strutMat);
     bogieBeam.position.set(0, -1.85, 0);
     mg.add(bogieBeam);
 
@@ -789,10 +1096,10 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
 
     for (const wx of [-0.44, 0.44]) {
       for (const wz of [-0.64, 0.64]) {
-        const mw = new THREE.Mesh(cyl(0.60, 0.60, 0.36, 16), tireMat);
+        const mw = new THREE.Mesh(cyl(0.60, 0.60, 0.36, 22), tireMat);
         mw.rotation.z = Math.PI / 2;
         mw.position.set(wx, -1.85, wz);
-        const mh = new THREE.Mesh(cyl(0.28, 0.28, 0.38, 12), chromeMat);
+        const mh = new THREE.Mesh(cyl(0.28, 0.28, 0.38, 16), chromeMat);
         mh.rotation.z = Math.PI / 2;
         mw.add(mh);
         mg.add(mw);
@@ -801,32 +1108,34 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     }
   }
 
-  // --- 4. Navigation, Strobe & Anti-Collision Beacons ---
+  // --- 4. Navigation, Strobe & Anti-Collision Beacons (flush aerodynamic lenses) ---
   const navPort = new THREE.Mesh(
-    new THREE.SphereGeometry(0.32, 8, 8),
+    new THREE.SphereGeometry(0.11, 10, 10),
     new THREE.MeshBasicMaterial({ color: 0xff2a1a })
   );
-  navPort.position.set(21.6, 3.75, -5.8);
+  navPort.position.set(21.6, 4.35, -6.2);
 
   const navStarboard = new THREE.Mesh(
-    new THREE.SphereGeometry(0.32, 8, 8),
+    new THREE.SphereGeometry(0.11, 10, 10),
     new THREE.MeshBasicMaterial({ color: 0x18e65a })
   );
-  navStarboard.position.set(-21.6, 3.75, -5.8);
+  navStarboard.position.set(-21.6, 4.35, -6.2);
 
   const strobeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const strobePort = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 8), strobeMat);
-  strobePort.position.set(22.8, 5.75, -7.5);
-  const strobeStarboard = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 8), strobeMat);
-  strobeStarboard.position.set(-22.8, 5.75, -7.5);
-  const strobeTail = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 8), strobeMat);
-  strobeTail.position.set(0, 12.65, -21.8);
+  const strobePort = new THREE.Mesh(new THREE.SphereGeometry(0.10, 10, 10), strobeMat);
+  strobePort.position.set(22.65, 5.86, -7.75);
+  const strobeStarboard = new THREE.Mesh(new THREE.SphereGeometry(0.10, 10, 10), strobeMat);
+  strobeStarboard.position.set(-22.65, 5.86, -7.75);
+  const strobeTail = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10), strobeMat);
+  strobeTail.position.set(0, 12.70, -22.25);
 
   const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff1e1e });
-  const beaconTop = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), beaconMat);
-  beaconTop.position.set(0, 5.72, 3.5);
-  const beaconBelly = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), beaconMat);
-  beaconBelly.position.set(0, 1.55, 2.0);
+  const beaconGeo = new THREE.SphereGeometry(0.09, 10, 8);
+  beaconGeo.scale(1.0, 0.45, 1.4);
+  const beaconTop = new THREE.Mesh(beaconGeo, beaconMat);
+  beaconTop.position.set(0, 5.76, 3.5);
+  const beaconBelly = new THREE.Mesh(beaconGeo, beaconMat);
+  beaconBelly.position.set(0, 1.18, 2.0);
 
   airframe.add(navPort, navStarboard, strobePort, strobeStarboard, strobeTail, beaconTop, beaconBelly);
 
@@ -848,7 +1157,7 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     strobeMat,
     beaconMat,
     cabinWinMat,
-    materials: [whiteMat, bellyMat, wingMat, liveryMat, stripeMat, chromeMat],
+    materials: [fuseMat, whiteMat, bellyMat, wingMat, liveryMat, stripeMat, chromeMat],
     driverSeat: { x: 0, y: 3.4, z: 17.5, scale: 0.01 }, // hidden inside enclosed flight deck
   };
 

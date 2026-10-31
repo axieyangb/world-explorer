@@ -218,13 +218,16 @@ const roadIndexCache = new WeakMap();
 function roadIndex(chunk) {
   let idx = roadIndexCache.get(chunk);
   if (idx) return idx;
-  const segs = (chunk.userData.roadSegments || []).filter((s) => CAR.has(s.cls) && !s.tunnel && !s.bridge);
+  const allSegs = chunk.userData.roadSegments || [];
+  const segs = allSegs.filter((s) => CAR.has(s.cls) && !s.tunnel && !s.bridge);
+  const bridgeSegs = allSegs.filter((s) => !s.tunnel && s.bridge);
   const grid = new Map();
+  const bridgeGrid = new Map();
   const ends = new Map();
   const C = 25;
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
-    const pad = s.width * 0.5 + 6;
+    const pad = s.width * 0.5 + 10;
     const x0 = Math.floor((Math.min(s.x1, s.x2) - pad) / C), x1 = Math.floor((Math.max(s.x1, s.x2) + pad) / C);
     const z0 = Math.floor((Math.min(s.z1, s.z2) - pad) / C), z1 = Math.floor((Math.max(s.z1, s.z2) + pad) / C);
     for (let gz = z0; gz <= z1; gz++) {
@@ -243,14 +246,47 @@ function roadIndex(chunk) {
       e.ids.add(s.id);
     }
   }
+  for (let i = 0; i < bridgeSegs.length; i++) {
+    const s = bridgeSegs[i];
+    const pad = (s.width || 8) * 0.5 + 6;
+    const x0 = Math.floor((Math.min(s.x1, s.x2) - pad) / C), x1 = Math.floor((Math.max(s.x1, s.x2) + pad) / C);
+    const z0 = Math.floor((Math.min(s.z1, s.z2) - pad) / C), z1 = Math.floor((Math.max(s.z1, s.z2) + pad) / C);
+    for (let gz = z0; gz <= z1; gz++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const k = (gx + 4096) * 8192 + gz + 4096;
+        let a = bridgeGrid.get(k);
+        if (!a) bridgeGrid.set(k, (a = []));
+        a.push(i);
+      }
+    }
+  }
   const junctions = new PointGrid(20);
   for (const e of ends.values()) if (e.n >= 3 && e.ids.size >= 2) junctions.add(e.x, e.z);
   const signalNodes = new PointGrid(30);
   const sn = chunk.userData.street && chunk.userData.street.signalNodes;
   if (sn) for (let i = 0; i < sn.length; i += 4) signalNodes.add(sn[i] + chunk.userData.ox, sn[i + 1] + chunk.userData.oz);
-  idx = { segs, grid, C, junctions, signalNodes };
+  idx = { segs, bridgeSegs, grid, bridgeGrid, C, junctions, signalNodes };
   roadIndexCache.set(chunk, idx);
   return idx;
+}
+
+function nearBridge(idx, x, z, extraClear = 3.8) {
+  if (!idx || !idx.bridgeGrid) return false;
+  const a = idx.bridgeGrid.get((Math.floor(x / idx.C) + 4096) * 8192 + Math.floor(z / idx.C) + 4096);
+  if (!a) return false;
+  for (const i of a) {
+    const s = idx.bridgeSegs[i];
+    const ex = s.x2 - s.x1, ez = s.z2 - s.z1;
+    const L2 = ex * ex + ez * ez;
+    if (L2 < 1e-4) continue;
+    let t = ((x - s.x1) * ex + (z - s.z1) * ez) / L2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const fx = s.x1 + ex * t, fz = s.z1 + ez * t;
+    const d = Math.hypot(x - fx, z - fz);
+    const hw = (s.width || 8) * 0.5;
+    if (d < hw + extraClear) return true;
+  }
+  return false;
 }
 
 /** Nearest car road to (x, z) within maxD of its edge: { s, d, hw, y, dx, dz, fx, fz } (d = centerline distance). */
@@ -588,12 +624,12 @@ export class StreetDetail {
       const ch = this._chunkAt(loaded, x, z);
       return ch ? roadIndex(ch) : null;
     };
-    // Ground height + off-asphalt nudge. Returns [x, y, z, road] or null if no chunk is loaded there.
-    const ground = (x, z, minOff, maxD = 8) => {
+    // Ground height + off-asphalt nudge. Returns [x, y, z, road, idx] or null if no chunk is loaded there.
+    const ground = (x, z, minOff, maxD = 10) => {
       const idx = ctx(x, z);
       if (!idx) return null;
       const r = nearestRoad(idx, x, z, maxD);
-      if (!r) return [x, getBeijingTerrainElevation(x, z) - 0.05, z, null, idx];
+      if (!r) return [x, getBeijingTerrainElevation(x, z), z, null, idx];
       if (r.d < r.hw + minOff) {
         // OSM point falls on our (approximate-width) asphalt: push it onto the sidewalk
         let nx = x - r.fx, nz = z - r.fz;
@@ -603,9 +639,18 @@ export class StreetDetail {
         z = r.fz + nz * (r.hw + minOff);
         r.d = r.hw + minOff;
       }
-      const sidewalk = r.s.cls === 'primary' || r.s.cls === 'secondary' || r.s.cls === 'tertiary' || r.s.cls === 'residential';
-      const swW = r.s.cls === 'residential' ? 1.6 : 2.2;
-      const y = sidewalk && r.d <= r.hw + swW + 0.3 ? r.y + 0.04 : r.d <= r.hw + 0.6 ? r.y : Math.max(getBeijingTerrainElevation(x, z) - 0.05, r.d < r.hw + 4 ? r.y - 0.3 : -1e9);
+      const terrY = getBeijingTerrainElevation(x, z);
+      const swW = r.s.cls === 'residential' ? 1.8 : 2.5;
+      const edgeD = Math.max(0, r.d - r.hw);
+      let y;
+      if (edgeD <= swW + 1.2) {
+        y = Math.max(terrY, r.y + 0.04);
+      } else if (edgeD <= 8.5) {
+        const blend = Math.max(0, 1 - (edgeD - (swW + 1.2)) / (8.5 - (swW + 1.2)));
+        y = Math.max(terrY, terrY * (1 - blend) + (r.y + 0.02) * blend);
+      } else {
+        y = terrY;
+      }
       return [x, y, z, r, idx];
     };
     const faceRoad = (x, z, r) => (r ? rotFor((r.fx - x) / Math.max(0.01, r.d), (r.fz - z) / Math.max(0.01, r.d)) : 0);
@@ -613,16 +658,24 @@ export class StreetDetail {
     // Trees
     const tr = d.trees;
     for (let i = 0; i < tr.length && P.n.trees < CAP.trees; i += 4) {
-      const g = ground(toX(tr[i + 1]), toZ(tr[i]), 0.9, 3);
+      const tx0 = toX(tr[i + 1]), tz0 = toZ(tr[i]);
+      const idx0 = ctx(tx0, tz0);
+      if (!idx0 || nearBridge(idx0, tx0, tz0, 3.8)) continue;
+      const g = ground(tx0, tz0, 1.35, 10);
       if (!g) continue;
+      const [tx, ty, tz, r, idx] = g;
+      if (nearBridge(idx, tx, tz, 3.8)) continue;
+      const terrY = getBeijingTerrainElevation(tx, tz);
+      if (r && r.y > terrY + 1.25 && r.d < r.hw + 3.8) continue;
+      const treeBaseY = r ? Math.max(ty, r.y + 0.04) : ty;
       const sp = tr[i + 2], h = tr[i + 3];
       const base = sp === SP_CONIFER ? 10.6 : sp === SP_TALL ? 10.4 : sp === SP_PALM ? 9.6 : 8.6;
       const hs = Math.sin(tr[i] * 12345.6 + tr[i + 1] * 6543.2) * 43758.5453;
       const rnd = hs - Math.floor(hs);
       const sc = h > 0 ? Math.max(0.45, Math.min(2.2, h / base)) : 0.78 + rnd * 0.26;
-      P.trees.push(g[0], g[1] - 0.05, g[2], sc, sc * (0.95 + rnd * 0.1), rnd * 6.283, 0.86 + rnd * 0.26, 0.9 + rnd * 0.2, 0.84 + rnd * 0.2);
+      P.trees.push(tx, treeBaseY, tz, sc, sc * (0.95 + rnd * 0.1), rnd * 6.283, 0.86 + rnd * 0.26, 0.9 + rnd * 0.2, 0.84 + rnd * 0.2);
       P.species.push(sp);
-      P.pts.tree.push(g[0], g[2]);
+      P.pts.tree.push(tx, tz);
       P.n.trees++;
     }
 

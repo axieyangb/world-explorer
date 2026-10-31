@@ -181,115 +181,156 @@ export class AirlinerSystem {
   }
 
   _initCloudDeck() {
-    // 1. Procedural Cumulus Cloud Layer Shader Sheet at y = 1,820 m (28 km x 28 km)
-    const sheetGeo = new THREE.PlaneGeometry(28000, 28000, 1, 1);
+    // Multi-layered procedural GLSL volumetric Perlin-Worley FBM cloud planes (y = 1,560m, 1,820m, 2,080m)
+    // Replaces any geometric oval/icosahedron puffs with continuous organic domain-warped cumulus & stratocumulus decks
+    const sheetGeo = new THREE.PlaneGeometry(32000, 32000, 1, 1);
     sheetGeo.rotateX(-Math.PI / 2);
-    const sheetMat = new THREE.ShaderMaterial({
+
+    const makeLayerMat = (layerNormY, layerSeed) => new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
       uniforms: {
         uTime: { value: 0 },
         uCenter: { value: new THREE.Vector2(0, 0) },
-        uSunElev: { value: 0.65 }
+        uSunElev: { value: 0.65 },
+        uSunDir: { value: new THREE.Vector3(0.45, 0.78, 0.42).normalize() },
+        uCloudCover: { value: 0.28 },
+        uLayerY: { value: layerNormY },
+        uLayerSeed: { value: layerSeed },
       },
       vertexShader: `
-        varying vec2 vWorldXZ;
-        varying vec2 vUv;
+        varying vec3 vWorldPos;
         void main() {
-          vUv = uv;
           vec4 wp = modelMatrix * vec4(position, 1.0);
-          vWorldXZ = wp.xz;
+          vWorldPos = wp.xyz;
           gl_Position = projectionMatrix * viewMatrix * wp;
         }
       `,
       fragmentShader: `
-        varying vec2 vWorldXZ;
-        varying vec2 vUv;
+        varying vec3 vWorldPos;
         uniform float uTime;
         uniform vec2 uCenter;
         uniform float uSunElev;
+        uniform vec3 uSunDir;
+        uniform float uCloudCover;
+        uniform float uLayerY;
+        uniform float uLayerSeed;
 
-        float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        float hash2(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
         }
-        float noise(vec2 p) {
+        vec2 hash22(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.xx + p3.yz) * p3.zy);
+        }
+        float vnoise(vec2 p) {
           vec2 i = floor(p);
           vec2 f = fract(p);
           vec2 u = f * f * (3.0 - 2.0 * f);
           return mix(
-            mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
-            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+            mix(hash2(i + vec2(0.0, 0.0)), hash2(i + vec2(1.0, 0.0)), u.x),
+            mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), u.x),
             u.y
           );
         }
         float fbm(vec2 p) {
           float v = 0.0;
-          float a = 0.52;
-          for (int i = 0; i < 4; i++) {
-            v += a * noise(p);
-            p = p * 2.07 + vec2(13.7, 29.3);
+          float a = 0.5;
+          mat2 rot = mat2(0.80, -0.60, 0.60, 0.80);
+          for (int i = 0; i < 5; i++) {
+            v += a * vnoise(p);
+            p = rot * p * 2.04 + vec2(13.7, 29.3);
             a *= 0.5;
           }
           return v;
         }
+        float worleyBillow(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          float minDist = 1.0;
+          for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+              vec2 neighbor = vec2(float(x), float(y));
+              vec2 pt = hash22(i + neighbor);
+              vec2 diff = neighbor + pt - f;
+              minDist = min(minDist, dot(diff, diff));
+            }
+          }
+          return 1.0 - sqrt(clamp(minDist, 0.0, 1.0));
+        }
+        float sampleVolCloud(vec2 p, float cover) {
+          vec2 q = p + 0.55 * vec2(fbm(p), fbm(p + vec2(5.2, 1.3)));
+          vec2 r = p + 0.85 * vec2(fbm(q * 1.9 + vec2(1.7, 9.2)), fbm(q * 1.9 + vec2(2.8, 8.3)));
+          float baseFbm = fbm(r);
+          float billow = worleyBillow(r * 1.7) * 0.65 + worleyBillow(r * 3.6 + 7.1) * 0.35;
+          float pw = mix(baseFbm, billow, 0.38);
+          float erode = (1.0 - billow) * 0.22 + (1.0 - abs(vnoise(r * 4.6) * 2.0 - 1.0)) * 0.10;
+          float raw = pw - erode * (1.0 - 0.5 * cover);
+          // Outer layers (base & anvil top) require higher core density so clouds taper organically in 3D height
+          float profileBias = abs(uLayerY - 0.5) * 0.22;
+          float thresh = 0.74 - cover * 0.54 + profileBias;
+          return smoothstep(thresh, thresh + 0.30, raw);
+        }
+
         void main() {
-          vec2 wind = vec2(uTime * 14.0, uTime * 6.0);
-          vec2 uv = (vWorldXZ + wind) * 0.00038;
-          float n = fbm(uv);
-          float n2 = fbm(uv * 2.4 - wind * 0.0002);
-          float density = smoothstep(0.47, 0.76, n * 0.75 + n2 * 0.35);
-          float distFade = 1.0 - smoothstep(7500.0, 13500.0, length(vWorldXZ - uCenter));
-          float alpha = density * distFade * 0.72;
-          if (alpha < 0.015) discard;
-          vec3 dayTop = vec3(0.97, 0.98, 1.0);
-          vec3 dayBase = vec3(0.76, 0.82, 0.90);
-          vec3 duskTop = vec3(0.98, 0.76, 0.62);
-          vec3 nightTop = vec3(0.14, 0.18, 0.26);
+          vec2 wind = vec2(uTime * 12.0, uTime * 4.5);
+          vec2 p = (vWorldPos.xz + wind) * 0.00032 + vec2(uLayerSeed * 3.7, uLayerSeed * 6.1);
+          float cov = sampleVolCloud(p, uCloudCover);
+          float distFade = 1.0 - smoothstep(8500.0, 15500.0, length(vWorldPos.xz - uCenter));
+          // Smooth vertical fade when camera flies right through the plane so there is zero hard plane clipping
+          float camVertDist = abs(cameraPosition.y - vWorldPos.y);
+          float camFade = smoothstep(18.0, 135.0, camVertDist);
+          float alpha = cov * distFade * camFade * (0.34 + 0.22 * uCloudCover);
+          if (alpha < 0.012) discard;
+
+          // 2-step Beer-Lambert self-shadowing along the sun direction
+          vec2 sunStep = normalize(uSunDir.xz + vec2(1e-4)) * 0.12;
+          float sunD1 = sampleVolCloud(p + sunStep * 0.7, uCloudCover);
+          float sunD2 = sampleVolCloud(p + sunStep * 1.8, uCloudCover);
+          float opticalDepth = (sunD1 * 0.6 + sunD2 * 0.4) * (1.1 + 0.7 * uCloudCover) + (1.0 - uLayerY) * 0.45;
+          float beer = exp(-opticalDepth * 1.85);
+          float powder = 1.0 - exp(-cov * 3.6);
+
+          vec3 dayTop = vec3(0.98, 0.99, 1.0);
+          vec3 dayBase = mix(vec3(0.70, 0.77, 0.86), vec3(0.48, 0.54, 0.63), smoothstep(0.45, 0.88, uCloudCover));
+          vec3 duskTop = vec3(0.98, 0.74, 0.58);
+          vec3 nightTop = vec3(0.13, 0.17, 0.25);
           float dayFactor = clamp(uSunElev * 1.8, 0.0, 1.0);
-          vec3 col = mix(nightTop, mix(duskTop, mix(dayBase, dayTop, smoothstep(0.45, 0.82, n)), dayFactor), clamp(uSunElev + 0.35, 0.15, 1.0));
+          float litMix = clamp(beer * (0.65 + 0.45 * powder) + uLayerY * 0.22, 0.0, 1.0);
+          vec3 dayCol = mix(dayBase, dayTop, litMix);
+          vec3 col = mix(nightTop, mix(duskTop, dayCol, dayFactor), clamp(uSunElev + 0.35, 0.15, 1.0));
+
+          // Forward-scattered silver-lining glow
+          vec3 viewDir = normalize(vWorldPos - cameraPosition);
+          float sunDot = max(0.0, dot(viewDir, normalize(uSunDir)));
+          float silver = pow(sunDot, 5.0) * beer * (1.0 - cov * 0.55) * clamp(uSunElev + 0.2, 0.0, 1.0);
+          col += vec3(1.0, 0.95, 0.84) * silver * 0.45;
+
           gl_FragColor = vec4(col, alpha);
         }
       `
     });
-    this.cloudSheet = new THREE.Mesh(sheetGeo, sheetMat);
-    this.cloudSheet.position.y = 1820;
-    this.cloudSheet.frustumCulled = false;
-    this.cloudGroup.add(this.cloudSheet);
 
-    // 2. 3D Volumetric Cumulus Puff Clusters (160 instanced multi-lobe cloud billows between 1,450 and 2,250 m)
-    const puffGeo = new THREE.IcosahedronGeometry(1, 2);
-    puffGeo.scale(1.6, 0.58, 1.25);
-    const puffMat = new THREE.MeshLambertMaterial({
-      color: 0xf4f8ff,
-      emissive: 0x334155,
-      emissiveIntensity: 0.22,
-      transparent: true,
-      opacity: 0.68,
-      depthWrite: false
-    });
-    const puffCount = 160;
-    this.cloudPuffs = new THREE.InstancedMesh(puffGeo, puffMat, puffCount);
-    this.cloudPuffs.frustumCulled = false;
-    this.cloudPuffData = [];
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < puffCount; i++) {
-      const ox = (Math.random() - 0.5) * 14000;
-      const oz = (Math.random() - 0.5) * 14000;
-      const oy = CLOUD_BASE_Y + 60 + Math.random() * (CLOUD_TOP_Y - CLOUD_BASE_Y - 120);
-      const sx = 140 + Math.random() * 260;
-      const sy = 90 + Math.random() * 140;
-      const sz = 130 + Math.random() * 240;
-      const rotY = Math.random() * Math.PI * 2;
-      this.cloudPuffData.push({ ox, oy, oz, sx, sy, sz, rotY });
-      dummy.position.set(ox, oy, oz);
-      dummy.rotation.set(0, rotY, 0);
-      dummy.scale.set(sx, sy, sz);
-      dummy.updateMatrix();
-      this.cloudPuffs.setMatrixAt(i, dummy.matrix);
+    this.cloudSheets = [];
+    const layerSpec = [
+      { y: 1580, normY: 0.2, seed: 1.1 },
+      { y: 1820, normY: 0.5, seed: 2.7 },
+      { y: 2060, normY: 0.85, seed: 4.3 },
+    ];
+    for (const spec of layerSpec) {
+      const m = new THREE.Mesh(sheetGeo, makeLayerMat(spec.normY, spec.seed));
+      m.position.y = spec.y;
+      m.frustumCulled = false;
+      this.cloudGroup.add(m);
+      this.cloudSheets.push(m);
     }
-    this.cloudPuffs.instanceMatrix.needsUpdate = true;
-    this.cloudGroup.add(this.cloudPuffs);
+    this.cloudSheet = this.cloudSheets[1];
+    this.cloudPuffs = null;
+    this.cloudPuffData = [];
   }
 
   _initFxPool() {
@@ -799,32 +840,23 @@ export class AirlinerSystem {
    */
   updateAmbient(dt, focusPos) {
     const now = performance.now() * 0.001;
+    if (!focusPos) focusPos = this.app.pos || this.app.camera?.position;
 
-    // 1. Update 3D Cloud Deck around camera / focus position
-    if (this.cloudSheet && focusPos) {
-      this.cloudSheet.position.x = focusPos.x;
-      this.cloudSheet.position.z = focusPos.z;
-      this.cloudSheet.material.uniforms.uTime.value = now;
-      this.cloudSheet.material.uniforms.uCenter.value.set(focusPos.x, focusPos.z);
-      const sunElev = this.app.sky?.lastState?.sunElevation ?? 0.65;
-      this.cloudSheet.material.uniforms.uSunElev.value = sunElev;
-
-      // Wrap 3D volumetric cloud puffs in a 14 km torus around the player
-      if (this.cloudPuffs && this.app.mode === "airliner") {
-        const dummy = new THREE.Object3D();
-        const span = 14000;
-        const half = span * 0.5;
-        for (let i = 0; i < this.cloudPuffData.length; i++) {
-          const d = this.cloudPuffData[i];
-          const wx = focusPos.x + ((((d.ox + now * 12 - focusPos.x) % span) + span) % span) - half;
-          const wz = focusPos.z + ((((d.oz + now * 5 - focusPos.z) % span) + span) % span) - half;
-          dummy.position.set(wx, d.oy, wz);
-          dummy.rotation.set(0, d.rotY, 0);
-          dummy.scale.set(d.sx, d.sy, d.sz);
-          dummy.updateMatrix();
-          this.cloudPuffs.setMatrixAt(i, dummy.matrix);
-        }
-        this.cloudPuffs.instanceMatrix.needsUpdate = true;
+    // 1. Update Multi-Layer 3D Volumetric Cloud Deck around camera / focus position
+    if (this.cloudSheets && focusPos) {
+      const sunDir = this.app.atmosphere?.sunDir || this.app.sunDir;
+      const sunElev = sunDir ? sunDir.y : (this.app.sky?.lastState?.sunElevation ?? 0.65);
+      const cloudCover = this.app.atmosphere?.cloud ?? 0.28;
+      for (let i = 0; i < this.cloudSheets.length; i++) {
+        const sheet = this.cloudSheets[i];
+        sheet.position.x = focusPos.x;
+        sheet.position.z = focusPos.z;
+        const u = sheet.material.uniforms;
+        u.uTime.value = now;
+        u.uCenter.value.set(focusPos.x, focusPos.z);
+        u.uSunElev.value = sunElev;
+        u.uCloudCover.value = cloudCover;
+        if (sunDir && u.uSunDir) u.uSunDir.value.copy(sunDir);
       }
     }
 
@@ -884,22 +916,23 @@ export class AirlinerSystem {
         for (const bc of ud.beacons) bc.material.opacity = (beaconOn && !this.dead) ? 1.0 : 0.22;
       }
 
-      // Wingtip + engine condensation contrails at high speed / altitude
-      if (this.app.mode === "airliner" && !this.dead && this.speed > 75 && this.mesh.position.y > 450) {
-        this.contrailClock += dt;
-        if (this.contrailClock >= 0.045) {
-          this.contrailClock = 0;
-          const altBoost = THREE.MathUtils.clamp((this.mesh.position.y - 450) / 1800, 0.25, 1.0);
+      // Wingtip vortex condensation trails at high altitude (> 2,200m) only when actively moving through space
+      if (this.app.mode === "airliner" && !this.dead && this.speed > 95 && this.mesh.position.y > 2200) {
+        if (!this._lastContrailPos) this._lastContrailPos = this.mesh.position.clone();
+        const movedDist = this.mesh.position.distanceTo(this._lastContrailPos);
+        if (movedDist >= 6.0) {
+          this._lastContrailPos.copy(this.mesh.position);
+          const altBoost = THREE.MathUtils.clamp((this.mesh.position.y - 2200) / 1800, 0.15, 0.65);
           for (const side of [-1, 1]) {
-            const p = new THREE.Vector3(side * 6.8, 1.35, 2.5).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
+            const p = new THREE.Vector3(side * 22.8, 4.85, -10.8).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
             this._spawnParticle({
               pos: p,
-              vel: new THREE.Vector3((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.5),
-              radius: 1.4,
-              growth: 5.5,
-              life: 1.4 + altBoost * 1.6,
-              color: 0xf1f5f9,
-              opacity: 0.28 * altBoost
+              vel: new THREE.Vector3((Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.6),
+              radius: 0.45,
+              growth: 1.2,
+              life: 0.9 + altBoost * 0.8,
+              color: 0xf8fafc,
+              opacity: 0.16 * altBoost
             });
           }
         }

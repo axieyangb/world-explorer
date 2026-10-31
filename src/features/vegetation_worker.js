@@ -9,7 +9,7 @@
  *    group and returns a compact tree/bush instance table that `VegetationSystem` renders with InstancedMesh.
  */
 import * as THREE from '../../vendor/three.module.js';
-import { getBeijingTerrainElevation, getBeijingDemState, snowCover } from '../environment.js';
+import { getBeijingTerrainElevation, getChunkTerrainMeshElevation, getBeijingDemState, snowCover } from '../environment.js';
 import { floraContext, pickFlora, floraLook, floraBush, orchardEntry } from './flora_climate.js'; // [feature/climate-flora]
 import { makeLandmarkSuppressor } from './landmarks/registry.js'; // [lm-west] keep trees out of hand-built landmarks
 import {
@@ -1932,6 +1932,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
 
   // --- Spatial indices (chunk-local) ---
   const roadGrid = createGrid(20);
+  const renderedRoadGrid = createGrid(24);
   const junctionGrid = createGrid(40);
   const nodeDeg = new Map();
   const segs = [];
@@ -1940,11 +1941,15 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (isTunnel || !flat || flat.length < 6) continue;
     const hw = Math.max(1.0, (widthM || 4) * 0.5);
     for (let i = 0; i + 5 < flat.length; i += 3) {
-      const x1 = flat[i], z1 = flat[i + 2], x2 = flat[i + 3], z2 = flat[i + 5];
+      const x1 = flat[i], y1 = flat[i + 1] || 0, z1 = flat[i + 2];
+      const x2 = flat[i + 3], y2 = flat[i + 4] || 0, z2 = flat[i + 5];
       if (Math.max(x1, x2) < -530 || Math.min(x1, x2) > 530 || Math.max(z1, z2) < -530 || Math.min(z1, z2) > 530) continue;
-      const seg = { x1, z1, x2, z2, hw, cls, bridge: isBridge, name: name || '' };
+      const isElevated = Boolean(isBridge || y1 > 0.8 || y2 > 0.8);
+      const isSunken = Boolean(y1 < -0.65 || y2 < -0.65);
+      const pad = isElevated ? hw + 6.5 : hw + 4.5;
+      const seg = { x1, z1, x2, z2, y1, y2, hw, cls, bridge: isBridge, elevated: isElevated, sunken: isSunken, name: name || '' };
       segs.push(seg);
-      roadGrid.insert(Math.min(x1, x2) - hw - 4, Math.min(z1, z2) - hw - 4, Math.max(x1, x2) + hw + 4, Math.max(z1, z2) + hw + 4, seg);
+      roadGrid.insert(Math.min(x1, x2) - pad, Math.min(z1, z2) - pad, Math.max(x1, x2) + pad, Math.max(z1, z2) + pad, seg);
       if (!isBridge && cls !== 'footway' && cls !== 'cycleway' && cls !== 'steps') {
         for (const [x, z] of [[x1, z1], [x2, z2]]) {
           const k = `${Math.round(x / 1.5)},${Math.round(z / 1.5)}`;
@@ -1954,6 +1959,21 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
         }
       }
     }
+  }
+  // Index actual rendered 3D road segments (with exact graded cy1, cy2 and bridge lifts from chunk_builder)
+  for (let i = 0; i < (roadSegments || []).length; i++) {
+    const rs = roadSegments[i];
+    if (rs.tunnel) continue;
+    const x1 = rs.x1 - ox, z1 = rs.z1 - oz, x2 = rs.x2 - ox, z2 = rs.z2 - oz;
+    const hw = Math.max(1.0, (rs.width || 4) * 0.5);
+    const pad = hw + 6.5;
+    renderedRoadGrid.insert(
+      Math.min(x1, x2) - pad,
+      Math.min(z1, z2) - pad,
+      Math.max(x1, x2) + pad,
+      Math.max(z1, z2) + pad,
+      { x1, y1: rs.y1, z1, x2, y2: rs.y2, z2, hw, cls: rs.cls, bridge: Boolean(rs.bridge) }
+    );
   }
   for (const e of nodeDeg.values()) {
     if (e.n >= 3) junctionGrid.insert(e.x - 14, e.z - 14, e.x + 14, e.z + 14, e);
@@ -1967,10 +1987,52 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
       const l2 = vx * vx + vz * vz;
       const t = l2 > 1e-4 ? Math.max(0, Math.min(1, ((x - s.x1) * vx + (z - s.z1) * vz) / l2)) : 0;
       const dx = x - (s.x1 + vx * t), dz = z - (s.z1 + vz * t);
-      const d = Math.sqrt(dx * dx + dz * dz) - s.hw;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      // Enforce extra clearance around bridges/elevated roads so tree canopies never poke up through bridge decks
+      const extraMargin = s.elevated ? 3.5 : 0.0;
+      const d = dist - (s.hw + extraMargin);
+      if (d < best) best = d;
+    }
+    const rList = renderedRoadGrid.query(x, z);
+    const terrY = Math.max(getBeijingTerrainElevation(ox + x, oz + z), getChunkTerrainMeshElevation(ox + x, oz + z));
+    for (let i = 0; i < rList.length; i++) {
+      const rs = rList[i];
+      const vx = rs.x2 - rs.x1, vz = rs.z2 - rs.z1;
+      const l2 = vx * vx + vz * vz;
+      const t = l2 > 1e-4 ? Math.max(0, Math.min(1, ((x - rs.x1) * vx + (z - rs.z1) * vz) / l2)) : 0;
+      const dx = x - (rs.x1 + vx * t), dz = z - (rs.z1 + vz * t);
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      const ry = rs.y1 + (rs.y2 - rs.y1) * t;
+      const isElev = rs.bridge || ry > terrY + 1.25;
+      const d = dist - (rs.hw + (isElev ? 3.8 : 0.0));
       if (d < best) best = d;
     }
     return best;
+  };
+  // Samples exact local ground / sidewalk surface height so street trees never grow from underneath the road deck
+  const sampleTreeSurfaceY = (x, z, isStreetTree = false) => {
+    const wx = ox + x, wz = oz + z;
+    let y = Math.max(getBeijingTerrainElevation(wx, wz), getChunkTerrainMeshElevation(wx, wz));
+    const rList = renderedRoadGrid.query(x, z);
+    let bestD = Infinity;
+    let bestRoadY = null;
+    for (let i = 0; i < rList.length; i++) {
+      const rs = rList[i];
+      if (rs.bridge) continue;
+      const vx = rs.x2 - rs.x1, vz = rs.z2 - rs.z1;
+      const l2 = vx * vx + vz * vz;
+      const t = l2 > 1e-4 ? Math.max(0, Math.min(1, ((x - rs.x1) * vx + (z - rs.z1) * vz) / l2)) : 0;
+      const dx = x - (rs.x1 + vx * t), dz = z - (rs.z1 + vz * t);
+      const edgeDist = Math.sqrt(dx * dx + dz * dz) - rs.hw;
+      const ry = rs.y1 + (rs.y2 - rs.y1) * t;
+      // Only snap to surface-graded streets (not high viaduct decks overhead)
+      if (edgeDist < (isStreetTree ? 4.5 : 3.2) && ry >= y - 0.6 && ry <= y + 1.85 && edgeDist < bestD) {
+        bestD = edgeDist;
+        bestRoadY = ry + 0.04; // match sidewalk surface elevation (ly + 0.04)
+      }
+    }
+    if (bestRoadY !== null) return Math.max(y, bestRoadY);
+    return y;
   };
   const nearJunction = (x, z, r) => {
     const list = junctionGrid.query(x, z);
@@ -2069,7 +2131,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (count >= MAX_CHUNK_INSTANCES) return false;
     const o = count * INST_STRIDE;
     inst[o] = ox + x;
-    inst[o + 1] = y - 0.05;
+    inst[o + 1] = y;
     inst[o + 2] = oz + z;
     inst[o + 3] = sXZ;
     inst[o + 4] = sY;
@@ -2082,14 +2144,14 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     return true;
   };
   // [feature/climate-flora] palette entry -> species/color/scale after season + altitude (null look = no tree here)
-  const plantTree = (e, x, z, sXZ, sY, rng) => {
-    const y = getBeijingTerrainElevation(ox + x, oz + z);
+  const plantTree = (e, x, z, sXZ, sY, rng, isStreetTree = false) => {
+    const y = sampleTreeSurfaceY(x, z, isStreetTree);
     const lk = floraLook(ctx, e, rng(), rng(), y + baseAsl);
     if (!lk) return count < MAX_CHUNK_INSTANCES;
     return pushRaw(lk.sp, x, y, z, sXZ * lk.sx, sY * lk.sy, rng() * 6.283, lk.r, lk.g, lk.b);
   };
   const plantBush = (x, z, sXZ, sY, rng) => {
-    const y = getBeijingTerrainElevation(ox + x, oz + z);
+    const y = sampleTreeSurfaceY(x, z, false);
     const lk = floraBush(ctx, rng(), y + baseAsl);
     if (!lk) return count < MAX_CHUNK_INSTANCES;
     return pushRaw(SP_BUSH, x, y, z, sXZ * lk.sx, sY * lk.sy, rng() * 6.283, lk.r, lk.g, lk.b);
@@ -2124,7 +2186,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
     const sw = STREET[s.cls];
-    if (!sw || s.bridge) continue;
+    if (!sw || s.bridge || s.elevated || s.sunken) continue;
     const dx = s.x2 - s.x1, dz = s.z2 - s.z1;
     const len = Math.hypot(dx, dz);
     if (len < 4) continue;
@@ -2138,7 +2200,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     if (!pickFlora(ctx, 0, uMain) || sr() > ctx.streetDens) continue;
     const baseScale = 0.82 + sr() * 0.22;
     const nx = -dz / len, nz = dx / len;
-    const off = s.hw + sw * 0.55;
+    const off = Math.max(s.hw + 1.4, s.hw + sw * 0.68);
     const along0 = ((s.x1 + ox) * dx + (s.z1 + oz) * dz) / len;
     for (let side = -1; side <= 1; side += 2) {
       const rng = mulberry32(streetSeed ^ Math.imul(i + 1, 2654435761) ^ (side > 0 ? 0x5bd1e995 : 0));
@@ -2153,10 +2215,10 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
           const dd = d + q * (1.6 + rng() * 1.2);
           if (dd >= len) break;
           const t = dd / len;
-          const lat = off + (rng() - 0.5) * Math.min(0.9, sw * 0.5);
+          const lat = off + (rng() - 0.5) * Math.min(0.45, sw * 0.25);
           const x = s.x1 + dx * t + nx * lat * side, z = s.z1 + dz * t + nz * lat * side;
           if (nearJunction(x, z, 11)) continue;
-          if (!groundOk(x, z, 0.5, 2.8, 5)) continue;
+          if (!groundOk(x, z, 1.2, 2.8, 5)) continue;
           const pl = blockPlanting(streetSeed, along0 + dd, uMain);
           const e = pl.e2 && nTree++ % 2 ? pl.e2 : pl.e1;
           if (!e) continue;
@@ -2164,7 +2226,7 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
           const age = rng();
           const ageK = age < 0.12 ? 0.45 + rng() * 0.2 : age < 0.32 ? 0.68 + rng() * 0.18 : 0.88 + rng() * 0.3;
           const sc = baseScale * ageK;
-          if (!plantTree(e, x, z, sc, sc * (0.92 + rng() * 0.16), rng)) break;
+          if (!plantTree(e, x, z, sc, sc * (0.92 + rng() * 0.16), rng, true)) break;
         }
       }
     }

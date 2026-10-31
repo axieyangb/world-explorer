@@ -76,6 +76,112 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 function yawOf(dx, dz) { return Math.atan2(dx, dz); }
 function wrapPi(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
 
+// Base hull collision dimensions (halfLen, halfWidth) by vessel class
+const HULL_COLLISION_SPEC = {
+  speedboat: { halfLen: 6.0, halfWidth: 2.2 },
+  sailboat: { halfLen: 7.0, halfWidth: 2.5 },
+  fishing: { halfLen: 9.5, halfWidth: 3.4 },
+  tug: { halfLen: 10.0, halfWidth: 3.8 },
+  patrol: { halfLen: 10.0, halfWidth: 3.8 },
+  ferry: { halfLen: 20.0, halfWidth: 6.2 },
+  carferry: { halfLen: 28.0, halfWidth: 8.5 },
+  cargo: { halfLen: 46.0, halfWidth: 10.5 },
+  tanker: { halfLen: 48.0, halfWidth: 11.0 },
+  container: { halfLen: 52.0, halfWidth: 11.5 },
+};
+
+function updateVesselCollisionBounds(v) {
+  const base = HULL_COLLISION_SPEC[v.type] || { halfLen: 8.0, halfWidth: 3.0 };
+  const sz = v.sz || 1;
+  const sx = v.sx || 1;
+  v.halfLen = base.halfLen * clamp(sz, 0.55, 2.2);
+  v.halfWidth = base.halfWidth * clamp(sx, 0.65, 2.0);
+  v.colRadius = Math.hypot(v.halfLen, v.halfWidth);
+}
+
+/** Closest point on 2D segment AB to point P: writes into out {x, z, t} */
+function closestPointOnSeg2D(px, pz, ax, az, bx, bz, out) {
+  const dx = bx - ax, dz = bz - az;
+  const l2 = dx * dx + dz * dz;
+  const t = l2 > 1e-6 ? clamp(((px - ax) * dx + (pz - az) * dz) / l2, 0, 1) : 0;
+  out.x = ax + dx * t;
+  out.z = az + dz * t;
+  out.t = t;
+}
+
+const _cpA = { x: 0, z: 0, t: 0 };
+const _cpB = { x: 0, z: 0, t: 0 };
+
+/**
+ * Oriented 2D capsule-vs-capsule hull intersection between vessel A and vessel B.
+ * Returns { pen, nx, nz, cx, cz } (normal pointing from B to A) or null if separated.
+ */
+function intersectVesselHulls(a, b) {
+  const dx0 = a.x - b.x, dz0 = a.z - b.z;
+  const maxR = (a.colRadius || 10) + (b.colRadius || 10);
+  if (dx0 * dx0 + dz0 * dz0 > maxR * maxR) return null;
+
+  const rA = a.halfWidth || 2.5, rB = b.halfWidth || 2.5;
+  const segA = Math.max(0.5, (a.halfLen || 6) - rA * 0.65);
+  const segB = Math.max(0.5, (b.halfLen || 6) - rB * 0.65);
+
+  const fxA = Math.sin(a.yaw), fzA = Math.cos(a.yaw);
+  const fxB = Math.sin(b.yaw), fzB = Math.cos(b.yaw);
+
+  const ax1 = a.x - fxA * segA, az1 = a.z - fzA * segA;
+  const ax2 = a.x + fxA * segA, az2 = a.z + fzA * segA;
+  const bx1 = b.x - fxB * segB, bz1 = b.z - fzB * segB;
+  const bx2 = b.x + fxB * segB, bz2 = b.z + fzB * segB;
+
+  // Test 3 hull stations (stern, midship, bow) on A against spine B and vice-versa for exact capsule contact
+  let bestD2 = Infinity;
+  let bestAx = a.x, bestAz = a.z, bestBx = b.x, bestBz = b.z;
+
+  for (let k = -1; k <= 1; k++) {
+    const px = a.x + fxA * (segA * k), pz = a.z + fzA * (segA * k);
+    closestPointOnSeg2D(px, pz, bx1, bz1, bx2, bz2, _cpB);
+    closestPointOnSeg2D(_cpB.x, _cpB.z, ax1, az1, ax2, az2, _cpA);
+    const d2 = (_cpA.x - _cpB.x) ** 2 + (_cpA.z - _cpB.z) ** 2;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      bestAx = _cpA.x; bestAz = _cpA.z;
+      bestBx = _cpB.x; bestBz = _cpB.z;
+    }
+  }
+  for (let k = -1; k <= 1; k++) {
+    const px = b.x + fxB * (segB * k), pz = b.z + fzB * (segB * k);
+    closestPointOnSeg2D(px, pz, ax1, az1, ax2, az2, _cpA);
+    closestPointOnSeg2D(_cpA.x, _cpA.z, bx1, bz1, bx2, bz2, _cpB);
+    const d2 = (_cpA.x - _cpB.x) ** 2 + (_cpA.z - _cpB.z) ** 2;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      bestAx = _cpA.x; bestAz = _cpA.z;
+      bestBx = _cpB.x; bestBz = _cpB.z;
+    }
+  }
+
+  const minSep = rA + rB;
+  if (bestD2 >= minSep * minSep) return null;
+
+  const dist = Math.sqrt(bestD2);
+  let nx, nz;
+  if (dist > 1e-4) {
+    nx = (bestAx - bestBx) / dist;
+    nz = (bestAz - bestBz) / dist;
+  } else {
+    const cDist = Math.hypot(dx0, dz0);
+    nx = cDist > 1e-4 ? dx0 / cDist : 1;
+    nz = cDist > 1e-4 ? dz0 / cDist : 0;
+  }
+  return {
+    pen: minSep - dist,
+    nx,
+    nz,
+    cx: (bestAx + bestBx) * 0.5,
+    cz: (bestAz + bestBz) * 0.5,
+  };
+}
+
 export class Maritime {
   constructor(app) {
     this.app = app;
@@ -334,24 +440,98 @@ export class Maritime {
     const dirSign = this.boatSpeed >= -0.1 ? 1 : -1;
     v.yaw += steer * turnAuth * speedFactor * dirSign * dt;
 
-    // Advance along bow (+sin(yaw), +cos(yaw))
-    const nx = v.x + Math.sin(v.yaw) * this.boatSpeed * dt;
-    const nz = v.z + Math.cos(v.yaw) * this.boatSpeed * dt;
-    const inWater = (this.region && typeof this.region.isWater === 'function')
-      ? this.region.isWater(nx, nz)
-      : (getBeijingTerrainElevation(nx, nz) <= 0.65);
-    if (inWater || getBeijingTerrainElevation(nx, nz) <= 0.55) {
-      v.x = nx;
-      v.z = nz;
-    } else {
-      this.boatSpeed *= -0.25;
+    const water = this.app.water;
+    const wy0 = water ? water.getWaterSurfaceY(v.x, v.z) : 0.0;
+    const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
+
+    // Decay external impact velocity & roll impulse
+    v.vx = (v.vx || 0) * Math.max(0, 1 - dt * 3.2);
+    v.vz = (v.vz || 0) * Math.max(0, 1 - dt * 3.2);
+    v.rollImpulse = (v.rollImpulse || 0) * Math.max(0, 1 - dt * 4.0);
+    if (v._hitCooldown > 0) v._hitCooldown = Math.max(0, v._hitCooldown - dt);
+
+    // Advance along bow (+sin(yaw), +cos(yaw)) + external collision impulse
+    v.x += (fx * this.boatSpeed + (v.vx || 0)) * dt;
+    v.z += (fz * this.boatSpeed + (v.vz || 0)) * dt;
+
+    // 1. Shoreline / Dry Land Hull Protection (check bow, midship, and stern hull points)
+    const halfL = v.halfLen || 6.0;
+    const halfW = v.halfWidth || 2.2;
+    const isDryAt = (px, pz) => {
+      const ty = getBeijingTerrainElevation(px, pz);
+      if (ty > wy0 + 0.15) return true;
+      if (this.region && typeof this.region.isWater === 'function' && !this.region.isWater(px, pz) && ty > wy0 - 0.15) {
+        return true;
+      }
+      return false;
+    };
+    const bowX = v.x + fx * (halfL * 0.82), bowZ = v.z + fz * (halfL * 0.82);
+    const sternX = v.x - fx * (halfL * 0.82), sternZ = v.z - fz * (halfL * 0.82);
+    if (isDryAt(bowX, bowZ) || isDryAt(v.x, v.z) || isDryAt(sternX, sternZ)) {
+      // Estimate shoreline outward water normal via terrain gradient
+      const eps = 3.5;
+      const gx = getBeijingTerrainElevation(v.x + eps, v.z) - getBeijingTerrainElevation(v.x - eps, v.z);
+      const gz = getBeijingTerrainElevation(v.x, v.z + eps) - getBeijingTerrainElevation(v.x, v.z - eps);
+      const gl = Math.hypot(gx, gz);
+      const snx = gl > 1e-3 ? -gx / gl : -fx;
+      const snz = gl > 1e-3 ? -gz / gl : -fz;
+      v.x += snx * Math.max(0.45, Math.abs(this.boatSpeed) * dt * 1.15);
+      v.z += snz * Math.max(0.45, Math.abs(this.boatSpeed) * dt * 1.15);
+      const vn = (fx * this.boatSpeed) * snx + (fz * this.boatSpeed) * snz;
+      if (vn < 0) {
+        this.boatSpeed *= -0.30;
+        v.vx = (v.vx || 0) + snx * 2.2;
+        v.vz = (v.vz || 0) + snz * 2.2;
+        v.rollImpulse = (v.rollImpulse || 0) + (snx * fz - snz * fx) * 0.16;
+      }
     }
 
-    v.v = Math.abs(this.boatSpeed);
-    v.roll = -steer * Math.min(0.22, Math.abs(this.boatSpeed) * 0.012);
+    // 2. Boat-vs-Pier Deck & Piling Collision
+    if (this.app.loadedChunks) {
+      for (const g of this.app.loadedChunks.values()) {
+        const segs = (g.userData && g.userData.deckSegments) || [];
+        for (let i = 0; i < segs.length; i++) {
+          const s = segs[i];
+          if (s.cls !== 'pier') continue;
+          const pw = (s.width || 3.5) * 0.5 + halfW;
+          for (const k of [-0.65, 0, 0.65]) {
+            const hx = v.x + fx * (halfL * k), hz = v.z + fz * (halfL * k);
+            closestPointOnSeg2D(hx, hz, s.x1, s.z1, s.x2, s.z2, _cpB);
+            const dx = hx - _cpB.x, dz = hz - _cpB.z;
+            const d2 = dx * dx + dz * dz;
+            if (d2 < pw * pw) {
+              const d = Math.sqrt(d2) || 0.01;
+              const pnx = dx / d, pnz = dz / d;
+              const pen = pw - d;
+              v.x += pnx * (pen + 0.08);
+              v.z += pnz * (pen + 0.08);
+              const velX = fx * this.boatSpeed + (v.vx || 0);
+              const velZ = fz * this.boatSpeed + (v.vz || 0);
+              const vn = velX * pnx + velZ * pnz;
+              if (vn < 0) {
+                const impactSpd = -vn;
+                this.boatSpeed *= 0.35;
+                v.vx = (v.vx || 0) - pnx * vn * 1.25;
+                v.vz = (v.vz || 0) - pnz * vn * 1.25;
+                v.rollImpulse = (v.rollImpulse || 0) + clamp((pnx * fz - pnz * fx) * impactSpd * 0.04, -0.28, 0.28);
+                if (impactSpd > 6.5 && !(v._hitCooldown > 0)) {
+                  v._hitCooldown = 0.45;
+                  this.damageVessel(v, (impactSpd - 5.5) * 0.045, _cpB.x, _cpB.z);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Player Boat vs. All Other Vessels (Moving & Moored/Docked)
+    this._resolveVesselPairCollisions(v, dt);
+
+    v.v = Math.hypot(fx * this.boatSpeed + (v.vx || 0), fz * this.boatSpeed + (v.vz || 0));
+    v.roll = -steer * Math.min(0.22, Math.abs(this.boatSpeed) * 0.012) + (v.rollImpulse || 0);
     v.pitch = -Math.min(0.10, Math.max(-0.04, this.boatSpeed * 0.004));
 
-    const water = this.app.water;
     const wy = water ? water.getWaterSurfaceY(v.x, v.z) : getBeijingTerrainElevation(v.x, v.z) + 0.28;
     v.y = wy;
 
@@ -654,6 +834,8 @@ export class Maritime {
     };
     const pal = PAINT[type];
     const lv = livery && LIVERY[livery];
+    v.vx = 0; v.vz = 0; v.rollImpulse = 0; v._hitCooldown = 0;
+    updateVesselCollisionBounds(v);
     v.paint.set(lv ? lv[0] : pal[0][seed % pal[0].length]);
     v.accent.set(lv ? lv[1] : pal[1][(seed >>> 8) % pal[1].length]);
     this.vessels.push(v);
@@ -667,6 +849,99 @@ export class Maritime {
     const sx = beam > 0 ? clamp(beam / spec.beam, sz * 0.6, sz * 1.5) : sz;
     v.sz = sz; v.sx = sx; v.sy = clamp((sx + sz) / 2, 0.3, 2.4);
     v.hp = v.hp0 = spec.hp * clamp(sz, 0.5, 2);
+    updateVesselCollisionBounds(v);
+  }
+
+  /** Apply direct collision or weapon damage to a single vessel with sparks/fire/sinking. */
+  damageVessel(v, dmg, hitX = v.x, hitZ = v.z) {
+    if (!v || v.state === 'sink' || v.state === 'sunk' || !(dmg > 0)) return;
+    v.hp -= dmg;
+    v.burn = Math.max(v.burn || 0, v.hp < v.hp0 * 0.5 ? 16 : 4.5);
+    const fx = (this.app.kaiju && this.app.kaiju.fx) || (this.app.vehicleDamage && this.app.vehicleDamage._fx && this.app.vehicleDamage._fx());
+    if (fx && fx.spawn) {
+      fx.spawn('spark', _p.set(hitX, (v.y || 0) + 1.4, hitZ), { count: 10, scale: 0.95 });
+      if (v.hp < v.hp0 * 0.5) fx.spawn('fire', _p.set(v.x, (v.y || 0) + 1.4, v.z), { scale: 0.75 });
+    }
+    this.hits.shots++;
+    if (v.hp <= 0) this._sink(v);
+  }
+
+  /** Resolve capsule hull collision between vessel `a` and all other nearby active vessels. */
+  _resolveVesselPairCollisions(a, dt = 0.016) {
+    if (!a || a.dead || a.state === 'sink' || a.state === 'sunk') return;
+    for (let i = 0; i < this.vessels.length; i++) {
+      const b = this.vessels[i];
+      if (!b || b === a || b.dead || b.state === 'sink' || b.state === 'sunk') continue;
+      const hit = intersectVesselHulls(a, b);
+      if (!hit) continue;
+
+      const { pen, nx, nz, cx, cz } = hit;
+      const massA = (a.halfLen || 6) * (a.halfWidth || 2.2);
+      const massB = (b.halfLen || 6) * (b.halfWidth || 2.2);
+      const invA = a.state === 'anchor' ? 0.15 : 1 / Math.max(4, massA);
+      const invB = b.state === 'anchor' ? 0.15 : 1 / Math.max(4, massB);
+      const invSum = invA + invB || 1;
+      const shareA = invA / invSum;
+      const shareB = invB / invSum;
+
+      // Immediately separate the two hulls so they never clip or pass through
+      const pushDist = pen + 0.06;
+      a.x += nx * pushDist * shareA;
+      a.z += nz * pushDist * shareA;
+      b.x -= nx * pushDist * shareB;
+      b.z -= nz * pushDist * shareB;
+
+      // Compute relative velocity at contact normal
+      const vax = Math.sin(a.yaw) * (a.state === 'player' ? this.boatSpeed : (a.v || 0)) + (a.vx || 0);
+      const vaz = Math.cos(a.yaw) * (a.state === 'player' ? this.boatSpeed : (a.v || 0)) + (a.vz || 0);
+      const vbx = Math.sin(b.yaw) * (b.state === 'player' ? this.boatSpeed : (b.v || 0)) + (b.vx || 0);
+      const vbz = Math.cos(b.yaw) * (b.state === 'player' ? this.boatSpeed : (b.v || 0)) + (b.vz || 0);
+
+      const rvx = vax - vbx, rvz = vaz - vbz;
+      const relVn = rvx * nx + rvz * nz;
+
+      if (relVn < 0) {
+        const impactSpd = -relVn;
+        const restitution = 0.42;
+        const j = (1 + restitution) * impactSpd;
+
+        a.vx = (a.vx || 0) + nx * j * shareA;
+        a.vz = (a.vz || 0) + nz * j * shareA;
+        b.vx = (b.vx || 0) - nx * j * shareB;
+        b.vz = (b.vz || 0) - nz * j * shareB;
+
+        if (a.state === 'player') {
+          const headDot = Math.sin(a.yaw) * nx + Math.cos(a.yaw) * nz;
+          if (headDot * this.boatSpeed < 0) {
+            this.boatSpeed *= Math.max(-0.25, 1 - Math.abs(headDot) * 0.88);
+          }
+        } else if (a.v > 0) {
+          a.v *= 0.45;
+        }
+        if (b.state === 'player') {
+          const headDot = Math.sin(b.yaw) * (-nx) + Math.cos(b.yaw) * (-nz);
+          if (headDot * this.boatSpeed < 0) {
+            this.boatSpeed *= Math.max(-0.25, 1 - Math.abs(headDot) * 0.88);
+          }
+        } else if (b.v > 0) {
+          b.v *= 0.45;
+        }
+
+        // Impart hydrodynamic hull roll rock to both vessels
+        const rollKick = clamp(impactSpd * 0.032, 0.06, 0.34);
+        a.rollImpulse = clamp((a.rollImpulse || 0) + rollKick * (nx * Math.cos(a.yaw) - nz * Math.sin(a.yaw) >= 0 ? 1 : -1), -0.38, 0.38);
+        b.rollImpulse = clamp((b.rollImpulse || 0) - rollKick * (nx * Math.cos(b.yaw) - nz * Math.sin(b.yaw) >= 0 ? 1 : -1), -0.38, 0.38);
+
+        // High-speed collision damage (> 5.5 m/s)
+        if (impactSpd > 5.5 && !(a._hitCooldown > 0) && !(b._hitCooldown > 0)) {
+          a._hitCooldown = 0.45;
+          b._hitCooldown = 0.45;
+          const baseDmg = (impactSpd - 5.5) * 0.065;
+          this.damageVessel(a, baseDmg * (0.5 + shareA), cx, cz);
+          this.damageVessel(b, baseDmg * (0.5 + shareB), cx, cz);
+        }
+      }
+    }
   }
 
   /** Random open-water route from near `c` within `rad` metres, on cells >= minD from shore. */
@@ -768,11 +1043,36 @@ export class Maritime {
           }
         }
       } else if (v.path) {
+        // AI lookahead collision avoidance (COLREGs starboard rudder & speed reduction when another vessel is ahead)
+        let avoidSpdScale = 1.0;
+        let avoidLatTarget = 0.0;
+        const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
+        const rx = fz, rz = -fx; // starboard unit vector
+        const rA = v.colRadius || 10;
+        for (let j = 0; j < this.vessels.length; j++) {
+          const o = this.vessels[j];
+          if (!o || o === v || o.dead || o.state === 'sink' || o.state === 'sunk') continue;
+          const dx = o.x - v.x, dz = o.z - v.z;
+          const rSum = rA + (o.colRadius || 10);
+          const lookDist = 2.2 * rSum;
+          if (dx * dx + dz * dz > lookDist * lookDist) continue;
+          const fwdProj = dx * fx + dz * fz;
+          const latProj = dx * rx + dz * rz;
+          if (fwdProj > -rSum * 0.25 && fwdProj < lookDist && Math.abs(latProj) < rSum * 1.15) {
+            const urgency = 1.0 - clamp(fwdProj / lookDist, 0, 1);
+            avoidSpdScale = Math.min(avoidSpdScale, Math.max(0.15, 1.0 - urgency * 0.85));
+            // Give way to starboard (or away from obstacle centerline)
+            const steerDir = latProj > 2.0 ? -1 : 1;
+            avoidLatTarget += steerDir * Math.min(18, (v.halfWidth || 3) * 2.4) * urgency;
+          }
+        }
+        v.avoidLat = (v.avoidLat || 0) + (avoidLatTarget - (v.avoidLat || 0)) * Math.min(1, dt * 1.8);
+
         const L = v.cum[v.cum.length - 1];
         const remain = v.dir > 0 ? L - v.s : v.s;
         const brake = v.kind === 'sail' ? v.speed : Math.sqrt(2 * 0.35 * Math.max(0, remain - 15)) + 0.6;
-        const target = Math.min(v.speed, brake);
-        v.v += Math.max(-0.6 * dt, Math.min(0.35 * dt, target - v.v));
+        const target = Math.min(v.speed, brake) * avoidSpdScale;
+        v.v += Math.max(-1.8 * dt, Math.min(0.45 * dt, target - v.v));
         v.s += v.dir * v.v * dt;
         if (v.s <= 0 || v.s >= L) {
           v.s = Math.max(0, Math.min(L, v.s));
@@ -781,16 +1081,39 @@ export class Maritime {
           if (v.kind === 'cargo' && v.dir < 0) v.dead = true; // reached the gate outbound
         }
         const ty = this._placeOnPath(v, false);
+        if (Math.abs(v.avoidLat) > 0.05) {
+          v.x += rx * v.avoidLat;
+          v.z += rz * v.avoidLat;
+        }
         const turn = v.type === 'container' || v.type === 'tanker' ? 0.6 : 1.6;
-        v.yaw += wrapPi(ty - v.yaw) * Math.min(1, dt * turn);
+        const rudderBias = clamp((v.avoidLat || 0) * 0.025, -0.35, 0.35);
+        v.yaw += wrapPi(ty + rudderBias - v.yaw) * Math.min(1, dt * turn);
       }
+
+      // Integrate external collision velocity & decay roll impulse on non-player vessels
+      if (v.state !== 'player' && v.state !== 'sink' && v.state !== 'sunk') {
+        if (v._hitCooldown > 0) v._hitCooldown = Math.max(0, v._hitCooldown - dt);
+        if (v.vx || v.vz) {
+          v.x += (v.vx || 0) * dt;
+          v.z += (v.vz || 0) * dt;
+          const damp = Math.max(0, 1 - dt * 2.8);
+          v.vx = (v.vx || 0) * damp;
+          v.vz = (v.vz || 0) * damp;
+          if (Math.hypot(v.vx, v.vz) < 0.02) { v.vx = 0; v.vz = 0; }
+        }
+        if (v.rollImpulse) {
+          v.rollImpulse *= Math.max(0, 1 - dt * 3.5);
+          if (Math.abs(v.rollImpulse) < 0.002) v.rollImpulse = 0;
+        }
+      }
+
       // Water surface + gentle motion.
       const wy = water ? water.getWaterSurfaceY(v.x, v.z) : getBeijingTerrainElevation(v.x, v.z) + 0.28;
       const small = VESSEL_TYPES[v.type].length * v.sz < 60;
       const amp = (small ? 1 : 0.15) * (this.app.seaState ? this.app.seaState.motion : 1); // [sea-state]
       v.y = wy + Math.sin(v.phase * 1.3) * 0.08 * amp - (v.sinkDepth || 0);
-      if (v.state !== 'sink') {
-        v.roll = Math.sin(v.phase * 0.9) * 0.025 * amp + (v.type === 'sailboat' ? 0.16 : 0);
+      if (v.state !== 'sink' && v.state !== 'player') {
+        v.roll = Math.sin(v.phase * 0.9) * 0.025 * amp + (v.type === 'sailboat' ? 0.16 : 0) + (v.rollImpulse || 0);
         v.pitch = Math.sin(v.phase * 0.7 + 1) * 0.012 * amp;
       }
       // Fire / smoke on damaged vessels.
@@ -806,6 +1129,15 @@ export class Maritime {
         fx.spawn('smoke', _p, { count: 1, scale: Math.max(0.6, v.sz * VESSEL_TYPES[v.type].length / 50), light: false, life: 4, speed: 1 });
       }
     }
+
+    // Hard pairwise hull separation across all active vessels so crossing boats never clip through each other
+    for (let i = 0; i < this.vessels.length; i++) {
+      const a = this.vessels[i];
+      if (!a || a.dead || a.state === 'sink' || a.state === 'sunk') continue;
+      if (a.state === 'moored' || a.state === 'anchor') continue;
+      this._resolveVesselPairCollisions(a, dt);
+    }
+
     if (this.vessels.some((v) => v.dead)) {
       for (const v of this.vessels) {
         if (v.dead && v.kind === 'ferry' && v.state === 'sunk') this._ferryRespawn(v);
