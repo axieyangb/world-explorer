@@ -310,6 +310,12 @@ export class ParkedCars {
     if (Math.abs(app.pos.x - e.x) > 12 || Math.abs(app.pos.z - e.z) > 12) return;
     const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, d.hl, d.hw, e.x, e.z, e.hx, e.hz, e.hl, e.hw);
     if (!r) return;
+    if (app.fsd && app.fsd.active) {
+      e.x -= r.nx * (r.depth + 0.35);
+      e.z -= r.nz * (r.depth + 0.35);
+      if (e.mesh) e.mesh.position.set(e.x, e.y + (e.lift || 0), e.z);
+      return;
+    }
     const mP = d.mass, mE = e.mass, m = mP + mE;
     const px0 = app.pos.x, pz0 = app.pos.z;
     app.pos.x += r.nx * r.depth * (mE / m); app.pos.z += r.nz * r.depth * (mE / m);

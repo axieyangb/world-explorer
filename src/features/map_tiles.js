@@ -322,7 +322,7 @@ function prepareTile(layers, z, x, y) {
       const pts = ringToLocal(line, n, x, y);
       prep.roads.push({ cls, rank: ROAD_RANK[cls], bridge: brunnel === 'bridge', tunnel: brunnel === 'tunnel', pts, bb: bboxOf(pts) });
       if (cls !== 'path' && cls !== 'track') {
-        prep.driveLines.push({ cls, oneway: f.tags.oneway | 0, latlon: line, pts });
+        prep.driveLines.push({ cls, oneway: f.tags.oneway | 0, tunnel: brunnel === 'tunnel', bridge: brunnel === 'bridge', latlon: line, pts });
       }
     }
   }

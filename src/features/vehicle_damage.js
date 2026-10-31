@@ -221,9 +221,94 @@ export class VehicleDamage {
 
   /** [crash-damage] Player car hit something at impact speed v (m/s); share = this car's part of the impulse. */
   crashPlayer(v, share = 1, src = 'crash') {
+    if (this.app && this.app.fsd && this.app.fsd.active) return 0;
     const d = crashDamage(v) * share;
     if (d > 0.01) this.hitPlayer(d, src);
     return d;
+  }
+
+  /**
+   * Returns all nearby moving traffic cars, wrecks, player parked cars, and POI venue parked cars
+   * within `radius` meters of (wx, wz) for FSD LiDAR obstacle avoidance.
+   */
+  getNearbyCarObstacles(wx, wz, wy = 0, radius = 38) {
+    const out = [];
+    const r2 = radius * radius;
+    const app = this.app;
+    const T = this.T;
+    if (T && Array.isArray(T.cars)) {
+      for (let i = 0; i < T.cars.length; i++) {
+        const c = T.cars[i];
+        if (!c || !c.active) continue;
+        if (c.dFly && c.ry > (c.dGround || c.y || 0) + 2.2) continue;
+        const cx = c.dPose ? c.rx : (c.x + (c.kxOff || 0));
+        const cz = c.dPose ? c.rz : (c.z + (c.kzOff || 0));
+        const cy = c.dPose ? c.ry : (c.y || 0);
+        if (Math.abs(cy - wy) > 4.5) continue;
+        const d2 = (cx - wx) * (cx - wx) + (cz - wz) * (cz - wz);
+        if (d2 > r2) continue;
+        const ux = c.dPose ? Math.sin(c.ryaw || 0) : (c.ux || 0);
+        const uz = c.dPose ? Math.cos(c.ryaw || 0) : (c.uz || 1);
+        const spd = (c.dPose || c.kWreck || c.dState >= 2) ? 0 : (c.v || c.speed || 0);
+        out.push({
+          x: cx, y: cy, z: cz, ux, uz, spd,
+          hl: (c.len || 4.6) * 0.5,
+          hw: (c.wid || 2.0) * 0.5,
+          kind: 'traffic',
+          ref: c,
+        });
+      }
+    }
+    if (app && app.parkedCars && Array.isArray(app.parkedCars.list)) {
+      for (const e of app.parkedCars.list) {
+        if (!e || Math.abs((e.y || 0) - wy) > 4.5) continue;
+        const d2 = (e.x - wx) * (e.x - wx) + (e.z - wz) * (e.z - wz);
+        if (d2 > r2) continue;
+        out.push({
+          x: e.x, y: e.y || wy, z: e.z,
+          ux: e.hx || Math.sin(e.yaw || 0),
+          uz: e.hz || Math.cos(e.yaw || 0),
+          spd: Math.hypot(e.vx || 0, e.vz || 0),
+          hl: e.hl || 2.3,
+          hw: e.hw || 1.0,
+          kind: 'parked',
+          ref: e,
+        });
+      }
+    }
+    if (Array.isArray(this.persistentWrecks)) {
+      for (const w of this.persistentWrecks) {
+        if (!w || !w.position) continue;
+        const d2 = (w.position.x - wx) * (w.position.x - wx) + (w.position.z - wz) * (w.position.z - wz);
+        if (d2 > r2) continue;
+        const yaw = (w.rotation && w.rotation.y) || 0;
+        out.push({
+          x: w.position.x, y: w.position.y, z: w.position.z,
+          ux: Math.sin(yaw), uz: Math.cos(yaw), spd: 0,
+          hl: 2.35, hw: 1.05, kind: 'wreck', ref: w,
+        });
+      }
+    }
+    if (app && app.poiVenues && app.poiVenues.tracked) {
+      for (const g of app.poiVenues.tracked) {
+        const pv = g.userData && g.userData.poiVenues;
+        const a = pv && pv.inst && pv.inst.car;
+        if (!a) continue;
+        for (let i = 0; i < a.length; i += 8) {
+          const cx = a[i], cy = a[i + 1], cz = a[i + 2];
+          if (cy < -500 || Math.abs(cy - wy) > 4.5) continue;
+          const d2 = (cx - wx) * (cx - wx) + (cz - wz) * (cz - wz);
+          if (d2 > r2) continue;
+          const yaw = a[i + 3] || 0;
+          out.push({
+            x: cx, y: cy, z: cz,
+            ux: Math.sin(yaw), uz: Math.cos(yaw), spd: 0,
+            hl: 2.3, hw: 1.05, kind: 'venue_parked',
+          });
+        }
+      }
+    }
+    return out;
   }
 
   /**

@@ -565,14 +565,35 @@ export class Maritime {
         this.boatSpeed = 0;
         this.app._onFsdArrived?.();
       } else {
-        let desiredYaw = Math.atan2(dx, dz);
-        // Probe ahead for dry land / peninsulas and steer around them
-        if (isDryProbe(v.x + Math.sin(desiredYaw) * 16, v.z + Math.cos(desiredYaw) * 16)) {
-          const offsets = [0.45, -0.45, 0.9, -0.9, 1.35, -1.35, 1.8, -1.8];
-          for (const off of offsets) {
-            const cand = desiredYaw + off;
-            if (!isDryProbe(v.x + Math.sin(cand) * 18, v.z + Math.cos(cand) * 18)) {
-              desiredYaw = cand;
+        const baseYaw = Math.atan2(dx, dz);
+        let desiredYaw = baseYaw;
+        const myHalfL = v.halfLen || 6.0;
+        const isVesselOrDryBlocked = (ang) => {
+          const sa = Math.sin(ang), ca = Math.cos(ang);
+          for (const d of [14, 28, 44]) {
+            const px = v.x + sa * d, pz = v.z + ca * d;
+            if (isDryProbe(px, pz)) return true;
+            if (Array.isArray(this.vessels)) {
+              for (const ov of this.vessels) {
+                if (!ov || ov === v) continue;
+                const safety = (ov.halfLen || 10) + myHalfL + 8.0;
+                if (Math.hypot(px - ov.x, pz - ov.z) < safety) return true;
+              }
+            }
+            if (Array.isArray(this.pierBoats)) {
+              for (const pb of this.pierBoats) {
+                if (!pb || pb === v) continue;
+                const safety = (pb.halfLen || 6) + myHalfL + 6.5;
+                if (Math.hypot(px - pb.x, pz - pb.z) < safety) return true;
+              }
+            }
+          }
+          return false;
+        };
+        if (isVesselOrDryBlocked(baseYaw)) {
+          for (const off of [0.32, -0.32, 0.64, -0.64, 0.98, -0.98, 1.35, -1.35, 1.75, -1.75]) {
+            if (!isVesselOrDryBlocked(baseYaw + off)) {
+              desiredYaw = baseYaw + off;
               break;
             }
           }

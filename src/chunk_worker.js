@@ -1,5 +1,5 @@
 import { setBeijingDemState } from './environment.js';
-import { computeChunkWorkerPayload } from './chunk_builder.js';
+import { computeChunkWorkerPayload } from './chunk_builder.js?v=20261031_r6';
 import { fetchGlobalChunkData, setTileCacheLimit } from './global_tiles.js';
 import { setStreetWorldOrigin } from './features/street_worker.js'; // [feature/street]
 

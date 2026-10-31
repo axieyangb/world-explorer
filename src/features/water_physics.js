@@ -1,5 +1,6 @@
-import * as THREE from '../../vendor/three.module.js';
-import { getBeijingTerrainElevation } from '../environment.js';
+import { sampleTunnelCorridorAt } from './road_grid.js?v=20261031_r6';
+import * as THREE from '../../vendor/three.module.js?v=20261031_r6';
+import { getBeijingTerrainElevation } from '../environment.js?v=20261031_r6';
 
 /**
  * Water physics: a per-chunk bit raster of "deep" water (lakes/sea/river polygons incl. island holes,
@@ -192,13 +193,18 @@ export class WaterPhysics {
   }
 
   /** True when the road surface `surf` (from sampleRoadSurface) physically supports a point above water. */
+  /** True when (wx, wz) lies within an underwater or underground vehicular tunnel corridor. */
+  isInUnderwaterTunnel(wx, wz) {
+    return Boolean(sampleTunnelCorridorAt(this.app, wx, wz, 6.0));
+  }
+
+  /** True when the road surface surf (from sampleRoadSurface) physically supports a point above/across water. */
   _roadSupports(surf, wx, wz, waterY) {
+    if (this.isInUnderwaterTunnel(wx, wz)) return true;
     if (!surf || !surf.seg) return false;
     const s = surf.seg;
+    if (s.bridge || s.tunnel) return true;
     if (surf.y < waterY - 0.6) return false;
-    // Bridge decks: trust sampleRoadSurface (its lateral tolerance is what the floor clamp uses too), so a car
-    // on a narrow-mapped bridge (e.g. footway-only Pont d Iena) never drops through the deck.
-    if (s.bridge) return true;
     const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
     const len2 = vx * vx + vz * vz;
     let t = len2 > 1e-6 ? ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2 : 0;
@@ -207,9 +213,10 @@ export class WaterPhysics {
     return d <= (s.width || 6) * 0.5 + 1.5;
   }
 
-  /** Water under (wx, wz) with no road/bridge deck carrying the body at height wy. */
+  /** Water under (wx, wz) with no road/bridge deck or underwater tunnel carrying the body at height wy. */
   isUnsupportedWater(wx, wz, wy, surf) {
     if (!this.isPointInWater(wx, wz)) return false;
+    if (this.isInUnderwaterTunnel(wx, wz)) return false;
     const waterY = this.getWaterSurfaceY(wx, wz);
     if (wy < waterY - 2.5) return false; // trench / tunnel below the surface
     return !this._roadSupports(surf, wx, wz, waterY);
@@ -389,7 +396,7 @@ export class WaterPhysics {
   /** Walk mode: allows entering/dropping into water (where unsupported water triggers drowning) while recording dry shore poses. */
   resolveWalk(px, pz, nx, nz, wy) {
     const surfHere = this.app.sampleRoadSurface(px, wy, pz);
-    if (!this.isPointInWater(px, pz) || (surfHere && surfHere.seg && surfHere.seg.bridge)) {
+    if (!this.isPointInWater(px, pz) || (surfHere && surfHere.seg && (surfHere.seg.bridge || surfHere.seg.tunnel)) || this.isInUnderwaterTunnel(px, pz)) {
       this.safe = { x: px, z: pz, yaw: this.app.yaw, seg: surfHere ? surfHere.seg : null };
       const last = this.safeHist[this.safeHist.length - 1];
       if (!last || Math.hypot(last.x - px, last.z - pz) > 4.0) {

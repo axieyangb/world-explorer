@@ -698,7 +698,29 @@ export class AirlinerSystem {
       const dx = fsd.destX - pos.x;
       const dz = fsd.destZ - pos.z;
       fsdDist = Math.hypot(dx, dz);
-      const desiredYaw = Math.atan2(dx, dz);
+      let desiredYaw = Math.atan2(dx, dz);
+      if (this.grounded && typeof this.getAllAirlinerColliders === "function") {
+        const cols = this.getAllAirlinerColliders();
+        const isPlaneAhead = (ang) => {
+          const sA = Math.sin(ang), cA = Math.cos(ang);
+          for (const col of cols) {
+            if (!col || col.mesh === this.mesh) continue;
+            const odx = col.x - pos.x, odz = col.z - pos.z;
+            const fwdD = odx * sA + odz * cA;
+            const latD = Math.abs(-odx * cA + odz * sA);
+            if (fwdD > 0 && fwdD < 95 && latD < (col.radius || 22) + 22) return true;
+          }
+          return false;
+        };
+        if (isPlaneAhead(desiredYaw)) {
+          for (const off of [0.38, -0.38, 0.75, -0.75, 1.15, -1.15]) {
+            if (!isPlaneAhead(desiredYaw + off)) {
+              desiredYaw += off;
+              break;
+            }
+          }
+        }
+      }
       fsdYawErr = Math.atan2(Math.sin(desiredYaw - this.app.yaw), Math.cos(desiredYaw - this.app.yaw));
       const destTerrY = this.app.world.getHeightAt(fsd.destX, fsd.destZ);
       fsdTargetAlt = Math.max(this.groundY + 180, destTerrY + 180, Math.min(680, 220 + fsdDist * 0.12));

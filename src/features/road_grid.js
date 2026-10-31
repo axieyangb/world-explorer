@@ -135,7 +135,7 @@ function bridgeGapFallback(app, wx, wy, wz, cx, cz) {
         for (let j = g.start[k], e = g.start[k + 1]; j < e; j++) {
           const i = g.items[j];
           const s = i < g.nSegs ? segs[i] : decks[i - g.nSegs];
-          if (!s || !s.bridge || s.tunnel) continue;
+          if (!s || (!s.bridge && !s.tunnel)) continue;
           const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
           const len2 = vx * vx + vz * vz;
           if (len2 < 0.05) continue;
@@ -198,4 +198,51 @@ export function sampleBridgeUndersideAt(app, wx, wy, wz) {
   }
   if (!bestSeg) return null;
   return { deckY: bestDeckY + 0.07, soffitY: bestDeckY - 0.85, seg: bestSeg };
+}
+
+/**
+ * Queries whether (wx, wz) lies inside a vehicular tunnel corridor (s.tunnel === true).
+ * Returns { y, seg, distH } or null.
+ */
+export function sampleTunnelCorridorAt(app, wx, wz, extraMargin = 4.5) {
+  if (!app || !app.loadedChunks) return null;
+  const [cx, cz] = app.worldToChunk(wx, wz);
+  let best = null, bestD = Infinity, bestY = 0;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      const chunk = app.loadedChunks.get((cx + dx) + "," + (cz + dz));
+      const ud = chunk && chunk.userData;
+      if (!ud || !ud.roadSegments) continue;
+      let g = ud.roadGrid;
+      if (g === undefined || (g && g.src && g.src !== ud.roadSegments)) {
+        g = ud.roadGrid = buildRoadGrid(ud.roadSegments, ud.deckSegments || null);
+      }
+      if (!g) continue;
+      const reach = extraMargin + 10.0;
+      const c0 = Math.max(0, Math.floor((wx - reach - g.minX) / g.cell)), c1 = Math.min(g.nx - 1, Math.floor((wx + reach - g.minX) / g.cell));
+      const r0 = Math.max(0, Math.floor((wz - reach - g.minZ) / g.cell)), r1 = Math.min(g.nz - 1, Math.floor((wz + reach - g.minZ) / g.cell));
+      const segs = ud.roadSegments;
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+        const k = r * g.nx + c;
+        for (let j = g.start[k], e = g.start[k + 1]; j < e; j++) {
+          const i = g.items[j];
+          if (i >= g.nSegs) continue;
+          const s = segs[i];
+          if (!s || !s.tunnel) continue;
+          const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
+          const len2 = vx * vx + vz * vz;
+          if (len2 < 0.05) continue;
+          let t = ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const d = Math.hypot(wx - (s.x1 + vx * t), wz - (s.z1 + vz * t));
+          if (d <= (s.width || 8.0) * 0.5 + extraMargin && d < bestD) {
+            bestD = d;
+            best = s;
+            bestY = s.y1 + (s.y2 - s.y1) * t;
+          }
+        }
+      }
+    }
+  }
+  return best ? { y: bestY + 0.07, seg: best, distH: bestD } : null;
 }

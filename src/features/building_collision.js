@@ -1,3 +1,4 @@
+import { sampleTunnelCorridorAt } from './road_grid.js?v=20261031_r6';
 /**
  * Building collision against real footprint polygons (base tier), with a lazily built per-chunk
  * uniform grid and neighbour-chunk lookups. Bodies are circles (the car is three circles along its
@@ -146,8 +147,22 @@ export class BuildingCollision {
   }
 
   /** Push-out vector for one circle (accumulated over all overlapping footprints). */
+  _isBypassedByTunnel(x, z) {
+    const app = this.app;
+    if (!app) return false;
+    const tun = sampleTunnelCorridorAt(app, x, z, 3.8);
+    if (!tun) return false;
+    if (app.water && app.water.isPointInWater(x, z)) return true;
+    if (app.fsd && app.fsd.active && app.navigator && app.navigator.isOnTunnelSegment && app.navigator.isOnTunnelSegment(x, z)) return true;
+    return false;
+  }
+
   _circlePush(x, z, r, wy, out) {
     let px = 0, pz = 0, hit = false, roofMax = -Infinity;
+    if (this._isBypassedByTunnel(x, z)) {
+      out.x = 0; out.z = 0; out.hit = false; out.roof = -Infinity;
+      return out;
+    }
     this._forNear(x, z, r, (ring, b) => {
       if (wy > b.h + 0.5) return; // above the roof (elevated road, landing on top)
       const q = closestOnRing(x + px, z + pz, ring);
@@ -293,6 +308,7 @@ export class BuildingCollision {
 
   /** True if (x, z) lies inside any base footprint (test probe). */
   insideAny(x, z, wy = -Infinity) {
+    if (this._isBypassedByTunnel(x, z)) return null;
     let found = null;
     this._forNear(x, z, 0.01, (ring, b) => { if (!found && wy <= b.h + 0.5 && pointInRing(x, z, ring)) found = b; });
     return found;

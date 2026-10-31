@@ -257,13 +257,32 @@ export class HeliFlight {
         this.app._onFsdArrived?.();
       } else {
         const s = this.state;
-        const desiredYaw = Math.atan2(dx, dz);
-        const yawErr = angDiff(s.yaw, desiredYaw);
+        let desiredYaw = Math.atan2(dx, dz);
         const supHere = this._support(pos.x, pos.z, pos.y + 80);
-        const lookD = Math.min(dist, 55);
+        const lookD = Math.min(dist, 60);
         const supAhead = this._support(pos.x + Math.sin(desiredYaw) * lookD, pos.z + Math.cos(desiredYaw) * lookD, pos.y + 120);
+        let maxBldgAhead = -Infinity;
+        for (const d of [22, 42, 62]) {
+          const px = pos.x + Math.sin(desiredYaw) * d;
+          const pz = pos.z + Math.cos(desiredYaw) * d;
+          this._forBoxes(px, pz, 24, (b) => { if (b.h > maxBldgAhead) maxBldgAhead = b.h; });
+        }
+        if (pos.y < maxBldgAhead + 14) {
+          for (const off of [0.45, -0.45, 0.9, -0.9, 1.35, -1.35]) {
+            const cand = desiredYaw + off;
+            let hitTall = false;
+            this._forBoxes(pos.x + Math.sin(cand) * 34, pos.z + Math.cos(cand) * 34, 18, (b) => {
+              if (b.h > pos.y - 6) hitTall = true;
+            });
+            if (!hitTall) {
+              desiredYaw = cand;
+              break;
+            }
+          }
+        }
+        const yawErr = angDiff(s.yaw, desiredYaw);
         const destSup = this._terrain(fsd.destX, fsd.destZ);
-        const targetY = Math.max(supHere, supAhead, destSup) + (dist < 90 ? 38 : 72);
+        const targetY = Math.max(supHere, supAhead, destSup, Number.isFinite(maxBldgAhead) ? maxBldgAhead : -Infinity) + (dist < 90 ? 38 : 72);
         if (s.grounded || this.autoLanding) {
           this.autoLanding = false;
           s.autoLanding = false;

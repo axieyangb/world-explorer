@@ -1212,9 +1212,23 @@ export class CityTraffic {
             const lat0 = Math.abs((o.x[k] - c.lx) * c.uz - (o.z[k] - c.lz) * c.ux);
             if (lat0 < c.wid * 0.5 + extW + 0.3 && along > -(c.len * 0.5 + extL + 0.8) && along < stAlong) { stAlong = along; stK = k; }
           }
+          if (kind === 1) {
+            const dxP = dx + o.hx[k] * o.v[k] * 0.65, dzP = dz + o.hz[k] * o.v[k] * 0.65;
+            const alongP = dxP * c.ux + dzP * c.uz;
+            const latNow = Math.abs(dx * c.uz - dz * c.ux);
+            const latPred = Math.abs(dxP * c.uz - dzP * c.ux);
+            const padP = (this.app && this.app.fsd && this.app.fsd.active) ? 2.6 : 1.3;
+            const maxLatP = c.wid * 0.5 + extW + padP;
+            if ((along > -1.2 && along < 24.0 && latNow <= maxLatP) || (alongP > -1.0 && alongP < 24.0 && latPred <= maxLatP)) {
+              const effAlong = Math.min(along > -1.2 ? along : Infinity, alongP > -1.0 ? alongP : Infinity);
+              const gP = Math.max(0, effAlong - c.len * 0.5 - extL - 2.6);
+              if (gP < gap) { gap = gP; leadV = 0; }
+              if (gP < 2.2) c.v = Math.min(c.v, 0);
+            }
+          }
           if (along <= 0.5) continue;
           const lat = Math.abs(dx * c.uz - dz * c.ux);
-          if (lat > c.wid * 0.5 + extW + (kind === 2 ? 1.2 : 0.25)) continue;
+          if (lat > c.wid * 0.5 + extW + (kind === 2 ? 1.2 : (kind === 1 ? 1.4 : 0.25))) continue;
           // oncoming traffic: only a car passing an obstacle in MY lane counts, and only while I am not passing
           let back = 0;
           if (!st && kind === 0 && hdot < -0.5) {
@@ -2570,6 +2584,16 @@ export class CityTraffic {
       if (Math.abs(c.y - app.pos.y) > 2.8) continue;
       const r = obbOverlap(app.pos.x, app.pos.z, hx, hz, pl, pw, cxEff, czEff, c.ux, c.uz, c.len * 0.5, c.wid * 0.5);
       if (!r) continue;
+      if (app.fsd && app.fsd.active) {
+        // Non-destructive cushion when FSD is active: move the AI car aside smoothly without triggering a crash
+        c.kxOff = (c.kxOff || 0) - r.nx * (r.depth + 0.45);
+        c.kzOff = (c.kzOff || 0) - r.nz * (r.depth + 0.45);
+        c.rx = c.x + c.kxOff;
+        c.rz = c.z + c.kzOff;
+        c.v = 0;
+        c.bumpT = Math.max(c.bumpT || 0, 1.2);
+        continue;
+      }
       const isTank = spec && (spec.id === 'tank' || spec.isTank);
       const mAi = CAR_MASS_KG[c.type] || 1500;
       const wPlayer = drive ? (isTank ? 0.0 : mAi / (mPlayer + mAi)) : 1.0;

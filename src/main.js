@@ -99,13 +99,13 @@ import { WaterPhysics } from "./features/water_physics.js"; // fix/water
 import { BuildingCollision } from "./features/building_collision.js"; // fix/water
 import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-ships]
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
-import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
+import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt, sampleTunnelCorridorAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r5"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r6"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
-import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r5"; // [feature/space-launch]
+import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r6"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -262,6 +262,9 @@ class WorldExplorerApp {
       destZ: 0,
       label: "",
       beaconMesh: null,
+      stuckTimer: 0,
+      reverseTimer: 0,
+      reverseSteer: 1,
     };
 
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.35);
@@ -423,7 +426,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261031_r6" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;
@@ -1801,32 +1804,9 @@ class WorldExplorerApp {
       let fsdYaw = this.yaw;
       let fsdSpd = 0;
       if (fsdWalk) {
-        const distToDest = Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z);
-        if (distToDest < 4.5) {
-          this.speed = 0;
-          this._onFsdArrived();
-        } else {
-          const wp = (this.navigator && this.navigator.getLookaheadPoint && this.navigator.getLookaheadPoint(this.pos.x, this.pos.z, 14.0))
-            || { x: this.fsd.destX, z: this.fsd.destZ };
-          fsdYaw = Math.atan2(wp.x - this.pos.x, wp.z - this.pos.z);
-          // Obstacle avoidance probe for buildings & unsupported water
-          const isWalkBlocked = (ang) => {
-            const px = this.pos.x + Math.sin(ang) * 3.5;
-            const pz = this.pos.z + Math.cos(ang) * 3.5;
-            if (this.collision.insideAny(px, pz, this.pos.y + 0.6)) return true;
-            const s = this.sampleRoadSurface(px, this.pos.y, pz);
-            return Boolean(this.water && this.water.isUnsupportedWater(px, pz, this.pos.y, s));
-          };
-          if (isWalkBlocked(fsdYaw)) {
-            for (const off of [0.55, -0.55, 1.1, -1.1, 1.6, -1.6]) {
-              if (!isWalkBlocked(fsdYaw + off)) {
-                fsdYaw += off;
-                break;
-              }
-            }
-          }
-          fsdSpd = distToDest > 28.0 ? 11.5 : 6.2;
-        }
+        const wOut = this._computeWalkFsdInput(dt);
+        fsdYaw = wOut.yaw;
+        fsdSpd = wOut.spd;
       }
 
       const moveLen = fsdWalk ? (fsdSpd > 0 ? 1 : 0) : rawMoveLen;
@@ -2022,40 +2002,10 @@ class WorldExplorerApp {
     let handbrake = !isTank && this.keys.has("Space");
 
     if (this.fsd && this.fsd.active) {
-      const distToDest = Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z);
-      if (distToDest < 10.0) {
-        throttle = 0;
-        handbrake = true;
-        this.speed = 0;
-        this._onFsdArrived();
-      } else {
-        const lookDist = Math.max(18.0, Math.abs(this.speed) * 0.85);
-        const wp = (this.navigator && this.navigator.getLookaheadPoint && this.navigator.getLookaheadPoint(this.pos.x, this.pos.z, lookDist))
-          || { x: this.fsd.destX, z: this.fsd.destZ };
-        let desiredYaw = Math.atan2(wp.x - this.pos.x, wp.z - this.pos.z);
-        const probeDist = 11.0;
-        const isBlockedProbe = (ang) => {
-          const px = this.pos.x + Math.sin(ang) * probeDist;
-          const pz = this.pos.z + Math.cos(ang) * probeDist;
-          if (this.collision.insideAny(px, pz, this.pos.y + 0.6)) return true;
-          const s = this.sampleRoadSurface(px, this.pos.y, pz);
-          return this.water && this.water.isUnsupportedWater(px, pz, this.pos.y, s);
-        };
-        if (isBlockedProbe(desiredYaw)) {
-          if (!isBlockedProbe(desiredYaw + 0.55)) desiredYaw += 0.55;
-          else if (!isBlockedProbe(desiredYaw - 0.55)) desiredYaw -= 0.55;
-        }
-        const yawErr = this._angleDiff(this.yaw, desiredYaw);
-        steerInput = THREE.MathUtils.clamp(yawErr * 2.2, -1, 1);
-        this.yaw += THREE.MathUtils.clamp(yawErr, -0.9, 0.9) * dt * 1.65;
-        if ((performance.now() - this.lastMouseOrbitTime) * 0.001 > 1.2) {
-          this.camYaw += this._angleDiff(this.camYaw, this.yaw) * Math.min(1, 3.5 * dt);
-        }
-        const cornerFactor = Math.max(0.35, 1.0 - Math.abs(yawErr) * 0.72);
-        const approachFactor = THREE.MathUtils.clamp(distToDest / 45.0, 0.28, 1.0);
-        const targetFsdSpeed = Math.min(spec.maxSpeed * 0.78, 32.0) * cornerFactor * approachFactor;
-        throttle = this.speed < targetFsdSpeed ? 1 : -0.45;
-      }
+      const fsdDriveOut = this._applyDriveFsd(dt, spec);
+      throttle = fsdDriveOut.throttle;
+      steerInput = fsdDriveOut.steerInput;
+      handbrake = fsdDriveOut.handbrake;
     }
     const isNitro = shiftPressed && throttle > 0 && !(this.poiVenues && this.poiVenues.nitroEmpty); // [venues-poi] nitro tank
     this.nitroActive = isNitro;
@@ -3688,6 +3638,409 @@ class WorldExplorerApp {
     return grp;
   }
 
+  get fsdActive() {
+    return Boolean(this.fsd && this.fsd.active);
+  }
+
+  set fsdActive(val) {
+    if (!this.fsd) return;
+    const on = Boolean(val);
+    if (on && !this.fsd.active) {
+      if (this.fsd.destX === 0 && this.fsd.destZ === 0) {
+        const dist = this.mode === "airliner" ? 2400 : this.mode === "helicopter" ? 850 : 480;
+        this.fsd.destX = this.pos.x + Math.sin(this.yaw) * dist;
+        this.fsd.destZ = this.pos.z + Math.cos(this.yaw) * dist;
+      }
+      this.setFsdDestination(this.fsd.destX, this.fsd.destZ, this.fsd.label || "Destination");
+    } else if (!on && this.fsd.active) {
+      this.stopFsd();
+    }
+  }
+
+  get carSpeed() {
+    return this.speed;
+  }
+
+  set carSpeed(v) {
+    this.speed = Number(v) || 0;
+  }
+
+  isInTunnelCorridor(wx, wz) {
+    return Boolean(sampleTunnelCorridorAt(this, wx, wz, 4.5));
+  }
+
+  _ensureFsdRouteActive() {
+    if (!this.fsd || !this.fsd.active || !this.navigator) return;
+    if (this.fsd.destX === 0 && this.fsd.destZ === 0) {
+      this.fsd.destX = this.pos.x + Math.sin(this.yaw) * 420;
+      this.fsd.destZ = this.pos.z + Math.cos(this.yaw) * 420;
+    }
+    const dGoal = this.navigator.dest
+      ? Math.hypot(this.navigator.dest.x - this.fsd.destX, this.navigator.dest.z - this.fsd.destZ)
+      : Infinity;
+    if (!this.navigator.active || dGoal > 8.0) {
+      this.navigator.routeTo(this.pos, { x: this.fsd.destX, z: this.fsd.destZ }, this.fsd.label || "Destination");
+    }
+  }
+
+  /**
+   * Sidewalk & Footway FSD controller for human walker mode:
+   * - Follows local A* sidewalk/footway waypoints tightly (lookAhead = 6m)
+   * - Scans 9 candidate angles out to 8m for moving/parked cars, buildings, and water
+   * - Yields/pauses if a fast moving car crosses directly in front (< 4.5m)
+   */
+  _computeWalkFsdInput(dt) {
+    const distToDest = Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z);
+    if (distToDest < 4.5) {
+      this.speed = 0;
+      this._onFsdArrived();
+      return { yaw: this.yaw, spd: 0 };
+    }
+    this._ensureFsdRouteActive();
+    if (this.navigator) this.navigator.update(this.pos, performance.now());
+
+    const wp = (this.navigator && this.navigator.getLookaheadPoint && this.navigator.getLookaheadPoint(this.pos.x, this.pos.z, 6.0))
+      || { x: this.fsd.destX, z: this.fsd.destZ };
+    const baseYaw = Math.atan2(wp.x - this.pos.x, wp.z - this.pos.z);
+    const inTunnel = Boolean((wp && wp.tunnel) || this.isInTunnelCorridor(this.pos.x, this.pos.z));
+
+    const carObs = this.vehicleDamage
+      ? this.vehicleDamage.getNearbyCarObstacles(this.pos.x, this.pos.z, this.pos.y, 15.0)
+      : [];
+
+    // Check if a moving traffic car is crossing right in front of the walker
+    const sinB = Math.sin(baseYaw), cosB = Math.cos(baseYaw);
+    for (let i = 0; i < carObs.length; i++) {
+      const c = carObs[i];
+      if (c.spd < 1.5) continue;
+      const dx = c.x - this.pos.x, dz = c.z - this.pos.z;
+      const fwdDist = dx * sinB + dz * cosB;
+      const latDist = Math.abs(-dx * cosB + dz * sinB);
+      if (fwdDist > 0.2 && fwdDist < 4.5 && latDist < c.hw + 1.25) {
+        return { yaw: baseYaw, spd: 0 };
+      }
+    }
+
+    const isWalkAngleBlocked = (ang) => {
+      const sa = Math.sin(ang), ca = Math.cos(ang);
+      for (const dist of [2.2, 4.2, 6.8]) {
+        const px = this.pos.x + sa * dist;
+        const pz = this.pos.z + ca * dist;
+        if (!inTunnel && this.collision && this.collision.insideAny(px, pz, this.pos.y + 0.6)) return true;
+        const surf = this.sampleRoadSurface(px, this.pos.y, pz);
+        if (!inTunnel && this.water && this.water.isUnsupportedWater(px, pz, this.pos.y, surf)) return true;
+        for (let i = 0; i < carObs.length; i++) {
+          const c = carObs[i];
+          const dx = px - c.x, dz = pz - c.z;
+          const along = Math.abs(dx * c.ux + dz * c.uz);
+          const lat = Math.abs(-dx * c.uz + dz * c.ux);
+          if (along < c.hl + 0.85 && lat < c.hw + 0.85) return true;
+        }
+      }
+      if (!inTunnel && this.collision) {
+        const hitF = this.collision.segmentHit(this.pos.x, this.pos.y + 0.6, this.pos.z, sa, 0, ca, 4.5);
+        if (hitF < 0.92) return true;
+      }
+      return false;
+    };
+
+    let chosenYaw = baseYaw;
+    if (isWalkAngleBlocked(baseYaw)) {
+      for (const off of [0.38, -0.38, 0.76, -0.76, 1.15, -1.15, 1.55, -1.55, 2.0, -2.0]) {
+        if (!isWalkAngleBlocked(baseYaw + off)) {
+          chosenYaw = baseYaw + off;
+          break;
+        }
+      }
+    }
+    return {
+      yaw: chosenYaw,
+      spd: distToDest > 28.0 ? 11.5 : 6.2,
+    };
+  }
+
+  /**
+   * Autonomous Collision-Avoiding Car & Tank FSD Pilot:
+   * - Follows road-network A* route with right-hand lane keeping & corner-safe intersection turns
+   * - Evaluates a 15-angle LiDAR trajectory fan out to 28m against moving AI traffic (t = 0..1.3s),
+   *   parked/wrecked cars, pedestrians, airliners, buildings, and unsupported water
+   * - Overtakes / steers cleanly around slower or stopped vehicles when an adjacent lane is clear
+   * - Applies Adaptive Cruise Control (ACC), Predictive Automatic Emergency Braking (AEB),
+   *   and Auto-Reverse Unstick Recovery
+   */
+  _applyDriveFsd(dt, spec = VEHICLE_SPECS[this.vehicleIdx]) {
+    const distToDest = Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z);
+    if (distToDest < 10.0) {
+      this.speed = 0;
+      this._onFsdArrived();
+      return { throttle: 0, steerInput: 0, handbrake: true };
+    }
+
+    this._ensureFsdRouteActive();
+    if (this.navigator) this.navigator.update(this.pos, performance.now());
+
+    const lookDist = Math.max(10.5, Math.min(18.0, Math.abs(this.speed) * 0.68 + 8.5));
+    const wp = (this.navigator && this.navigator.getLookaheadPoint && this.navigator.getLookaheadPoint(this.pos.x, this.pos.z, lookDist))
+      || { x: this.fsd.destX, z: this.fsd.destZ, turnAngle: 0, distToRoute: 0, tunnel: false };
+
+    let baseDesiredYaw = Math.atan2(wp.x - this.pos.x, wp.z - this.pos.z);
+    const inTunnel = Boolean(wp.tunnel || this.isInTunnelCorridor(this.pos.x, this.pos.z));
+
+    const pHL = (spec && spec.length ? spec.length : 4.6) * 0.5;
+    const pHW = (spec && spec.width ? spec.width : 2.0) * 0.5;
+
+    // Gather all nearby moving traffic cars, wrecks, player parked cars, and POI parked cars
+    const carObs = this.vehicleDamage
+      ? this.vehicleDamage.getNearbyCarObstacles(this.pos.x, this.pos.z, this.pos.y, 38.0)
+      : [];
+
+    // Also include pedestrians within 22m
+    const pedObs = [];
+    if (this.traffic && Array.isArray(this.traffic.peds)) {
+      for (let i = 0; i < this.traffic.peds.length; i++) {
+        const p = this.traffic.peds[i];
+        if (!p || !p.active || p.state === "lying") continue;
+        if (Math.abs((p.y || 0) - this.pos.y) > 3.5) continue;
+        const d2 = (p.x - this.pos.x) * (p.x - this.pos.x) + (p.z - this.pos.z) * (p.z - this.pos.z);
+        if (d2 <= 22 * 22) {
+          pedObs.push({
+            x: p.x, z: p.z,
+            ux: p.hx || 0, uz: p.hz || 1,
+            spd: p.state === "walking" ? 1.4 : 0,
+            hl: 0.7, hw: 0.7,
+          });
+        }
+      }
+    }
+
+    // Handle active reverse-and-turn unstick maneuver
+    if (this.fsd.reverseTimer > 0) {
+      this.fsd.reverseTimer = Math.max(0, this.fsd.reverseTimer - dt);
+      const revSteer = this.fsd.reverseSteer || 1;
+      // Check rear clearance before backing up
+      const backX = this.pos.x - Math.sin(this.yaw) * (pHL + 2.2);
+      const backZ = this.pos.z - Math.cos(this.yaw) * (pHL + 2.2);
+      const rearBlocked = !inTunnel && this.collision && this.collision.insideAny(backX, backZ, this.pos.y + 0.6);
+      if (rearBlocked) {
+        this.fsd.reverseTimer = 0;
+      } else {
+        this.speed = -6.5;
+        this.yaw += revSteer * 0.85 * dt;
+        return { throttle: -1, steerInput: revSteer, handbrake: false };
+      }
+    }
+
+    // 15-Angle LiDAR Trajectory Fan around baseDesiredYaw
+    const candOffsets = [0, 0.11, -0.11, 0.22, -0.22, 0.34, -0.34, 0.48, -0.48, 0.62, -0.62, 0.78, -0.78, 0.96, -0.96];
+    const sampleDists = [3.2, 6.2, 9.8, 14.0, 19.0, 25.0];
+
+    let bestYaw = baseDesiredYaw;
+    let bestOffset = 0;
+    let bestCost = Infinity;
+    let bestMinObsDist = Infinity;
+    let bestLeadSpd = Infinity;
+    let bestWallDist = Infinity;
+
+    for (let ci = 0; ci < candOffsets.length; ci++) {
+      const off = candOffsets[ci];
+      const candYaw = baseDesiredYaw + off;
+      const sa = Math.sin(candYaw), ca = Math.cos(candYaw);
+      let cost = Math.abs(off) * 18.0 + Math.abs(this._angleDiff(this.yaw, candYaw)) * 7.5;
+      let minObsDist = Infinity;
+      let leadSpd = Infinity;
+      let wallDist = Infinity;
+
+      for (let di = 0; di < sampleDists.length; di++) {
+        const d = sampleDists[di];
+        if (d > distToDest + 2.0) break;
+        const px = this.pos.x + sa * d;
+        const pz = this.pos.z + ca * d;
+
+        // 1. Building & Water check
+        if (!inTunnel) {
+          const hitBldg = this.collision && (
+            this.collision.insideAny(px, pz, this.pos.y + 0.6) ||
+            (d <= 15.0 && this.collision.resolveCar(px, this.pos.y, pz, candYaw, spec).hit)
+          );
+          const surf = this.sampleRoadSurface(px, this.pos.y, pz);
+          const hitWater = this.water && this.water.isUnsupportedWater(px, pz, this.pos.y, surf);
+          if (hitBldg || hitWater) {
+            cost += (32.0 - d) * 650.0;
+            if (d < wallDist) wallDist = d;
+            break;
+          }
+        }
+
+        // 2. Moving & Parked Cars check (at current pose t=0 and predicted pose tPred)
+        const tPred = Math.min(1.3, d / Math.max(8.5, Math.abs(this.speed) + 4.5));
+        for (let oi = 0; oi < carObs.length; oi++) {
+          const c = carObs[oi];
+          for (let step = 0; step < 2; step++) {
+            const tt = step === 0 ? 0 : tPred;
+            const ox = c.x + c.ux * c.spd * tt;
+            const oz = c.z + c.uz * c.spd * tt;
+            const dx = px - ox, dz = pz - oz;
+            const along = Math.abs(dx * c.ux + dz * c.uz);
+            const lat = Math.abs(-dx * c.uz + dz * c.ux);
+            const safeL = c.hl + pHL + 1.45;
+            const safeW = c.hw + pHW + 1.15;
+            if (along < safeL && lat < safeW) {
+              cost += (32.0 - d) * 240.0;
+              const clearD = Math.max(0, d - c.hl - pHL);
+              if (clearD < minObsDist) {
+                minObsDist = clearD;
+                leadSpd = c.spd * (c.ux * sa + c.uz * ca);
+              }
+            } else if (along < safeL + 1.5 && lat < safeW + 0.85) {
+              // Soft proximity cushion penalty
+              cost += (30.0 - d) * 18.0;
+            }
+          }
+        }
+
+        // 3. Pedestrian check
+        for (let pi = 0; pi < pedObs.length; pi++) {
+          const p = pedObs[pi];
+          const ox = p.x + p.ux * p.spd * tPred;
+          const oz = p.z + p.uz * p.spd * tPred;
+          if (Math.hypot(px - ox, pz - oz) < pHW + p.hw + 1.35) {
+            cost += (32.0 - d) * 280.0;
+            const clearD = Math.max(0, d - pHL - p.hl);
+            if (clearD < minObsDist) {
+              minObsDist = clearD;
+              leadSpd = 0;
+            }
+          }
+        }
+      }
+
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestYaw = candYaw;
+        bestOffset = off;
+        bestMinObsDist = minObsDist;
+        bestLeadSpd = leadSpd;
+        bestWallDist = wallDist;
+      }
+    }
+
+    // Immediate forward-corridor scan along current heading AND bestYaw for ACC / AEB & lateral repulsion
+    const sinY = Math.sin(this.yaw), cosY = Math.cos(this.yaw);
+    const sinBest = Math.sin(bestYaw), cosBest = Math.cos(bestYaw);
+    let minClearAhead = bestMinObsDist;
+    let leadAlongSpd = bestLeadSpd;
+    let repulseYawDelta = 0;
+
+    for (let oi = 0; oi < carObs.length; oi++) {
+      const c = carObs[oi];
+      const dx = c.x - this.pos.x, dz = c.z - this.pos.z;
+      // Check along current heading
+      const fwdCur = dx * sinY + dz * cosY;
+      const latCur = -dx * cosY + dz * sinY; // + = right of player, - = left of player
+      // Check along chosen bestYaw
+      const fwdBest = dx * sinBest + dz * cosBest;
+      const latBest = -dx * cosBest + dz * sinBest;
+
+      const hdot = Math.abs(c.ux * sinY + c.uz * cosY);
+      const oHalfL = hdot * c.hl + (1 - hdot) * c.hw;
+      const oHalfW = hdot * c.hw + (1 - hdot) * c.hl;
+
+      // If obstacle lies in the forward corridor of our chosen path (or in current heading before lane change completes)
+      const inBestCorridor = fwdBest > -0.5 && fwdBest < 25.0 && Math.abs(latBest) < pHW + oHalfW + 0.95;
+      const inImmediateCur = fwdCur > -0.4 && fwdCur < 18.0 && Math.abs(latCur) < pHW + oHalfW + 0.85;
+      if (inBestCorridor || inImmediateCur) {
+        const fwdRef = inBestCorridor ? Math.min(fwdBest, fwdCur > 0 ? fwdCur : fwdBest) : fwdCur;
+        const clearD = Math.max(0, fwdRef - pHL - oHalfL);
+        // When actively steering around an obstacle in an open passing lane, allow controlled passing speed unless very close
+        const isOvertaking = Math.abs(bestOffset) > 0.12 && !inBestCorridor;
+        const effClearD = isOvertaking ? Math.max(clearD, 5.8) : clearD;
+        if (effClearD < minClearAhead) {
+          minClearAhead = effClearD;
+          leadAlongSpd = c.spd * (c.ux * sinBest + c.uz * cosBest);
+        }
+        if (isOvertaking && clearD < 8.5) {
+          this.speed = Math.min(this.speed, Math.max(5.2, clearD * 1.05));
+        }
+      }
+
+      // Close-proximity lateral repulsion cushion (< 10.5m)
+      if (fwdCur > -1.0 && fwdCur < 10.5 && Math.abs(latCur) < pHW + oHalfW + 1.65) {
+        // Steer away from the car (if car is on right latCur > 0, turn left +yaw; if on left latCur < 0, turn right -yaw)
+        const awaySign = latCur >= 0 ? 1 : -1;
+        const testYaw = bestYaw + awaySign * 0.32;
+        const tx = this.pos.x + Math.sin(testYaw) * 5.0;
+        const tz = this.pos.z + Math.cos(testYaw) * 5.0;
+        if (inTunnel || !(this.collision && this.collision.insideAny(tx, tz, this.pos.y + 0.6))) {
+          repulseYawDelta += awaySign * 0.26 * (1 - fwdCur / 11.0);
+        }
+      }
+    }
+
+    bestYaw += THREE.MathUtils.clamp(repulseYawDelta, -0.42, 0.42);
+
+    const yawErr = this._angleDiff(this.yaw, bestYaw);
+    const steerInput = THREE.MathUtils.clamp(yawErr * 2.55, -1, 1);
+    const yawRateGain = Math.abs(bestOffset) > 0.11 ? 2.85 : 1.95;
+    this.yaw += THREE.MathUtils.clamp(yawErr, -1.35, 1.35) * dt * yawRateGain;
+    if ((performance.now() - this.lastMouseOrbitTime) * 0.001 > 1.2) {
+      this.camYaw += this._angleDiff(this.camYaw, this.yaw) * Math.min(1, 3.5 * dt);
+    }
+
+    // Target speed modulation: cornering, upcoming route turn, passing, ACC, and AEB
+    const cornerFactor = Math.max(0.32, 1.0 - Math.abs(yawErr) * 0.72);
+    const turnLookFactor = Math.max(0.38, 1.0 - (wp.turnAngle || 0) * 0.52);
+    const approachFactor = THREE.MathUtils.clamp(distToDest / 45.0, 0.28, 1.0);
+    let targetFsdSpeed = Math.min(spec.maxSpeed * 0.76, 26.0) * cornerFactor * turnLookFactor * approachFactor;
+
+    if (Math.abs(bestOffset) > 0.16) {
+      // Controlled speed during lane change / overtaking maneuver
+      targetFsdSpeed = Math.min(targetFsdSpeed, 13.5);
+    }
+    if (bestWallDist < 12.0) {
+      targetFsdSpeed = Math.min(targetFsdSpeed, Math.max(4.5, bestWallDist * 0.85));
+    }
+
+    let throttle = 0;
+    let handbrake = false;
+
+    if (minClearAhead < 5.5) {
+      // Full Automatic Emergency Braking (AEB) + pre-contact speed clamp
+      const safeLead = Number.isFinite(leadAlongSpd) ? Math.max(0, leadAlongSpd) : 0;
+      targetFsdSpeed = Math.max(0, safeLead - 3.0);
+      this.speed = Math.min(this.speed, Math.max(0, safeLead * 0.75));
+      if (minClearAhead < 3.6) {
+        this.speed = 0;
+      } else {
+        this.speed = Math.max(0, this.speed - 42.0 * dt);
+      }
+      throttle = -1;
+      handbrake = true;
+    } else if (minClearAhead < 22.0) {
+      // Adaptive Cruise Control (ACC)
+      const safeLead = Number.isFinite(leadAlongSpd) ? Math.max(0, leadAlongSpd) : 0;
+      const accSpd = Math.max(3.0, safeLead + (minClearAhead - 5.5) * 0.88);
+      targetFsdSpeed = Math.min(targetFsdSpeed, accSpd);
+      throttle = this.speed < targetFsdSpeed ? 1 : -0.55;
+    } else {
+      throttle = this.speed < targetFsdSpeed ? 1 : -0.45;
+    }
+
+    // Auto-Reverse Unstick Detection (when wedged against a building or static obstacle)
+    const isBlockedByWall = bestWallDist < 3.4 || (!inTunnel && this.collision && this.collision.insideAny(this.pos.x + sinY * (pHL + 0.8), this.pos.z + cosY * (pHL + 0.8), this.pos.y + 0.6));
+    if (Math.abs(this.speed) < 0.85 && (isBlockedByWall || (minClearAhead < 2.2 && (!Number.isFinite(leadAlongSpd) || Math.abs(leadAlongSpd) < 0.3)))) {
+      this.fsd.stuckTimer = (this.fsd.stuckTimer || 0) + dt;
+      if (this.fsd.stuckTimer > 1.15) {
+        this.fsd.stuckTimer = 0;
+        this.fsd.reverseTimer = 1.25;
+        this.fsd.reverseSteer = yawErr >= 0 ? -1 : 1;
+      }
+    } else if (this.speed > 1.8) {
+      this.fsd.stuckTimer = 0;
+    }
+
+    return { throttle, steerInput, handbrake };
+  }
+
   setFsdDestination(wx, wz, label = "Destination") {
     const cx = Math.max(-HALF_WORLD + 40, Math.min(HALF_WORLD - 40, Number(wx) || 0));
     const cz = Math.max(-HALF_WORLD + 40, Math.min(HALF_WORLD - 40, Number(wz) || 0));
@@ -3695,6 +4048,8 @@ class WorldExplorerApp {
     this.fsd.destX = cx;
     this.fsd.destZ = cz;
     this.fsd.label = label || "Destination";
+    this.fsd.stuckTimer = 0;
+    this.fsd.reverseTimer = 0;
 
     const beacon = this._ensureFsdBeacon();
     const terrY = getBeijingTerrainElevation(cx, cz);
@@ -3705,9 +4060,7 @@ class WorldExplorerApp {
       this.navigator.routeTo(
         this.pos,
         { x: cx, z: cz },
-        this.loadedChunks,
-        (x, z) => this.worldToChunk(x, z),
-        this.overview
+        this.fsd.label
       );
     }
     this._updateHud();

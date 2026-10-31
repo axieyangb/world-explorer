@@ -1,40 +1,40 @@
-import * as THREE from '../vendor/three.module.js';
-import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js'; // [feature/traffic] lane graph
-import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js'; // feature/atmosphere
-import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js'; // fix/water
-import { buildBridgeDecks, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js'; // fix/water
-import { computeRoadLiftProfiles } from './features/bridge_profile.js'; // fix/bridge-continuity
-import { clearBridgeDeckBuildings } from './features/bridge_deck_buildings.js'; // [release-6-integ] Tower Bridge deck blockers
-import { makeLandmarkDeckTest } from './features/landmarks/registry.js'; // [lm-west] hand-built bridge decks replace generic piers
-import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js'; // fix/water
+import * as THREE from '../vendor/three.module.js?v=20261031_r6';
+import { buildTrafficGraph, trafficGraphBuffers } from './features/traffic_graph.js?v=20261031_r6'; // [feature/traffic] lane graph
+import { appendPolyShoreUv, appendRibbonShoreUv } from './features/water_shore.js?v=20261031_r6'; // feature/atmosphere
+import { buildWaterMask, waterMaskTransfer } from './features/water_physics.js?v=20261031_r6'; // fix/water
+import { buildBridgeDecks, isGoldenGateBridgeWay, worldXZToLatLon } from './features/bridge_deck.js?v=20261031_r6'; // fix/water
+import { computeRoadLiftProfiles } from './features/bridge_profile.js?v=20261031_r6'; // fix/bridge-continuity
+import { clearBridgeDeckBuildings } from './features/bridge_deck_buildings.js?v=20261031_r6'; // [release-6-integ] Tower Bridge deck blockers
+import { makeLandmarkDeckTest } from './features/landmarks/registry.js?v=20261031_r6'; // [lm-west] hand-built bridge decks replace generic piers
+import { buildRoadGrid, roadGridTransfer } from './features/road_grid.js?v=20261031_r6'; // fix/water
 import {
   getBeijingTerrainElevation,
   getChunkTerrainMeshElevation,
   buildChunkTerrainMesh,
   buildChunkTerrainArrays,
   snowCover,
-} from './environment.js';
-import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js';
-import { computeStreetFeatures } from './features/street_worker.js'; // [feature/street]
-import { buildWaterwayMesh } from './features/waterways.js'; // [terrain-roads]
+} from './environment.js?v=20261031_r6';
+import { appendCompactChunkBuildingWFC, FACADE_CATALOG, DOOR_CATALOG, resolveRegionTag } from './wfc/wfc_mesh_builder.js?v=20261031_r6';
+import { computeStreetFeatures } from './features/street_worker.js?v=20261031_r6'; // [feature/street]
+import { buildWaterwayMesh } from './features/waterways.js?v=20261031_r6'; // [terrain-roads]
 const VIADUCT_H = 2.6; // [elevated-roads] lifted non-bridge ways above this many metres are built as viaducts
 const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalks drawn by features/street_worker.js
-import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
-import { chunkGroundSampler } from './features/ground_cover.js'; // [ground]
-import { appendInfillBuilding } from './features/infill_buildings.js'; // [ground]
-import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod } from './features/roofs_chunk.js'; // [roofs]
-import { drawExtraFacadeLayers } from './features/facade_styles.js'; // [roofs]
-import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
-import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
-import { buildPoiVenues, poiVenuesTransfer, createPoiVenueMats } from './features/poi_venues.js'; // [venues-poi]
+import { buildVegetationLayer } from './features/vegetation_worker.js?v=20261031_r6'; // [feature/vegetation]
+import { chunkGroundSampler } from './features/ground_cover.js?v=20261031_r6'; // [ground]
+import { appendInfillBuilding } from './features/infill_buildings.js?v=20261031_r6'; // [ground]
+import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod } from './features/roofs_chunk.js?v=20261031_r6'; // [roofs]
+import { drawExtraFacadeLayers } from './features/facade_styles.js?v=20261031_r6'; // [roofs]
+import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js?v=20261031_r6'; // feature/places
+import { buildVenues, setVenueTerrainSampler } from './features/venues.js?v=20261031_r6'; // [venues]
+import { buildPoiVenues, poiVenuesTransfer, createPoiVenueMats } from './features/poi_venues.js?v=20261031_r6'; // [venues-poi]
 setVenueTerrainSampler(getBeijingTerrainElevation); // [release-6-integ] breaks environment<->venues import cycle
-import { addPlacesInfo } from './features/places_info/pi_worker.js'; // places-info
-import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js'; // [kaiju]
+import { addPlacesInfo } from './features/places_info/pi_worker.js?v=20261031_r6'; // places-info
+import { kaijuPatchBuildingShader, kaijuCreateBuildingDepthMaterial, kaijuBidAttribute } from './features/kaiju/kaiju_destruction.js?v=20261031_r6'; // [kaiju]
 import {
   LANDMARKS_40,
   matchLandmarkForChunkBuilding,
-} from './landmarks_40.js';
-import { buildRailTrack } from './features/rail_build.js'; // [feature/rail-transit]
+} from './landmarks_40.js?v=20261031_r6';
+import { buildRailTrack } from './features/rail_build.js?v=20261031_r6'; // [feature/rail-transit]
 
 /**
  * Converts a float [0..1] RGB array into a compact normalized Uint8Array (3 bytes/vertex instead of 12).
@@ -2247,7 +2247,7 @@ function buildRoadsAndBridges(
   for (let rIdx = 0; rIdx < roads.length; rIdx++) {
     const r = roads[rIdx];
     const [wid, cls, name, ref, lanes, widthM, oneway, isBridge, isTunnel, layer, flat] = r;
-    if (!flat || flat.length < 6 || isTunnel) continue;
+    if (!flat || flat.length < 6 || (isTunnel && MINOR_TUNNEL_CLS.has(cls))) continue;
     if (
       isBridge &&
       isPointInWater &&
@@ -2393,7 +2393,7 @@ function buildRoadsAndBridges(
         touchesMainSunken = true;
       }
       // fix/bridge-continuity: bridge decks get their height from liftProfiles (ground-relative raw 0 here)
-      rawYs[i] = (isBridge || (layer || 0) >= 1)
+      rawYs[i] = (isBridge || isTunnel || (layer || 0) >= 1)
         ? 0.0
         : isMinorWay
             ? Math.max(-0.8, Math.min(0.2, rY * 0.14))
@@ -2592,30 +2592,33 @@ function buildRoadsAndBridges(
           continue;
         }
 
-        if (!isTunnel) {
-          roadSegments.push({
-            x1: cx1 + ox,
-            y1: cy1,
-            z1: cz1 + oz,
-            x2: cx2 + ox,
-            y2: cy2,
-            z2: cz2 + oz,
-            width: widthM,
-            layer,
-            bridge: isBridge,
-            tunnel: isTunnel,
-            onWater: segInWater,
-            oneway,
-            lanes,
-            cls,
-            name: resolvedRoadName,
-            nameZh: resolvedRoadNameZh || undefined, // [road-names-zh]
-            rawName: name || ref || '',
-            signName: name || '',
-            ref: ref || '',
-            id: wid,
-          });
-        }
+        const segOverWater = Boolean(
+          isPointInWater &&
+          (isPointInWater(cx1, cz1, 0) || isPointInWater(cx2, cz2, 0) || isPointInWater((cx1 + cx2) * 0.5, (cz1 + cz2) * 0.5, 0))
+        );
+        roadSegments.push({
+          x1: cx1 + ox,
+          y1: cy1,
+          z1: cz1 + oz,
+          x2: cx2 + ox,
+          y2: cy2,
+          z2: cz2 + oz,
+          width: widthM,
+          layer,
+          bridge: isBridge,
+          tunnel: isTunnel,
+          onWater: isTunnel ? segOverWater : segInWater,
+          oneway,
+          lanes,
+          cls,
+          name: resolvedRoadName,
+          nameZh: resolvedRoadNameZh || undefined, // [road-names-zh]
+          rawName: name || ref || '',
+          signName: name || '',
+          ref: ref || '',
+          id: wid,
+        });
+        if (isTunnel) continue;
 
         // Road surface quad (counter-clockwise with +Y normal)
         rPos.push(
