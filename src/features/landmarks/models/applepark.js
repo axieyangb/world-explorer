@@ -181,7 +181,21 @@ function steveJobsTheater(k) {
   k.color(PATH).cyl(0, 2.8, 0, 24, 24, 0.5, seg);
   // 7m tall frameless 360-degree curved glass cylinder wall (glowing warmly at night)
   k.glow(true).color(LIT).cyl(0, 3.3, 0, 19.2, 19.2, 6.6, seg);
+  if (hi) {
+    // Central glass elevator & stone spiral stair core inside the lobby cylinder
+    k.glow(false).color(PATH).cyl(0, 3.3, 0, 5.2, 5.2, 6.7, 20);
+  }
   k.glow(false).color(GLASS_LT).cyl(0, 3.3, 0, 20.2, 20.2, 6.8, seg);
+  if (hi) {
+    // Ultra-slender silicone-joint glass panel seams & carbon-fiber roof soffit rings
+    k.color(ALU);
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      k.strut([Math.cos(a) * 20.24, 3.3, Math.sin(a) * 20.24], [Math.cos(a) * 20.24, 10.1, Math.sin(a) * 20.24], 0.09);
+    }
+    k.torus(0, 10.1, 0, 24.2, 0.22, 36, 10);
+    k.torus(0, 10.75, 0, 18.0, 0.16, 32, 8);
+  }
   // Iconic cantilevered metallic silver carbon-fiber disc roof (47m diameter)
   k.color(ALU).cyl(0, 10.1, 0, 24.5, 23.5, 0.65, seg);
   k.color(STEEL).cyl(0, 10.75, 0, 23.5, 16.0, 0.55, seg);

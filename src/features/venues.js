@@ -894,22 +894,36 @@ function kiosk(acc, x, z, gy, col, yaw) {
 
 // ------------------------------------------------------------------ build (worker, stage 3)
 export function buildVenues(ctx) {
-  const { data, ox, oz, groups, mats, colliders } = ctx;
+  const { data, ox, oz, groups, mats, colliders, isPointInWater } = ctx;
   const v = data && data.venues;
   if (!v) return null;
+  const inW = (x, z, m = 1.5) => Boolean(isPointInWater && isPointInWater(x, z, m));
   const acc = new Accum();
   const anim = [];
   const lat = data.places ? data.places.lat : 0;
   const lon = data.places ? data.places.lon : 0;
   const us = lat > 18 && lat < 72 && lon > -170 && lon < -50;
   for (const s of v.stadiums || []) {
+    if (isPointInWater && s.outer && s.outer.length >= 6) {
+      let sx = 0, sz = 0, wet = false;
+      for (let k = 0; k < s.outer.length; k += 2) {
+        sx += s.outer[k]; sz += s.outer[k + 1];
+        if (inW(s.outer[k], s.outer[k + 1], 1.0)) { wet = true; break; }
+      }
+      if (wet || inW(sx / (s.outer.length >> 1), sz / (s.outer.length >> 1), 1.0)) continue;
+    }
     try { buildStadium(acc, { ...s, us }, ox, oz, colliders); } catch (e) { /* malformed footprint: skip */ }
   }
-  for (const r of v.rides || []) buildRide(acc, r, ox, oz, anim, colliders);
+  for (const r of v.rides || []) {
+    const rad = r.k === 'coaster' ? Math.max(r.a || 20, r.b || 12) : r.k === 'wheel' ? (r.r || 16) : 8;
+    if (inW(r.x, r.z, 2.0) || inW(r.x + rad, r.z, 1.0) || inW(r.x - rad, r.z, 1.0) || inW(r.x, r.z + rad, 1.0) || inW(r.x, r.z - rad, 1.0)) continue;
+    buildRide(acc, r, ox, oz, anim, colliders);
+  }
   for (const [x1, z1, x2, z2] of v.paths || []) {
     const l = Math.hypot(x2 - x1, z2 - z1), n = Math.max(1, Math.ceil(l / 20));
     for (let i = 0; i < n; i++) {
       const a = [x1 + ((x2 - x1) * i) / n, z1 + ((z2 - z1) * i) / n], b = [x1 + ((x2 - x1) * (i + 1)) / n, z1 + ((z2 - z1) * (i + 1)) / n];
+      if (inW(a[0], a[1], 1.0) || inW(b[0], b[1], 1.0) || inW((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, 1.0)) continue;
       const y = (getBeijingTerrainElevation(ox + a[0], oz + a[1]) + getBeijingTerrainElevation(ox + b[0], oz + b[1])) / 2 + 0.28;
       acc.line(a[0], a[1], b[0], b[1], y, 4.5, PATH);
     }

@@ -375,7 +375,7 @@ export function buildPoiVenues(ctx) {
   // forecourts that OSM maps as paved service areas; props stand on the slab top (groundTop).
   const ground = (x, z) => Math.max(getBeijingTerrainElevation(ox + x, oz + z), getChunkTerrainMeshElevation(ox + x, oz + z) + 0.3);
   const groundTop = (x, z) => ground(x, z) + 0.1;
-  const inWater = (x, z) => Boolean(isPointInWater && isPointInWater(x, z, 0));
+  const inWater = (x, z) => Boolean(isPointInWater && isPointInWater(x, z, 1.5));
 
   // Footprints of the extruded ground-level buildings (local), with their entity index for kBid
   const blds = [];
@@ -723,6 +723,13 @@ export function buildPoiVenues(ctx) {
     if (canopy) {
       hl = Math.max(3.5, canopy.hl); hw = Math.max(3.2, canopy.hw);
       F = Frame.fromAxis(canopy.cx, 0, canopy.cz, canopy.ux, canopy.uz);
+      if (
+        inWater(canopy.cx, canopy.cz) ||
+        inWater(F.wx(-hl, -hw), F.wz(-hl, -hw)) ||
+        inWater(F.wx(hl, -hw), F.wz(hl, -hw)) ||
+        inWater(F.wx(-hl, hw), F.wz(-hl, hw)) ||
+        inWater(F.wx(hl, hw), F.wz(hl, hw))
+      ) return false;
       F.y0 = ground(canopy.cx, canopy.cz);
     } else {
       // Synthesize: canopy long axis along the nearest road, set back from the kerb
@@ -935,9 +942,10 @@ export function buildPoiVenues(ctx) {
       }
     }
     if (!G) {
-      if (bldAt(px0, pz0, 1.5) || taken(px0, pz0, 6)) return false;
+      if (inWater(px0, pz0) || bldAt(px0, pz0, 1.5) || taken(px0, pz0, 6)) return false;
       const ux = road0 ? road0.ux : 1, uz = road0 ? road0.uz : 0;
       G = Frame.fromAxis(px0, ground(px0, pz0), pz0, ux, uz);
+      if (!rectClear(G, -L / 2 - 1, L / 2 + 1, -Wb / 2 - 1, Wb / 2 + 1, { roadPad: 0.2 })) return false;
     }
     claim(G.x0, G.z0, L * 0.55);
     const seed = hashAbs(G.x0, G.z0, 19);
@@ -1645,6 +1653,17 @@ export function buildPoiVenues(ctx) {
   function garage(G0) {
     const F = Frame.fromAxis(G0.cx, ground(G0.cx, G0.cz), G0.cz, G0.ux, G0.uz);
     const hl = G0.hl, hw = G0.hw;
+    if (
+      inWater(G0.cx, G0.cz) ||
+      inWater(F.wx(-hl, -hw), F.wz(-hl, -hw)) ||
+      inWater(F.wx(hl, -hw), F.wz(hl, -hw)) ||
+      inWater(F.wx(-hl, hw), F.wz(-hl, hw)) ||
+      inWater(F.wx(hl, hw), F.wz(hl, hw)) ||
+      inWater(F.wx(0, -hw), F.wz(0, -hw)) ||
+      inWater(F.wx(0, hw), F.wz(0, hw)) ||
+      inWater(F.wx(-hl, 0), F.wz(-hl, 0)) ||
+      inWater(F.wx(hl, 0), F.wz(hl, 0))
+    ) return false;
     const R = rng32(G0.seed);
     const levels = Math.max(2, Math.min(9, Math.round(G0.h / 3.0)));
     const LH = Math.max(2.9, Math.min(3.4, G0.h / levels));

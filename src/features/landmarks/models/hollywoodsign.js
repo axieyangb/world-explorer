@@ -108,6 +108,10 @@ function buildHollywoodLetter(k, ch, cx, y0, cz, W, H, D) {
     k.strut([px, y0 + mastH * 0.88, zBack + 0.25], [px, y0 + 0.2, zAnchor], 0.38);
     if (hi) {
       k.strut([px, y0 + mastH * 0.45, zBack + 0.25], [px, y0 + 0.2, zAnchor], 0.32);
+      // Horizontal rear maintenance catwalk rungs on the back of the vertical stroke
+      for (const frac of [0.28, 0.56, 0.82]) {
+        k.box(px, y0 + mastH * frac, zBack + 0.35, T * 0.85, 0.18, 0.28);
+      }
     }
   }
 }

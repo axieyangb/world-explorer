@@ -160,7 +160,15 @@ function buildLongMarch2F(k, rx, rz) {
     [0.42, 4.5],
     [0.18, 6.2],
     [0.0, 8.8],
-  ], 10);
+  ], hi ? 16 : 10);
+  if (hi) {
+    // 4 Angled escape-motor nozzle cluster & booster attachment struts
+    k.color(ENGINE_DK).cyl(rx, y0 + 55.2, rz, 0.58, 0.44, 0.9, 12);
+    for (const [bx, bz] of bPos) {
+      k.strut([rx + bx * 0.85, y0 + 2.8, rz + bz * 0.85], [rx + bx * 0.55, y0 + 3.4, rz + bz * 0.55], 0.28);
+      k.strut([rx + bx * 0.85, y0 + 14.5, rz + bz * 0.85], [rx + bx * 0.55, y0 + 15.2, rz + bz * 0.55], 0.28);
+    }
+  }
 }
 
 function buildJiuquanVABAndTrees(k, vx, vz) {

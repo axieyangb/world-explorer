@@ -115,8 +115,26 @@ function buildSlsRocket(k, rx, rz) {
   // Orange-tan Liquid Hydrogen / Liquid Oxygen Core Stage (65m tall, r = 4.2m)
   k.color(SLS_ORANGE_DK).cyl(rx, y0, rz, 4.25, 4.25, 4.5, seg);
   k.color(SLS_ORANGE).cyl(rx, y0 + 4.5, rz, 4.2, 4.2, 54.0, seg);
-  // Ribbed intertank band
+  // Ribbed intertank band + external LOX feedline & Tail Service Masts (TSMs)
   k.color(SLS_ORANGE_DK).cyl(rx, y0 + 42.0, rz, 4.32, 4.32, 6.8, seg);
+  if (hi) {
+    // External LOX & Pressurization lines along the core stage
+    k.color(SLS_ORANGE_DK);
+    k.cyl(rx + 4.18, y0 + 3.0, rz + 0.8, 0.28, 0.28, 41.0, 8);
+    k.cyl(rx - 4.18, y0 + 3.0, rz + 0.8, 0.24, 0.24, 41.0, 8);
+    // Twin Tail Service Masts (TSMs) on ML-1 deck flanking the core stage base
+    k.color(SRB_WHITE);
+    for (const sx of [-3.4, 3.4]) {
+      k.taper(rx + sx, y0, rz - 4.2, 2.2, 2.8, 1.4, 1.8, 6.2);
+      k.strut([rx + sx, y0 + 4.8, rz - 3.2], [rx + sx * 0.75, y0 + 3.8, rz - 1.5], 0.55);
+    }
+    // Orion LAS 4-nozzle abort motor ring & Service Module RCS pods
+    k.color(TOWER_DK).cyl(rx, y0 + 86.2, rz, 0.72, 0.58, 1.2, 12);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      k.color(SRB_WHITE).box(rx + Math.cos(a) * 2.52, y0 + 73.0, rz + Math.sin(a) * 2.52, 0.55, 2.2, 0.55);
+    }
+  }
 
   // Twin 5-segment Solid Rocket Boosters (SRBs, 54m tall) at x = ±6.2m
   for (const sx of [-6.2, 6.2]) {

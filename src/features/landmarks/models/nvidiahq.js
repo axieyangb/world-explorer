@@ -120,8 +120,20 @@ function polyhedralTriangleBuilding(k, cx, cz, R, yEave, yPeak, rot) {
           cym + (P[1] - cym) * 0.62,
           czm + (P[2] - czm) * 0.62,
         ];
+        const q00 = inset(p00), q10 = inset(p10), q11 = inset(p11), q01 = inset(p01);
         k.glow(true).color(SKYLIGHT);
-        k.quadN(inset(p00), inset(p10), inset(p11), inset(p01), [0, 1, 0]);
+        k.quadN(q00, q10, q11, q01, [0, 1, 0]);
+        if (hi) {
+          // Internal triangular space-frame skylight sub-trusses
+          k.glow(false).color(STEEL);
+          k.strut(q00, q11, 0.24);
+          k.strut(q10, q01, 0.24);
+          k.strut(
+            [(q00[0] + q10[0]) * 0.5, (q00[1] + q10[1]) * 0.5, (q00[2] + q10[2]) * 0.5],
+            [(q01[0] + q11[0]) * 0.5, (q01[1] + q11[1]) * 0.5, (q01[2] + q11[2]) * 0.5],
+            0.22
+          );
+        }
       }
 
       // Crisp white/silver polyhedral ridge struts

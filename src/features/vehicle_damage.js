@@ -520,7 +520,14 @@ export class VehicleDamage {
       p.dFlee = 1.5;
     }
     const v = p.dSpd || 4;
-    p.x += p.dHx * v * dt; p.z += p.dHz * v * dt;
+    const nx = p.x + p.dHx * v * dt, nz = p.z + p.dHz * v * dt;
+    if (this.T && this.T._isPedInWater && this.T._isPedInWater(nx, p.y, nz)) {
+      const c = -0.5, sn = 0.8660254;
+      const hx = p.dHx * c - p.dHz * sn, hz = p.dHx * sn + p.dHz * c;
+      p.dHx = hx; p.dHz = hz;
+    } else {
+      p.x = nx; p.z = nz;
+    }
     p.hx = p.dHx; p.hz = p.dHz;
     p.phase += dt * v * 3.4;
     p.amp += (0.95 - p.amp) * Math.min(1, dt * 6);

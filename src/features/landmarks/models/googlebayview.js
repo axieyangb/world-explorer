@@ -58,7 +58,6 @@ function dragonscaleCanopyBuilding(k, cx, cz, w, d, hPeak, baysX, baysZ) {
   }
 
   // Clerestory window bands rising under the catenary wave peaks (glowing warmly at night)
-  k.glow(true).color(GLASS_LT);
   for (let bx = 0; bx < baysX; bx++) {
     const u = -1 + ((2 * bx + 1) / baysX);
     const x = u * (w * 0.42);
@@ -66,7 +65,17 @@ function dragonscaleCanopyBuilding(k, cx, cz, w, d, hPeak, baysX, baysZ) {
       const v = -1 + ((2 * bz + 1) / baysZ);
       const z = v * (d * 0.42);
       const yTop = roofY(u, v);
-      k.box(x, yTop - 3.6, z, (w / baysX) * 0.48, 2.2, (d / baysZ) * 0.48);
+      const cw = (w / baysX) * 0.48, cd = (d / baysZ) * 0.48;
+      k.glow(true).color(GLASS_LT).box(x, yTop - 3.6, z, cw, 2.2, cd);
+      if (hi) {
+        // Eyebrow clerestory arch frame & vertical structural mullions
+        k.glow(false).color(STEEL);
+        k.box(x, yTop - 1.35, z, cw + 1.2, 0.38, cd + 1.2);
+        for (let m = -2; m <= 2; m++) {
+          k.box(x + m * (cw * 0.2), yTop - 3.6, z + cd * 0.5, 0.22, 2.2, 0.28);
+          k.box(x + m * (cw * 0.2), yTop - 3.6, z - cd * 0.5, 0.22, 2.2, 0.28);
+        }
+      }
     }
   }
   k.glow(false);

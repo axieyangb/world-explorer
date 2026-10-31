@@ -117,6 +117,14 @@ function wingsAndGrounds(k) {
   // South Lawn circular fountain
   k.color(WHITE).cyl(0, 0.25, 36, 7.2, 7.6, 0.65, hi ? 20 : 10);
   k.color(WATER).cyl(0, 0.65, 36, 6.6, 6.6, 0.3, hi ? 20 : 10);
+  if (hi) {
+    // Central stone pedestals & glowing water plume jets in both fountains
+    for (const fz of [-30, 36]) {
+      k.color(WHITE_SH).cyl(0, 0.65, fz, 1.2, 0.85, 1.1, 12);
+      k.glow(true).color(0xd8f2ff).cone(0, 1.6, fz, 0.95, 2.8, 12);
+      k.glow(false);
+    }
+  }
 
   // 2. East & West Terraced Colonnade Walkways (connecting Residence to East & West Wings)
   for (const sx of [-1, 1]) {

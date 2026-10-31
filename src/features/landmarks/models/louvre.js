@@ -67,6 +67,18 @@ function peiGlassPyramid(k, px, pz) {
       const bM2 = [bx + (ax - bx) * t, 0.9, bz + (az - bz) * t];
       k.strut(rL, bM, 0.22);
       k.strut(rR, bM2, 0.22);
+      if (hi) {
+        // Horizontal stainless-steel tension tie-rods completing the Pei space-frame triangles
+        k.strut(rL, rR, 0.14);
+      }
+    }
+  }
+  if (hi) {
+    // Diamond steel lattice ridges on the 3 satellite Pyramions + fountain jets in the reflecting pools
+    for (const [sx, sz] of [[0, -28], [-28, 0], [28, 0]]) {
+      for (const [cx, cz] of [[-3.8, -3.8], [3.8, -3.8], [3.8, 3.8], [-3.8, 3.8]]) {
+        k.strut([sx + cx, 0.9, sz + cz], [sx, 5.75, sz], 0.14);
+      }
     }
   }
   k.pop();

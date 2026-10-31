@@ -146,6 +146,7 @@ export function buildTrafficGraph(segs, signalNodes, ox = 0, oz = 0) {
   for (const s of segs || []) {
     const code = trafficClassCode(s.cls);
     if (code === 9 || s.tunnel) continue;
+    if (s.onWater && !s.bridge && code === 8) continue;
     const a = find(s.x1, s.y1, s.z1);
     const b = find(s.x2, s.y2, s.z2);
     if (a === b) continue;
@@ -153,7 +154,7 @@ export function buildTrafficGraph(segs, signalNodes, ox = 0, oz = 0) {
     sA.push(a); sB.push(b);
     const lanes = Math.max(1, Math.min(6, s.lanes | 0 || 1));
     const width = Math.max(2, Number(s.width) || 5);
-    const oneway = (s.oneway ? 1 : 0) | (s.bridge ? 2 : 0);
+    const oneway = (s.oneway ? 1 : 0) | (s.bridge ? 2 : 0) | (s.onWater && !s.bridge ? 4 : 0);
     sMeta.push([code, lanes, oneway, width]);
     sSig.push(`${code}|${lanes}|${oneway}|${width}|${s.id}`);
     nodeSegs[a].push(i);

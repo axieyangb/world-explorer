@@ -78,7 +78,21 @@ function buildH3Rocket(k, rx, rz) {
 
   // Twin LE-9 first-stage liquid hydrogen engines + ignition glow
   k.glow(true).color(FLAME_GLOW).cyl(rx, y0 - 1.6, rz, 3.2, 2.4, 1.1, 12);
-  k.glow(false).color(ENGINE_DK).cyl(rx, y0 - 1.0, rz, 1.6, 1.1, 1.2, seg);
+  k.glow(false).color(ENGINE_DK);
+  if (hi) {
+    for (const ex of [-0.95, 0.95]) {
+      k.cyl(rx + ex, y0 - 1.2, rz, 0.88, 0.52, 1.4, 12);
+    }
+    // Diagonal SRB-3 thrust struts & cryogenic propellant transfer pipes from spherical tanks
+    for (const sx of [-4.1, 4.1]) {
+      k.strut([rx + sx, y0 + 12.2, rz], [rx + Math.sign(sx) * 2.5, y0 + 13.8, rz], 0.35);
+      k.strut([rx + sx, y0 + 2.2, rz], [rx + Math.sign(sx) * 2.5, y0 + 2.2, rz], 0.35);
+    }
+    k.color(TOWER_STEEL).pipe([42, 3.2, -24], [11, 3.2, -8], 0.42, 8);
+    k.pipe([42, 3.2, 8], [11, 3.2, 2], 0.42, 8);
+  } else {
+    k.cyl(rx, y0 - 1.0, rz, 1.6, 1.1, 1.2, seg);
+  }
 
   // White Aft Engine Section + Iconic Orange-Gold Cryogenic Tank Core Stage (r = 2.6m)
   k.color(H3_WHITE).cyl(rx, y0, rz, 2.6, 2.6, 5.5, seg);

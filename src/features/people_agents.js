@@ -136,7 +136,14 @@ export class PeopleAgents {
         const stopAt = c.action === 'follow' ? 2.0 : 0.4;
         if (d > stopAt) {
           const v = Math.min(ped.v * (c.action === 'follow' && d > 6 ? 1.6 : 1), d - stopAt + 0.2);
-          ped.x += (dx / d) * v * dt; ped.z += (dz / d) * v * dt;
+          const nx = ped.x + (dx / d) * v * dt, nz = ped.z + (dz / d) * v * dt;
+          if (this.T && this.T._isPedInWater && this.T._isPedInWater(nx, ped.y, nz)) {
+            this._settle(ped, dt);
+            if (c.action === 'return') { this._resume(ped); return false; }
+            this._end(ped);
+            return true;
+          }
+          ped.x = nx; ped.z = nz;
           ped.hx = dx / d; ped.hz = dz / d;
           ped.amp += ((c.action === 'follow' && d > 6 ? 0.95 : 0.5) - ped.amp) * Math.min(1, dt * 6);
           this._faceDir(ped, dx, dz, dt);

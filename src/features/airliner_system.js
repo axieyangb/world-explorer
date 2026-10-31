@@ -31,6 +31,7 @@ export class AirlinerSystem {
   constructor(app) {
     this.app = app;
     this.scene = app.scene;
+    this.maritime = app.maritime || null;
 
     // Active / player-controlled or parked hero airliner
     this.liveryIdx = 0;
@@ -54,6 +55,8 @@ export class AirlinerSystem {
     this.flaps = 0.5;    // 0 = clean, 0.5 = takeoff, 1.0 = landing
     this.stalling = false;
     this.groundY = 0;
+    this.heroYaw = 0;
+    this._collisionCooldown = 0;
 
     // Health & damage state for the active/hero airliner
     this.hp = MAX_HP;
@@ -456,6 +459,9 @@ export class AirlinerSystem {
     if (!cand) return false;
 
     if (cand.type === "instanced") {
+      if (this.hasSpawnedHero && this.mesh.visible && Math.hypot(this.mesh.position.x - cand.x, this.mesh.position.z - cand.z) > 18) {
+        this._saveCurrentHeroAsParked();
+      }
       this.app.places?.hidePlaneAt?.(cand.x, cand.z);
       this.cycleLivery(cand.liveryIdx);
       this.hp = MAX_HP;
@@ -580,8 +586,39 @@ export class AirlinerSystem {
     this.app.setMode("walk");
   }
 
+  _saveCurrentHeroAsParked() {
+    if (!this.hasSpawnedHero || !this.mesh.visible) return;
+    const hx = this.mesh.position.x;
+    const hy = this.mesh.position.y;
+    const hz = this.mesh.position.z;
+    const key = `hero_${Math.round(hx)}_${Math.round(hz)}`;
+    if (this.damagedParked.has(key)) return;
+    const parkedMesh = createHeroAirlinerModel(this.liveryIdx);
+    parkedMesh.position.set(hx, hy, hz);
+    parkedMesh.rotation.y = this.heroYaw || 0;
+    if (this.dead) charAirlinerModel(parkedMesh);
+    this._updateDamageVisuals(parkedMesh, this.hp);
+    this.scene.add(parkedMesh);
+    this.damagedParked.set(key, {
+      key,
+      x: hx,
+      y: hy,
+      z: hz,
+      yaw: this.heroYaw || 0,
+      liveryIdx: this.liveryIdx,
+      hp: this.hp,
+      maxHp: this.maxHp,
+      dead: this.dead,
+      mesh: parkedMesh,
+    });
+  }
+
   _syncOrientation() {
-    const euler = new THREE.Euler(-this.pitch, this.app.yaw, -this.roll, "YXZ");
+    if (this.app.mode === "airliner") {
+      this.heroYaw = this.app.yaw;
+    }
+    const yaw = this.app.mode === "airliner" ? this.app.yaw : (this.heroYaw ?? this.app.yaw);
+    const euler = new THREE.Euler(-this.pitch, yaw, -this.roll, "YXZ");
     this.mesh.quaternion.setFromEuler(euler);
   }
 
@@ -800,7 +837,11 @@ export class AirlinerSystem {
         if (this.vertSpeed > 0) this.vertSpeed = 0;
       }
 
-      // Touchdown / Landing or Crash check
+      // Touchdown / Landing or Crash check (including ship decks if over a large vessel)
+      const shipDeck = (this.maritime || this.app.maritime)?.getDeckHeightAt?.(pos.x, pos.z, pos.y + 2.5);
+      if (shipDeck && shipDeck.y > this.groundY) {
+        this.groundY = shipDeck.y;
+      }
       if (pos.y <= this.groundY + 0.05) {
         pos.y = this.groundY;
         const hardSink = this.vertSpeed < -18.5;
@@ -809,7 +850,7 @@ export class AirlinerSystem {
           this.applyDamage(MAX_HP + 50, pos);
           return;
         }
-        // Smooth touchdown on runway / terrain!
+        // Smooth touchdown on runway / terrain / deck!
         this.grounded = true;
         this.gearDown = true;
         this.gearAnim = 1.0;
@@ -819,10 +860,27 @@ export class AirlinerSystem {
       }
     }
 
-    // 5. Advance horizontal position along aircraft heading
+    if (this._collisionCooldown > 0) {
+      this._collisionCooldown = Math.max(0, this._collisionCooldown - dt);
+    }
+
+    // 5. Advance horizontal position along aircraft heading with swept 3D collision sub-steps
     const horizSpeed = this.grounded ? this.speed : (this.speed * Math.cos(this.pitch));
-    pos.x += Math.sin(this.app.yaw) * horizSpeed * dt;
-    pos.z += Math.cos(this.app.yaw) * horizSpeed * dt;
+    const totalStepDist = Math.abs(horizSpeed * dt);
+    const subSteps = Math.max(1, Math.min(8, Math.ceil(totalStepDist / 3.0)));
+    const subDt = dt / subSteps;
+
+    for (let s = 0; s < subSteps; s++) {
+      const curHoriz = this.grounded ? this.speed : (this.speed * Math.cos(this.pitch));
+      pos.x += Math.sin(this.app.yaw) * curHoriz * subDt;
+      pos.z += Math.cos(this.app.yaw) * curHoriz * subDt;
+      this.heroYaw = this.app.yaw;
+
+      // Resolve 3D collisions against all other airliners and all maritime ships/boats
+      this._resolveActiveAirlinerCollisions(subDt);
+      if (this.dead) break;
+    }
+
     this.app.pos.copy(pos);
     this.app.speed = this.speed;
     const mouseIdleSec = (performance.now() - (this.app.lastMouseOrbitTime || 0)) * 0.001;
@@ -965,7 +1023,10 @@ export class AirlinerSystem {
       p.mesh.material.opacity = p.startOpacity * (1.0 - t);
     }
 
-    // 6. Update interactive boarding prompt when walking or driving near an airport airliner
+    // 6. Keep AI traffic cars from driving through parked or active airliners
+    this._resolveTrafficVsAirliners();
+
+    // 7. Update interactive boarding prompt when walking or driving near an airport airliner
     this._updateBoardingPrompt();
   }
 
@@ -1221,5 +1282,790 @@ export class AirlinerSystem {
       this.app.audio?.playExplosion?.(1.35);
       this.app.traffic?.triggerImpactSphere?.(centerPos, 32, { damage: 240, shoveCars: true });
     } catch (_) {}
+  }
+
+  /** Active airliner descriptor when spawned. */
+  get activeAirliner() {
+    if (!this.hasSpawnedHero || !this.mesh.visible) return null;
+    const yaw = this.app.mode === "airliner" ? this.app.yaw : (this.heroYaw ?? this.app.yaw);
+    return {
+      key: "hero",
+      type: "hero",
+      x: this.mesh.position.x,
+      y: this.mesh.position.y,
+      z: this.mesh.position.z,
+      yaw,
+      pitch: this.pitch,
+      roll: this.roll,
+      speed: this.app.mode === "airliner" ? this.speed : 0,
+      scale: 1.35,
+      hp: this.hp,
+      maxHp: this.maxHp,
+      dead: this.dead,
+      mesh: this.mesh,
+    };
+  }
+
+  /** All airliners currently in the world (active/hero, damagedParked, instanced tarmac, runway, sky, liveSky). */
+  get airliners() {
+    return this.getAllAirlinerColliders(false);
+  }
+
+  /**
+   * Collects all 3D airliner colliders in the world.
+   * If `excludeHero` is true, omits `this.mesh` (used when `this.mesh` is checking against all other planes).
+   */
+  getAllAirlinerColliders(excludeHero = false, refX = undefined, refZ = undefined, maxRange = 650) {
+    const out = [];
+    const checkRange = Number.isFinite(refX) && Number.isFinite(refZ);
+    const maxR2 = maxRange * maxRange;
+
+    // 1. Hero / player airliner
+    if (!excludeHero && this.hasSpawnedHero && this.mesh.visible) {
+      const hx = this.mesh.position.x;
+      const hz = this.mesh.position.z;
+      if (!checkRange || (hx - refX) ** 2 + (hz - refZ) ** 2 <= maxR2) {
+        const yaw = this.app.mode === "airliner" ? this.app.yaw : (this.heroYaw ?? this.app.yaw);
+        const spd = this.app.mode === "airliner" ? this.speed : 0;
+        out.push({
+          key: "hero",
+          type: "hero",
+          x: hx,
+          y: this.mesh.position.y,
+          z: hz,
+          yaw,
+          pitch: this.pitch || 0,
+          roll: this.roll || 0,
+          vx: Math.sin(yaw) * spd,
+          vy: this.app.mode === "airliner" ? (this.vertSpeed || 0) : 0,
+          vz: Math.cos(yaw) * spd,
+          scale: 1.35,
+          hp: this.hp,
+          dead: this.dead,
+          mesh: this.mesh,
+        });
+      }
+    }
+
+    // 2. Promoted / damaged parked airliners
+    for (const [key, dp] of this.damagedParked.entries()) {
+      if (!dp || !dp.mesh || !dp.mesh.visible) continue;
+      if (checkRange && (dp.x - refX) ** 2 + (dp.z - refZ) ** 2 > maxR2) continue;
+      out.push({
+        key,
+        type: "damagedParked",
+        x: dp.mesh.position.x,
+        y: dp.mesh.position.y,
+        z: dp.mesh.position.z,
+        yaw: dp.yaw || 0,
+        pitch: 0,
+        roll: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        scale: 1.35,
+        hp: dp.hp,
+        dead: dp.dead,
+        entry: dp,
+        mesh: dp.mesh,
+      });
+    }
+
+    // 3. Instanced airport tarmac airliners (app.places._planes)
+    const places = this.app.places;
+    if (places && Array.isArray(places._planes)) {
+      for (let i = 0; i < places._planes.length; i++) {
+        const pl = places._planes[i];
+        if (!pl) continue;
+        if (checkRange && (pl.x - refX) ** 2 + (pl.z - refZ) ** 2 > maxR2) continue;
+        const key = `${Math.round(pl.x)}_${Math.round(pl.z)}`;
+        if (places.hiddenPlanes?.has(key) || this.damagedParked.has(key)) continue;
+        if (
+          this.hasSpawnedHero &&
+          this.mesh.visible &&
+          Math.hypot(pl.x - this.mesh.position.x, pl.z - this.mesh.position.z) < 12
+        ) {
+          continue;
+        }
+        const py = Number.isFinite(pl.y) ? pl.y : this.app.world.getHeightAt(pl.x, pl.z);
+        out.push({
+          key,
+          type: "instanced",
+          x: pl.x,
+          y: py,
+          z: pl.z,
+          yaw: pl.yaw || 0,
+          pitch: 0,
+          roll: 0,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          scale: pl.scale || 1.25,
+          pl,
+        });
+      }
+    }
+
+    // 4. Animated runway takeoff/landing airliners (app.places._runwayPlanes)
+    if (places && Array.isArray(places._runwayPlanes)) {
+      for (let i = 0; i < places._runwayPlanes.length; i++) {
+        const rp = places._runwayPlanes[i];
+        if (!rp || !rp.mesh || !rp.mesh.visible) continue;
+        const rx = rp.mesh.position.x;
+        const rz = rp.mesh.position.z;
+        if (checkRange && (rx - refX) ** 2 + (rz - refZ) ** 2 > maxR2) continue;
+        const yaw = rp.mesh.rotation.y || 0;
+        const spd = rp.speed || 0;
+        out.push({
+          key: `runway_${rp.id || i}`,
+          type: "runway",
+          x: rx,
+          y: rp.mesh.position.y,
+          z: rz,
+          yaw,
+          pitch: rp.pitch || 0,
+          roll: rp.roll || 0,
+          vx: Math.sin(yaw) * spd,
+          vy: 0,
+          vz: Math.cos(yaw) * spd,
+          scale: 1.15,
+          rp,
+          mesh: rp.mesh,
+        });
+      }
+    }
+
+    // 5. Ambient sky airliners (app.places._skyPlanes)
+    if (places && Array.isArray(places._skyPlanes)) {
+      for (let i = 0; i < places._skyPlanes.length; i++) {
+        const sp = places._skyPlanes[i];
+        if (!sp || !sp.mesh || !sp.mesh.visible) continue;
+        const sx = sp.mesh.position.x;
+        const sz = sp.mesh.position.z;
+        if (checkRange && (sx - refX) ** 2 + (sz - refZ) ** 2 > maxR2) continue;
+        const yaw = sp.yaw || sp.mesh.rotation.y || 0;
+        const spd = sp.speed || 75;
+        out.push({
+          key: `sky_${i}`,
+          type: "sky",
+          x: sx,
+          y: sp.mesh.position.y,
+          z: sz,
+          yaw,
+          pitch: sp.pitch || 0,
+          roll: sp.roll || 0,
+          vx: Math.sin(yaw) * spd,
+          vy: 0,
+          vz: Math.cos(yaw) * spd,
+          scale: sp.mesh.scale?.x || 1.2,
+          sp,
+          mesh: sp.mesh,
+        });
+      }
+    }
+
+    // 6. LiveSky ADS-B aircraft (app.liveSky.aircraft)
+    const liveAc = this.app.liveSky?.aircraft;
+    if (liveAc && typeof liveAc.values === "function") {
+      for (const ac of liveAc.values()) {
+        if (!ac || !Number.isFinite(ac.rx) || !Number.isFinite(ac.rz)) continue;
+        if (checkRange && (ac.rx - refX) ** 2 + (ac.rz - refZ) ** 2 > maxR2) continue;
+        out.push({
+          key: `live_${ac.id}`,
+          type: "live",
+          x: ac.rx,
+          y: ac.ry || 0,
+          z: ac.rz,
+          yaw: ac.yaw || 0,
+          pitch: ac.pitch || 0,
+          roll: ac.roll || 0,
+          vx: ac.vx || 0,
+          vy: ac.vy || 0,
+          vz: ac.vz || 0,
+          scale: ac.scale || 1.15,
+          ac,
+        });
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Promote an instanced airport airliner into an interactive `damagedParked` 3D rig so it can show fire/char/explosion.
+   */
+  _promoteInstancedAirliner(planeObj) {
+    if (!planeObj || planeObj.type !== "instanced") return planeObj?.entry || null;
+    const key = planeObj.key || `${Math.round(planeObj.x)}_${Math.round(planeObj.z)}`;
+    if (this.damagedParked.has(key)) return this.damagedParked.get(key);
+    this.app.places?.hidePlaneAt?.(planeObj.x, planeObj.z);
+    const liveryIdx = Math.abs(Math.round(planeObj.x * 0.13 + planeObj.z * 0.07)) % AIRLINER_LIVERIES.length;
+    const py = Number.isFinite(planeObj.y) ? planeObj.y : this.app.world.getHeightAt(planeObj.x, planeObj.z);
+    const mesh = createHeroAirlinerModel(liveryIdx);
+    mesh.position.set(planeObj.x, py, planeObj.z);
+    mesh.rotation.y = planeObj.yaw || 0;
+    this.scene.add(mesh);
+    const entry = {
+      key,
+      x: planeObj.x,
+      y: py,
+      z: planeObj.z,
+      yaw: planeObj.yaw || 0,
+      liveryIdx,
+      hp: MAX_HP,
+      maxHp: MAX_HP,
+      dead: false,
+      mesh,
+    };
+    this.damagedParked.set(key, entry);
+    return entry;
+  }
+
+  /**
+   * 3D sphere vs local box helper: returns { pen, lnx, lny, lnz, topY } in plane-local space or null.
+   */
+  _sphereVsLocalBox(lx, ly, lz, r, xMin, xMax, yMin, yMax, zMin, zMax) {
+    const cx = THREE.MathUtils.clamp(lx, xMin, xMax);
+    const cy = THREE.MathUtils.clamp(ly, yMin, yMax);
+    const cz = THREE.MathUtils.clamp(lz, zMin, zMax);
+    const dx = lx - cx;
+    const dy = ly - cy;
+    const dz = lz - cz;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= r * r) return null;
+
+    if (d2 > 1e-6) {
+      const d = Math.sqrt(d2);
+      return {
+        pen: r - d,
+        lnx: dx / d,
+        lny: dy / d,
+        lnz: dz / d,
+        topY: yMax,
+      };
+    }
+
+    // Center inside box: push out horizontally unless near the top surface
+    const pRight = xMax - lx;
+    const pLeft = lx - xMin;
+    const pTop = yMax - ly;
+    const pFront = zMax - lz;
+    const pBack = lz - zMin;
+
+    let minP = pRight, lnx = 1, lny = 0, lnz = 0;
+    if (pLeft < minP) { minP = pLeft; lnx = -1; lny = 0; lnz = 0; }
+    if (pFront < minP) { minP = pFront; lnx = 0; lny = 0; lnz = 1; }
+    if (pBack < minP) { minP = pBack; lnx = 0; lny = 0; lnz = -1; }
+    if (pTop <= Math.max(1.8, r * 0.95) && pTop < minP) { minP = pTop; lnx = 0; lny = 1; lnz = 0; }
+
+    return {
+      pen: r + minP,
+      lnx,
+      lny,
+      lnz,
+      topY: yMax,
+    };
+  }
+
+  /**
+   * Tests a 3D world sphere `(px, py, pz, r)` against a single airliner `plane`'s
+   * 3D oriented Fuselage + Swept Wings/Engines + Vertical Tail Fin + Horizontal Tailplane.
+   */
+  _testSphereVsAirliner3D(px, py, pz, r, plane) {
+    const S = plane.scale || 1.25;
+    const dx = px - plane.x;
+    const dz = pz - plane.z;
+    const maxReach = 25.5 * S + r + 2.0;
+    if (dx * dx + dz * dz > maxReach * maxReach) return null;
+
+    const dy = py - plane.y;
+    if (dy + r < -1.0 || dy - r > 13.2 * S) return null;
+
+    const c = Math.cos(plane.yaw);
+    const s = Math.sin(plane.yaw);
+    // Transform into target plane's local space (+lz = nose, +lx = port, +ly = up)
+    const lx = dx * c - dz * s;
+    const lz = dx * s + dz * c;
+    const ly = dy;
+
+    let best = null;
+    const pick = (cand, partName) => {
+      if (cand && (!best || cand.pen > best.pen)) {
+        best = { ...cand, part: partName };
+      }
+    };
+
+    // 1. Widebody Fuselage OBB/Capsule (z in [-23.8*S, +24.0*S], x in [-2.35*S, +2.35*S], y in [0.4*S, 5.85*S])
+    pick(
+      this._sphereVsLocalBox(lx, ly, lz, r, -2.35 * S, 2.35 * S, 0.4 * S, 5.85 * S, -23.8 * S, 24.0 * S),
+      "fuselage"
+    );
+
+    // 2. Swept Supercritical Main Wings + Underwing Turbofan Engine Nacelles (x in [-22.6*S, +22.6*S])
+    const absX = Math.abs(lx);
+    if (absX <= 22.8 * S + r) {
+      const clampedX = THREE.MathUtils.clamp(absX, 1.8 * S, 22.6 * S);
+      const u = (clampedX - 1.8 * S) / Math.max(0.01, 20.8 * S);
+      const zCenter = (1.65 - 7.45 * u) * S;
+      const halfChord = (3.75 - 2.35 * u) * S;
+      const yLow = (u < 0.35 ? 1.15 : 2.15 + 1.8 * u) * S; // includes engine pods inboard
+      const yHigh = (3.45 + 2.1 * u) * S;
+      pick(
+        this._sphereVsLocalBox(lx, ly, lz, r, -22.6 * S, 22.6 * S, yLow, yHigh, zCenter - halfChord, zCenter + halfChord),
+        "wing"
+      );
+    }
+
+    // 3. Vertical Stabilizer Tail Fin (up to 12.65*S ~ 17m tall)
+    pick(
+      this._sphereVsLocalBox(lx, ly, lz, r, -0.85 * S, 0.85 * S, 4.2 * S, 12.65 * S, -22.2 * S, -10.8 * S),
+      "tail_fin"
+    );
+
+    // 4. Horizontal Stabilizer Tailplane
+    pick(
+      this._sphereVsLocalBox(lx, ly, lz, r, -7.65 * S, 7.65 * S, 3.55 * S, 4.65 * S, -21.8 * S, -17.5 * S),
+      "tailplane"
+    );
+
+    if (!best) return null;
+
+    // Convert local normal back to world space
+    const wnx = best.lnx * c + best.lnz * s;
+    const wny = best.lny;
+    const wnz = -best.lnx * s + best.lnz * c;
+    const nl = Math.hypot(wnx, wny, wnz) || 1;
+    return {
+      pen: best.pen,
+      nx: wnx / nl,
+      ny: wny / nl,
+      nz: wnz / nl,
+      topY: plane.y + best.topY,
+      part: best.part,
+    };
+  }
+
+  /**
+   * Build 3D skeletal sample spheres for an airliner at `(x, y, z, yaw, pitch, roll, scale)`
+   * covering nose, forward/mid/aft fuselage, tail cone, vertical fin, engines, and swept wingtips.
+   */
+  _getAirlinerSampleSpheres(x, y, z, yaw, pitch = 0, roll = 0, scale = 1.35) {
+    const S = scale;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = -Math.cos(yaw); // right (starboard) vector
+    const rz = Math.sin(yaw);
+    const sinP = Math.sin(pitch);
+    const sinR = Math.sin(roll);
+    const yc = y + 3.35 * S;
+
+    return [
+      // Fuselage spine stations (nose to tail)
+      { px: x + fx * (20.8 * S), py: yc + (20.8 * S) * sinP, pz: z + fz * (20.8 * S), r: 2.15 * S, tag: "nose", side: 0 },
+      { px: x + fx * (10.5 * S), py: yc + (10.5 * S) * sinP, pz: z + fz * (10.5 * S), r: 2.38 * S, tag: "fwd_fuse", side: 0 },
+      { px: x, py: yc, pz: z, r: 2.55 * S, tag: "mid_fuse", side: 0 },
+      { px: x - fx * (10.5 * S), py: yc - (10.5 * S) * sinP, pz: z - fz * (10.5 * S), r: 2.35 * S, tag: "aft_fuse", side: 0 },
+      { px: x - fx * (20.5 * S), py: yc - (20.5 * S) * sinP + 0.5 * S, pz: z - fz * (20.5 * S), r: 2.05 * S, tag: "tail_cone", side: 0 },
+      // Vertical tail fin upper station
+      { px: x - fx * (18.5 * S), py: y + 9.8 * S - (18.5 * S) * sinP, pz: z - fz * (18.5 * S), r: 1.55 * S, tag: "tail_fin", side: 0 },
+      // Port (-1) & Starboard (+1) turbofan engines & mid-wings
+      { px: x - rx * (7.2 * S) + fx * (1.8 * S), py: y + 2.4 * S + (7.2 * S) * sinR, pz: z - rz * (7.2 * S) + fz * (1.8 * S), r: 2.1 * S, tag: "engine_port", side: -1 },
+      { px: x + rx * (7.2 * S) + fx * (1.8 * S), py: y + 2.4 * S - (7.2 * S) * sinR, pz: z + rz * (7.2 * S) + fz * (1.8 * S), r: 2.1 * S, tag: "engine_starboard", side: 1 },
+      { px: x - rx * (14.5 * S) - fx * (2.6 * S), py: y + 3.4 * S + (14.5 * S) * sinR, pz: z - rz * (14.5 * S) - fz * (2.6 * S), r: 1.65 * S, tag: "wing_port", side: -1 },
+      { px: x + rx * (14.5 * S) - fx * (2.6 * S), py: y + 3.4 * S - (14.5 * S) * sinR, pz: z + rz * (14.5 * S) - fz * (2.6 * S), r: 1.65 * S, tag: "wing_starboard", side: 1 },
+      // Swept sharklet wingtips
+      { px: x - rx * (21.6 * S) - fx * (5.8 * S), py: y + 4.4 * S + (21.6 * S) * sinR, pz: z - rz * (21.6 * S) - fz * (5.8 * S), r: 1.45 * S, tag: "wingtip_port", side: -1 },
+      { px: x + rx * (21.6 * S) - fx * (5.8 * S), py: y + 4.4 * S - (21.6 * S) * sinR, pz: z + rz * (21.6 * S) - fz * (5.8 * S), r: 1.45 * S, tag: "wingtip_starboard", side: 1 },
+    ];
+  }
+
+  /**
+   * Resolve 3D collisions for the player-piloted active airliner (`this.mesh`) against:
+   *   1. All other airliners (parked airport planes, damaged planes, runway planes, sky planes, liveSky).
+   *   2. All maritime vessels & moored pier boats (`this.maritime` / `this.app.maritime`).
+   */
+  _resolveActiveAirlinerCollisions(dt) {
+    if (this.dead || !this.mesh.visible) return;
+    const pos = this.mesh.position;
+    const yaw = this.app.yaw;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const horizSpd = this.grounded ? this.speed : (this.speed * Math.cos(this.pitch));
+    const myVx = fx * horizSpd;
+    const myVy = this.grounded ? 0 : this.vertSpeed;
+    const myVz = fz * horizSpd;
+
+    // --- PART A: Active Airliner vs. All Other Airliners ---
+    const others = this.getAllAirlinerColliders(true, pos.x, pos.z, 180);
+    if (others.length > 0) {
+      const myPts = this._getAirlinerSampleSpheres(pos.x, pos.y, pos.z, yaw, this.pitch, this.roll, 1.35);
+      const myPlaneDesc = { x: pos.x, y: pos.y, z: pos.z, yaw, scale: 1.35 };
+
+      for (let i = 0; i < others.length; i++) {
+        const other = others[i];
+        const dx0 = pos.x - other.x;
+        const dz0 = pos.z - other.z;
+        if (dx0 * dx0 + dz0 * dz0 > 95 * 95) continue;
+
+        let bestHit = null;
+        let hitSide = 0;
+
+        // Forward check: our fuselage & wing spheres vs other airliner's 3D body
+        for (let p = 0; p < myPts.length; p++) {
+          const pt = myPts[p];
+          const h = this._testSphereVsAirliner3D(pt.px, pt.py, pt.pz, pt.r, other);
+          if (h && (!bestHit || h.pen > bestHit.pen)) {
+            bestHit = h;
+            hitSide = pt.side;
+          }
+        }
+
+        // Reverse check: other airliner's nose/tail/wingtips vs our 3D body
+        const otherPts = this._getAirlinerSampleSpheres(other.x, other.y, other.z, other.yaw, other.pitch, other.roll, other.scale || 1.25);
+        for (let p = 0; p < otherPts.length; p++) {
+          const opt = otherPts[p];
+          const h = this._testSphereVsAirliner3D(opt.px, opt.py, opt.pz, opt.r, myPlaneDesc);
+          if (h && (!bestHit || h.pen > bestHit.pen)) {
+            bestHit = {
+              pen: h.pen,
+              nx: -h.nx,
+              ny: -h.ny,
+              nz: -h.nz,
+              topY: other.y + 5.8 * (other.scale || 1.25),
+              part: h.part,
+            };
+          }
+        }
+
+        if (!bestHit) continue;
+
+        // 1. Physically push active airliner out of the other airliner's 3D body so they NEVER overlap!
+        const pushDist = bestHit.pen + 0.08;
+        if (this.grounded || Math.abs(bestHit.ny) < 0.72) {
+          const hLen = Math.hypot(bestHit.nx, bestHit.nz) || 1;
+          pos.x += (bestHit.nx / hLen) * pushDist;
+          pos.z += (bestHit.nz / hLen) * pushDist;
+        } else {
+          pos.x += bestHit.nx * pushDist;
+          pos.y = Math.max(this.groundY, pos.y + bestHit.ny * pushDist);
+          pos.z += bestHit.nz * pushDist;
+        }
+
+        // 2. Relative velocity & impulse response
+        const rvx = myVx - (other.vx || 0);
+        const rvy = myVy - (other.vy || 0);
+        const rvz = myVz - (other.vz || 0);
+        const vn = rvx * bestHit.nx + rvy * bestHit.ny + rvz * bestHit.nz;
+        const impactSpd = vn < 0 ? -vn : Math.hypot(rvx, rvy, rvz) * 0.4;
+
+        // Block inward motion & bounce/scrub speed
+        const headDot = fx * bestHit.nx + fz * bestHit.nz;
+        if (vn < 0) {
+          if (this.grounded) {
+            if (headDot * this.speed < -0.15) {
+              // Head-on or reverse-into-plane: bounce slightly and stop
+              this.speed = -Math.sign(this.speed) * Math.min(3.2, impactSpd * 0.18);
+              this.throttle = 0;
+            } else {
+              // Glancing / wingtip scrape: scrub speed and impart yaw torque
+              this.speed *= 0.45;
+            }
+          } else {
+            this.speed = Math.max(32, this.speed * 0.65);
+            if (bestHit.ny > 0.5 && this.vertSpeed < 0) {
+              this.vertSpeed = Math.max(2.5, -this.vertSpeed * 0.35);
+            }
+          }
+
+          if (hitSide !== 0) {
+            // Wingtip clipped another plane -> realistic yaw spin torque
+            this.app.yaw += hitSide * THREE.MathUtils.clamp(impactSpd * 0.025, 0.04, 0.32);
+          }
+        }
+
+        // 3. Apply impact damage to both airliners (with cooldown so low-speed scrape doesn't instant-kill)
+        if (impactSpd >= 25.0) {
+          // High-speed collision (>= 25 m/s): catastrophic crash & explosion of both planes!
+          if (other.type === "instanced") {
+            const entry = this._promoteInstancedAirliner(other);
+            if (entry) this._damageParkedEntry(entry, MAX_HP + 100);
+          } else if (other.type === "damagedParked" && other.entry) {
+            this._damageParkedEntry(other.entry, MAX_HP + 100);
+          }
+          this.applyDamage(MAX_HP + 100, pos);
+          return;
+        } else if (impactSpd > 2.2 && this._collisionCooldown <= 0) {
+          this._collisionCooldown = 0.38;
+          const dmg = impactSpd < 12.0
+            ? (impactSpd - 1.8) * 4.5
+            : 46.0 + (impactSpd - 12.0) * 18.0;
+          if (other.type === "instanced") {
+            const entry = this._promoteInstancedAirliner(other);
+            if (entry) this._damageParkedEntry(entry, dmg);
+          } else if (other.type === "damagedParked" && other.entry) {
+            this._damageParkedEntry(other.entry, dmg);
+          }
+          this.applyDamage(dmg, pos);
+          try {
+            this.app.audio?.playCrash?.(Math.min(1.0, impactSpd / 18));
+          } catch (_) {}
+        }
+      }
+    }
+
+    // --- PART B: Active Airliner vs. Maritime Vessels & Moored Boats ---
+    const maritime = this.maritime || this.app.maritime;
+    if (maritime && typeof maritime.resolveAircraftCollision === "function") {
+      const shipCol = maritime.resolveAircraftCollision(
+        pos,
+        3.35,
+        29.8,
+        pos.y + 3.2,
+        yaw,
+        { x: myVx, y: myVy, z: myVz },
+        {
+          pitch: this.pitch,
+          roll: this.roll,
+          halfLen: 29.5,
+          halfH: 3.4,
+          applyPosition: true,
+        }
+      );
+
+      if (shipCol && shipCol.hit) {
+        if (pos.y < this.groundY) pos.y = this.groundY;
+        const impactSpd = shipCol.relSpeed || Math.hypot(myVx, myVy, myVz);
+
+        if (shipCol.isDeckContact && !this.grounded && this.vertSpeed < 0 && impactSpd < 35.0) {
+          // Descending onto a ship deck: bounce or touch down on top of the vessel
+          pos.y = Math.max(pos.y, shipCol.topY);
+          this.groundY = Math.max(this.groundY, shipCol.topY);
+          if (this.vertSpeed < -16.5) {
+            this.applyDamage(MAX_HP + 50, pos);
+            return;
+          }
+          this.vertSpeed = Math.max(0, -this.vertSpeed * 0.25);
+        } else {
+          // Lateral hull / bridge superstructure / mast collision
+          if (impactSpd >= 35.0 || (!this.grounded && this.speed > 45.0)) {
+            maritime.damageVessel?.(shipCol.vessel, 12.0, shipCol.contactX, shipCol.contactZ);
+            this.applyDamage(MAX_HP + 100, pos);
+            return;
+          }
+
+          const headDot = fx * shipCol.nx + fz * shipCol.nz;
+          if (this.grounded) {
+            if (headDot * this.speed < -0.1) {
+              this.speed = -Math.sign(this.speed) * Math.min(2.8, impactSpd * 0.18);
+              this.throttle = 0;
+            } else {
+              this.speed *= 0.4;
+            }
+          } else {
+            this.speed = Math.max(30, this.speed * 0.6);
+            this.vertSpeed = Math.max(2.0, this.vertSpeed);
+          }
+
+          if (shipCol.isWingHit) {
+            const wingSign = shipCol.partTag?.includes("port") ? -1 : 1;
+            this.app.yaw += wingSign * THREE.MathUtils.clamp(impactSpd * 0.025, 0.05, 0.28);
+          }
+
+          if (impactSpd > 2.5 && this._collisionCooldown <= 0) {
+            this._collisionCooldown = 0.38;
+            const dmg = impactSpd < 14.0
+              ? (impactSpd - 2.0) * 5.0
+              : 60.0 + (impactSpd - 14.0) * 16.0;
+            this.applyDamage(dmg, pos);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Highest surface height on any airliner (fuselage roof or wing upper surface) at `(x, z)` not above `refY + 1.5`.
+   * Used by helicopters and walkers so they can land/stand on top of a parked airliner instead of falling through it.
+   */
+  getSupportHeightAt(x, z, refY = Infinity) {
+    const excludeHero = this.app.mode === "airliner";
+    const list = this.getAllAirlinerColliders(excludeHero, x, z, 90);
+    let bestY = -Infinity;
+    for (let i = 0; i < list.length; i++) {
+      const pl = list[i];
+      const S = pl.scale || 1.25;
+      const dx = x - pl.x;
+      const dz = z - pl.z;
+      if (dx * dx + dz * dz > (34 * S) * (34 * S)) continue;
+      const c = Math.cos(pl.yaw);
+      const s = Math.sin(pl.yaw);
+      const lx = dx * c - dz * s;
+      const lz = dx * s + dz * c;
+
+      // Fuselage roof
+      if (Math.abs(lx) <= 2.25 * S && Math.abs(lz) <= 23.2 * S) {
+        const top = pl.y + 5.85 * S;
+        if (top <= refY + 1.8 && top > bestY) bestY = top;
+      }
+      // Swept wing surface
+      const absX = Math.abs(lx);
+      if (absX >= 1.8 * S && absX <= 22.4 * S) {
+        const u = (absX - 1.8 * S) / (20.6 * S);
+        const zCenter = (1.65 - 7.45 * u) * S;
+        const halfChord = (3.75 - 2.35 * u) * S;
+        if (Math.abs(lz - zCenter) <= halfChord) {
+          const top = pl.y + (3.45 + 2.0 * u) * S;
+          if (top <= refY + 1.8 && top > bestY) bestY = top;
+        }
+      }
+    }
+    return bestY;
+  }
+
+  /**
+   * External 3D collision query & resolution against all airliners in the world.
+   * Called by:
+   *   - Player Helicopter (`src/features/heli_flight.js`)
+   *   - Player Fighter Jet / Propeller Plane / Ground Vehicles (`car`, `tank`) / Walker (`src/main.js`)
+   *   - AI Traffic (`_resolveTrafficVsAirliners`)
+   * Mutates `pos` to push the caller out of the airliner's 3D fuselage, wings, engines, and tail!
+   */
+  resolveExternalCollision(pos, yaw = 0, radius = 2.5, wingSpan = 0, velocity = null, isAircraft = false) {
+    if (!pos) return null;
+    const excludeHero = this.app.mode === "airliner";
+    const list = this.getAllAirlinerColliders(excludeHero, pos.x, pos.z, 140);
+    if (!list.length) return null;
+
+    const rBody = Math.max(0.45, radius || 2.0);
+    const halfSpan = Math.max(0, (wingSpan || 0) * 0.5);
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = -Math.cos(yaw);
+    const rz = Math.sin(yaw);
+
+    const samplePts = [
+      { px: pos.x, py: (pos.y ?? 0) + (isAircraft ? 0 : rBody * 0.65), pz: pos.z, r: rBody, tag: "body" },
+    ];
+    if (isAircraft && halfSpan > rBody * 1.1) {
+      const tipSpan = halfSpan * 0.9;
+      const tipR = Math.max(1.0, rBody * 0.45);
+      samplePts.push(
+        { px: pos.x - rx * tipSpan, py: pos.y ?? 0, pz: pos.z - rz * tipSpan, r: tipR, tag: "wing_port" },
+        { px: pos.x + rx * tipSpan, py: pos.y ?? 0, pz: pos.z + rz * tipSpan, r: tipR, tag: "wing_starboard" },
+        { px: pos.x + fx * (halfSpan * 0.65), py: pos.y ?? 0, pz: pos.z + fz * (halfSpan * 0.65), r: tipR, tag: "nose" },
+        { px: pos.x - fx * (halfSpan * 0.65), py: pos.y ?? 0, pz: pos.z - fz * (halfSpan * 0.65), r: tipR, tag: "tail" }
+      );
+    }
+
+    let bestHit = null;
+    let hitPlane = null;
+
+    for (let i = 0; i < list.length; i++) {
+      const pl = list[i];
+      for (let p = 0; p < samplePts.length; p++) {
+        const pt = samplePts[p];
+        const h = this._testSphereVsAirliner3D(pt.px, pt.py, pt.pz, pt.r, pl);
+        if (h && (!bestHit || h.pen > bestHit.pen)) {
+          bestHit = h;
+          hitPlane = pl;
+        }
+      }
+    }
+
+    if (!bestHit || !hitPlane) return null;
+
+    let vx = 0, vy = 0, vz = 0;
+    if (velocity && typeof velocity === "object") {
+      vx = velocity.x || 0;
+      vy = velocity.y || 0;
+      vz = velocity.z || 0;
+    } else if (typeof velocity === "number") {
+      vx = fx * velocity;
+      vz = fz * velocity;
+    }
+
+    const rvx = vx - (hitPlane.vx || 0);
+    const rvy = vy - (hitPlane.vy || 0);
+    const rvz = vz - (hitPlane.vz || 0);
+    const vn = rvx * bestHit.nx + rvy * bestHit.ny + rvz * bestHit.nz;
+    const relSpeed = vn < 0 ? -vn : Math.hypot(rvx, rvy, rvz) * 0.35;
+
+    const pushDist = bestHit.pen + 0.06;
+    let pushX = bestHit.nx * pushDist;
+    let pushY = bestHit.ny * pushDist;
+    let pushZ = bestHit.nz * pushDist;
+
+    if (!isAircraft) {
+      // Ground vehicles & walkers: push horizontally so cars don't pop into the air
+      const hLen = Math.hypot(bestHit.nx, bestHit.nz) || 1;
+      pushX = (bestHit.nx / hLen) * pushDist;
+      pushY = 0;
+      pushZ = (bestHit.nz / hLen) * pushDist;
+    }
+
+    pos.x += pushX;
+    if (isAircraft && pos.y !== undefined) {
+      pos.y += pushY;
+    }
+    pos.z += pushZ;
+
+    // Apply impact damage to the hit airliner if collided at high speed
+    if (relSpeed > 11.0 && !(this._collisionCooldown > 0)) {
+      this._collisionCooldown = 0.35;
+      const dmg = (relSpeed - 9.0) * (isAircraft ? 8.5 : 3.5);
+      if (hitPlane.type === "hero") {
+        this.applyDamage(dmg, pos);
+      } else if (hitPlane.type === "instanced") {
+        const entry = this._promoteInstancedAirliner(hitPlane);
+        if (entry) this._damageParkedEntry(entry, dmg);
+      } else if (hitPlane.type === "damagedParked" && hitPlane.entry) {
+        this._damageParkedEntry(hitPlane.entry, dmg);
+      }
+    }
+
+    return {
+      hit: true,
+      pen: bestHit.pen,
+      nx: bestHit.nx,
+      ny: bestHit.ny,
+      nz: bestHit.nz,
+      pushX,
+      pushY,
+      pushZ,
+      topY: bestHit.topY,
+      part: bestHit.part,
+      airliner: hitPlane,
+      relSpeed,
+    };
+  }
+
+  /**
+   * Prevent AI street/airport traffic cars from driving through parked or active airliners.
+   */
+  _resolveTrafficVsAirliners() {
+    const cars = this.app.traffic?.cars;
+    if (!Array.isArray(cars) || !cars.length) return;
+    const planes = this.getAllAirlinerColliders(false, this.app.pos?.x, this.app.pos?.z, 260);
+    if (!planes.length) return;
+
+    for (let i = 0; i < cars.length; i++) {
+      const c = cars[i];
+      if (!c || c.dead) continue;
+      for (let j = 0; j < planes.length; j++) {
+        const pl = planes[j];
+        if (Math.abs((c.y || 0) - pl.y) > 8.0) continue;
+        const dx = c.x - pl.x;
+        const dz = c.z - pl.z;
+        if (dx * dx + dz * dz > 42 * 42) continue;
+        const h = this._testSphereVsAirliner3D(c.x, (c.y || pl.y) + 1.2, c.z, 2.2, pl);
+        if (h) {
+          const hl = Math.hypot(h.nx, h.nz) || 1;
+          c.x += (h.nx / hl) * (h.pen + 0.1);
+          c.z += (h.nz / hl) * (h.pen + 0.1);
+          if (typeof c.v === "number") c.v = 0;
+          if (typeof c.speed === "number") c.speed = 0;
+        }
+      }
+    }
   }
 }

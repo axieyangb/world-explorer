@@ -46,6 +46,7 @@ function place(g, t) {
   return g;
 }
 function part(geom, surf, t) {
+  if (geom.index) geom.computeVertexNormals();
   let g = geom.index ? geom.toNonIndexed() : geom;
   for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
   if (!g.attributes.normal) g.computeVertexNormals();
@@ -75,13 +76,34 @@ function merge(parts) {
   return out;
 }
 const box = (w, h, d, s, t) => part(new THREE.BoxGeometry(w, h, d), s, t);
-const cyl = (rt, rb, h, seg, s, t, open = false) => part(new THREE.CylinderGeometry(rt, rb, h, seg, 1, open), s, t);
-const sphere = (r, ws, hs, s, t, th0 = 0, thL = Math.PI) => part(new THREE.SphereGeometry(r, ws, hs, 0, Math.PI * 2, th0, thL), s, t);
-const torus = (r, tube, rs, ts, s, t, arc = Math.PI * 2) => part(new THREE.TorusGeometry(r, tube, rs, ts, arc), s, t);
+const cyl = (rt, rb, h, seg, s, t, open = false) => {
+  const g = new THREE.CylinderGeometry(rt, rb, h, Math.max(seg, 12), 1, open);
+  g.computeVertexNormals();
+  return part(g, s, t);
+};
+const cone = (r, h, seg, s, t) => cyl(0, r, h, seg, s, t);
+const sphere = (r, ws, hs, s, t, th0 = 0, thL = Math.PI) => {
+  const g = new THREE.SphereGeometry(r, Math.max(ws, 16), Math.max(hs, 8), 0, Math.PI * 2, th0, thL);
+  g.computeVertexNormals();
+  return part(g, s, t);
+};
+const dome = (r, ws, hs, s, t) => sphere(r, ws, hs, s, t, 0, Math.PI / 2);
+const torus = (r, tubeR, rs, ts, s, t, arc = Math.PI * 2) => {
+  const g = new THREE.TorusGeometry(r, tubeR, Math.max(rs, 10), Math.max(ts, 20), arc);
+  g.computeVertexNormals();
+  return part(g, s, t);
+};
+const ring = (r, tubeR, rs, ts, s, t, arc = Math.PI * 2) => torus(r, tubeR, rs, ts, s, t, arc);
+function lathe(pts, seg, s, t) {
+  const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), Math.max(seg, 16));
+  g.computeVertexNormals();
+  return part(g, s, t);
+}
 function rod(a, b, r, seg, s) {
   const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const len = d.length();
-  const g = new THREE.CylinderGeometry(r, r, len, seg, 1, true);
+  const g = new THREE.CylinderGeometry(r, r, len, Math.max(seg, 8), 1, true);
+  g.computeVertexNormals();
   g.translate(0, len / 2, 0);
   _q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
   g.applyQuaternion(_q);
@@ -90,7 +112,9 @@ function rod(a, b, r, seg, s) {
 }
 function tube(points, r, segs, radial, s) {
   const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
-  return part(new THREE.TubeGeometry(curve, segs, r, radial, false), s);
+  const g = new THREE.TubeGeometry(curve, Math.max(segs, 16), r, Math.max(radial, 10), false);
+  g.computeVertexNormals();
+  return part(g, s);
 }
 function rslab(w, h, d, r, s, t, seg = 3) {
   const sh = new THREE.Shape();
@@ -155,11 +179,26 @@ function pump() {
   return merge(P);
 }
 function pumpFar() {
-  return merge([box(0.55, 2.0, 1.15, S.paintW, { y: 1.0 }), box(0.6, 0.14, 1.2, S.tintGlow, { y: 1.92 }), box(0.57, 0.24, 0.4, S.screen, { y: 1.55 })]);
+  return merge([
+    box(0.64, 0.12, 1.28, S.concrete, { y: 0.06 }),
+    box(0.54, 0.92, 1.12, S.paintW, { y: 0.58 }),
+    box(0.56, 0.34, 1.0, S.tint, { y: 0.82 }),
+    box(0.52, 0.76, 1.06, S.paintW, { y: 1.42 }),
+    box(0.56, 0.24, 0.4, S.screen, { y: 1.55, z: -0.18 }),
+    box(0.6, 0.16, 1.22, S.tintGlow, { y: 1.93 }),
+  ]);
 }
 function bollard() {
-  const P = [cyl(0.16, 0.18, 0.04, 10, S.steelDk, { y: 0.02 }), cyl(0.11, 0.11, 0.95, 14, S.yellow, { y: 0.5 }), sphere(0.11, 14, 5, S.yellow, { y: 0.975 }, 0, Math.PI / 2)];
-  for (const y of [0.62, 0.82]) P.push(cyl(0.113, 0.113, 0.07, 14, S.black, { y }));
+  const P = [
+    cyl(0.16, 0.18, 0.04, 18, S.steelDk, { y: 0.02 }),
+    cyl(0.125, 0.145, 0.06, 18, S.steel, { y: 0.06 }),
+    cyl(0.11, 0.11, 0.95, 20, S.yellow, { y: 0.5 }),
+    sphere(0.11, 20, 10, S.yellow, { y: 0.975 }, 0, Math.PI / 2),
+  ];
+  for (const [bx, bz] of [[-0.12, -0.12], [0.12, -0.12], [-0.12, 0.12], [0.12, 0.12]]) {
+    P.push(cyl(0.015, 0.015, 0.03, 12, S.chrome, { x: bx, y: 0.045, z: bz }));
+  }
+  for (const y of [0.62, 0.82]) P.push(cyl(0.113, 0.113, 0.07, 20, S.black, { y }));
   return merge(P);
 }
 function islandBin() {
@@ -310,7 +349,14 @@ function newsRack() {
   return merge(P);
 }
 function shopBin() {
-  return merge([cyl(0.25, 0.23, 0.92, 14, S.steelDk, { y: 0.46 }), sphere(0.26, 14, 4, S.steelDk, { y: 0.92, sy: 0.35 }, 0, Math.PI / 2), box(0.2, 0.08, 0.04, S.black, { y: 0.92, z: 0.22 })]);
+  return merge([
+    cyl(0.26, 0.27, 0.06, 20, S.black, { y: 0.03 }),
+    cyl(0.25, 0.23, 0.92, 20, S.steelDk, { y: 0.46 }),
+    torus(0.252, 0.014, 10, 24, S.chrome, { y: 0.88, rx: Math.PI / 2 }),
+    sphere(0.26, 20, 10, S.steelDk, { y: 0.92, sy: 0.38 }, 0, Math.PI / 2),
+    box(0.22, 0.09, 0.05, S.black, { y: 0.93, z: 0.22 }),
+    box(0.18, 0.06, 0.02, S.chrome, { y: 0.93, z: 0.24, rx: -0.25 }),
+  ]);
 }
 function cart() {
   // long axis Z: handle at -Z, nose at +Z; wire basket tapers toward the nose (nests into the cart ahead)
@@ -348,17 +394,25 @@ function cart() {
 }
 function lotLamp() {
   const P = [];
-  P.push(cyl(0.38, 0.42, 0.8, 12, S.concrete, { y: 0.4 }));
+  P.push(cyl(0.38, 0.42, 0.8, 20, S.concrete, { y: 0.4 }));
+  P.push(cyl(0.39, 0.39, 0.06, 20, S.yellow, { y: 0.78 }));
+  P.push(box(0.28, 0.06, 0.28, S.steelDk, { y: 0.83 }));
   P.push(box(0.16, 9.2, 0.16, S.paintG, { y: 0.8 + 4.6 }));
   for (const sx of [-1, 1]) {
     P.push(box(0.9, 0.08, 0.1, S.paintG, { x: sx * 0.5, y: 9.6 }));
-    P.push(box(0.75, 0.18, 0.5, S.paintG, { x: sx * 1.15, y: 9.6 }));
-    P.push(box(0.62, 0.02, 0.4, S.lamp, { x: sx * 1.15, y: 9.5 }));
+    P.push(rod([sx * 0.08, 9.2, 0], [sx * 0.65, 9.58, 0], 0.022, 10, S.steelDk));
+    P.push(rslab(0.76, 0.52, 0.18, 0.04, S.paintG, { x: sx * 1.15, y: 9.6, rx: Math.PI / 2 }));
+    P.push(box(0.62, 0.025, 0.4, S.lamp, { x: sx * 1.15, y: 9.5 }));
   }
   return merge(P);
 }
 function lotLampFar() {
-  return merge([box(0.18, 9.8, 0.18, S.paintG, { y: 4.9 }), box(3.0, 0.2, 0.5, S.paintG, { y: 9.6 }), box(2.9, 0.03, 0.42, S.lamp, { y: 9.48 })]);
+  return merge([
+    cyl(0.4, 0.42, 0.8, 14, S.concrete, { y: 0.4 }),
+    box(0.18, 9.2, 0.18, S.paintG, { y: 5.2 }),
+    box(3.0, 0.2, 0.5, S.paintG, { y: 9.6 }),
+    box(2.9, 0.03, 0.42, S.lamp, { y: 9.48 }),
+  ]);
 }
 function cartReturn() {
   const P = [];
@@ -393,12 +447,15 @@ function menuBoard() {
 }
 function greenCross() {
   const P = [];
+  P.push(box(0.16, 0.72, 0.05, S.steelDk, { y: -0.15, z: -0.58 }));
   P.push(box(0.08, 0.08, 1.1, S.steelDk, { z: -0.05 }));
-  P.push(box(0.04, 0.6, 0.04, S.steelDk, { z: -0.5, y: -0.25 }));
+  P.push(rod([0, -0.45, -0.55], [0, -0.02, 0.05], 0.025, 10, S.steelDk));
   const c0 = 0.92, t = 0.32;
+  P.push(cyl(0.24, 0.24, 0.16, 20, S.steelDk, { z: 0.55, rz: Math.PI / 2 }));
   for (const [w, h] of [[c0, t], [t, c0]]) {
     P.push(box(0.16, h + 0.06, w + 0.06, S.steelDk, { z: 0.55 }));
-    P.push(box(0.17, h, w, S.green, { z: 0.55 }));
+    P.push(box(0.175, h, w, S.green, { z: 0.55 }));
+    P.push(box(0.185, h * 0.62, w * 0.86, S.white, { z: 0.55 }));
   }
   return merge(P);
 }
@@ -427,10 +484,29 @@ function trailer() {
   return merge(P);
 }
 function trailerFar() {
-  return merge([box(2.55, 2.75, 13.4, S.trailerW, { y: 2.6 }), box(2.4, 0.9, 5, S.black, { y: 0.5, z: 3.5 })]);
+  return merge([
+    box(2.55, 2.75, 13.4, S.trailerW, { y: 2.62 }),
+    box(2.59, 0.14, 13.42, S.paintG, { y: 1.31 }),
+    box(2.2, 0.95, 0.22, S.steelDk, { y: 0.55, z: -3.7 }),
+    box(2.4, 0.9, 4.2, S.black, { y: 0.5, z: 4.1 }),
+  ]);
 }
 function carFar() {
-  return merge([box(1.85, 0.72, 4.5, S.tint, { y: 0.55 }), box(1.6, 0.52, 2.2, S.glassDk, { y: 1.15, z: -0.2 })]);
+  const P = [
+    rslab(1.86, 4.52, 0.64, 0.16, S.tint, { y: 0.56, rx: Math.PI / 2 }),
+    rslab(1.58, 2.25, 0.52, 0.14, S.glassDk, { y: 1.10, z: -0.18, rx: Math.PI / 2 }),
+    box(1.88, 0.18, 0.14, S.black, { y: 0.34, z: 2.24 }),
+    box(1.88, 0.18, 0.14, S.black, { y: 0.34, z: -2.24 }),
+    box(0.38, 0.12, 0.06, S.lampCool, { x: -0.64, y: 0.62, z: 2.25 }),
+    box(0.38, 0.12, 0.06, S.lampCool, { x: 0.64, y: 0.62, z: 2.25 }),
+    box(0.42, 0.12, 0.06, S.screenR, { x: -0.62, y: 0.64, z: -2.25 }),
+    box(0.42, 0.12, 0.06, S.screenR, { x: 0.62, y: 0.64, z: -2.25 }),
+  ];
+  for (const [wx, wz] of [[-0.86, 1.38], [0.86, 1.38], [-0.86, -1.38], [0.86, -1.38]]) {
+    P.push(cyl(0.33, 0.33, 0.22, 14, S.rubber, { x: wx, y: 0.33, z: wz, rz: Math.PI / 2 }));
+    P.push(cyl(0.19, 0.19, 0.23, 12, S.chrome, { x: wx, y: 0.33, z: wz, rz: Math.PI / 2 }));
+  }
+  return merge(P);
 }
 
 function patioTable() {
@@ -490,12 +566,11 @@ function menuAFrame() {
 }
 function pubBarrel() {
   const P = [];
-  // Aged oak tavern barrel with belly bulge, wrought-iron hoops, brass tap, and pint glasses on top
-  P.push(cyl(0.30, 0.34, 0.48, 16, S.oak, { y: 0.72 }));
-  P.push(cyl(0.34, 0.30, 0.48, 16, S.oak, { y: 0.24 }));
-  P.push(cyl(0.285, 0.285, 0.025, 16, S.woodLt, { y: 0.96 }));
-  for (const [y, r] of [[0.09, 0.312], [0.33, 0.336], [0.63, 0.336], [0.88, 0.312]]) {
-    P.push(cyl(r, r, 0.04, 16, S.steelDk, { y }, true));
+  // Aged oak tavern barrel with smooth lathe belly bulge, wrought-iron hoops, brass tap, and pint glasses on top
+  P.push(lathe([[0, 0], [0.295, 0], [0.325, 0.22], [0.342, 0.48], [0.325, 0.74], [0.295, 0.96], [0, 0.96]], 24, S.oak));
+  P.push(cyl(0.285, 0.285, 0.025, 24, S.woodLt, { y: 0.96 }));
+  for (const [y, r] of [[0.09, 0.312], [0.33, 0.338], [0.63, 0.338], [0.88, 0.312]]) {
+    P.push(cyl(r, r, 0.04, 24, S.steelDk, { y }, true));
   }
   P.push(cyl(0.02, 0.02, 0.11, 8, S.brass, { y: 0.48, z: 0.36, rx: Math.PI / 2 }));
   P.push(box(0.025, 0.07, 0.025, S.brass, { y: 0.52, z: 0.39 }));

@@ -38,6 +38,14 @@ export function appendInfillBuilding(b, ox, oz, getY, region, out) {
   const pz = (i) => flatOuter[(flip ? n - 1 - i : i) * 2 + 1];
 
   const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
+  if (out.isPointInWater && btype !== 'boathouse' && btype !== 'bridge' && btype !== 'pier') {
+    const inW = out.isPointInWater;
+    if (inW(cx, cz, 1.0) || inW(minX, minZ, 0.8) || inW(maxX, minZ, 0.8) || inW(minX, maxZ, 0.8) || inW(maxX, maxZ, 0.8)) return;
+    for (let i = 0; i < n; i++) {
+      const x1 = px(i), z1 = pz(i), x2 = px((i + 1) % n), z2 = pz((i + 1) % n);
+      if (inW(x1, z1, 0.8) || inW((x1 + x2) * 0.5, (z1 + z2) * 0.5, 0.8)) return;
+    }
+  }
   const gC = getY(cx, cz);
   const g00 = getY(minX, minZ), g10 = getY(maxX, minZ), g01 = getY(minX, maxZ), g11 = getY(maxX, maxZ);
   const gLow = Math.min(gC, g00, g10, g01, g11);

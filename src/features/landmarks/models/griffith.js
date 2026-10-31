@@ -37,7 +37,20 @@ function copperDome(k, cx, y0, cz, rDrum, hDrum, rDome, hasSlit) {
   }
   // Copper-bronze hemisphere with patina sheen band at base
   k.glow(false).color(PATINA).cyl(0, hDrum, 0, rDome + 0.2, rDome, 0.9, seg);
-  k.color(COPPER).sphere(0, hDrum + 0.4, 0, rDome, seg, hi ? 10 : 6, 0.96, 0.5);
+  k.color(COPPER).sphere(0, hDrum + 0.4, 0, rDome, seg, hi ? 14 : 6, 0.96, 0.5);
+  if (hi) {
+    // Meridian copper standing-seam ribs across the observatory dome
+    k.color(COPPER_LT);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+      const pts = [];
+      for (let j = 0; j <= 5; j++) {
+        const th = (j / 5) * (Math.PI * 0.48);
+        pts.push([ca * Math.cos(th) * (rDome + 0.08), hDrum + 0.4 + Math.sin(th) * rDome * 0.96, sa * Math.cos(th) * (rDome + 0.08)]);
+      }
+      k.tube(pts, 0.11, 5);
+    }
+  }
   if (hasSlit) {
     // Telescope shutter arch slit across the dome meridian
     k.color(COPPER_LT).box(0, hDrum + rDome * 0.48, -rDome * 0.42, 1.9, rDome * 0.95, rDome * 0.95);

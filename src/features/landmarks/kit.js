@@ -169,30 +169,64 @@ export class Kit {
 
   /** Square pyramid (w x d base). */
   pyramid(x, y0, z, w, d, h) { return this.taper(x, y0, z, w, d, 0, 0, h); }
+  pyr(x, y0, z, w, d = w, h = w) { return this.pyramid(x, y0, z, w, d, h); }
 
   /**
    * Surface of revolution around the local Y axis through (x, z). prof = [[r, y], ...] bottom to top
-   * (y relative to y0). seg sides, smooth normals. Caps are added where the end radius is > 0.
+   * (y relative to y0). seg sides, smooth analytical radial/profile normals when seg >= 10 (or opts.smooth),
+   * keeping crisp flat facet normals on polygonal prisms (seg <= 8). Caps are added where the end radius is > 0.
    */
   lathe(x, y0, z, prof, seg = 16, opts = {}) {
-    const smooth = opts.smooth !== false;
+    const smooth = opts.smooth !== undefined ? opts.smooth : (seg >= 10 || !!opts.pipe);
+    if (this.hi && smooth && seg >= 12 && !opts.exactSeg) {
+      seg = Math.min(64, Math.max(24, Math.round(seg * 1.5)));
+    }
     const a0 = opts.phase || 0;
     const caps = opts.caps !== false;
-    for (let i = 0; i < prof.length - 1; i++) {
+    const nSeg = prof.length - 1;
+    const snr = new Float64Array(nSeg);
+    const sny = new Float64Array(nSeg);
+    for (let i = 0; i < nSeg; i++) {
       const [r0, h0] = prof[i], [r1, h1] = prof[i + 1];
-      // profile normal (dr, dy) -> outward (dy, -dr)
       const dr = r1 - r0, dy = h1 - h0;
       const ln = Math.hypot(dr, dy) || 1;
-      const pnr = dy / ln, pny = -dr / ln;
+      snr[i] = dy / ln;
+      sny[i] = -dr / ln;
+    }
+    const pNorm = opts.profNormals;
+    for (let i = 0; i < nSeg; i++) {
+      const [r0, h0] = prof[i], [r1, h1] = prof[i + 1];
+      let pnr0 = snr[i], pny0 = sny[i], pnr1 = snr[i], pny1 = sny[i];
+      if (pNorm) {
+        pnr0 = pNorm[i][0]; pny0 = pNorm[i][1];
+        pnr1 = pNorm[i + 1][0]; pny1 = pNorm[i + 1][1];
+      } else if (smooth && nSeg > 1) {
+        if (i > 0 && snr[i - 1] * snr[i] + sny[i - 1] * sny[i] > 0.35) {
+          const br = snr[i - 1] + snr[i], by = sny[i - 1] + sny[i], bl = Math.hypot(br, by) || 1;
+          pnr0 = br / bl; pny0 = by / bl;
+        }
+        if (i + 1 < nSeg && snr[i] * snr[i + 1] + sny[i] * sny[i + 1] > 0.35) {
+          const tr = snr[i] + snr[i + 1], ty = sny[i] + sny[i + 1], tl = Math.hypot(tr, ty) || 1;
+          pnr1 = tr / tl; pny1 = ty / tl;
+        }
+      }
       for (let s = 0; s < seg; s++) {
         const t0 = a0 + (s / seg) * TAU, t1 = a0 + ((s + 1) / seg) * TAU;
         const c0 = Math.cos(t0), s0 = Math.sin(t0), c1 = Math.cos(t1), s1 = Math.sin(t1);
         const p00 = [x + r0 * c0, y0 + h0, z + r0 * s0], p01 = [x + r0 * c1, y0 + h0, z + r0 * s1];
         const p10 = [x + r1 * c0, y0 + h1, z + r1 * s0], p11 = [x + r1 * c1, y0 + h1, z + r1 * s1];
         if (smooth) {
-          const n0 = [pnr * c0, pny, pnr * s0], n1 = [pnr * c1, pny, pnr * s1];
-          if (r0 > 1e-4) this._emit(p00, p10, p01, n0, n0, n1);
-          if (r1 > 1e-4) this._emit(p01, p10, p11, n1, n0, n1);
+          const n00 = [pnr0 * c0, pny0, pnr0 * s0], n01 = [pnr0 * c1, pny0, pnr0 * s1];
+          const n10 = [pnr1 * c0, pny1, pnr1 * s0], n11 = [pnr1 * c1, pny1, pnr1 * s1];
+          const tm = (t0 + t1) * 0.5, cm = Math.cos(tm), sm = Math.sin(tm);
+          if (r0 > 1e-4) {
+            const nt = r1 > 1e-4 ? n10 : [pnr1 * cm, pny1, pnr1 * sm];
+            this._emit(p00, p10, p01, n00, nt, n01);
+          }
+          if (r1 > 1e-4) {
+            const nb = r0 > 1e-4 ? n01 : [pnr0 * cm, pny0, pnr0 * sm];
+            this._emit(p01, p10, p11, nb, n10, n11);
+          }
         } else {
           if (r0 > 1e-4) this._emit(p00, p10, p01);
           if (r1 > 1e-4) this._emit(p01, p10, p11);
@@ -201,10 +235,11 @@ export class Kit {
     }
     if (caps) {
       const [rb, hb] = prof[0], [rt, ht] = prof[prof.length - 1];
+      const nUp = [0, 1, 0], nDn = [0, -1, 0];
       for (let s = 0; s < seg; s++) {
         const t0 = a0 + (s / seg) * TAU, t1 = a0 + ((s + 1) / seg) * TAU;
-        if (rt > 1e-4) this._emit([x, y0 + ht, z], [x + rt * Math.cos(t1), y0 + ht, z + rt * Math.sin(t1)], [x + rt * Math.cos(t0), y0 + ht, z + rt * Math.sin(t0)]);
-        if (rb > 1e-4 && (hb + y0 > 0.01 || this._stack.length)) this._emit([x, y0 + hb, z], [x + rb * Math.cos(t0), y0 + hb, z + rb * Math.sin(t0)], [x + rb * Math.cos(t1), y0 + hb, z + rb * Math.sin(t1)]);
+        if (rt > 1e-4) this._emit([x, y0 + ht, z], [x + rt * Math.cos(t1), y0 + ht, z + rt * Math.sin(t1)], [x + rt * Math.cos(t0), y0 + ht, z + rt * Math.sin(t0)], nUp, nUp, nUp);
+        if (rb > 1e-4 && (hb + y0 > 0.01 || this._stack.length)) this._emit([x, y0 + hb, z], [x + rb * Math.cos(t0), y0 + hb, z + rb * Math.sin(t0)], [x + rb * Math.cos(t1), y0 + hb, z + rb * Math.sin(t1)], nDn, nDn, nDn);
       }
     }
     return this;
@@ -213,17 +248,75 @@ export class Kit {
   /** Frustum / cylinder / cone (r1 = 0) of height h. */
   cyl(x, y0, z, r0, r1, h, seg = 12, opts = {}) { return this.lathe(x, y0, z, [[r0, 0], [r1, h]], seg, opts); }
 
+  /** Cone of base radius r and height h. */
+  cone(x, y0, z, r, h, seg = 16, opts = {}) { return this.cyl(x, y0, z, r, 0, h, seg, opts); }
+
+  /** Crisp flat-faceted polygonal prism of radius r, height h, and seg sides. */
+  prism(x, y0, z, r, h, seg = 6, phase = 0) { return this.cyl(x, y0, z, r, r, h, seg, { smooth: false, phase }); }
+
   /** Sphere (or ellipsoid with sy) centred at (x, y, z). frac < 1 makes a dome (upper part only). */
   sphere(x, y, z, r, seg = 14, rings = 8, sy = 1, frac = 1) {
+    const smooth = seg >= 10;
+    if (this.hi && smooth) {
+      seg = Math.min(64, Math.max(24, Math.round(seg * 1.5)));
+      rings = Math.min(32, Math.max(12, Math.round(rings * 1.5)));
+    }
     const prof = [];
+    const profNormals = [];
     const start = frac >= 1 ? -Math.PI / 2 : Math.PI / 2 - frac * Math.PI;
     for (let i = 0; i <= rings; i++) {
       const a = start + (i / rings) * (Math.PI / 2 - start);
-      prof.push([Math.max(0, Math.cos(a) * r), Math.sin(a) * r * sy]);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      prof.push([Math.max(0, ca * r), sa * r * sy]);
+      const nr = ca * sy, ny = sa, nl = Math.hypot(nr, ny) || 1;
+      profNormals.push([nr / nl, ny / nl]);
     }
     prof[prof.length - 1][0] = 0;
-    return this.lathe(x, y, z, prof, seg, { caps: frac < 1 });
+    profNormals[profNormals.length - 1] = [0, 1];
+    if (frac >= 1) {
+      prof[0][0] = 0;
+      profNormals[0] = [0, -1];
+    }
+    return this.lathe(x, y, z, prof, seg, { caps: frac < 1, smooth, profNormals, exactSeg: true });
   }
+
+  /** Upper dome helper (defaults to hemisphere frac = 0.5). */
+  dome(x, y, z, r, seg = 20, rings = 10, sy = 1, frac = 0.5) {
+    return this.sphere(x, y, z, r, seg, rings, sy, frac);
+  }
+
+  /** Horizontal torus / ring around the local Y axis centred at (x, y, z) with smooth analytical normals. */
+  torus(x, y, z, R, r, seg = 24, tubeSeg = 12, arc = TAU) {
+    const smooth = seg >= 10;
+    if (this.hi && smooth) {
+      seg = Math.min(64, Math.max(28, Math.round(seg * 1.5)));
+      tubeSeg = Math.min(24, Math.max(12, Math.round(tubeSeg * 1.25)));
+    }
+    for (let i = 0; i < seg; i++) {
+      const u0 = (i / seg) * arc, u1 = ((i + 1) / seg) * arc;
+      const cu0 = Math.cos(u0), su0 = Math.sin(u0), cu1 = Math.cos(u1), su1 = Math.sin(u1);
+      for (let j = 0; j < tubeSeg; j++) {
+        const v0 = (j / tubeSeg) * TAU, v1 = ((j + 1) / tubeSeg) * TAU;
+        const cv0 = Math.cos(v0), sv0 = Math.sin(v0), cv1 = Math.cos(v1), sv1 = Math.sin(v1);
+        const r0 = R + r * cv0, r1 = R + r * cv1;
+        const p00 = [x + r0 * cu0, y + r * sv0, z + r0 * su0];
+        const p10 = [x + r1 * cu0, y + r * sv1, z + r1 * su0];
+        const p01 = [x + r0 * cu1, y + r * sv0, z + r0 * su1];
+        const p11 = [x + r1 * cu1, y + r * sv1, z + r1 * su1];
+        if (smooth) {
+          const n00 = [cv0 * cu0, sv0, cv0 * su0], n10 = [cv1 * cu0, sv1, cv1 * su0];
+          const n01 = [cv0 * cu1, sv0, cv0 * su1], n11 = [cv1 * cu1, sv1, cv1 * su1];
+          this._emit(p00, p10, p01, n00, n10, n01);
+          this._emit(p01, p10, p11, n01, n10, n11);
+        } else {
+          this._emit(p00, p10, p01);
+          this._emit(p01, p10, p11);
+        }
+      }
+    }
+    return this;
+  }
+  ring(x, y, z, R, r, seg = 24, tubeSeg = 12, arc = TAU) { return this.torus(x, y, z, R, r, seg, tubeSeg, arc); }
 
   /** Square-section beam between two points (lattice struts). t = width. */
   strut(a, b, t) {
@@ -246,6 +339,12 @@ export class Kit {
     return this;
   }
 
+  /** Frustum / cylinder alias. */
+  cylinder(x, y0, z, r0, r1, h, seg = 16, opts = {}) { return this.cyl(x, y0, z, r0, r1, h, seg, opts); }
+
+  /** Surface of revolution alias. */
+  revolve(x, y0, z, prof, seg = 16, opts = {}) { return this.lathe(x, y0, z, prof, seg, opts); }
+
   /** Round pipe between two points (cables, arch tubes). */
   pipe(a, b, r, seg = 6) {
     _e1.set(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
@@ -254,8 +353,9 @@ export class Kit {
     const dir = _e1.clone().normalize();
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     const m = new THREE.Matrix4().compose(new THREE.Vector3(a[0], a[1], a[2]), q, new THREE.Vector3(1, 1, 1));
+    const s = this.hi ? Math.max(12, Math.round(seg * 1.5)) : seg;
     this.push()._mul(m);
-    this.lathe(0, 0, 0, [[r, 0], [r, len]], seg, { caps: false });
+    this.lathe(0, 0, 0, [[r, 0], [r, len]], s, { caps: false, smooth: true, pipe: true, exactSeg: true });
     this.pop();
     return this;
   }
@@ -266,7 +366,35 @@ export class Kit {
     return this;
   }
 
-  /** Vertical extrusion of a polygon [[x, z], ...] from y0 to y0 + h (any winding, simple polygon). */
+  /** Catenary / parabolic sagging cable between two 3D points a and b. */
+  cable(a, b, r = 0.08, sag = 0, segs = 12, radialSeg = 8) {
+    const n = this.hi ? Math.max(12, segs) : Math.max(6, segs >> 1);
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      pts.push([
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t - 4 * sag * t * (1 - t),
+        a[2] + (b[2] - a[2]) * t,
+      ]);
+    }
+    return this.tube(pts, r, radialSeg);
+  }
+
+  /** Smooth semicircular / parabolic arch tube in the XY plane at z. */
+  arch(x, y0, z, span, rise, r = 0.35, segs = 20, radialSeg = 10) {
+    const n = this.hi ? Math.max(20, segs) : Math.max(10, segs >> 1);
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * Math.PI;
+      pts.push([x - (span * 0.5) * Math.cos(a), y0 + rise * Math.sin(a), z]);
+    }
+    return this.tube(pts, r, radialSeg);
+  }
+
+  /** Vertical extrusion of a polygon [[x, z], ...] from y0 to y0 + h (any winding, simple polygon) with smooth normals on gently curved edges. */
+  extrudePolygon(pts, y0, h, caps = true) { return this.extrude(pts, y0, h, caps); }
+
   extrude(pts, y0, h, caps = true) {
     let area = 0;
     for (let i = 0; i < pts.length; i++) {
@@ -275,10 +403,30 @@ export class Kit {
     }
     // normalise winding so side walls face outward (shoelace area > 0 in x/z)
     const P = area > 0 ? pts : pts.slice().reverse();
+    const N = P.length;
     const y1 = y0 + h;
-    for (let i = 0; i < P.length; i++) {
-      const [x0, z0] = P[i], [x1, z1] = P[(i + 1) % P.length];
-      this.quad([x0, y0, z0], [x0, y1, z0], [x1, y1, z1], [x1, y0, z1]);
+    const enx = new Float64Array(N), enz = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      const [x0, z0] = P[i], [x1, z1] = P[(i + 1) % N];
+      const dx = x1 - x0, dz = z1 - z0, ln = Math.hypot(dx, dz) || 1;
+      enx[i] = -dz / ln;
+      enz[i] = dx / ln;
+    }
+    for (let i = 0; i < N; i++) {
+      const [x0, z0] = P[i], [x1, z1] = P[(i + 1) % N];
+      const prev = (i + N - 1) % N, next = (i + 1) % N;
+      let nx0 = enx[i], nz0 = enz[i], nx1 = enx[i], nz1 = enz[i];
+      if (enx[prev] * enx[i] + enz[prev] * enz[i] > 0.85) {
+        const bx = enx[prev] + enx[i], bz = enz[prev] + enz[i], bl = Math.hypot(bx, bz) || 1;
+        nx0 = bx / bl; nz0 = bz / bl;
+      }
+      if (enx[i] * enx[next] + enz[i] * enz[next] > 0.85) {
+        const tx = enx[i] + enx[next], tz = enz[i] + enz[next], tl = Math.hypot(tx, tz) || 1;
+        nx1 = tx / tl; nz1 = tz / tl;
+      }
+      const n0 = [nx0, 0, nz0], n1 = [nx1, 0, nz1];
+      this._emit([x0, y0, z0], [x0, y1, z0], [x1, y1, z1], n0, n0, n1);
+      this._emit([x0, y0, z0], [x1, y1, z1], [x1, y0, z1], n0, n1, n1);
     }
     if (caps) {
       const v2 = P.map(([x, z]) => new THREE.Vector2(x, z));

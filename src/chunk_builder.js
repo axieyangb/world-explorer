@@ -1293,7 +1293,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           roadSegments,
           buildingEntities,
           regionTag,
-          { arch: archRegion, ground: groundSampler, pools: poolRings(data), warm: (worldOrigin?.centerLat ?? 90) < 36 } // [roofs]
+          { arch: archRegion, ground: groundSampler, pools: poolRings(data), warm: (worldOrigin?.centerLat ?? 90) < 36, isPointInWater } // [roofs]
         );
         stage = 2;
         if (performance.now() - t0 >= budgetMs) {
@@ -1329,7 +1329,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         root.userData.places = computePlacesPayload({
           data, ox, oz, buildingEntities, roadSegments, isPointInWater, groups: subGroups, mats,
         });
-        root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders }); // [venues] stadium bowls + theme-park rides
+        root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders, isPointInWater }); // [venues] stadium bowls + theme-park rides
         addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater, street: root.userData.street }); // places-info
 
         stage = 4;
@@ -1463,6 +1463,11 @@ function createWaterMaskChecker(data) {
       if (isSinglePointInWater(lx - margin, lz)) return true;
       if (isSinglePointInWater(lx, lz + margin)) return true;
       if (isSinglePointInWater(lx, lz - margin)) return true;
+      const d = margin * 0.7071;
+      if (isSinglePointInWater(lx + d, lz + d)) return true;
+      if (isSinglePointInWater(lx - d, lz + d)) return true;
+      if (isSinglePointInWater(lx + d, lz - d)) return true;
+      if (isSinglePointInWater(lx - d, lz - d)) return true;
     }
     return false;
   };
@@ -2561,6 +2566,17 @@ function buildRoadsAndBridges(
         const segLen = Math.hypot(cx2 - cx1, cz2 - cz1);
         if (segLen < 0.05) continue;
         const subAccumDist = accumDist + fullSegLen * u0;
+        const segInWater = Boolean(
+          !isBridge &&
+          !isTunnel &&
+          rawY1 < 0.45 &&
+          rawY2 < 0.45 &&
+          isPointInWater &&
+          (isPointInWater(cx1, cz1, 0) || isPointInWater(cx2, cz2, 0) || isPointInWater((cx1 + cx2) * 0.5, (cz1 + cz2) * 0.5, 0))
+        );
+        if (segInWater && (cls === 'footway' || cls === 'pedestrian' || cls === 'path' || cls === 'steps' || cls === 'cycleway' || cls === 'track')) {
+          continue;
+        }
 
         if (!isTunnel) {
           roadSegments.push({
@@ -2574,6 +2590,7 @@ function buildRoadsAndBridges(
             layer,
             bridge: isBridge,
             tunnel: isTunnel,
+            onWater: segInWater,
             oneway,
             lanes,
             cls,
@@ -3298,8 +3315,9 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const b = buildings[curIdx];
         const i = curIdx;
         curIdx++;
+        const isPointInWater = roofOpts && roofOpts.isPointInWater;
         if (b[13]) { // [ground] plain infill block past the detailed-build budget
-          appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders, roof: roofCtx }); // [roofs] roof ctx
+          appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders, roof: roofCtx, isPointInWater }); // [roofs] roof ctx
           continue;
         }
 
@@ -3370,6 +3388,25 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         const curMinZ = minZ + oz, curMaxZ = maxZ + oz;
         const curArea = Math.max(1.0, (curMaxX - curMinX) * (curMaxZ - curMinZ));
         const matchedLm = regionTag === 'beijing' ? matchLandmarkForChunkBuilding(wx, wz, osmId) : null;
+        if (!matchedLm && isPointInWater && rawBtype !== 'boathouse' && rawBtype !== 'bridge' && rawBtype !== 'pier') {
+          let bldgInWater =
+            isPointInWater(cx, cz, 1.0) ||
+            isPointInWater(minX, minZ, 0.8) ||
+            isPointInWater(maxX, minZ, 0.8) ||
+            isPointInWater(minX, maxZ, 0.8) ||
+            isPointInWater(maxX, maxZ, 0.8);
+          if (!bldgInWater) {
+            for (let k = 0; k < normFlatOuter.length; k += 2) {
+              const vx0 = normFlatOuter[k], vz0 = normFlatOuter[k + 1];
+              const vx1 = normFlatOuter[(k + 2) % normFlatOuter.length], vz1 = normFlatOuter[(k + 3) % normFlatOuter.length];
+              if (isPointInWater(vx0, vz0, 0.8) || isPointInWater((vx0 + vx1) * 0.5, (vz0 + vz1) * 0.5, 0.8)) {
+                bldgInWater = true;
+                break;
+              }
+            }
+          }
+          if (bldgInWater) continue;
+        }
 
         // Check duplicate footprints & validate elevated building parts BEFORE pushing to entityTable or buildingColliders
         // so skipped footprints never create invisible ghost buildings or floating blocks in the air.

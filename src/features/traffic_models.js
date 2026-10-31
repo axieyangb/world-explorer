@@ -1,12 +1,36 @@
 // Instanced render assets for AI traffic & pedestrians.
-// Cars: the low-detail build of each player vehicle (hero builders with options.lod) flattened into one
-// merged geometry per type, drawn with one InstancedMesh each; per-instance paint + brake light, emissive
-// head/tail lights at night.
+// Cars: the low-detail build of each player vehicle (hero builders with options.lod) enriched with fine 3D
+// exterior details (sculpted wheel arches, 16-segment dark rubber tires, multi-spoke silver alloy wheel hubs,
+// recessed radiator grilles, chrome bumper trim, side mirrors, wipers, A/B-pillar frames, roof rails, sunroofs,
+// rear license plate recesses, dual exhaust tips, bus LED headers/folding doors/AC pods/mullions, truck vertical
+// chrome stacks/sun visors/fuel tanks/ribbed doors/underride guards, and taxi/police/ambulance/firetruck equipment)
+// flattened into one merged geometry per type, drawn with one InstancedMesh each; per-instance paint + brake light,
+// emissive head/tail lights at night.
 // Pedestrians: a sculpted figure (near + far detail), walk/run/idle posed in the vertex shader.
 import * as THREE from '../../vendor/three.module.js';
 import { buildHeroVehicle } from './hero_vehicles.js';
 import { HEAVY_VEHICLE_IDS, buildHeavyVehicle } from './hero_heavy.js';
 import { personParts, PERSON_COMMON_GLSL, PERSON_ANIM_GLSL, PERSON_BEGIN_GLSL, PERSON_COLOR_GLSL, RAGDOLL_PART_SPECS, createRagdollPartGeometries } from './person_model.js';
+
+// Headless Node ESM fallback for canvas-based livery/LED helpers inside hero builders.
+if (typeof globalThis.document === 'undefined') {
+  globalThis.document = {
+    createElement: () => ({
+      width: 64,
+      height: 64,
+      getContext: () =>
+        new Proxy(
+          {
+            getImageData: (_x, _y, w, h) => ({ data: new Uint8ClampedArray(Math.max(1, w * h * 4)) }),
+            measureText: () => ({ width: 20 }),
+            createLinearGradient: () => ({ addColorStop: () => {} }),
+            createRadialGradient: () => ({ addColorStop: () => {} }),
+          },
+          { get: (t, k) => (k in t ? t[k] : () => {}) }
+        ),
+    }),
+  };
+}
 
 // Lamp colours in the flat traffic shading (the hero lamp materials rely on reflections and emissive).
 const HEAD_HEX = 0xfff3c4;
@@ -14,13 +38,491 @@ const TAIL_HEX = 0xc00a0a; // deep red: brighter values tone-map to salmon when 
 
 const uStrobeTime = { value: 0 };
 
+// Shared material factory for fine-detail 3D vehicle parts baked by flattenVehicle.
+function makeDetailMats() {
+  const mk = (color, { paintWeight = 0, emitCode = 0, lodKind = 0 } = {}) => {
+    const m = new THREE.MeshStandardMaterial({ color });
+    m.userData = { paintWeight, emitCode, lodKind };
+    return m;
+  };
+  return {
+    paint: mk(0xd8dde4, { paintWeight: 1, lodKind: 0 }),
+    chrome: mk(0xe4e9ef, { lodKind: 3 }),
+    alloy: mk(0xcfd5dd, { lodKind: 3 }),
+    disc: mk(0x6e737b, { lodKind: 3 }),
+    darkTrim: mk(0x141619, { lodKind: 0 }),
+    grille: mk(0x0b0c0e, { lodKind: 0 }),
+    rubber: mk(0x16171a, { lodKind: 2 }),
+    glass: mk(0x0c1318, { lodKind: 1 }),
+    plate: mk(0xf0f2f5, { lodKind: 0 }),
+    head: mk(HEAD_HEX, { emitCode: 1 }),
+    tail: mk(TAIL_HEX, { emitCode: 2 }),
+    glowAmber: mk(0xffb81c, { emitCode: 3 }),
+    glowWhite: mk(0xf4fbff, { emitCode: 3 }),
+    taxiYellow: mk(0xffcc11, { emitCode: 3 }),
+    strobeRed: mk(0xff1e1e, { emitCode: 4 }),
+    strobeBlue: mk(0x1e88ff, { emitCode: 5 }),
+    fireRed: mk(0xc81018, { paintWeight: 0.35, lodKind: 0 }),
+  };
+}
+
+function addPart(parent, geom, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+  if (geom.index) geom.computeVertexNormals();
+  const m = new THREE.Mesh(geom, mat);
+  m.position.set(x, y, z);
+  if (rx || ry || rz) m.rotation.set(rx, ry, rz);
+  parent.add(m);
+  return m;
+}
+
+/**
+ * Adds fine 3D exterior details to every vehicle archetype before flattening into the shared InstancedMesh
+ * template (0 extra draw calls):
+ * - Sculpted wheel arches / fenders + 16-segment dark rubber tires + multi-spoke silver alloy wheel hubs & brake discs
+ * - Recessed front radiator grille with slats + chrome/silver front & rear bumper trim
+ * - Side-view mirrors with reflective glass & turn indicators + windshield wipers + A/B-pillar window frames
+ * - Roof rails (SUVs/vans) + panoramic sunroof glass panel (sedans/SUVs)
+ * - Rear license plate recess + dual chrome exhaust tips
+ * - Bus destination LED header display, folding double passenger doors, rooftop AC unit pods & side window mullions
+ * - Truck/semi vertical chrome exhaust stacks, cab sun visor, side fuel tanks, ribbed cargo doors & rear underride guard
+ * - Emergency/service equipment for taxi, police, ambulance, and firetruck / tow_truck
+ */
+function addFineVehicleDetails(built, typeId, options = {}) {
+  const M = makeDetailMats();
+  const root = new THREE.Group();
+  root.name = 'fine_vehicle_details';
+  built.group.add(root);
+
+  built.group.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(built.group);
+  const arch = options.archetype || (options.hideTaxiSign ? 'sedan' : typeId);
+
+  // Extract wheel centers from built.wheels
+  const wheelCenters = [];
+  for (const w of built.wheels || []) {
+    const p = new THREE.Vector3();
+    w.getWorldPosition(p);
+    wheelCenters.push(p);
+  }
+
+  const isHeavy = typeId === 'bus' || typeId === 'ambulance' || typeId === 'tow_truck' || typeId === 'cybertruck';
+  const numSpokes = typeId === 'bus' || typeId === 'tow_truck' ? 8 : typeId === 'police' || typeId === 'cybertruck' ? 7 : 6;
+
+  // 1. Sculpted wheel arches / fenders + 16-segment dark rubber tires + multi-spoke silver alloy wheel hubs
+  for (const wp of wheelCenters) {
+    const sx = wp.x >= 0 ? 1 : -1;
+    const R = wp.y;
+    const tw = isHeavy ? 0.28 : 0.24;
+    const rimR = R * 0.65;
+    const faceX = wp.x + sx * (tw * 0.38);
+
+    // Sculpted wheel arch flare lip + dark wheel-well liner
+    addPart(
+      root,
+      new THREE.TorusGeometry(R + 0.045, isHeavy ? 0.042 : 0.032, 8, 16, Math.PI),
+      isHeavy ? M.darkTrim : M.paint,
+      wp.x + sx * (tw * 0.28),
+      R,
+      wp.z,
+      0,
+      Math.PI / 2,
+      0
+    );
+    addPart(
+      root,
+      new THREE.CylinderGeometry(R + 0.02, R + 0.02, tw * 0.92, 16, 1, true, 0, Math.PI),
+      M.darkTrim,
+      wp.x,
+      R,
+      wp.z,
+      0,
+      0,
+      Math.PI / 2
+    );
+
+    // Smooth 16-segment dark rubber tire tread & sidewall shoulder
+    addPart(
+      root,
+      new THREE.CylinderGeometry(R, R, tw * 0.88, 16, 1, false),
+      M.rubber,
+      wp.x,
+      R,
+      wp.z,
+      0,
+      0,
+      Math.PI / 2
+    );
+    addPart(
+      root,
+      new THREE.TorusGeometry(R - 0.048, 0.046, 8, 16),
+      M.rubber,
+      wp.x + sx * (tw * 0.34),
+      R,
+      wp.z,
+      0,
+      Math.PI / 2,
+      0
+    );
+
+    // Recessed brake rotor disc + outer chrome rim lip + central alloy hub cap
+    addPart(
+      root,
+      new THREE.CylinderGeometry(rimR * 0.78, rimR * 0.78, 0.024, 16),
+      M.disc,
+      wp.x + sx * (tw * 0.14),
+      R,
+      wp.z,
+      0,
+      0,
+      Math.PI / 2
+    );
+    addPart(
+      root,
+      new THREE.TorusGeometry(rimR, 0.016, 6, 16),
+      M.chrome,
+      faceX,
+      R,
+      wp.z,
+      0,
+      Math.PI / 2,
+      0
+    );
+    addPart(
+      root,
+      new THREE.CylinderGeometry(rimR * 0.24, rimR * 0.26, 0.036, 12),
+      M.chrome,
+      faceX + sx * 0.006,
+      R,
+      wp.z,
+      0,
+      0,
+      Math.PI / 2
+    );
+
+    // Multi-spoke silver alloy wheel hub spokes
+    const spokeLen = rimR * 0.78;
+    for (let s = 0; s < numSpokes; s++) {
+      const a = (s / numSpokes) * Math.PI * 2;
+      addPart(
+        root,
+        new THREE.BoxGeometry(0.022, spokeLen, 0.032),
+        M.alloy,
+        faceX,
+        R + Math.cos(a) * (spokeLen * 0.46),
+        wp.z + Math.sin(a) * (spokeLen * 0.46),
+        -a,
+        0,
+        0
+      );
+    }
+  }
+
+  const zFront = bbox.max.z;
+  const zRear = bbox.min.z;
+  const halfW = Math.max(0.88, (bbox.max.x - bbox.min.x) * 0.48);
+
+  // 2. Common Passenger / SUV / Sports / Police / Taxi Details
+  if (!isHeavy) {
+    const grilleY = typeId === 'supercar' ? 0.38 : 0.56;
+    const grilleW = typeId === 'supercar' ? 1.16 : 0.94;
+    const grilleH = typeId === 'supercar' ? 0.16 : 0.2;
+    // Recessed front radiator grille + chrome surround + horizontal slats
+    addPart(root, new THREE.BoxGeometry(grilleW, grilleH, 0.04), M.grille, 0, grilleY, zFront - 0.03);
+    addPart(root, new THREE.BoxGeometry(grilleW + 0.05, 0.02, 0.045), M.chrome, 0, grilleY + grilleH * 0.5, zFront - 0.025);
+    addPart(root, new THREE.BoxGeometry(grilleW + 0.05, 0.02, 0.045), M.chrome, 0, grilleY - grilleH * 0.5, zFront - 0.025);
+    for (let k = -1; k <= 1; k++) {
+      addPart(root, new THREE.BoxGeometry(grilleW - 0.04, 0.014, 0.048), M.chrome, 0, grilleY + k * (grilleH * 0.28), zFront - 0.022);
+    }
+    // Front & rear chrome/silver bumper trim mouldings
+    addPart(root, new THREE.BoxGeometry(halfW * 1.68, 0.036, 0.08), M.chrome, 0, 0.34, zFront - 0.03);
+    addPart(root, new THREE.BoxGeometry(halfW * 1.68, 0.036, 0.08), M.chrome, 0, 0.36, zRear + 0.03);
+
+    // Side-view mirrors (mirrorglass face + LED turn-signal strip) & A/B-pillar window frames + door handles
+    const beltY = typeId === 'supercar' ? 0.84 : 0.96;
+    const wsZ = typeId === 'supercar' ? 0.78 : 1.08;
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.CylinderGeometry(0.055, 0.055, 0.012, 12), M.chrome, sx * (halfW + 0.04), beltY + 0.08, wsZ - 0.2, Math.PI / 2, 0, 0);
+      addPart(root, new THREE.BoxGeometry(0.08, 0.014, 0.02), M.glowAmber, sx * (halfW + 0.05), beltY + 0.08, wsZ - 0.12);
+      // B-pillar gloss black frame + chrome window sill beltline + A-pillar trim
+      addPart(root, new THREE.BoxGeometry(0.024, 0.38, 0.085), M.darkTrim, sx * (halfW - 0.12), beltY + 0.18, -0.08);
+      addPart(root, new THREE.BoxGeometry(0.022, 0.42, 0.045), M.darkTrim, sx * (halfW - 0.1), beltY + 0.16, wsZ - 0.18, -0.58, 0, 0);
+      addPart(root, new THREE.BoxGeometry(0.024, 0.022, 1.96), M.chrome, sx * (halfW - 0.05), beltY - 0.01, -0.1);
+      // Door handles
+      for (const hz of typeId === 'supercar' ? [-0.28] : [0.16, -0.78]) {
+        addPart(root, new THREE.BoxGeometry(0.026, 0.028, 0.16), M.chrome, sx * (halfW - 0.01), beltY - 0.12, hz);
+      }
+    }
+    // Dual articulated front windshield wipers
+    for (const wx of [-0.32, 0.22]) {
+      addPart(root, new THREE.BoxGeometry(0.46, 0.016, 0.022), M.darkTrim, wx, beltY + 0.02, wsZ - 0.02, 0, 0, 0.12);
+    }
+
+    // Rear license plate recess & dual chrome exhaust tips
+    addPart(root, new THREE.BoxGeometry(0.48, 0.15, 0.04), M.darkTrim, 0, 0.58, zRear + 0.025);
+    addPart(root, new THREE.BoxGeometry(0.4, 0.11, 0.046), M.plate, 0, 0.58, zRear + 0.022);
+    addPart(root, new THREE.BoxGeometry(0.44, 0.018, 0.05), M.chrome, 0, 0.655, zRear + 0.02);
+    for (const ex of [-0.52, 0.52]) {
+      addPart(root, new THREE.CylinderGeometry(0.042, 0.044, 0.16, 14, 1, true), M.chrome, ex, 0.28, zRear + 0.04, Math.PI / 2, 0, 0);
+      addPart(root, new THREE.CylinderGeometry(0.034, 0.034, 0.14, 12), M.grille, ex, 0.28, zRear + 0.05, Math.PI / 2, 0, 0);
+    }
+
+    // Sunroof glass panel on sedans & SUVs + shark-fin antenna
+    if (arch === 'sedan' || arch === 'suv' || typeId === 'tesla') {
+      const roofY = bbox.max.y - 0.015;
+      addPart(root, new THREE.BoxGeometry(0.92, 0.022, 0.74), M.darkTrim, 0, roofY, 0.08);
+      addPart(root, new THREE.BoxGeometry(0.84, 0.026, 0.66), M.glass, 0, roofY + 0.003, 0.08);
+      addPart(root, new THREE.BoxGeometry(0.04, 0.075, 0.16), M.darkTrim, 0, roofY + 0.03, -0.88);
+    }
+
+    // Raised silver roof rails on SUVs (tesla / suv)
+    if (arch === 'suv' || typeId === 'tesla') {
+      const roofY = bbox.max.y - 0.02;
+      for (const sx of [-1, 1]) {
+        addPart(root, new THREE.CylinderGeometry(0.018, 0.018, 1.68, 10), M.chrome, sx * 0.54, roofY + 0.045, -0.12, Math.PI / 2, 0, 0);
+        for (const rz of [-0.88, -0.12, 0.64]) {
+          addPart(root, new THREE.BoxGeometry(0.028, 0.05, 0.08), M.darkTrim, sx * 0.54, roofY + 0.02, rz);
+        }
+      }
+    }
+
+    // Detailed yellow taxi roof sign dome + roof rack bars
+    if (arch === 'taxi' || (typeId === 'taxi' && !options.hideTaxiSign)) {
+      const ry = 1.46;
+      for (const rz of [-0.08, 0.22]) {
+        addPart(root, new THREE.BoxGeometry(1.06, 0.018, 0.035), M.chrome, 0, ry, rz);
+      }
+      addPart(root, new THREE.BoxGeometry(0.72, 0.03, 0.26), M.darkTrim, 0, ry + 0.02, 0.07);
+      addPart(root, new THREE.CylinderGeometry(0.1, 0.12, 0.64, 14), M.taxiYellow, 0, ry + 0.11, 0.07, 0, 0, Math.PI / 2);
+      for (const sx of [-1, 1]) {
+        addPart(root, new THREE.SphereGeometry(0.1, 12, 8), M.darkTrim, sx * 0.32, ry + 0.11, 0.07);
+      }
+    }
+
+    // Police push-bumper + dual-color red/blue aero lightbar + grille strobes + whip antennas
+    if (arch === 'police' || typeId === 'police') {
+      const ry = 1.52;
+      addPart(root, new THREE.BoxGeometry(1.28, 0.045, 0.28), M.chrome, 0, ry, 0.15);
+      addPart(root, new THREE.BoxGeometry(0.22, 0.095, 0.28), M.darkTrim, 0, ry + 0.06, 0.15);
+      addPart(root, new THREE.BoxGeometry(0.52, 0.085, 0.25), M.strobeRed, -0.37, ry + 0.06, 0.15);
+      addPart(root, new THREE.BoxGeometry(0.52, 0.085, 0.25), M.strobeBlue, 0.37, ry + 0.06, 0.15);
+      for (const sx of [-1, 1]) {
+        addPart(root, new THREE.BoxGeometry(0.05, 0.07, 0.18), M.glowWhite, sx * 0.64, ry + 0.06, 0.15);
+        // Heavy push-bumper rubber bash pads & grille strobes
+        addPart(root, new THREE.BoxGeometry(0.065, 0.54, 0.09), M.darkTrim, sx * 0.32, 0.6, 2.43);
+        addPart(root, new THREE.BoxGeometry(0.12, 0.045, 0.04), sx < 0 ? M.strobeRed : M.strobeBlue, sx * 0.2, 0.66, 2.44);
+      }
+      // Roof whip antennas & radar pod
+      addPart(root, new THREE.CylinderGeometry(0.08, 0.09, 0.05, 12), M.darkTrim, 0, 1.49, -0.45);
+      addPart(root, new THREE.CylinderGeometry(0.008, 0.012, 0.42, 6), M.chrome, -0.22, 1.66, -0.75);
+      addPart(root, new THREE.CylinderGeometry(0.008, 0.012, 0.42, 6), M.chrome, 0.22, 1.66, -0.75);
+    }
+  }
+
+  // 3. Bus Details: destination LED header display, folding double passenger doors, rooftop AC unit pods, side window mullions
+  if (typeId === 'bus' || arch === 'bus') {
+    // Front & curb-side destination LED header display
+    addPart(root, new THREE.BoxGeometry(1.88, 0.28, 0.06), M.darkTrim, 0, 2.86, 5.28);
+    addPart(root, new THREE.BoxGeometry(1.76, 0.2, 0.07), M.glowAmber, 0, 2.86, 5.29);
+    addPart(root, new THREE.BoxGeometry(0.05, 0.22, 1.24), M.darkTrim, -1.27, 2.52, 2.45);
+    addPart(root, new THREE.BoxGeometry(0.06, 0.16, 1.14), M.glowAmber, -1.275, 2.52, 2.45);
+
+    // Folding double passenger doors (front & mid curb side) with leaf mullions & grab bars
+    for (const dz of [4.15, -0.35]) {
+      addPart(root, new THREE.BoxGeometry(0.05, 2.15, 1.16), M.darkTrim, -1.265, 1.42, dz);
+      for (const lz of [-0.28, 0.28]) {
+        addPart(root, new THREE.BoxGeometry(0.06, 1.88, 0.48), M.glass, -1.27, 1.46, dz + lz);
+      }
+      addPart(root, new THREE.BoxGeometry(0.07, 2.12, 0.045), M.rubber, -1.275, 1.42, dz);
+      addPart(root, new THREE.BoxGeometry(0.07, 0.08, 1.18), M.chrome, -1.275, 2.46, dz);
+    }
+
+    // Twin rooftop AC unit pods with louvred condenser grilles
+    for (const az of [1.65, -2.05]) {
+      addPart(root, new THREE.BoxGeometry(1.68, 0.22, 1.95), M.paint, 0, 3.22, az);
+      addPart(root, new THREE.BoxGeometry(1.48, 0.04, 1.65), M.darkTrim, 0, 3.33, az);
+      for (const fx of [-0.42, 0.42]) {
+        addPart(root, new THREE.CylinderGeometry(0.28, 0.28, 0.05, 14), M.grille, fx, 3.335, az);
+      }
+    }
+
+    // Side window vertical mullions & upper hopper transom bar along both sides
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.04, 0.035, 8.6), M.darkTrim, sx * 1.27, 2.28, -0.3);
+      addPart(root, new THREE.BoxGeometry(0.045, 0.04, 9.8), M.chrome, sx * 1.275, 1.28, -0.2);
+      for (let wz = -4.2; wz <= 3.4; wz += 1.26) {
+        if (sx < 0 && (Math.abs(wz - 4.15) < 0.7 || Math.abs(wz + 0.35) < 0.7)) continue;
+        addPart(root, new THREE.BoxGeometry(0.045, 1.18, 0.055), M.darkTrim, sx * 1.27, 1.88, wz);
+      }
+      // Extended gantry side-view mirrors on tubular arms
+      addPart(root, new THREE.CylinderGeometry(0.02, 0.02, 0.38, 8), M.darkTrim, sx * 1.36, 2.32, 5.18, 0, 0, Math.PI / 2);
+      addPart(root, new THREE.BoxGeometry(0.12, 0.38, 0.08), M.darkTrim, sx * 1.48, 2.12, 5.22);
+      addPart(root, new THREE.BoxGeometry(0.1, 0.32, 0.02), M.chrome, sx * 1.48, 2.12, 5.175);
+    }
+
+    // Front recessed radiator grille, chrome bumper trim, pantograph wipers, rear engine louvres, plate & dual exhausts
+    addPart(root, new THREE.BoxGeometry(1.76, 0.36, 0.05), M.grille, 0, 0.72, 5.3);
+    for (const gy of [0.62, 0.72, 0.82]) addPart(root, new THREE.BoxGeometry(1.68, 0.022, 0.06), M.chrome, 0, gy, 5.31);
+    addPart(root, new THREE.BoxGeometry(2.42, 0.06, 0.12), M.chrome, 0, 0.42, 5.3);
+    addPart(root, new THREE.BoxGeometry(2.42, 0.06, 0.12), M.chrome, 0, 0.44, -5.3);
+    for (const wx of [-0.52, 0.52]) addPart(root, new THREE.BoxGeometry(0.68, 0.024, 0.03), M.darkTrim, wx, 1.42, 5.31, 0, 0, 0.08);
+    for (let ly = 0.85; ly <= 1.65; ly += 0.16) addPart(root, new THREE.BoxGeometry(1.56, 0.03, 0.05), M.grille, 0, ly, -5.31);
+    addPart(root, new THREE.BoxGeometry(0.52, 0.16, 0.05), M.plate, 0, 0.62, -5.31);
+    for (const ex of [-0.78, 0.78]) {
+      addPart(root, new THREE.CylinderGeometry(0.055, 0.055, 0.22, 14, 1, true), M.chrome, ex, 0.34, -5.32, Math.PI / 2, 0, 0);
+    }
+  }
+
+  // 4. Pickup / Cybertruck Details
+  if (typeId === 'cybertruck' || arch === 'pickup') {
+    addPart(root, new THREE.BoxGeometry(1.56, 0.22, 0.06), M.grille, 0, 0.56, 2.82);
+    for (const gy of [0.5, 0.56, 0.62]) addPart(root, new THREE.BoxGeometry(1.48, 0.02, 0.07), M.chrome, 0, gy, 2.83);
+    addPart(root, new THREE.BoxGeometry(2.08, 0.05, 0.12), M.chrome, 0, 0.38, 2.82);
+    addPart(root, new THREE.BoxGeometry(2.08, 0.05, 0.12), M.chrome, 0, 0.42, -2.86);
+    // Roof rack crossbars + bed side rails + ribbed bed liner slats
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.CylinderGeometry(0.024, 0.024, 2.1, 10), M.chrome, sx * 0.88, 1.32, -1.55, Math.PI / 2, 0, 0);
+      addPart(root, new THREE.BoxGeometry(0.14, 0.08, 0.06), M.darkTrim, sx * 1.08, 1.16, 1.15);
+      addPart(root, new THREE.BoxGeometry(0.11, 0.06, 0.02), M.chrome, sx * 1.08, 1.16, 1.115);
+    }
+    for (let bz = -2.6; bz <= -0.6; bz += 0.28) {
+      addPart(root, new THREE.BoxGeometry(1.62, 0.02, 0.08), M.darkTrim, 0, 0.88, bz);
+    }
+    addPart(root, new THREE.BoxGeometry(0.48, 0.15, 0.05), M.plate, 0, 0.58, -2.88);
+    for (const ex of [-0.64, 0.64]) {
+      addPart(root, new THREE.CylinderGeometry(0.048, 0.048, 0.18, 14, 1, true), M.chrome, ex, 0.34, -2.88, Math.PI / 2, 0, 0);
+    }
+  }
+
+  // 5. Ambulance / Van Details: rear step bumper, roof emergency beacons & aero lightbar, recessed grille, side lockers
+  if (typeId === 'ambulance' || arch === 'ambulance' || arch === 'van') {
+    const isAmb = arch !== 'van';
+    // Recessed front radiator grille with chrome crossbars & strobe lights
+    addPart(root, new THREE.BoxGeometry(1.36, 0.34, 0.06), M.grille, 0, 0.86, 3.04);
+    for (const gy of [0.76, 0.86, 0.96]) addPart(root, new THREE.BoxGeometry(1.28, 0.024, 0.07), M.chrome, 0, gy, 3.05);
+    addPart(root, new THREE.BoxGeometry(2.12, 0.06, 0.14), M.chrome, 0, 0.46, 3.06);
+    if (isAmb) {
+      addPart(root, new THREE.BoxGeometry(0.16, 0.06, 0.08), M.strobeRed, -0.42, 0.86, 3.06);
+      addPart(root, new THREE.BoxGeometry(0.16, 0.06, 0.08), M.strobeBlue, 0.42, 0.86, 3.06);
+      // Front cab aero lightbar + perimeter roof emergency beacons
+      addPart(root, new THREE.BoxGeometry(1.56, 0.05, 0.28), M.chrome, 0, 2.38, 1.15);
+      addPart(root, new THREE.BoxGeometry(0.72, 0.09, 0.24), M.strobeRed, -0.4, 2.44, 1.15);
+      addPart(root, new THREE.BoxGeometry(0.72, 0.09, 0.24), M.strobeBlue, 0.4, 2.44, 1.15);
+      for (const bz of [0.2, -1.4, -2.85]) {
+        for (const sx of [-1, 1]) {
+          addPart(root, new THREE.BoxGeometry(0.06, 0.12, 0.26), sx < 0 ? M.strobeRed : M.strobeBlue, sx * 1.13, 2.62, bz);
+          addPart(root, new THREE.CylinderGeometry(0.09, 0.1, 0.12, 12), sx < 0 ? M.strobeRed : M.strobeBlue, sx * 0.86, 2.82, bz);
+        }
+      }
+    } else {
+      // Van roof rack rails
+      for (const sx of [-1, 1]) {
+        addPart(root, new THREE.CylinderGeometry(0.022, 0.022, 3.6, 10), M.chrome, sx * 0.86, 2.82, -1.0, Math.PI / 2, 0, 0);
+      }
+    }
+    // Rooftop AC/ventilator pod
+    addPart(root, new THREE.BoxGeometry(0.96, 0.16, 1.18), M.paint, 0, 2.82, -0.8);
+    // Cab mirrors, wipers, side equipment locker doors with chrome latches
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.12, 0.34, 0.07), M.darkTrim, sx * 1.18, 1.56, 1.88);
+      addPart(root, new THREE.BoxGeometry(0.1, 0.28, 0.02), M.chrome, sx * 1.18, 1.56, 1.84);
+      for (const lz of [-0.45, -1.65, -2.55]) {
+        addPart(root, new THREE.BoxGeometry(0.03, 0.82, 0.76), M.darkTrim, sx * 1.13, 1.06, lz);
+        addPart(root, new THREE.BoxGeometry(0.045, 0.05, 0.12), M.chrome, sx * 1.14, 1.06, lz + 0.24);
+      }
+    }
+    for (const wx of [-0.42, 0.38]) addPart(root, new THREE.BoxGeometry(0.54, 0.02, 0.025), M.darkTrim, wx, 1.48, 2.28, 0, 0, 0.1);
+    // Diamond-plate ambulance rear step bumper + rear barn door mullion + license plate recess + dual exhaust tips
+    addPart(root, new THREE.BoxGeometry(2.18, 0.09, 0.28), M.chrome, 0, 0.44, -3.18);
+    addPart(root, new THREE.BoxGeometry(0.05, 1.88, 0.05), M.darkTrim, 0, 1.58, -3.06);
+    addPart(root, new THREE.BoxGeometry(0.48, 0.15, 0.05), M.plate, -0.52, 0.72, -3.06);
+    for (const ex of [-0.72, 0.72]) {
+      addPart(root, new THREE.CylinderGeometry(0.048, 0.048, 0.2, 14, 1, true), M.chrome, ex, 0.34, -3.14, Math.PI / 2, 0, 0);
+    }
+  }
+
+  // 6. Truck / Semi / Tow Truck / Firetruck Details:
+  // Chrome vertical exhaust stacks, cab sun visor, side fuel tanks, ribbed cargo box doors, rear underride guard,
+  // fire engine chrome bumper, rooftop extension ladder & twin hose reels!
+  if (typeId === 'tow_truck' || arch === 'truck' || arch === 'firetruck') {
+    // Tall recessed vertical-bar chrome radiator grille + heavy chrome front bumper
+    addPart(root, new THREE.BoxGeometry(1.42, 0.68, 0.06), M.grille, 0, 1.08, 3.22);
+    addPart(root, new THREE.BoxGeometry(1.48, 0.74, 0.04), M.chrome, 0, 1.08, 3.2);
+    for (let gx = -0.56; gx <= 0.56; gx += 0.16) {
+      addPart(root, new THREE.BoxGeometry(0.024, 0.64, 0.075), M.chrome, gx, 1.08, 3.23);
+    }
+    addPart(root, new THREE.BoxGeometry(2.34, 0.24, 0.22), M.chrome, 0, 0.52, 3.28);
+    addPart(root, new THREE.BoxGeometry(0.18, 0.07, 0.06), M.strobeRed, -0.58, 0.54, 3.38);
+    addPart(root, new THREE.BoxGeometry(0.18, 0.07, 0.06), M.strobeBlue, 0.58, 0.54, 3.38);
+
+    // Cab sun visor above windshield with 5 amber clearance LEDs
+    addPart(root, new THREE.BoxGeometry(1.94, 0.09, 0.26), M.chrome, 0, 2.48, 1.62, 0.22, 0, 0);
+    for (let mx = -0.64; mx <= 0.64; mx += 0.32) {
+      addPart(root, new THREE.BoxGeometry(0.08, 0.035, 0.05), M.glowAmber, mx, 2.53, 1.68);
+    }
+
+    // Dual vertical chrome exhaust stacks behind cab with perforated heat shields & curved top tips
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.CylinderGeometry(0.062, 0.062, 1.85, 14), M.chrome, sx * 1.02, 1.98, 0.12);
+      addPart(root, new THREE.CylinderGeometry(0.082, 0.082, 1.1, 14, 1, true), M.alloy, sx * 1.02, 1.72, 0.12);
+      addPart(root, new THREE.TorusGeometry(0.09, 0.055, 8, 12, Math.PI * 0.55), M.chrome, sx * 1.02, 2.9, 0.03, 0, Math.PI / 2, 0);
+      // Cylindrical side chrome fuel tanks with mounting straps & cab entry steps
+      addPart(root, new THREE.CylinderGeometry(0.24, 0.24, 1.12, 16), M.chrome, sx * 0.98, 0.58, 0.65, Math.PI / 2, 0, 0);
+      for (const sz of [0.32, 0.98]) {
+        addPart(root, new THREE.TorusGeometry(0.246, 0.014, 6, 16), M.darkTrim, sx * 0.98, 0.58, sz);
+      }
+      addPart(root, new THREE.BoxGeometry(0.18, 0.035, 0.72), M.alloy, sx * 1.08, 0.42, 1.48);
+      // Heavy west-coast gantry side mirrors
+      addPart(root, new THREE.BoxGeometry(0.1, 0.44, 0.06), M.chrome, sx * 1.24, 1.92, 1.52);
+    }
+
+    // Ribbed side cargo/equipment compartment roll-up doors
+    for (const sx of [-1, 1]) {
+      for (const dz of [-0.65, -1.65, -2.55]) {
+        addPart(root, new THREE.BoxGeometry(0.04, 0.88, 0.78), M.alloy, sx * 1.14, 1.18, dz);
+        for (let ry = 0.82; ry <= 1.52; ry += 0.1) {
+          addPart(root, new THREE.BoxGeometry(0.052, 0.022, 0.74), M.chrome, sx * 1.145, ry, dz);
+        }
+      }
+    }
+
+    // Dual-color emergency roof lightbar + Rooftop extension ladder + Twin cylindrical hose reels
+    addPart(root, new THREE.BoxGeometry(1.68, 0.055, 0.28), M.chrome, 0, 2.66, 0.95);
+    addPart(root, new THREE.BoxGeometry(0.76, 0.095, 0.24), M.strobeRed, -0.42, 2.72, 0.95);
+    addPart(root, new THREE.BoxGeometry(0.76, 0.095, 0.24), M.strobeBlue, 0.42, 2.72, 0.95);
+
+    // Rooftop aluminium extension ladder rack (side rails + 10 rungs)
+    const ladY = 2.42;
+    for (const lx of [-0.26, 0.26]) {
+      addPart(root, new THREE.BoxGeometry(0.045, 0.09, 3.1), M.chrome, lx, ladY, -1.45);
+    }
+    for (let lz = -2.85; lz <= -0.05; lz += 0.31) {
+      addPart(root, new THREE.CylinderGeometry(0.016, 0.016, 0.52, 8), M.alloy, 0, ladY, lz, 0, 0, Math.PI / 2);
+    }
+
+    // Twin cylindrical fire hose reels with red hose coils & chrome end flanges
+    for (const hz of [-0.45, -1.15]) {
+      addPart(root, new THREE.CylinderGeometry(0.24, 0.24, 0.62, 16), M.fireRed, 0, 1.72, hz, 0, 0, Math.PI / 2);
+      for (const fx of [-0.32, 0.32]) {
+        addPart(root, new THREE.CylinderGeometry(0.28, 0.28, 0.025, 16), M.chrome, fx, 1.72, hz, 0, 0, Math.PI / 2);
+      }
+    }
+
+    // Rear underride guard bar (Mansfield bar) + license plate recess + dual low exhaust tips
+    addPart(root, new THREE.BoxGeometry(2.16, 0.1, 0.1), M.chrome, 0, 0.38, -3.28);
+    for (const ux of [-0.72, 0.72]) {
+      addPart(root, new THREE.BoxGeometry(0.08, 0.32, 0.08), M.darkTrim, ux, 0.52, -3.26);
+    }
+    addPart(root, new THREE.BoxGeometry(0.5, 0.16, 0.05), M.plate, 0, 0.64, -3.26);
+  }
+}
+
 // Tags read from mesh.userData, then material.userData (set by the hero builders):
 //   paintWeight  0..1 share of the per-instance paint colour (1 = main body paint)
 //   emitCode     1 head lamp, 2 tail lamp, 3 always-lit glow, 4 / 5 strobe phase A / B
 //   lodColor     flat colour for textured materials (LED signs)
 //   lodSkip      leave the mesh out
 // A geometry `color` attribute (baked liveries, checker bands) overrides the material colour.
-function flattenVehicle(typeId, options = {}) {
+export function flattenVehicle(typeId, options = {}) {
   const lodOpts = { ...options, lod: true };
   const built = HEAVY_VEHICLE_IDS.has(typeId) ? buildHeavyVehicle(typeId, lodOpts) : buildHeroVehicle(typeId, lodOpts);
   const lb = built.lightbarParts;
@@ -28,10 +530,11 @@ function flattenVehicle(typeId, options = {}) {
     for (const m of lb.phaseAMeshes) m.userData.emitCode = 4;
     for (const m of lb.phaseBMeshes) m.userData.emitCode = 5;
   }
+  addFineVehicleDetails(built, typeId, options);
   const model = built.group;
   model.updateMatrixWorld(true);
   const pos = [], nor = [], col = [], paint = [], emit = [], kind = [], seat = [];
-  const gPos = [], gNor = []; // [drivers] glass goes to its own see-through instanced mesh
+  const gPos = [], gNor = [], gCol = []; // [drivers] glass goes to its own see-through instanced mesh
   const tmpN = new THREE.Matrix3();
   const v = new THREE.Vector3();
   const c = new THREE.Color();
@@ -46,6 +549,8 @@ function flattenVehicle(typeId, options = {}) {
     else if (em === 2) c.set(TAIL_HEX);
     else if (mat.color) c.copy(mat.color);
     else c.set(0x888888);
+    // CRITICAL NORMAL FIX: compute smooth analytical normals on indexed curved geometries BEFORE .toNonIndexed()
+    if (o.geometry.index && !o.geometry.attributes.normal) o.geometry.computeVertexNormals();
     const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     if (!g.attributes.normal) g.computeVertexNormals();
     const p = g.attributes.position, n = g.attributes.normal, vc = g.attributes.color;
@@ -57,6 +562,7 @@ function flattenVehicle(typeId, options = {}) {
         gPos.push(v.x, v.y, v.z);
         v.fromBufferAttribute(n, i).applyMatrix3(tmpN).normalize();
         gNor.push(v.x, v.y, v.z);
+        gCol.push(c.r, c.g, c.b);
       }
       g.dispose();
       return;
@@ -86,6 +592,8 @@ function flattenVehicle(typeId, options = {}) {
   const glass = new THREE.BufferGeometry();
   glass.setAttribute('position', new THREE.Float32BufferAttribute(gPos, 3));
   glass.setAttribute('normal', new THREE.Float32BufferAttribute(gNor, 3));
+  glass.setAttribute('color', new THREE.Float32BufferAttribute(gCol, 3));
+  glass.computeBoundingSphere();
   return { geom, glass };
 }
 
@@ -121,16 +629,60 @@ function indexed(pos, nor, col, paint, emit, kind, seat) {
 }
 
 export const CAR_TYPES = [
-  { id: 'sedan', base: 'taxi', options: { hideTaxiSign: true }, length: 4.5, width: 1.9 },
-  { id: 'taxi', base: 'taxi', length: 4.5, width: 1.9 },
-  { id: 'coupe', base: 'supercar', length: 4.6, width: 2.05 },
-  { id: 'police', base: 'police', length: 4.7, width: 1.96 },
-  { id: 'bus', base: 'bus', length: 10.6, width: 2.55 },
-  { id: 'tesla', base: 'tesla', length: 4.97, width: 1.96, roughness: 0.22, metalness: 0.58 },
-  { id: 'cybertruck', base: 'cybertruck', length: 5.68, width: 2.20, roughness: 0.24, metalness: 0.84 },
-  { id: 'ambulance', base: 'ambulance', length: 6.10, width: 2.26 },
-  { id: 'tow_truck', base: 'tow_truck', length: 6.40, width: 2.32 },
+  { id: 'sedan', base: 'taxi', options: { hideTaxiSign: true, archetype: 'sedan' }, length: 4.5, width: 1.9 },
+  { id: 'taxi', base: 'taxi', options: { archetype: 'taxi' }, length: 4.5, width: 1.9 },
+  { id: 'coupe', base: 'supercar', options: { archetype: 'sports' }, length: 4.6, width: 2.05 },
+  { id: 'police', base: 'police', options: { archetype: 'police' }, length: 4.7, width: 1.96 },
+  { id: 'bus', base: 'bus', options: { archetype: 'bus' }, length: 10.6, width: 2.55 },
+  { id: 'tesla', base: 'tesla', options: { archetype: 'suv' }, length: 4.97, width: 1.96, roughness: 0.22, metalness: 0.58 },
+  { id: 'cybertruck', base: 'cybertruck', options: { archetype: 'pickup' }, length: 5.68, width: 2.20, roughness: 0.24, metalness: 0.84 },
+  { id: 'ambulance', base: 'ambulance', options: { archetype: 'ambulance' }, length: 6.10, width: 2.26 },
+  { id: 'tow_truck', base: 'tow_truck', options: { archetype: 'firetruck' }, length: 6.40, width: 2.32 },
 ];
+
+// All 11 canonical vehicle archetypes (sedan, suv, sports, pickup, van, truck, bus, taxi, police, ambulance, firetruck)
+export const VEHICLE_ARCHETYPE_SPECS = {
+  sedan: { base: 'taxi', options: { hideTaxiSign: true, archetype: 'sedan' } },
+  suv: { base: 'tesla', options: { archetype: 'suv' } },
+  sports: { base: 'supercar', options: { archetype: 'sports' } },
+  pickup: { base: 'cybertruck', options: { archetype: 'pickup' } },
+  van: { base: 'ambulance', options: { archetype: 'van' } },
+  truck: { base: 'tow_truck', options: { archetype: 'truck' } },
+  bus: { base: 'bus', options: { archetype: 'bus' } },
+  taxi: { base: 'taxi', options: { archetype: 'taxi' } },
+  police: { base: 'police', options: { archetype: 'police' } },
+  ambulance: { base: 'ambulance', options: { archetype: 'ambulance' } },
+  firetruck: { base: 'tow_truck', options: { archetype: 'firetruck' } },
+};
+
+export function buildVehicleArchetype(archetype = 'sedan') {
+  const spec = VEHICLE_ARCHETYPE_SPECS[archetype] || VEHICLE_ARCHETYPE_SPECS.sedan;
+  const { geom, glass } = flattenVehicle(spec.base, spec.options);
+  geom.geom = geom;
+  geom.body = geom;
+  geom.glass = glass;
+  return geom;
+}
+
+export const VEHICLE_BUILDERS = {
+  sedan: () => buildVehicleArchetype('sedan'),
+  suv: () => buildVehicleArchetype('suv'),
+  sports: () => buildVehicleArchetype('sports'),
+  pickup: () => buildVehicleArchetype('pickup'),
+  van: () => buildVehicleArchetype('van'),
+  truck: () => buildVehicleArchetype('truck'),
+  bus: () => buildVehicleArchetype('bus'),
+  taxi: () => buildVehicleArchetype('taxi'),
+  police: () => buildVehicleArchetype('police'),
+  ambulance: () => buildVehicleArchetype('ambulance'),
+  firetruck: () => buildVehicleArchetype('firetruck'),
+};
+
+export function buildAllVehicleArchetypes() {
+  const out = {};
+  for (const [k, fn] of Object.entries(VEHICLE_BUILDERS)) out[k] = fn();
+  return out;
+}
 
 // [drivers] Per-car / per-seat occupants and burnt wrecks, shared by the car and glass shaders.
 // Seed: from the car's paint when it has one (stable per car), else the instance slot (fixed liveries).
@@ -451,7 +1003,7 @@ export function createPedMesh(capacity, lod = 0) {
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   mesh.name = lod ? 'traffic_pedestrians_far' : 'traffic_pedestrians';
-  return { mesh, iAnim, iGait, iShirt, iPants, iSkin, iHair, iAcc, tris: base.index.count / 3 };
+  return { mesh, geometry: geom, iAnim, iGait, iShirt, iPants, iSkin, iHair, iAcc, tris: base.index.count / 3 };
 }
 
 export const RAGDOLL_PART_NAMES = RAGDOLL_PART_SPECS.map((s) => s.name);
@@ -510,6 +1062,11 @@ export function createPedPartMeshes(capacity) {
 
 export function createImpactPuffMesh(capacity = 128) {
   const geom = new THREE.DodecahedronGeometry(0.16, 0);
+  geom.computeVertexNormals();
+  const n = geom.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { col[i * 3] = 0.85; col[i * 3 + 1] = 0.81; col[i * 3 + 2] = 0.76; }
+  geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const mat = new THREE.MeshStandardMaterial({
     color: 0xd8cfc2,
     roughness: 0.9,

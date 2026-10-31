@@ -2,22 +2,25 @@
  * Detailed procedural tree species for the vegetation system. [tree-detail]
  *
  * Every species is code-generated (no assets):
- *   - trunks/limbs: tapered, curved tubes with root flare, mapped onto tileable bark bands of one canvas atlas;
- *   - canopies: many alpha-tested leaf-card clusters spread over a few lumpy sub-crowns (soft, varied silhouette),
+ *   - trunks/limbs: tapered, curved tubes with fluted root buttresses, surface root flares, and branch collars,
+ *     with analytical smooth 3D normals (radial + longitudinal taper slope + circumferential flute derivative)
+ *     mapped onto tileable bark bands of one canvas atlas;
+ *   - canopies: many alpha-tested leaf-card clusters spread over lumpy sub-crowns (soft, varied silhouette),
  *     with spherical "canopy" normals and baked ambient occlusion in the vertex colours;
- *   - palms / banana / date palm: V-folded frond strips; conifers: drooping whorls of needle-spray cards.
+ *   - palms / banana / date palm: V-folded frond strips with 3D rachis midribs & fruit clusters;
+ *   - conifers: drooping whorls with wooden branch cores, side branchlets, and V-cupped needle-spray cards.
  *
  * buildTreeGeometry(sp, lod) -> indexed BufferGeometry { position, normal, uv, color, vegSway }
- *   lod 0 = near ring (detailed, ~1-2.5k tris), lod 1 = mid ring (~150-450 tris). Both share the seed, so the mid
+ *   lod 0 = near ring (detailed, ~1.5-3.2k tris), lod 1 = mid ring (~180-480 tris). Both share the seed, so the mid
  *   tree has the same silhouette (lumps, limbs, frond directions) and the LOD switch barely pops.
  * vegSway: 0 = rigid (cactus), 1 = bends with height, >1.1 = leaf card (extra flutter in the shader).
  * TREE_DIM[sp] = { h, cy, cr, tr } at instance scale 1: height, canopy centre/radius, trunk radius (hit tests).
  */
-import * as THREE from '../../vendor/three.module.js';
+import * as THREE from "../../vendor/three.module.js";
 import {
   SP_BROADLEAF, SP_TALL, SP_CONIFER, SP_PALM, SP_BUSH, SP_COLUMN, SP_UMBRELLA, SP_EUCALYPT, SP_CACTUS, SP_BANANA,
   SP_DATEPALM, SP_BIRCH, SP_BAMBOO, SP_BARE, SPECIES_COUNT,
-} from './flora_climate.js';
+} from "./flora_climate.js";
 
 // ------------------------------------------------------------------------------------------------
 // Atlas layout (canvas pixels, 1024 x 1024; y down). Bands span the full width so bark wraps around trunks.
@@ -37,7 +40,7 @@ function bandV(name) {
   const [y0, y1] = BAND[name];
   return [1 - (y1 - 1.5) / AT, 1 - (y0 + 1.5) / AT]; // bottom, top
 }
-export const PARTICLE_UV = { leaf: cellUV('pleaf'), splinter: cellUV('splinter'), ember: cellUV('ember') };
+export const PARTICLE_UV = { leaf: cellUV("pleaf"), splinter: cellUV("splinter"), ember: cellUV("ember") };
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -58,10 +61,10 @@ let ATLAS = null;
 /** The shared foliage/bark atlas (CanvasTexture, sRGB, mipmapped). Built once. */
 export function getFloraAtlas() {
   if (ATLAS) return ATLAS;
-  const cv = document.createElement('canvas');
+  const cv = document.createElement("canvas");
   cv.width = AT;
   cv.height = AT;
-  const c = cv.getContext('2d');
+  const c = cv.getContext("2d");
   const R = mulberry(911);
   const rr = (a, b) => a + (b - a) * R();
   const hsl = (h, s, l, a = 1) => `hsla(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%,${a})`;
@@ -84,7 +87,7 @@ export function getFloraAtlas() {
   };
 
   // Bark: vertical fissures between flat plates (light neutral; the hue comes from vertex colours)
-  band('bark', '#c9bfb4', (wrap, H) => {
+  band("bark", "#c9bfb4", (wrap, H) => {
     for (let i = 0; i < 260; i++) {
       const x = rr(0, AT), w = rr(6, 26), y = rr(0, H), h = rr(10, 40), l = rr(68, 88);
       wrap(() => { c.fillStyle = `rgb(${l * 2.4},${l * 2.25},${l * 2.1})`; c.fillRect(x, y, w, h); });
@@ -106,14 +109,14 @@ export function getFloraAtlas() {
     }
   });
   // Birch: chalk white with black horizontal lenticels and dark patches
-  band('birch', '#efece4', (wrap, H) => {
+  band("birch", "#efece4", (wrap, H) => {
     for (let i = 0; i < 160; i++) {
       const x = rr(0, AT), y = rr(0, H), w = rr(10, 46), h = rr(1.5, 4);
       wrap(() => { c.fillStyle = `rgba(34,30,28,${rr(0.55, 0.9)})`; c.beginPath(); c.ellipse(x, y, w / 2, h / 2, 0, 0, Math.PI * 2); c.fill(); });
     }
     for (let i = 0; i < 26; i++) {
       const x = rr(0, AT), y = rr(0, H), w = rr(14, 40), h = rr(6, 16);
-      wrap(() => { c.fillStyle = 'rgba(40,36,32,0.75)'; c.beginPath(); c.ellipse(x, y, w / 2, h / 2, rr(-0.2, 0.2), 0, Math.PI * 2); c.fill(); });
+      wrap(() => { c.fillStyle = "rgba(40,36,32,0.75)"; c.beginPath(); c.ellipse(x, y, w / 2, h / 2, rr(-0.2, 0.2), 0, Math.PI * 2); c.fill(); });
     }
     for (let i = 0; i < 900; i++) {
       const x = rr(0, AT), y = rr(0, H);
@@ -121,17 +124,17 @@ export function getFloraAtlas() {
     }
   });
   // Coconut palm: ring scars
-  band('palm', '#c4b296', (wrap, H) => {
+  band("palm", "#c4b296", (wrap, H) => {
     for (let k = 0; k < 6; k++) {
       const y = (k + rr(0.1, 0.3)) * (H / 6);
       wrap(() => {
-        c.strokeStyle = 'rgba(70,56,40,0.75)';
+        c.strokeStyle = "rgba(70,56,40,0.75)";
         c.lineWidth = rr(2, 4);
         c.beginPath();
         c.moveTo(-4, y);
         for (let x = 0; x <= AT + 8; x += 16) c.lineTo(x, y + Math.sin(x * 0.03 + k) * 1.6);
         c.stroke();
-        c.fillStyle = 'rgba(230,215,190,0.35)';
+        c.fillStyle = "rgba(230,215,190,0.35)";
         c.fillRect(0, y + 3, AT, 2);
       });
     }
@@ -141,14 +144,14 @@ export function getFloraAtlas() {
     }
   });
   // Date palm: diamond leaf-base pattern
-  band('diamond', '#b39a76', (wrap, H) => {
+  band("diamond", "#b39a76", (wrap, H) => {
     const n = 32;
     for (let k = 0; k < n; k++) {
       for (let row = 0; row < 2; row++) {
         const x = (k + row * 0.5) * (AT / n), y = row * (H / 2) + H / 4;
         wrap(() => {
           c.fillStyle = `rgb(${rr(120, 150)},${rr(98, 118)},${rr(66, 82)})`;
-          c.strokeStyle = 'rgba(50,38,26,0.85)';
+          c.strokeStyle = "rgba(50,38,26,0.85)";
           c.lineWidth = 2;
           c.beginPath();
           c.moveTo(x, y - H / 4 + 1);
@@ -162,7 +165,7 @@ export function getFloraAtlas() {
       }
     }
   });
-  c.fillStyle = '#ffffff';
+  c.fillStyle = "#ffffff";
   c.fillRect(0, BAND.plain[0], AT, BAND.plain[1] - BAND.plain[0]);
 
   // ---- leaf cells ----
@@ -198,7 +201,7 @@ export function getFloraAtlas() {
   };
   const twigs = (cx, cy, n, r, col, lw) => {
     c.strokeStyle = col;
-    c.lineCap = 'round';
+    c.lineCap = "round";
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + rr(-0.3, 0.3);
       c.lineWidth = lw;
@@ -209,8 +212,8 @@ export function getFloraAtlas() {
     }
   };
   // Broadleaf cluster: ~60 ovate leaves radiating from twigs, darker underneath, sunlit on top
-  inCell('leaf', (w, h) => {
-    twigs(w / 2 + rr(-20, 20), h / 2 + rr(-20, 20), 4, 80, 'rgba(91,74,54,0.8)', 2);
+  inCell("leaf", (w, h) => {
+    twigs(w / 2 + rr(-20, 20), h / 2 + rr(-20, 20), 4, 80, "rgba(91,74,54,0.8)", 2);
     for (let pass = 0; pass < 3; pass++) {
       for (let i = 0; i < 70; i++) {
         const a = rr(0, Math.PI * 2), d = Math.sqrt(R()) * 100;
@@ -222,8 +225,8 @@ export function getFloraAtlas() {
     }
   });
   // Small leaves (birch / eucalyptus / acacia): many narrow leaves on hanging twigs, airy
-  inCell('small', (w, h) => {
-    c.strokeStyle = '#6a5a48';
+  inCell("small", (w, h) => {
+    c.strokeStyle = "#6a5a48";
     c.lineWidth = 1.5;
     for (let k = 0; k < 9; k++) {
       const x0 = rr(30, w - 30), y0 = rr(14, 60);
@@ -242,7 +245,7 @@ export function getFloraAtlas() {
     }
   });
   // Conifer needle spray: twig along +u (base left, tip right) with needles both sides
-  inCell('needle', (w, h) => {
+  inCell("needle", (w, h) => {
     const needles = (x0, y0, x1, y1, len, n) => {
       for (let i = 0; i < n; i++) {
         const t = i / n, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
@@ -259,8 +262,8 @@ export function getFloraAtlas() {
         }
       }
     };
-    c.lineCap = 'round';
-    c.strokeStyle = '#4c3e30';
+    c.lineCap = "round";
+    c.strokeStyle = "#4c3e30";
     c.lineWidth = 4;
     c.beginPath();
     c.moveTo(6, h / 2);
@@ -270,7 +273,7 @@ export function getFloraAtlas() {
       const t = 0.05 + k * 0.075, x = 6 + (w - 16) * t, y = h / 2 - 6 * t;
       const sgn = k % 2 ? 1 : -1, L = (1 - t) * 120 + 26;
       const ex = x + L * 0.6, ey = y + sgn * Math.min(110, L * 0.85);
-      c.strokeStyle = '#4c3e30';
+      c.strokeStyle = "#4c3e30";
       c.lineWidth = 2;
       c.beginPath();
       c.moveTo(x, y);
@@ -281,7 +284,7 @@ export function getFloraAtlas() {
     needles(6, h / 2, w - 10, h / 2 - 6, 30, 60);
   });
   // Cypress / juniper scale foliage: dense irregular mass of tiny sprigs
-  inCell('cypress', (w, h) => {
+  inCell("cypress", (w, h) => {
     for (let i = 0; i < 1100; i++) {
       const a = rr(0, Math.PI * 2), d = Math.pow(R(), 0.6) * 112 * (0.75 + 0.25 * Math.sin(a * 5 + 1));
       const x = w / 2 + Math.cos(a) * d, y = h / 2 + Math.sin(a) * d * 1.05;
@@ -293,9 +296,9 @@ export function getFloraAtlas() {
     }
   });
   // Palm frond: rachis along +u (base left), leaflets angled toward the tip on both sides
-  inCell('frond', (w, h) => {
+  inCell("frond", (w, h) => {
     const cy = h / 2;
-    c.lineCap = 'round';
+    c.lineCap = "round";
     for (let x = 18; x < w - 8; x += 5.5) {
       const t = x / w;
       const L = Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.08 + 0.04)), 0.7) * 116 + 6;
@@ -309,7 +312,7 @@ export function getFloraAtlas() {
         c.stroke();
       }
     }
-    c.strokeStyle = '#7c7448';
+    c.strokeStyle = "#7c7448";
     c.lineWidth = 5;
     c.beginPath();
     c.moveTo(4, cy);
@@ -317,7 +320,7 @@ export function getFloraAtlas() {
     c.stroke();
   });
   // Banana leaf: broad blade along +u with midrib, lateral veins and wind tears
-  inCell('banana', (w, h) => {
+  inCell("banana", (w, h) => {
     const cy = h / 2;
     c.fillStyle = hsl(92, 52, 40);
     c.beginPath();
@@ -335,7 +338,7 @@ export function getFloraAtlas() {
       c.lineTo(x + 22, cy + 100);
       c.stroke();
     }
-    c.globalCompositeOperation = 'destination-out';
+    c.globalCompositeOperation = "destination-out";
     for (let i = 0; i < 9; i++) {
       const x = rr(40, w - 30), sgn = R() < 0.5 ? -1 : 1;
       c.lineWidth = rr(2, 4);
@@ -344,8 +347,8 @@ export function getFloraAtlas() {
       c.lineTo(x + 4, cy + sgn * rr(18, 50));
       c.stroke();
     }
-    c.globalCompositeOperation = 'source-over';
-    c.strokeStyle = '#b7c27a';
+    c.globalCompositeOperation = "source-over";
+    c.strokeStyle = "#b7c27a";
     c.lineWidth = 4;
     c.beginPath();
     c.moveTo(4, cy);
@@ -353,8 +356,8 @@ export function getFloraAtlas() {
     c.stroke();
   });
   // Bamboo: drooping lanceolate leaves fanning from thin twigs
-  inCell('bamboo', (w, h) => {
-    c.strokeStyle = '#7d8a40';
+  inCell("bamboo", (w, h) => {
+    c.strokeStyle = "#7d8a40";
     c.lineWidth = 2;
     for (let k = 0; k < 7; k++) {
       const x0 = rr(30, w - 30), y0 = rr(20, h - 80);
@@ -366,8 +369,8 @@ export function getFloraAtlas() {
     }
   });
   // Bare twigs: fine recursive branchlets
-  inCell('twig', (w, h) => {
-    c.lineCap = 'round';
+  inCell("twig", (w, h) => {
+    c.lineCap = "round";
     const tw = (x, y, a, len, lw, d) => {
       const ex = x + Math.cos(a) * len, ey = y + Math.sin(a) * len;
       c.strokeStyle = `rgb(${rr(70, 95)},${rr(58, 74)},${rr(48, 60)})`;
@@ -384,9 +387,9 @@ export function getFloraAtlas() {
     for (let k = 0; k < 3; k++) tw(w / 2 + rr(-30, 30), h - 4, -Math.PI / 2 + rr(-0.5, 0.5), rr(40, 55), 4, 5);
   });
   // Particles: single leaf, wood splinter, ember
-  inCell('pleaf', (w, h) => leafShape(6, h / 2, 0, w - 12, 13, '#eef4e4', '#ffffff'));
-  inCell('splinter', (w, h) => {
-    c.fillStyle = '#e4cfa8';
+  inCell("pleaf", (w, h) => leafShape(6, h / 2, 0, w - 12, 13, "#eef4e4", "#ffffff"));
+  inCell("splinter", (w, h) => {
+    c.fillStyle = "#e4cfa8";
     c.beginPath();
     c.moveTo(4, h / 2);
     c.lineTo(w * 0.4, h / 2 - 8);
@@ -395,11 +398,11 @@ export function getFloraAtlas() {
     c.closePath();
     c.fill();
   });
-  inCell('ember', (w, h) => {
+  inCell("ember", (w, h) => {
     const g = c.createRadialGradient(w / 2, h / 2, 1, w / 2, h / 2, w / 2 - 3);
-    g.addColorStop(0, 'rgba(255,255,255,1)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.9)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.5, "rgba(255,255,255,0.9)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
     c.fillStyle = g;
     c.fillRect(0, 0, w, h);
   });
@@ -430,11 +433,11 @@ class Geo {
   }
   build() {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.P, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.N, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.U, 2));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.C, 3));
-    g.setAttribute('vegSway', new THREE.Float32BufferAttribute(this.S, 1));
+    g.setAttribute("position", new THREE.Float32BufferAttribute(this.P, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(this.N, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(this.U, 2));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(this.C, 3));
+    g.setAttribute("vegSway", new THREE.Float32BufferAttribute(this.S, 1));
     g.setIndex(this.n > 65535 ? new THREE.Uint32BufferAttribute(this.I, 1) : new THREE.Uint16BufferAttribute(this.I, 1));
     g.computeBoundingSphere();
     g.computeBoundingBox();
@@ -465,33 +468,70 @@ function spline(ctrl, n) {
 
 /**
  * Tapered tube along `pts` (radius r(t), t = 0..1). Each length segment maps the whole bark band once (bands are
- * vertically tileable), u wraps `uRep` times around. `ring(t, a)` optionally modulates the radius (cactus ribs).
+ * vertically tileable), u wraps `uRep` times around. `ring(t, a)` optionally modulates the radius (root buttress
+ * fluting, bamboo nodes, cactus ribs).
+ * Computes smooth 3D surface normals incorporating longitudinal taper slope (-dr/ds) and circumferential flute
+ * derivative (-1/r * dr/da) so root flares, branch collars, and ribbed stems shade smoothly.
  */
 function tube(g, pts, r, segs, bandName, col0, col1, uRep = 1, sway = 1, ring = null) {
   const [vb, vt] = bandV(bandName);
   const n = pts.length;
-  // parallel-transport frame
+  // Parallel-transport frame
   let t0 = norm3([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]]);
   let ref = Math.abs(t0[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
   let n1 = norm3(cross(t0, ref));
   const frames = [];
+  const tangents = [];
+  const arcStep = [];
   for (let i = 0; i < n; i++) {
-    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    const i0 = Math.max(0, i - 1), i1 = Math.min(n - 1, i + 1);
+    const a = pts[i0], b = pts[i1];
+    const ds = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) / Math.max(1, i1 - i0);
+    arcStep.push(Math.max(1e-3, ds));
     const t = norm3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+    tangents.push(t);
     const d = n1[0] * t[0] + n1[1] * t[1] + n1[2] * t[2];
     n1 = norm3([n1[0] - t[0] * d, n1[1] - t[1] * d, n1[2] - t[2] * d]);
     frames.push([n1, cross(t, n1)]);
   }
+  const dtEps = 1 / Math.max(8, (n - 1) * 4);
+  const daEps = 0.04;
   const ringAt = (i, vv, base) => {
-    const p = pts[i], [a1, a2] = frames[i], tt = i / (n - 1);
+    const p = pts[i], [a1, a2] = frames[i], tang = tangents[i], tt = i / (n - 1);
     const rad = r(tt);
-    const col = lerp3(col0, col1, tt);
+    // Longitudinal taper derivative dr/ds
+    const tLo = Math.max(0, tt - dtEps), tHi = Math.min(1, tt + dtEps);
+    const drdt = (r(tHi) - r(tLo)) / Math.max(1e-4, tHi - tLo);
+    const drds = Math.max(-1.25, Math.min(1.25, drdt / (arcStep[i] * (n - 1))));
+    const baseCol = lerp3(col0, col1, tt);
     for (let k = 0; k <= segs; k++) {
       const ang = (k / segs) * Math.PI * 2;
       const ca = Math.cos(ang), sa = Math.sin(ang);
-      const rr = ring ? rad * ring(tt, ang) : rad;
-      const nx = a1[0] * ca + a2[0] * sa, ny = a1[1] * ca + a2[1] * sa, nz = a1[2] * ca + a2[2] * sa;
-      g.v(p[0] + nx * rr, p[1] + ny * rr, p[2] + nz * rr, nx, ny, nz, (k / segs) * uRep, vv, col[0], col[1], col[2], sway);
+      const rf = ring ? ring(tt, ang) : 1;
+      const rr = rad * rf;
+      // Radial & circumferential unit vectors in the cross-section plane
+      const rx = a1[0] * ca + a2[0] * sa, ry = a1[1] * ca + a2[1] * sa, rz = a1[2] * ca + a2[2] * sa;
+      const tx = -a1[0] * sa + a2[0] * ca, ty = -a1[1] * sa + a2[1] * ca, tz = -a1[2] * sa + a2[2] * ca;
+      // Circumferential rib/flute slope
+      let dAngSlope = 0;
+      if (ring) {
+        const rfLo = ring(tt, ang - daEps), rfHi = ring(tt, ang + daEps);
+        dAngSlope = Math.max(-0.85, Math.min(0.85, -(rfHi - rfLo) / (2 * daEps * Math.max(0.25, rf))));
+      }
+      const sn = norm3([
+        rx - drds * tang[0] + dAngSlope * tx,
+        ry - drds * tang[1] + dAngSlope * ty,
+        rz - drds * tang[2] + dAngSlope * tz,
+      ]);
+      // Subtle crevice darkening inside root flutes / cactus valleys
+      const fluteAO = ring ? Math.min(1.04, Math.max(0.84, 0.88 + 0.12 * rf)) : 1.0;
+      g.v(
+        p[0] + rx * rr, p[1] + ry * rr, p[2] + rz * rr,
+        sn[0], sn[1], sn[2],
+        (k / segs) * uRep, vv,
+        baseCol[0] * fluteAO, baseCol[1] * fluteAO, baseCol[2] * fluteAO,
+        sway,
+      );
     }
     return base;
   };
@@ -573,7 +613,6 @@ function crown(g, R, o) {
     d[1] = d[1] * 0.85 + 0.12 - droop * 0.3;
     const sh = 0.72 + 0.28 * Math.sqrt(R());
     const p = [L.c[0] + d[0] * L.r * sh, L.c[1] + d[1] * L.r * sh * (1 - flat * 0.6), L.c[2] + d[2] * L.r * sh];
-    // skip clusters buried inside a neighbouring lump (hidden overdraw)
     let buried = false;
     for (const l of lumps) {
       if (l === L) continue;
@@ -596,44 +635,81 @@ function crown(g, R, o) {
   return lumps;
 }
 
-/** Limbs from the trunk top into each lump (+ thinner twigs on lod 0). */
-function limbs(g, R, base, lumps, r0, lod, bandName, col, maxN = 8, reach = 0.8) {
-  const segs = lod === 0 ? 6 : 4;
+/** Limbs from the trunk top into each lump (+ forked secondary boughs & thinner twigs on lod 0). */
+function limbs(g, R, base, lumps, r0, lod, bandName, col, maxN = 8, reach = 0.82) {
+  const segs = lod === 0 ? 7 : 4;
+  const colTip = [Math.min(1, col[0] * 1.08), Math.min(1, col[1] * 1.08), Math.min(1, col[2] * 1.06)];
   let n = 0;
   for (let i = 1; i < lumps.length && n < (lod === 0 ? maxN : Math.min(4, maxN)); i++, n++) {
     const L = lumps[i];
     const e = lerp3(base, L.c, reach);
     const hx = e[0] - base[0], hz = e[2] - base[2], hl = Math.hypot(hx, hz) || 1;
     const b0 = [base[0], base[1] - 0.25 - R() * 0.35, base[2]];
-    // leave the trunk at ~40-55 deg, then bend up into the lump
     const out = Math.max(0.7, hl * 0.55);
     const m = [b0[0] + (hx / hl) * out, b0[1] + out * (0.8 + R() * 0.4), b0[2] + (hz / hl) * out];
-    const rr = r0 * (0.55 + R() * 0.3);
-    tube(g, spline([b0, m, e], lod === 0 ? 5 : 2), (t) => rr * (1 - t * 0.78), segs, bandName, col, col, 1, 1);
+    const rr = r0 * (0.56 + R() * 0.30);
+    // Primary bough with swollen branch collar at trunk union (t -> 0) and organic taper
+    const mainPts = spline([b0, m, e], lod === 0 ? 6 : 2);
+    tube(
+      g, mainPts,
+      (t) => rr * (1 - t * 0.76) * (1 + 0.28 * Math.pow(1 - t, 4)),
+      segs, bandName, col, colTip, 1, 1,
+    );
     if (lod === 0) {
       for (let k = 0; k < 2; k++) {
-        const s0 = lerp3(b0, e, 0.45 + R() * 0.3);
+        const s0 = lerp3(m, e, 0.25 + k * 0.38);
         const d = randUnit(R);
-        const s1 = [s0[0] + d[0] * L.r * 0.8, s0[1] + Math.abs(d[1]) * L.r * 0.7, s0[2] + d[2] * L.r * 0.8];
-        const r1 = rr * 0.35;
-        tube(g, [s0, lerp3(s0, s1, 0.5), s1], (t) => r1 * (1 - t * 0.8), 3, bandName, col, col, 1, 1);
+        const s1 = [s0[0] + d[0] * L.r * 0.82, s0[1] + Math.abs(d[1]) * L.r * 0.72, s0[2] + d[2] * L.r * 0.82];
+        const sm = lerp3(s0, s1, 0.5);
+        sm[1] += 0.14;
+        const r1 = rr * (0.38 - k * 0.06);
+        tube(g, spline([s0, sm, s1], 3), (t) => r1 * (1 - t * 0.78), 4, bandName, col, colTip, 1, 1);
       }
     }
   }
 }
 
-/** Main trunk: curved, tapered, with root flare. Returns the top point. */
-function trunk(g, R, h, r0, lean, lod, bandName, colBot, colTop, uRep = 2, flare = 1.7, ctrl = 4) {
+/**
+ * Main trunk: curved, organically tapered, with fluted root buttresses and surface root spurs on lod 0.
+ * Returns the top point.
+ */
+function trunk(g, R, h, r0, lean, lod, bandName, colBot, colTop, uRep = 2, flare = 1.75, ctrl = 4) {
   const ang = R() * Math.PI * 2;
+  const fluteOff = R() * Math.PI * 2;
+  const nLobes = 4 + (Math.floor(R() * 2));
   const pts = [[0, 0, 0]];
   for (let i = 1; i <= ctrl; i++) {
     const t = i / ctrl;
     const w = (R() - 0.5) * 0.18 * h * 0.1;
     pts.push([Math.cos(ang) * lean * t * t * h + w, t * h, Math.sin(ang) * lean * t * t * h + w]);
   }
-  const n = Math.max(3, Math.round(h / (lod === 0 ? 0.9 : 2.2)));
+  const n = Math.max(3, Math.round(h / (lod === 0 ? 0.8 : 2.2)));
   const sp = spline(pts, n);
-  tube(g, sp, (t) => r0 * (1 - t * 0.55) * (1 + (flare - 1) * Math.pow(Math.max(0, 1 - t * n * 0.7), 2)), lod === 0 ? 9 : 5, bandName, colBot, colTop, uRep, 1);
+  // Fluted root buttress modulation at the base of the trunk (fades out smoothly above t = 0.28)
+  const buttressRing = (t, a) => {
+    const baseFade = Math.pow(Math.max(0, 1 - t * 3.6), 2);
+    return 1 + 0.18 * baseFade * Math.cos(a * nLobes + fluteOff) + 0.04 * (1 - t) * Math.sin(a * 3 - t * 5);
+  };
+  tube(
+    g, sp,
+    (t) => r0 * (1 - t * 0.55) * (1 + (flare - 1) * Math.pow(Math.max(0, 1 - t * n * 0.65), 2.1)),
+    lod === 0 ? 10 : 5, bandName, colBot, colTop, uRep, 1, buttressRing,
+  );
+  // Exposed surface root spurs radiating from the buttress lobes at ground level (lod 0)
+  if (lod === 0 && r0 >= 0.16 && flare > 1.35) {
+    const rootCount = Math.min(4, nLobes);
+    for (let k = 0; k < rootCount; k++) {
+      const ra = (k / rootCount) * Math.PI * 2 - fluteOff / nLobes + (R() - 0.5) * 0.25;
+      const ca = Math.cos(ra), sa = Math.sin(ra);
+      const rLen = r0 * (2.2 + R() * 0.9);
+      const rPts = [
+        [ca * r0 * 0.55, r0 * 1.35, sa * r0 * 0.55],
+        [ca * rLen * 0.55, r0 * 0.42, sa * rLen * 0.55],
+        [ca * rLen, -0.03, sa * rLen],
+      ];
+      tube(g, spline(rPts, 3), (t) => r0 * 0.42 * Math.pow(1 - t * 0.82, 1.3), 5, bandName, colBot, colBot, 1, 0);
+    }
+  }
   return sp[sp.length - 1];
 }
 
@@ -644,24 +720,24 @@ const BARK_C = [0.52, 0.42, 0.34], BARK_D = [0.36, 0.29, 0.24];
 const LEAF_T = [1.0, 1.0, 1.0];
 
 function broadleafLike(g, R, lod, o) {
-  const top = trunk(g, R, o.hb + 0.3, o.tr, o.lean ?? 0.04, lod, o.band || 'bark', o.bc0 || BARK_D, o.bc1 || BARK_C, 2);
+  const top = trunk(g, R, o.hb + 0.3, o.tr, o.lean ?? 0.04, lod, o.band || "bark", o.bc0 || BARK_D, o.bc1 || BARK_C, 2);
   const c = [top[0], o.cy, top[2]];
   const L = lod === 0 ? 1 : 0;
   const lumps = crown(g, R, {
     c, rx: o.rx, ry: o.ry, lumps: o.lumps, count: L ? o.count : Math.round(o.count * 0.3), size: L ? o.size : o.size * 1.7,
-    cell: o.cell || 'leaf', tint: o.tint || LEAF_T, quads: L ? 3 : 2, flat: o.flat || 0, droop: o.droop || 0, hang: o.hang || 0,
+    cell: o.cell || "leaf", tint: o.tint || LEAF_T, quads: L ? 3 : 2, flat: o.flat || 0, droop: o.droop || 0, hang: o.hang || 0,
   });
-  limbs(g, R, [top[0], o.hb, top[2]], lumps, o.tr * 0.9, lod, o.band || 'bark', o.bc1 || BARK_C, o.maxLimbs || 8, o.reach || 0.8);
+  limbs(g, R, [top[0], o.hb, top[2]], lumps, o.tr * 0.9, lod, o.band || "bark", o.bc1 || BARK_C, o.maxLimbs || 8, o.reach || 0.8);
 }
 
 /** Italian cypress / Lombardy poplar: dense spindle of scale-foliage clusters around a hidden stem. */
 function column(g, R, lod) {
-  trunk(g, R, 3.0, 0.17, 0.01, lod, 'bark', BARK_D, BARK_C, 2, 1.4, 2);
-  const uv = cellUV('cypress');
+  trunk(g, R, 3.4, 0.17, 0.01, lod, "bark", BARK_D, BARK_C, 2, 1.45, 2);
+  const uv = cellUV("cypress");
   const H = 10.6, y0 = 0.9;
   const prof = (f) => 1.25 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.12 + f * 0.9)), 0.8) * (1 - f * 0.25) + 0.1;
   const shade = leafShade([1.12, 1.15, 1.05], [0, 5.4, 0], [1.3, 5.2, 1.3], R);
-  const n = lod === 0 ? 230 : 60;
+  const n = lod === 0 ? 235 : 60;
   for (let i = 0; i < n; i++) {
     const f = Math.pow(R(), 0.85), y = y0 + (H - y0) * f;
     const a = R() * Math.PI * 2, rad = prof(f) * (0.65 + 0.35 * Math.sqrt(R()));
@@ -674,8 +750,8 @@ function column(g, R, lod) {
 }
 
 function conifer(g, R, lod, H = 10.4, R0 = 2.5, tint = [1.1, 1.15, 1.08]) {
-  const top = trunk(g, R, H, 0.2, 0.01, lod, 'bark', [0.3, 0.23, 0.19], [0.42, 0.32, 0.25], 2, 1.5, 3);
-  const uv = cellUV('needle');
+  const top = trunk(g, R, H, 0.21, 0.01, lod, "bark", [0.3, 0.23, 0.19], [0.42, 0.32, 0.25], 2, 1.55, 3);
+  const uv = cellUV("needle");
   const y0 = 1.5;
   const whorls = lod === 0 ? 20 : 9;
   const per = lod === 0 ? 8 : 6;
@@ -693,8 +769,16 @@ function conifer(g, R, lod, H = 10.4, R0 = 2.5, tint = [1.1, 1.15, 1.08]) {
       const d = norm3(dir);
       const s = [top[0] * f, y, top[2] * f];
       const e = [s[0] + d[0] * len, s[1] + d[1] * len, s[2] + d[2] * len];
-      if (lod === 0 && f < 0.75) tube(g, [s, lerp3(s, e, 0.5), [e[0], e[1] + 0.15, e[2]]], (t) => 0.06 * (1 - t * 0.8) * (1.2 - f), 3, 'bark', [0.3, 0.24, 0.2], [0.34, 0.27, 0.22], 1, 1);
-      // needle sprays: V pair along the branch (tilted +-35deg around the branch axis), tip curls up
+      if (lod === 0 && f < 0.78) {
+        const mid = lerp3(s, e, 0.55);
+        mid[1] -= len * 0.05;
+        tube(
+          g, [s, mid, [e[0], e[1] + 0.16, e[2]]],
+          (t) => 0.062 * (1 - t * 0.78) * (1.22 - f),
+          4, "bark", [0.3, 0.24, 0.2], [0.36, 0.28, 0.23], 1, 1,
+        );
+      }
+      // Needle sprays: V pair along the branch (tilted +-35deg around the branch axis), tip curls up
       const nCards = lod === 0 ? (len > 1.2 ? 2 : 1) : 1;
       const side = norm3(cross(d, [0, 1, 0]));
       for (let q = 0; q < nCards; q++) {
@@ -712,7 +796,6 @@ function conifer(g, R, lod, H = 10.4, R0 = 2.5, tint = [1.1, 1.15, 1.08]) {
       }
     }
   }
-  // inner fill sprays around the stem + leader
   const fills = lod === 0 ? 26 : 8;
   for (let q = 0; q < fills; q++) {
     const f = q / fills, y = y0 + (H - y0) * f, a = q * 2.39996;
@@ -723,9 +806,12 @@ function conifer(g, R, lod, H = 10.4, R0 = 2.5, tint = [1.1, 1.15, 1.08]) {
   card(g, [top[0], H + 0.2, top[2]], [0.35, 0, 0], [0, 0.6, 0], uv, shade, [0, H * 0.4, 0], 1.3, 0.3);
 }
 
-/** Palm frond strip: V-folded, arching spine from p0 heading `a` with rise/droop; half of the frond texture per side. */
-function frond(g, R, p0, a, L, W, rise, droop, segs, tint, sway = 1.3, dead = false) {
-  const [u0, v0, u1, v1] = cellUV('frond');
+/**
+ * Palm frond strip: V-folded, arching spine from p0 heading `a` with rise/droop; half of the frond texture per side.
+ * Includes smooth longitudinal & transverse leaflet camber normals and a woody petiole midrib on lod 0.
+ */
+function frond(g, R, p0, a, L, W, rise, droop, segs, tint, sway = 1.3, dead = false, hasSpineRib = false) {
+  const [u0, v0, u1, v1] = cellUV("frond");
   const vm = (v0 + v1) * 0.5;
   const dx = Math.cos(a), dz = Math.sin(a);
   const side = [-dz, 0, dx];
@@ -735,6 +821,10 @@ function frond(g, R, p0, a, L, W, rise, droop, segs, tint, sway = 1.3, dead = fa
     const t = k / segs;
     spine.push([p0[0] + dx * L * t, p0[1] + rise * t - droop * t * t, p0[2] + dz * L * t, t]);
   }
+  if (hasSpineRib && !dead) {
+    const ribPts = spine.slice(0, Math.max(3, Math.ceil(segs * 0.65))).map((p) => [p[0], p[1], p[2]]);
+    tube(g, ribPts, (t) => 0.045 * (1 - t * 0.72), 4, "plain", [0.42, 0.46, 0.24], [0.52, 0.58, 0.30], 1, sway * 0.85);
+  }
   const col = dead ? [0.95, 0.72, 0.42] : tint;
   for (const sgn of [-1, 1]) {
     const b = g.n;
@@ -742,13 +832,14 @@ function frond(g, R, p0, a, L, W, rise, droop, segs, tint, sway = 1.3, dead = fa
       const [x, y, z, t] = spine[k];
       const w = W * (0.35 + 0.65 * Math.sin(Math.PI * Math.min(1, t * 1.05 + 0.06)));
       const ex = x + side[0] * sgn * w, ey = y - fold * w * (1 + t), ez = z + side[2] * sgn * w;
-      const ny = 1;
-      const nx = side[0] * sgn * 0.45, nz = side[2] * sgn * 0.45;
-      const nn = norm3([nx + dx * 0.1, ny, nz + dz * 0.1]);
+      // Smooth normal varying from spine ridge to drooping outer leaflet tips
+      const slopeY = (rise - 2 * droop * t) / Math.max(0.5, L);
+      const nSpine = norm3([dx * (-slopeY * 0.5) + side[0] * sgn * 0.18, 1, dz * (-slopeY * 0.5) + side[2] * sgn * 0.18]);
+      const nEdge = norm3([dx * (-slopeY * 0.5) + side[0] * sgn * 0.62, 0.82, dz * (-slopeY * 0.5) + side[2] * sgn * 0.62]);
       const u = u0 + (u1 - u0) * t;
       const ao = 0.62 + 0.38 * t;
-      g.v(x, y, z, nn[0], nn[1], nn[2], u, vm, col[0] * ao, col[1] * ao, col[2] * ao, sway);
-      g.v(ex, ey, ez, nn[0], nn[1], nn[2], u, sgn < 0 ? v1 : v0, col[0] * ao, col[1] * ao, col[2] * ao, sway);
+      g.v(x, y, z, nSpine[0], nSpine[1], nSpine[2], u, vm, col[0] * ao, col[1] * ao, col[2] * ao, sway);
+      g.v(ex, ey, ez, nEdge[0], nEdge[1], nEdge[2], u, sgn < 0 ? v1 : v0, col[0] * ao * 0.96, col[1] * ao * 0.96, col[2] * ao * 0.96, sway);
     }
     for (let k = 0; k < segs; k++) {
       const i0 = b + k * 2;
@@ -757,8 +848,8 @@ function frond(g, R, p0, a, L, W, rise, droop, segs, tint, sway = 1.3, dead = fa
   }
 }
 
-function ball(g, c, r, col, segs = 5) {
-  const [vb, vt] = bandV('plain');
+function ball(g, c, r, col, segs = 6) {
+  const [vb, vt] = bandV("plain");
   const b = g.n;
   for (let i = 0; i <= segs; i++) {
     const th = (i / segs) * Math.PI;
@@ -775,7 +866,6 @@ function ball(g, c, r, col, segs = 5) {
 }
 
 function palm(g, R, lod) {
-  // curved, slightly leaning trunk
   const lean = 1.1 + R() * 0.6, a = R() * Math.PI * 2;
   const ctrl = [];
   for (let i = 0; i <= 4; i++) {
@@ -783,26 +873,27 @@ function palm(g, R, lod) {
     ctrl.push([Math.cos(a) * lean * t * t, t * 8.6, Math.sin(a) * lean * t * t]);
   }
   const sp = spline(ctrl, lod === 0 ? 12 : 5);
-  tube(g, sp, (t) => 0.21 * (1 - t * 0.32) * (1 + 0.5 * Math.pow(Math.max(0, 1 - t * 6), 2)), lod === 0 ? 8 : 5, 'palm', [0.62, 0.55, 0.46], [0.74, 0.66, 0.54], 2, 1);
+  const ringScars = (t) => 1 + 0.03 * Math.sin(t * 95);
+  tube(g, sp, (t) => 0.21 * (1 - t * 0.32) * (1 + 0.52 * Math.pow(Math.max(0, 1 - t * 6), 2)), lod === 0 ? 9 : 5, "palm", [0.62, 0.55, 0.46], [0.74, 0.66, 0.54], 2, 1, ringScars);
   const top = sp[sp.length - 1];
   const n = lod === 0 ? 14 : 9;
   for (let f = 0; f < n; f++) {
     const fa = (f / n) * Math.PI * 2 + R() * 0.3;
     const upper = f % 3 !== 0;
-    frond(g, R, [top[0], top[1] + 0.1, top[2]], fa, 3.8 + R() * 0.7, 0.72, upper ? 1.3 : 0.4, upper ? 2.6 : 2.4, lod === 0 ? 6 : 3, [0.95, 1.0, 0.9]);
+    frond(g, R, [top[0], top[1] + 0.1, top[2]], fa, 3.8 + R() * 0.7, 0.72, upper ? 1.3 : 0.4, upper ? 2.6 : 2.4, lod === 0 ? 6 : 3, [0.95, 1.0, 0.9], 1.3, false, lod === 0 && f % 2 === 0);
   }
   if (lod === 0) {
     for (let k = 0; k < 5; k++) {
       const ca = R() * Math.PI * 2;
-      ball(g, [top[0] + Math.cos(ca) * 0.28, top[1] - 0.25 - R() * 0.2, top[2] + Math.sin(ca) * 0.28], 0.16, [0.42, 0.4, 0.18], 4);
+      ball(g, [top[0] + Math.cos(ca) * 0.28, top[1] - 0.25 - R() * 0.2, top[2] + Math.sin(ca) * 0.28], 0.16, [0.42, 0.4, 0.18], 5);
     }
-    ball(g, [top[0], top[1] - 0.05, top[2]], 0.3, [0.45, 0.4, 0.26], 4);
+    ball(g, [top[0], top[1] - 0.05, top[2]], 0.3, [0.45, 0.4, 0.26], 5);
   }
 }
 
 function datepalm(g, R, lod) {
   const sp = spline([[0, 0, 0], [0.05, 4, 0.03], [0.1, 8.2, 0.05]], lod === 0 ? 10 : 4);
-  tube(g, sp, (t) => 0.33 * (1 - t * 0.12) * (1 + 0.35 * Math.pow(Math.max(0, 1 - t * 5), 2)), lod === 0 ? 9 : 6, 'diamond', [0.78, 0.7, 0.6], [0.88, 0.8, 0.68], 3, 1);
+  tube(g, sp, (t) => 0.33 * (1 - t * 0.12) * (1 + 0.35 * Math.pow(Math.max(0, 1 - t * 5), 2)), lod === 0 ? 10 : 6, "diamond", [0.78, 0.7, 0.6], [0.88, 0.8, 0.68], 3, 1);
   const top = sp[sp.length - 1];
   const n = lod === 0 ? 24 : 12;
   const tint = [0.86, 0.95, 0.98];
@@ -810,17 +901,24 @@ function datepalm(g, R, lod) {
     const fa = f * 2.39996 + R() * 0.2; // golden angle
     const tier = f % 3;
     const rise = tier === 0 ? 2.6 : tier === 1 ? 1.4 : 0.2;
-    frond(g, R, [top[0], top[1], top[2]], fa, 3.4 + R() * 0.5, 0.42, rise, tier === 2 ? 2.2 : 1.6, lod === 0 ? 5 : 3, tint);
+    frond(g, R, [top[0], top[1], top[2]], fa, 3.4 + R() * 0.5, 0.42, rise, tier === 2 ? 2.2 : 1.6, lod === 0 ? 5 : 3, tint, 1.3, false, lod === 0 && tier === 1);
   }
-  // dead brown skirt
-  if (lod === 0) for (let f = 0; f < 8; f++) frond(g, R, [top[0], top[1] - 0.4, top[2]], f * 0.785 + R() * 0.3, 2.2, 0.3, -0.6, 0.8, 2, tint, 1, true);
+  if (lod === 0) {
+    // Dead brown skirt fronds + golden-orange date fruit clusters
+    for (let f = 0; f < 8; f++) frond(g, R, [top[0], top[1] - 0.4, top[2]], f * 0.785 + R() * 0.3, 2.2, 0.3, -0.6, 0.8, 2, tint, 1, true);
+    for (let d = 0; d < 4; d++) {
+      const da = d * (Math.PI / 2) + 0.4;
+      const bx = top[0] + Math.cos(da) * 0.45, bz = top[2] + Math.sin(da) * 0.45, by = top[1] - 0.45;
+      ball(g, [bx, by, bz], 0.20, [0.86, 0.54, 0.16], 5);
+    }
+  }
 }
 
 function banana(g, R, lod) {
-  const sp = spline([[0, 0, 0], [0.03, 1.2, 0], [0.05, 2.4, 0.02]], lod === 0 ? 4 : 2);
-  tube(g, sp, (t) => 0.17 * (1 - t * 0.3), lod === 0 ? 7 : 5, 'plain', [0.42, 0.44, 0.24], [0.4, 0.52, 0.26], 1, 1);
+  const sp = spline([[0, 0, 0], [0.03, 1.2, 0], [0.05, 2.4, 0.02]], lod === 0 ? 5 : 2);
+  tube(g, sp, (t) => 0.18 * (1 - t * 0.3) * (1 + 0.25 * Math.pow(1 - t, 2)), lod === 0 ? 8 : 5, "plain", [0.42, 0.44, 0.24], [0.4, 0.52, 0.26], 1, 1);
   const top = sp[sp.length - 1];
-  const [u0, v0, u1, v1] = cellUV('banana');
+  const [u0, v0, u1, v1] = cellUV("banana");
   const vm = (v0 + v1) / 2;
   const n = lod === 0 ? 10 : 6;
   for (let f = 0; f < n; f++) {
@@ -834,10 +932,12 @@ function banana(g, R, lod) {
         const t = k / segs;
         const x = top[0] + dx * L * t * 0.95, y = top[1] - 0.2 + rise * t - droop * t * t, z = top[2] + dz * L * t * 0.95;
         const w = W * Math.sin(Math.PI * Math.min(1, t * 0.95 + 0.08));
-        const nn = norm3([side[0] * sgn * 0.3, 1, side[2] * sgn * 0.3]);
+        const slopeY = (rise - 2 * droop * t) / L;
+        const nSpine = norm3([dx * (-slopeY * 0.4) + side[0] * sgn * 0.15, 1, dz * (-slopeY * 0.4) + side[2] * sgn * 0.15]);
+        const nEdge = norm3([dx * (-slopeY * 0.4) + side[0] * sgn * 0.45, 0.9, dz * (-slopeY * 0.4) + side[2] * sgn * 0.45]);
         const u = u0 + (u1 - u0) * t, ao = 0.7 + 0.3 * t;
-        g.v(x, y, z, nn[0], nn[1], nn[2], u, vm, ao, ao, ao * 0.95, 1.3);
-        g.v(x + side[0] * sgn * w, y - w * 0.25, z + side[2] * sgn * w, nn[0], nn[1], nn[2], u, sgn < 0 ? v1 : v0, ao, ao, ao * 0.95, 1.3);
+        g.v(x, y, z, nSpine[0], nSpine[1], nSpine[2], u, vm, ao, ao, ao * 0.95, 1.3);
+        g.v(x + side[0] * sgn * w, y - w * 0.25, z + side[2] * sgn * w, nEdge[0], nEdge[1], nEdge[2], u, sgn < 0 ? v1 : v0, ao, ao, ao * 0.95, 1.3);
       }
       for (let k = 0; k < segs; k++) { const i0 = b + k * 2; g.I.push(i0, i0 + 2, i0 + 3, i0, i0 + 3, i0 + 1); }
     }
@@ -848,7 +948,6 @@ function cactus(g, R, lod) {
   const C0 = [0.24, 0.42, 0.22], C1 = [0.34, 0.52, 0.3];
   const rib = (t, a) => 1 + 0.09 * Math.cos(a * 12);
   const segs = lod === 0 ? 24 : 10;
-  // columns with domed tops: extra rings over the last radius of height
   const domeTube = (x, y0, h, r0, n, s) => {
     const pts = [];
     for (let i = 0; i <= n; i++) pts.push([x, y0 + (h - r0) * (i / n), 0]);
@@ -859,22 +958,24 @@ function cactus(g, R, lod) {
       const i = Math.round(t * N);
       if (i <= n) return r0;
       return Math.max(0.02, r0 * Math.cos(((i - n) / k) * Math.PI / 2));
-    }, s, 'plain', C0, C1, 1, 0, rib);
+    }, s, "plain", C0, C1, 1, 0, rib);
   };
   domeTube(0, 0, 6.4, 0.36, lod === 0 ? 7 : 3, segs);
   for (const [dir, y0, h] of [[1, 2.4, 2.1], [-1, 3.2, 1.7]]) {
     const ctrl = [[dir * 0.2, y0, 0], [dir * 0.85, y0 + 0.05, 0], [dir * 1.05, y0 + 0.45, 0]];
-    tube(g, spline(ctrl, lod === 0 ? 5 : 2), () => 0.21, lod === 0 ? 16 : 8, 'plain', C0, C1, 1, 0, rib);
+    tube(g, spline(ctrl, lod === 0 ? 5 : 2), () => 0.21, lod === 0 ? 16 : 8, "plain", C0, C1, 1, 0, rib);
     domeTube(dir * 1.05, y0 + 0.4, h - 0.4, 0.21, lod === 0 ? 4 : 2, lod === 0 ? 16 : 8);
   }
 }
 
 function bamboo(g, R, lod) {
   const S0 = [0.5, 0.6, 0.26], S1 = [0.58, 0.68, 0.3];
-  const uv = cellUV('bamboo');
+  const uv = cellUV("bamboo");
   const tint = [1.1, 1.12, 1.0];
   const shade = leafShade(tint, [0, 5.4, 0], [1.6, 3.0, 1.6], R);
   const n = lod === 0 ? 9 : 6;
+  // Swollen bamboo culm node rings every segment
+  const nodeRing = (t) => 1 + 0.14 * Math.pow(Math.max(0, Math.cos(t * Math.PI * 10)), 8);
   for (let k = 0; k < n; k++) {
     const a = k * 2.39996, r = 0.15 + (k % 3) * 0.12;
     const h = 6.2 + R() * 2.2, lean = 0.05 + R() * 0.12;
@@ -882,8 +983,7 @@ function bamboo(g, R, lod) {
     const tip = [base[0] + Math.cos(a) * lean * h, h, base[2] + Math.sin(a) * lean * h];
     const mid = [base[0] + Math.cos(a) * lean * h * 0.35, h * 0.5, base[2] + Math.sin(a) * lean * h * 0.35];
     const pts = spline([base, mid, tip], lod === 0 ? 10 : 3);
-    // node rings: alternate segment shade
-    tube(g, pts, (t) => 0.06 * (1 - t * 0.4), lod === 0 ? 6 : 4, 'plain', S0, S1, 1, 1);
+    tube(g, pts, (t) => 0.062 * (1 - t * 0.4), lod === 0 ? 7 : 4, "plain", S0, S1, 1, 1, lod === 0 ? nodeRing : null);
     const nc = lod === 0 ? 11 : 4;
     for (let q = 0; q < nc; q++) {
       const t = 0.45 + (q / nc) * 0.55;
@@ -898,17 +998,16 @@ function bamboo(g, R, lod) {
 
 function bare(g, R, lod) {
   const col0 = [0.34, 0.28, 0.23], col1 = [0.42, 0.35, 0.29];
-  const top = trunk(g, R, 3.6, 0.24, 0.04, lod, 'bark', col0, col1, 2);
-  const uv = cellUV('twig');
+  const top = trunk(g, R, 3.6, 0.24, 0.04, lod, "bark", col0, col1, 2);
+  const uv = cellUV("twig");
   const shade = () => [0.75, 0.68, 0.6];
   const rec = (p, d, len, r, depth) => {
     const e = [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len];
     const m = lerp3(p, e, 0.5);
     m[1] += len * 0.06;
-    tube(g, [p, m, e], (t) => r * (1 - t * 0.45), depth >= 2 ? (lod === 0 ? 5 : 4) : 3, 'bark', col1, col1, 1, 1);
+    tube(g, [p, m, e], (t) => r * (1 - t * 0.45) * (1 + 0.18 * Math.pow(1 - t, 3)), depth >= 2 ? (lod === 0 ? 6 : 4) : 4, "bark", col1, col1, 1, 1);
     if (depth === 0 || (lod === 1 && depth === 1)) {
-      // twig card at the tip, facing roughly the branch direction
-      const [ax, ay] = planeAxes(norm3([d[0], 0.2, d[2]]), R, 0.9, 0.7);
+      const [ax] = planeAxes(norm3([d[0], 0.2, d[2]]), R, 0.9, 0.7);
       card(g, [e[0] + d[0] * 0.5, e[1] + 0.4, e[2] + d[2] * 0.5], [ax[0], ax[1] * 0.2, ax[2]], [0, 0.75, 0], uv, shade, null, 1.3, 0.6);
       return;
     }
@@ -929,11 +1028,18 @@ function bare(g, R, lod) {
 }
 
 function bush(g, R, lod) {
-  const uv = cellUV('leaf');
+  const uv = cellUV("leaf");
   const c = [0, 0.62, 0];
   const shade = leafShade([0.92, 0.96, 0.88], c, [1.1, 0.75, 1.1], R);
   const lumps = [[0, 0.62, 0, 0.75], [0.5, 0.55, 0.3, 0.55], [-0.45, 0.5, -0.25, 0.52], [0.1, 0.5, -0.55, 0.5]];
-  const count = lod === 0 ? 46 : 14;
+  // Woody basal stems radiating into the bush sub-crowns on lod 0
+  if (lod === 0) {
+    for (let s = 0; s < lumps.length; s++) {
+      const L = lumps[s];
+      tube(g, [[0, 0, 0], [L[0] * 0.5, L[1] * 0.45, L[2] * 0.5], [L[0] * 0.85, L[1] * 0.8, L[2] * 0.85]], (t) => 0.055 * (1 - t * 0.65), 4, "bark", BARK_D, BARK_C, 1, 0.6);
+    }
+  }
+  const count = lod === 0 ? 48 : 14;
   for (let i = 0; i < count; i++) {
     const L = lumps[i % lumps.length];
     const d = randUnit(R);
@@ -971,12 +1077,12 @@ const SPECIES_BUILD = {
   [SP_PALM]: (g, R, lod) => palm(g, R, lod),
   [SP_BUSH]: (g, R, lod) => bush(g, R, lod),
   [SP_COLUMN]: (g, R, lod) => column(g, R, lod),
-  [SP_UMBRELLA]: (g, R, lod) => broadleafLike(g, R, lod, { hb: 4.4, tr: 0.26, cy: 6.2, rx: 3.8, ry: 1.0, lumps: 7, count: 150, size: 1.4, cell: 'small', tint: [0.82, 0.95, 0.8], flat: 0.75, maxLimbs: 5, reach: 0.9, lean: 0.06 }),
-  [SP_EUCALYPT]: (g, R, lod) => broadleafLike(g, R, lod, { hb: 5.6, tr: 0.27, cy: 8.8, rx: 3.0, ry: 2.6, lumps: 5, count: 110, size: 1.5, cell: 'small', tint: [0.86, 0.98, 1.02], band: 'birch', bc0: [0.72, 0.66, 0.58], bc1: [0.86, 0.82, 0.74], hang: 0.6, lean: 0.06 }),
+  [SP_UMBRELLA]: (g, R, lod) => broadleafLike(g, R, lod, { hb: 4.4, tr: 0.26, cy: 6.2, rx: 3.8, ry: 1.0, lumps: 7, count: 150, size: 1.4, cell: "small", tint: [0.82, 0.95, 0.8], flat: 0.75, maxLimbs: 5, reach: 0.9, lean: 0.06 }),
+  [SP_EUCALYPT]: (g, R, lod) => broadleafLike(g, R, lod, { hb: 5.6, tr: 0.27, cy: 8.8, rx: 3.0, ry: 2.6, lumps: 5, count: 110, size: 1.5, cell: "small", tint: [0.86, 0.98, 1.02], band: "birch", bc0: [0.72, 0.66, 0.58], bc1: [0.86, 0.82, 0.74], hang: 0.6, lean: 0.06 }),
   [SP_CACTUS]: (g, R, lod) => cactus(g, R, lod),
   [SP_BANANA]: (g, R, lod) => banana(g, R, lod),
   [SP_DATEPALM]: (g, R, lod) => datepalm(g, R, lod),
-  [SP_BIRCH]: (g, R, lod) => broadleafLike(g, R, lod, { hb: 5.2, tr: 0.15, cy: 6.6, rx: 1.8, ry: 3.1, maxLimbs: 6, reach: 0.65, lumps: 5, count: 120, size: 1.1, cell: 'small', tint: [1.04, 1.08, 0.9], band: 'birch', bc0: [0.62, 0.6, 0.56], bc1: [0.98, 0.97, 0.94], hang: 0.45, lean: 0.07 }),
+  [SP_BIRCH]: (g, R, lod) => broadleafLike(g, R, lod, { hb: 5.2, tr: 0.15, cy: 6.6, rx: 1.8, ry: 3.1, maxLimbs: 6, reach: 0.65, lumps: 5, count: 120, size: 1.1, cell: "small", tint: [1.04, 1.08, 0.9], band: "birch", bc0: [0.62, 0.6, 0.56], bc1: [0.98, 0.97, 0.94], hang: 0.45, lean: 0.07 }),
   [SP_BAMBOO]: (g, R, lod) => bamboo(g, R, lod),
   [SP_BARE]: (g, R, lod) => bare(g, R, lod),
 };
@@ -996,25 +1102,26 @@ export function buildTreeGeometry(sp, lod) {
   return geo;
 }
 
-/** Stump left by a snapped tree: short flared trunk with a jagged top (unit radius 1 -> scaled per instance). */
+/** Stump left by a snapped tree: short flared trunk with fluted root buttresses and a jagged top (unit radius 1 -> scaled per instance). */
 let STUMP = null;
 export function buildStumpGeometry() {
   if (STUMP) return STUMP;
   const g = new Geo();
   const R = mulberry(77);
   const jag = [];
-  for (let k = 0; k <= 9; k++) jag.push(0.75 + R() * 0.5);
-  jag[9] = jag[0];
-  tube(g, [[0, 0, 0], [0, 0.45, 0], [0, 0.9, 0]], (t) => 1 + 0.5 * Math.pow(1 - t, 3), 9, 'bark', [0.3, 0.24, 0.2], [0.4, 0.32, 0.26], 2, 0);
-  // splintered top (pale wood), jagged rim
-  const [vb] = bandV('plain');
+  for (let k = 0; k <= 10; k++) jag.push(0.75 + R() * 0.5);
+  jag[10] = jag[0];
+  const stumpFlute = (t, a) => 1 + 0.14 * Math.pow(1 - t, 2) * Math.cos(a * 5);
+  tube(g, [[0, 0, 0], [0, 0.45, 0], [0, 0.9, 0]], (t) => 1 + 0.52 * Math.pow(1 - t, 3), 10, "bark", [0.3, 0.24, 0.2], [0.4, 0.32, 0.26], 2, 0, stumpFlute);
+  // Splintered top (pale wood), jagged rim
+  const [vb] = bandV("plain");
   const b = g.n;
   g.v(0, 1.05, 0, 0, 1, 0, 0.5, vb, 0.78, 0.66, 0.48, 0);
-  for (let k = 0; k <= 9; k++) {
-    const a = (k / 9) * Math.PI * 2;
+  for (let k = 0; k <= 10; k++) {
+    const a = (k / 10) * Math.PI * 2;
     g.v(Math.cos(a), 0.9 + (jag[k] - 0.75) * 0.6, Math.sin(a), 0, 1, 0, 0.5, vb, 0.62, 0.5, 0.36, 0);
   }
-  for (let k = 0; k < 9; k++) g.I.push(b, b + k + 2, b + k + 1);
+  for (let k = 0; k < 10; k++) g.I.push(b, b + k + 2, b + k + 1);
   STUMP = g.build();
   return STUMP;
 }

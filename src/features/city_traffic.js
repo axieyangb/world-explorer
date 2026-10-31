@@ -14,12 +14,24 @@ import { getSignalPhase, getSignalInfo, approachAxis, signalTime } from './signa
 import * as daylight from './daylight.js';
 import {
   CAR_TYPES,
+  VEHICLE_ARCHETYPE_SPECS,
+  VEHICLE_BUILDERS,
+  buildVehicleArchetype,
+  buildAllVehicleArchetypes,
   RAGDOLL_PART_NAMES,
   createCarMeshes,
   createPedMesh,
   createPedPartMeshes,
   createImpactPuffMesh,
 } from './traffic_models.js';
+export {
+  CAR_TYPES,
+  VEHICLE_ARCHETYPE_SPECS,
+  VEHICLE_BUILDERS,
+  buildVehicleArchetype,
+  buildAllVehicleArchetypes,
+  createCarMeshes,
+};
 import { TESLA_PAINTS, TOW_TRUCK_PAINTS } from './vehicles.js'; // [feature/vehicles]
 import { randomPersonLook, bit, OPT } from './person_model.js'; // [feature/people]
 import { startRagdoll, stepRagdoll, ragdollCenter } from './ped_ragdoll.js'; // [drivers]
@@ -305,7 +317,8 @@ export class CityTraffic {
       if ((i & 255) === 255) yield;
       const cls = g.eCls[i];
       const isBridge = (g.eOneway[i] & 2) !== 0;
-      const car = CAR_W[cls] > 0, ped = PED_W[cls] > 0 && !isBridge;
+      const onWater = (g.eOneway[i] & 4) !== 0;
+      const car = CAR_W[cls] > 0, ped = PED_W[cls] > 0 && !isBridge && !onWater;
       if (!car && !ped) continue;
       const p0 = g.ptOff[i], p1 = g.ptOff[i + 1], n = p1 - p0;
       if (n < 2) continue;
@@ -1505,6 +1518,26 @@ export class CityTraffic {
     if (e.cls === 8) ped.footOff = 0.2 + Math.random() * 0.6;
   }
 
+  _isPedInWater(wx, wy, wz, margin = 0.8) {
+    const W = this.app && this.app.water;
+    if (!W || typeof W.isPointInWater !== 'function') return false;
+    let inW = W.isPointInWater(wx, wz);
+    if (!inW && margin > 0) {
+      inW =
+        W.isPointInWater(wx + margin, wz) ||
+        W.isPointInWater(wx - margin, wz) ||
+        W.isPointInWater(wx, wz + margin) ||
+        W.isPointInWater(wx, wz - margin);
+    }
+    if (!inW) return false;
+    const surf = this.app.sampleRoadSurface ? this.app.sampleRoadSurface(wx, wy, wz) : null;
+    if (surf && surf.seg && surf.seg.bridge) {
+      const waterY = W.getWaterSurfaceY ? W.getWaterSurfaceY(wx, wz) : 0;
+      if (surf.y > waterY + 0.35 && Math.abs((wy ?? surf.y) - surf.y) < 2.2) return false;
+    }
+    return true;
+  }
+
   _pedPose(ped) {
     const e = ped.e;
     const sg = ped.fwd ? ped.s : e.len - ped.s;
@@ -1559,6 +1592,13 @@ export class CityTraffic {
         }
       }
       this._pedPose(ped);
+      if (this._isPedInWater(ped.x, ped.y, ped.z)) {
+        ped.side = -ped.side;
+        ped.crossState = 0;
+        ped.willCross = false;
+        this._pedPose(ped);
+        if (this._isPedInWater(ped.x, ped.y, ped.z)) continue;
+      }
       const dP = Math.hypot(ped.x - p.x, ped.z - p.z);
       const dK = kj ? Math.hypot(ped.x - kj.position.x, ped.z - kj.position.z) : Infinity;
       const validP = dP <= PED_R && dP >= (initial ? 6 : 16);
@@ -2074,8 +2114,15 @@ export class CityTraffic {
       ped.staggerTimer = Math.max(0, (ped.staggerTimer || 0) - dt);
       // High ground friction decelerates stumble so total backward displacement is 0.4-0.7 m with vy = 0
       const decay = Math.exp(-0.55 * dt);
-      ped.x += (ped.staggerVx || 0) * dt;
-      ped.z += (ped.staggerVz || 0) * dt;
+      const sx = ped.x + (ped.staggerVx || 0) * dt;
+      const sz = ped.z + (ped.staggerVz || 0) * dt;
+      if (!this._isPedInWater(sx, ped.y, sz)) {
+        ped.x = sx;
+        ped.z = sz;
+      } else {
+        ped.staggerVx = 0;
+        ped.staggerVz = 0;
+      }
       ped.y = ped.groundY;
       ped.staggerVx = (ped.staggerVx || 0) * decay;
       ped.staggerVz = (ped.staggerVz || 0) * decay;
@@ -2160,6 +2207,29 @@ export class CityTraffic {
       ped.side = s2 >= 0 ? 1 : -1;
     }
     this._pedPose(ped);
+    if (this._isPedInWater(ped.x, ped.y, ped.z)) {
+      if (ped.crossState === 2) {
+        ped.side = -ped.side;
+        ped.crossState = 0;
+        ped.willCross = false;
+        this._pedPose(ped);
+      }
+      if (this._isPedInWater(ped.x, ped.y, ped.z)) {
+        ped.side = -ped.side;
+        ped.lat = 0;
+        ped.latBase = 0;
+        this._pedPose(ped);
+      }
+      if (this._isPedInWater(ped.x, ped.y, ped.z)) {
+        ped.fwd = !ped.fwd;
+        ped.s = clamp(e.len - ped.s, 0, e.len);
+        this._pedPose(ped);
+      }
+      if (this._isPedInWater(ped.x, ped.y, ped.z)) {
+        ped.active = false;
+        return;
+      }
+    }
     ped.groundY = ped.y;
     const moving = speed > 0.05 || ped.crossState === 2;
     const v = ped.crossState === 2 ? ped.v : speed;
@@ -2249,6 +2319,7 @@ export class CityTraffic {
   // vz, dx, dz, spin }: thrown to the ground as a connected ragdoll instead, getting up after opts.getUp s
   // and then fleeing. Returns the ped or null when the pool is full.
   spawnActor(x, y, z, yaw, look, opts = {}) {
+    if (!opts.rag && this._isPedInWater(x, y, z)) return null;
     let ped = null;
     for (const q of this.peds) if (!q.active) { ped = q; break; }
     if (!ped) return null;
@@ -2319,6 +2390,11 @@ export class CityTraffic {
     ped.crossState = leader.crossState; ped.crossT = leader.crossT; ped.crossDur = leader.crossDur;
     ped.side = leader.side; ped.footOff = leader.footOff;
     this._pedPose(ped);
+    if (this._isPedInWater(ped.x, ped.y, ped.z)) {
+      ped.latBase = -ped.latBase;
+      this._pedPose(ped);
+      if (this._isPedInWater(ped.x, ped.y, ped.z)) return false;
+    }
     ped.groundY = ped.y;
     ped.phase = Math.random() * 6.28; ped.amp = leader.amp;
     ped.gph = Math.random() * 6.28; ped.gx = ped.x; ped.gz = ped.z; ped.gspd = ped.v;

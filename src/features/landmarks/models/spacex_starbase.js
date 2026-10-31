@@ -62,8 +62,24 @@ function mechazillaTower(k, tx, tz) {
   k.color(TOWER_BLK);
   k.strut([tx + hw + 1.5, cy, tz - 6.8], [tx + 24.5, cy, tz - 5.2], 2.2);
   k.strut([tx + hw + 1.5, cy, tz + 6.8], [tx + 24.5, cy, tz + 5.2], 2.2);
+  if (hi) {
+    // Chopstick catch rails, shock-absorbing tankzilla pads & actuator cylinders
+    k.color(STAINLESS);
+    k.strut([tx + hw + 2.5, cy + 1.35, tz - 6.6], [tx + 24.2, cy + 1.35, tz - 5.1], 0.45);
+    k.strut([tx + hw + 2.5, cy + 1.35, tz + 6.6], [tx + 24.2, cy + 1.35, tz + 5.1], 0.45);
+    k.strut([tx + hw, cy + 5.5, tz - 6.8], [tx + 16.0, cy + 0.8, tz - 5.8], 0.42);
+    k.strut([tx + hw, cy + 5.5, tz + 6.8], [tx + 16.0, cy + 0.8, tz + 5.8], 0.42);
+    // Vertical cryo riser pipes up the tower face
+    for (const pz of [-4.2, -1.4, 1.4, 4.2]) {
+      k.cyl(tx + hw + 0.4, 4.0, tz + pz, 0.32, 0.32, H - 8.0, 8);
+    }
+  }
 
-  k.strut([tx + hw + 1.0, 96.0, tz + 5.5], [tx + 16.5, 96.0, tz + 1.2], 1.6);
+  // Ship Quick Disconnect (SQD) swing arm + cryogenic jumper hoses
+  k.color(TOWER_BLK).strut([tx + hw + 1.0, 96.0, tz + 5.5], [tx + 16.5, 96.0, tz + 1.2], 1.6);
+  if (hi) {
+    k.color(STAINLESS).cable([tx + hw + 1.5, 97.2, tz + 5.2], [tx + 14.5, 95.8, tz + 0.8], 0.24, 1.4, 10, 6);
+  }
 }
 
 function starshipFullStack(k, sx, sz) {
@@ -86,12 +102,45 @@ function starshipFullStack(k, sx, sz) {
   k.glow(false);
 
   k.color(STAINLESS).cyl(sx, 20.8, sz, 4.5, 4.5, 69.0, seg);
+  if (hi) {
+    // Super Heavy COPV aerodynamic chines & circumferential barrel weld rings
+    k.color(STAINLESS_LT);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      k.box(sx + Math.cos(a) * 4.52, 22.0, sz + Math.sin(a) * 4.52, 0.55, 58.0, 0.55);
+    }
+    for (let y = 28.0; y <= 84.0; y += 14.0) {
+      k.torus(sx, y, sz, 4.52, 0.08, 24, 8);
+    }
+    // Outer ring of Raptor engine bells beneath the OLM table + water deluge ring manifold
+    k.color(TOWER_STEEL).torus(sx, 16.6, sz, 8.6, 0.45, 24, 10);
+    k.color(TOWER_BLK);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      k.cyl(sx + Math.cos(a) * 3.6, 15.2, sz + Math.sin(a) * 3.6, 0.55, 0.32, 1.8, 10);
+    }
+  }
   k.color(TOWER_STEEL).cyl(sx, 89.8, sz, 4.55, 4.55, 2.0, seg);
+  if (hi) {
+    // Hot-staging vented interstage ring slots
+    k.color(TOWER_BLK);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      k.box(sx + Math.cos(a) * 4.56, 90.0, sz + Math.sin(a) * 4.56, 0.35, 1.6, 0.35);
+    }
+  }
   k.color(TOWER_BLK);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
     k.push().translate(sx + Math.cos(a) * 5.8, 88.0, sz + Math.sin(a) * 5.8).rotateY(-a);
     k.box(0, 0, 0, 2.8, 2.6, 0.45);
+    if (hi) {
+      // Waffle grid fin lattice ribs
+      k.color(TOWER_STEEL);
+      for (const gx of [-0.8, 0, 0.8]) k.box(gx, 0, 0, 0.14, 2.6, 0.52);
+      for (const gy of [0.65, 1.3, 1.95]) k.box(0, gy, 0, 2.8, 0.14, 0.52);
+      k.color(TOWER_BLK);
+    }
     k.pop();
   }
 
@@ -144,8 +193,14 @@ export function build(k) {
   k.glow(false).color(PAD_DK).box(56, 0.4, -18, 66, 9.5, 34);
   for (let i = 0; i < 6; i++) {
     const tx = 34 + i * 9.0;
-    k.color(i % 2 === 0 ? TANK_W : STAINLESS_LT).cyl(tx, 0.4, -18, 3.6, 3.6, 28.5, hi ? 14 : 8);
-    k.sphere(tx, 28.9, -18, 3.6, hi ? 12 : 6, 5, 0.65, 0.5);
+    k.color(i % 2 === 0 ? TANK_W : STAINLESS_LT).cyl(tx, 0.4, -18, 3.6, 3.6, 28.5, hi ? 18 : 8);
+    k.sphere(tx, 28.9, -18, 3.6, hi ? 16 : 6, 6, 0.65, 0.5);
+  }
+  if (hi) {
+    // Cryogenic subcooler piping manifold bridge connecting tank farm to Orbital Launch Mount
+    k.color(STAINLESS).pipe([32, 4.2, -12], [6, 4.2, -12], 0.48, 10);
+    k.pipe([32, 5.4, -12], [6, 5.4, -12], 0.42, 10);
+    k.pipe([34, 29.8, -18], [79, 29.8, -18], 0.32, 8);
   }
 
   megaBay(k, -64, 32);

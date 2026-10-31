@@ -105,6 +105,17 @@ function spire(k) {
     }
   }
   k.glow(true).color(LIT).taper(0, yB, 0, 2 * sw(yB), 2 * sw(yB), 2 * sw(yC), 2 * sw(yC), yC - yB);
+  if (hi) {
+    // Crisp aluminium corner ridge mullions & horizontal lattice bands along the illuminated glass crown
+    k.glow(false).color(ALU);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      k.strut([sx * sw(yA), yA, sz * sw(yA)], [sx * sw(yC), yC, sz * sw(yC)], 0.28);
+    }
+    for (let y = yB + 3.5; y < yC; y += 3.5) {
+      const w = sw(y) * 2 + 0.14;
+      k.box(0, y, 0, w, 0.18, w);
+    }
+  }
   k.glow(false).color(ALU).taper(0, yC, 0, 2 * sw(yC), 2 * sw(yC), 0.25, 0.25, H_TIP - 0.6 - yC);
   k.glow(true).color(RED).box(0, H_TIP - 0.6, 0, 0.5, 0.6, 0.5);  // aircraft beacon
   k.glow(false);

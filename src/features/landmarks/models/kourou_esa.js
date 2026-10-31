@@ -49,6 +49,17 @@ function buildUmbilicalMastAndLightningTowers(k) {
   // Cryogenic umbilical arms connecting to Ariane 6 core & upper stage at (0, 0)
   for (const yArm of [24.0, 44.0, 54.0]) {
     k.color(MAST_STEEL).strut([mx, yArm, mz + 4.5], [0, yArm, -2.5], 1.35);
+    if (hi) {
+      k.color(MAST_DK).strut([mx, yArm + 3.2, mz + 4.5], [0, yArm + 0.4, -3.2], 0.38);
+      k.color(GANTRY_WHITE).cable([mx + 1.2, yArm - 0.4, mz + 4.5], [0.8, yArm - 0.6, -2.6], 0.18, 0.9, 8, 6);
+    }
+  }
+  if (hi) {
+    // ELA-4 Water Tower (Château d'eau) & deluge main pipe to launch table
+    k.color(GANTRY_WHITE).cyl(44, 0.3, -12, 3.2, 2.8, 42.0, 14);
+    k.sphere(44, 45.0, -12, 6.2, 16, 8, 0.85);
+    k.color(ESA_BLUE).cyl(44, 44.2, -12, 6.3, 6.3, 1.4, 16);
+    k.color(MAST_STEEL).pipe([41, 2.2, -12], [12, 2.2, -2], 0.55, 8);
   }
 
   // 4 Signature 90m Tall Perimeter Lightning Protection Towers around the pad

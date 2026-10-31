@@ -193,7 +193,8 @@ export class KaijuCrowd {
     const v = running ? num(CFG.PANIC_RUN_SPEED, 4.2) * p.kSpd : p.v || 1.2;
     const nx = p.x + hx * v * dt, nz = p.z + hz * v * dt;
     const D = this.K && this.K.destruction;
-    if (D && D.isInsideBuilding && ((this._frame + p.id) & 3) === 0 && D.isInsideBuilding(nx, nz)) {
+    const inW = this.T && this.T._isPedInWater && this.T._isPedInWater(nx, p.y, nz);
+    if (inW || (D && D.isInsideBuilding && ((this._frame + p.id) & 3) === 0 && D.isInsideBuilding(nx, nz))) {
       // Slide along the wall: turn away and wait a step.
       const t = p.kJit >= 0 ? 1.1 : -1.1;
       const c = Math.cos(t), sn = Math.sin(t);

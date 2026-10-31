@@ -78,25 +78,98 @@ function wrapPi(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) 
 
 // Base hull collision dimensions (halfLen, halfWidth) by vessel class
 const HULL_COLLISION_SPEC = {
-  speedboat: { halfLen: 6.0, halfWidth: 2.2 },
-  sailboat: { halfLen: 7.0, halfWidth: 2.5 },
-  fishing: { halfLen: 9.5, halfWidth: 3.4 },
-  tug: { halfLen: 10.0, halfWidth: 3.8 },
-  patrol: { halfLen: 10.0, halfWidth: 3.8 },
-  ferry: { halfLen: 20.0, halfWidth: 6.2 },
-  carferry: { halfLen: 28.0, halfWidth: 8.5 },
-  cargo: { halfLen: 46.0, halfWidth: 10.5 },
-  tanker: { halfLen: 48.0, halfWidth: 11.0 },
-  container: { halfLen: 52.0, halfWidth: 11.5 },
+  speedboat: { halfLen: 6.0, halfWidth: 2.2, halfL: 4.8, halfW: 1.6, deckY: 1.6, topY: 3.5, superZ0: -2.2, superZ1: 1.8, superHW: 1.3 },
+  sailboat: { halfLen: 7.0, halfWidth: 2.5, halfL: 6.2, halfW: 2.0, deckY: 1.8, topY: 18.0, superZ0: -2.2, superZ1: 2.6, superHW: 1.3 },
+  fishing: { halfLen: 9.5, halfWidth: 3.4, halfL: 13.0, halfW: 3.9, deckY: 4.8, topY: 13.0, superZ0: -6.5, superZ1: 5.5, superHW: 3.2 },
+  tug: { halfLen: 10.0, halfWidth: 3.8, halfL: 15.0, halfW: 5.5, deckY: 5.4, topY: 14.0, superZ0: -7.0, superZ1: 6.5, superHW: 4.2 },
+  patrol: { halfLen: 10.0, halfWidth: 3.8, halfL: 16.0, halfW: 3.6, deckY: 4.4, topY: 12.0, superZ0: -6.8, superZ1: 6.2, superHW: 3.0 },
+  ferry: { halfLen: 20.0, halfWidth: 6.2, halfL: 20.0, halfW: 6.1, deckY: 7.8, topY: 12.2, superZ0: -14.0, superZ1: 12.0, superHW: 5.4 },
+  carferry: { halfLen: 28.0, halfWidth: 8.5, halfL: 75.0, halfW: 13.0, deckY: 19.5, topY: 29.0, superZ0: -52.0, superZ1: 46.0, superHW: 12.0 },
+  cargo: { halfLen: 46.0, halfWidth: 10.5, halfL: 95.0, halfW: 16.0, deckY: 10.0, topY: 29.0, superZ0: -90.0, superZ1: -66.0, superHW: 13.8 },
+  tanker: { halfLen: 48.0, halfWidth: 11.0, halfL: 125.0, halfW: 22.0, deckY: 11.2, topY: 32.0, superZ0: -118.0, superZ1: -88.0, superHW: 17.5 },
+  container: { halfLen: 52.0, halfWidth: 11.5, halfL: 150.0, halfW: 24.0, deckY: 22.5, topY: 34.0, superZ0: -116.0, superZ1: -84.0, superHW: 19.5 },
 };
 
 function updateVesselCollisionBounds(v) {
-  const base = HULL_COLLISION_SPEC[v.type] || { halfLen: 8.0, halfWidth: 3.0 };
+  const base = HULL_COLLISION_SPEC[v.type] || {
+    halfLen: 8.0, halfWidth: 3.0, halfL: 8.0, halfW: 3.0, deckY: 3.5, topY: 8.0, superZ0: -4.0, superZ1: 4.0, superHW: 2.5,
+  };
   const sz = v.sz || 1;
   const sx = v.sx || 1;
+  const sy = v.sy || 1;
   v.halfLen = base.halfLen * clamp(sz, 0.55, 2.2);
   v.halfWidth = base.halfWidth * clamp(sx, 0.65, 2.0);
   v.colRadius = Math.hypot(v.halfLen, v.halfWidth);
+
+  // Full 3D visual hull & superstructure bounds for aircraft / helicopter / vehicle 3D collision
+  v.halfL = (base.halfL || base.halfLen) * clamp(sz, 0.45, 3.0);
+  v.halfW = (base.halfW || base.halfWidth) * clamp(sx, 0.45, 2.5);
+  v.deckY = (base.deckY || 4.0) * clamp(sy, 0.45, 2.4);
+  v.topY = (base.topY || 10.0) * clamp(sy, 0.45, 2.4);
+  v.height = v.topY;
+  v.superZ0 = (base.superZ0 ?? -v.halfL * 0.5) * clamp(sz, 0.45, 3.0);
+  v.superZ1 = (base.superZ1 ?? v.halfL * 0.5) * clamp(sz, 0.45, 3.0);
+  v.superHW = (base.superHW || v.halfW * 0.8) * clamp(sx, 0.45, 2.5);
+  v.colRadius3D = Math.hypot(v.halfL, v.halfW);
+}
+
+/**
+ * Compute 3D sphere-vs-OBB penetration in vessel-local space.
+ * Box bounds: x in [-hx, hx], y in [yMin, yMax], z in [zMin, zMax].
+ * Returns { pen, lnx, lny, lnz, cx, cy, cz } or null if no intersection.
+ */
+function sphereVsLocalBox3D(lx, ly, lz, r, hx, yMin, yMax, zMin, zMax, centerLx = lx, centerLy = ly, centerLz = lz) {
+  const cx = clamp(lx, -hx, hx);
+  const cy = clamp(ly, yMin, yMax);
+  const cz = clamp(lz, zMin, zMax);
+  const dx = lx - cx;
+  const dy = ly - cy;
+  const dz = lz - cz;
+  const d2 = dx * dx + dy * dy + dz * dz;
+  if (d2 >= r * r) return null;
+
+  if (d2 > 1e-6) {
+    const d = Math.sqrt(d2);
+    return {
+      pen: r - d,
+      lnx: dx / d,
+      lny: dy / d,
+      lnz: dz / d,
+      cx,
+      cy,
+      cz,
+    };
+  }
+
+  // Sphere center is strictly inside the box: push out toward the side where the aircraft's center is located
+  const zMid = (zMin + zMax) * 0.5;
+  const dirX = centerLx >= 0 ? 1 : -1;
+  const dirZ = centerLz >= zMid ? 1 : -1;
+  const penX = dirX > 0 ? (hx - lx) : (lx + hx);
+  const penZ = dirZ > 0 ? (zMax - lz) : (lz - zMin);
+  const penTop = yMax - ly;
+
+  let minFace = penX;
+  let lnx = dirX, lny = 0, lnz = 0;
+
+  if (penZ < minFace) {
+    minFace = penZ;
+    lnx = 0; lny = 0; lnz = dirZ;
+  }
+  if (penTop <= Math.max(2.4, r * 1.15) && centerLy >= yMax - Math.max(2.6, r * 1.2) && penTop < minFace) {
+    minFace = penTop;
+    lnx = 0; lny = 1; lnz = 0;
+  }
+
+  return {
+    pen: r + minFace,
+    lnx,
+    lny,
+    lnz,
+    cx: lx,
+    cy: ly,
+    cz: lz,
+  };
 }
 
 /** Closest point on 2D segment AB to point P: writes into out {x, z, t} */
@@ -206,6 +279,7 @@ export class Maritime {
     this.root.add(this.wakes);
 
     this.vessels = [];
+    this.pierBoats = [];
     this.region = null;
     this.origin = null;
     this.mode = 'none';          // 'sim' | 'live'
@@ -653,6 +727,7 @@ export class Maritime {
     this.origin = origin;
     this._gen++;
     this.vessels.length = 0;
+    this.pierBoats.length = 0;
     this.region = null;
     this.mode = 'none';
     this.aisStatus = 'off';
@@ -1138,6 +1213,26 @@ export class Maritime {
       this._resolveVesselPairCollisions(a, dt);
     }
 
+    // Ensure moving ships also push/deflect any parked or water-landed airliner/aircraft in their path
+    const airSys = this.app && this.app.airliner;
+    if (airSys && airSys.mesh && airSys.mesh.visible && !airSys.dead && this.app.mode !== 'airliner') {
+      const ap = airSys.mesh.position;
+      if (ap.y < 38) {
+        const hit = this.resolveAircraftCollision(
+          ap,
+          3.4,
+          28.0,
+          ap.y + 3.2,
+          airSys.heroYaw ?? this.app.yaw ?? 0,
+          { x: 0, y: 0, z: 0 },
+          { halfLen: 28.0, applyPosition: true }
+        );
+        if (hit && hit.hit && hit.relSpeed > 6.0) {
+          airSys.applyDamage(hit.relSpeed * 4.5, ap);
+        }
+      }
+    }
+
     if (this.vessels.some((v) => v.dead)) {
       for (const v of this.vessels) {
         if (v.dead && v.kind === 'ferry' && v.state === 'sunk') this._ferryRespawn(v);
@@ -1465,8 +1560,279 @@ export class Maritime {
       v.state = 'moored';
       v.v = 0;
       v.speed = 0;
+      this.pierBoats.push(v);
       added++;
     }
+  }
+
+  /** Return all active (non-sunk, non-dead) vessels including sailing ships and moored pier boats. */
+  _getAllActiveVessels() {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < this.vessels.length; i++) {
+      const v = this.vessels[i];
+      if (!v || v.dead || v.state === 'sunk') continue;
+      seen.add(v);
+      out.push(v);
+    }
+    if (Array.isArray(this.pierBoats)) {
+      for (let i = 0; i < this.pierBoats.length; i++) {
+        const v = this.pierBoats[i];
+        if (!v || v.dead || v.state === 'sunk' || seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Query highest landable vessel deck or superstructure roof height at world (x, z) not above refY + 2.0.
+   * Returns { y, vessel, vx, vz, yaw } or null.
+   */
+  getDeckHeightAt(x, z, refY = Infinity) {
+    let best = null;
+    let bestY = -Infinity;
+    const list = this._getAllActiveVessels();
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (v.state === 'sink') continue;
+      if (!v.halfL) updateVesselCollisionBounds(v);
+      const dx = x - v.x;
+      const dz = z - v.z;
+      const maxR = (v.colRadius3D || 20) + 4.0;
+      if (dx * dx + dz * dz > maxR * maxR) continue;
+
+      const c = Math.cos(v.yaw);
+      const s = Math.sin(v.yaw);
+      // Local vessel frame: +lz = bow (sin yaw, cos yaw), +lx = port (cos yaw, -sin yaw)
+      const lx = dx * c - dz * s;
+      const lz = dx * s + dz * c;
+      if (Math.abs(lz) > v.halfL) continue;
+
+      // Taper hull half-beam near bow and stern tips
+      const u = Math.abs(lz) / Math.max(1, v.halfL);
+      const taper = u > 0.68 ? Math.max(0.22, 1.0 - Math.pow((u - 0.68) / 0.32, 1.4) * 0.78) : 1.0;
+      const effHW = v.halfW * taper;
+      if (Math.abs(lx) > effHW) continue;
+
+      const baseWaterY = Number.isFinite(v.y) ? v.y : 0;
+      const inSuper = lz >= v.superZ0 && lz <= v.superZ1 && Math.abs(lx) <= v.superHW;
+      const superTopY = baseWaterY + v.topY;
+      const deckTopY = baseWaterY + v.deckY;
+
+      let candidateY = deckTopY;
+      if (inSuper && superTopY <= refY + 2.2) {
+        candidateY = superTopY;
+      } else if (deckTopY > refY + 2.2) {
+        continue;
+      }
+
+      if (candidateY > bestY) {
+        bestY = candidateY;
+        const spd = v.state === 'player' ? this.boatSpeed : (v.v || 0);
+        best = {
+          y: candidateY,
+          vessel: v,
+          vx: Math.sin(v.yaw) * spd + (v.vx || 0),
+          vz: Math.cos(v.yaw) * spd + (v.vz || 0),
+          yaw: v.yaw,
+        };
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Fast 3D oriented volume collision query against all active sailing ships & moored pier boats.
+   * Models each vessel as a 3D oriented hull + cargo/main deck volume AND a 3D superstructure/bridge/mast volume.
+   * Also tests aircraft wingtips & fuselage nose/tail when wingSpan or halfLen > 0.
+   */
+  checkVolumeCollision(x, y, z, radius = 3.2, wingSpan = 0, halfH = 2.2, yaw = 0, pitch = 0, roll = 0, halfLen = 0) {
+    const rBody = Math.max(0.5, radius || 3.0);
+    const halfSpan = Math.max(0, (wingSpan || 0) * 0.5);
+    const hLen = Math.max(0, halfLen || (halfSpan > 6 ? halfSpan * 0.88 : 0));
+
+    // Build 3D test spheres in world space covering aircraft fuselage (center, nose, tail) and wings (port/starboard)
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = -Math.cos(yaw);
+    const rz = Math.sin(yaw);
+    const sinP = Math.sin(pitch || 0);
+    const sinR = Math.sin(roll || 0);
+
+    const pts = [
+      { px: x, py: y, pz: z, r: rBody, tag: 'fuselage' },
+    ];
+    if (hLen > rBody * 0.8) {
+      const noseDist = hLen * 0.78;
+      const tailDist = hLen * 0.82;
+      pts.push(
+        { px: x + fx * noseDist, py: y + noseDist * sinP, pz: z + fz * noseDist, r: rBody * 0.82, tag: 'nose' },
+        { px: x - fx * tailDist, py: y - tailDist * sinP + rBody * 0.4, pz: z - fz * tailDist, r: rBody * 0.85, tag: 'tail' }
+      );
+    }
+    if (halfSpan > rBody * 1.15) {
+      const midSpan = halfSpan * 0.52;
+      const tipSpan = halfSpan * 0.94;
+      const wingR = Math.max(1.3, rBody * 0.52);
+      const tipR = Math.max(1.1, rBody * 0.42);
+      pts.push(
+        { px: x - rx * midSpan, py: y + midSpan * sinR, pz: z - rz * midSpan, r: wingR, tag: 'wing_port' },
+        { px: x + rx * midSpan, py: y - midSpan * sinR, pz: z + rz * midSpan, r: wingR, tag: 'wing_starboard' },
+        { px: x - rx * tipSpan - fx * (hLen * 0.14), py: y + tipSpan * sinR + 0.6, pz: z - rz * tipSpan - fz * (hLen * 0.14), r: tipR, tag: 'wingtip_port' },
+        { px: x + rx * tipSpan - fx * (hLen * 0.14), py: y - tipSpan * sinR + 0.6, pz: z + rz * tipSpan - fz * (hLen * 0.14), r: tipR, tag: 'wingtip_starboard' }
+      );
+    }
+
+    const maxAircraftReach = Math.max(rBody, halfSpan, hLen) + rBody;
+    const list = this._getAllActiveVessels();
+    let bestHit = null;
+
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (!v.halfL) updateVesselCollisionBounds(v);
+      const dx0 = x - v.x;
+      const dz0 = z - v.z;
+      const broadR = maxAircraftReach + (v.colRadius3D || 25) + 4.0;
+      if (dx0 * dx0 + dz0 * dz0 > broadR * broadR) continue;
+
+      const baseWaterY = Number.isFinite(v.y) ? v.y : 0;
+      const shipMinY = baseWaterY - 3.5;
+      const shipMaxY = baseWaterY + v.topY;
+      if (y - Math.max(halfH, rBody) - 6.0 > shipMaxY || y + Math.max(halfH, rBody) + 6.0 < shipMinY) continue;
+
+      const c = Math.cos(v.yaw);
+      const s = Math.sin(v.yaw);
+      const centerLx = dx0 * c - dz0 * s;
+      const centerLz = dx0 * s + dz0 * c;
+      const centerLy = y - baseWaterY;
+
+      for (let pIdx = 0; pIdx < pts.length; pIdx++) {
+        const pt = pts[pIdx];
+        const rxp = pt.px - v.x;
+        const rzp = pt.pz - v.z;
+        const lx = rxp * c - rzp * s;
+        const lz = rxp * s + rzp * c;
+        const ly = pt.py - baseWaterY;
+
+        // Taper hull width near bow and stern for realistic ship contour
+        const zClamped = clamp(lz, -v.halfL, v.halfL);
+        const u = Math.abs(zClamped) / Math.max(1, v.halfL);
+        const taper = u > 0.68 ? Math.max(0.25, 1.0 - Math.pow((u - 0.68) / 0.32, 1.4) * 0.75) : 1.0;
+        const effHW = v.halfW * taper;
+
+        // 1. Test Main Hull + Cargo/Deck Volume
+        const hitHull = sphereVsLocalBox3D(lx, ly, lz, pt.r, effHW, -3.0, v.deckY, -v.halfL, v.halfL, centerLx, centerLy, centerLz);
+        // 2. Test Superstructure / Wheelhouse / Bridge / Mast Volume
+        const hitSuper = sphereVsLocalBox3D(lx, ly, lz, pt.r, v.superHW, 0.0, v.topY, v.superZ0, v.superZ1, centerLx, centerLy, centerLz);
+
+        const subHit = (hitHull && hitSuper)
+          ? (hitHull.pen >= hitSuper.pen ? hitHull : hitSuper)
+          : (hitHull || hitSuper);
+
+        if (subHit && (!bestHit || subHit.pen > bestHit.pen)) {
+          // Convert local normal (lnx, lny, lnz) back to world space:
+          // worldX = lx * c + lz * s, worldZ = -lx * s + lz * c
+          const wnx = subHit.lnx * c + subHit.lnz * s;
+          const wny = subHit.lny;
+          const wnz = -subHit.lnx * s + subHit.lnz * c;
+          const nl = Math.hypot(wnx, wny, wnz) || 1;
+          const nx = wnx / nl;
+          const ny = wny / nl;
+          const nz = wnz / nl;
+          const localTop = subHit === hitSuper ? (baseWaterY + v.topY) : (baseWaterY + v.deckY);
+
+          bestHit = {
+            hit: true,
+            pen: subHit.pen,
+            nx,
+            ny,
+            nz,
+            pushX: nx * (subHit.pen + 0.08),
+            pushY: ny * (subHit.pen + 0.08),
+            pushZ: nz * (subHit.pen + 0.08),
+            topY: localTop,
+            deckY: baseWaterY + v.deckY,
+            superTopY: baseWaterY + v.topY,
+            vessel: v,
+            partTag: pt.tag,
+            isWingHit: pt.tag.startsWith('wing'),
+            isDeckContact: ny > 0.62,
+            contactX: v.x + subHit.cx * c + subHit.cz * s,
+            contactY: baseWaterY + subHit.cy,
+            contactZ: v.z - subHit.cx * s + subHit.cz * c,
+          };
+        }
+      }
+    }
+
+    return bestHit;
+  }
+
+  /**
+   * Resolve 3D collision between an aircraft (airliner, fighter jet, propeller plane, helicopter)
+   * and any maritime vessel (active ships + moored pier boats).
+   * Pushes `pos` out of the vessel's 3D body so the aircraft NEVER passes through a ship!
+   */
+  resolveAircraftCollision(pos, radius = 3.2, halfSpan = 0, altitudeY = undefined, yaw = 0, velocity = null, options = null) {
+    if (!pos) return null;
+    const x = pos.x;
+    const y = Number.isFinite(altitudeY) ? altitudeY : (pos.y ?? 0);
+    const z = pos.z;
+    const pitch = options?.pitch || 0;
+    const roll = options?.roll || 0;
+    const halfLen = options?.halfLen || 0;
+    const halfH = options?.halfH || Math.max(2.0, radius * 0.75);
+
+    const col = this.checkVolumeCollision(x, y, z, radius, (halfSpan || 0) * 2.0, halfH, yaw, pitch, roll, halfLen);
+    if (!col || !col.hit) return null;
+
+    const v = col.vessel;
+    const shipSpd = v.state === 'player' ? this.boatSpeed : (v.v || 0);
+    const shipVx = Math.sin(v.yaw) * shipSpd + (v.vx || 0);
+    const shipVz = Math.cos(v.yaw) * shipSpd + (v.vz || 0);
+
+    let acVx = 0, acVy = 0, acVz = 0;
+    if (velocity && typeof velocity === 'object') {
+      acVx = velocity.x || 0;
+      acVy = velocity.y || 0;
+      acVz = velocity.z || 0;
+    } else if (typeof velocity === 'number') {
+      acVx = Math.sin(yaw) * velocity;
+      acVz = Math.cos(yaw) * velocity;
+    }
+
+    const rvx = acVx - shipVx;
+    const rvy = acVy;
+    const rvz = acVz - shipVz;
+    const vn = rvx * col.nx + rvy * col.ny + rvz * col.nz;
+    const relSpeed = vn < 0 ? -vn : Math.hypot(rvx, rvy, rvz) * 0.35;
+    col.relSpeed = relSpeed;
+
+    // Immediately push aircraft position out of the ship's 3D hull/superstructure volume
+    if (!options || options.applyPosition !== false) {
+      pos.x += col.pushX;
+      if (pos.y !== undefined) pos.y += col.pushY;
+      pos.z += col.pushZ;
+    }
+
+    // Apply physical reaction & damage to the vessel on significant impact
+    const shipMass = Math.max(12, (v.halfL || 10) * (v.halfW || 3));
+    const pushShare = clamp(25 / shipMass, 0.03, 0.45);
+    if (relSpeed > 1.5) {
+      v.vx = (v.vx || 0) - col.nx * relSpeed * pushShare * 0.35;
+      v.vz = (v.vz || 0) - col.nz * relSpeed * pushShare * 0.35;
+      const rollSign = (col.nx * Math.cos(v.yaw) - col.nz * Math.sin(v.yaw)) >= 0 ? 1 : -1;
+      v.rollImpulse = clamp((v.rollImpulse || 0) - rollSign * clamp(relSpeed * 0.015, 0.04, 0.32), -0.38, 0.38);
+    }
+    if (relSpeed > 9.0 && !(v._hitCooldown > 0)) {
+      v._hitCooldown = 0.40;
+      const dmg = (relSpeed - 7.0) * 0.09;
+      this.damageVessel(v, dmg, col.contactX, col.contactZ);
+    }
+
+    return col;
   }
 }
 

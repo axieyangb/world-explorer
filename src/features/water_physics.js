@@ -121,8 +121,8 @@ export function buildWaterMask(data) {
   for (const wl of lines) {
     const [, cls, , widthM, flat] = wl;
     if (!flat || flat.length < 4) continue;
-    if (cls !== 'river' && cls !== 'canal' && !(widthM >= 12)) continue;
-    fillRibbon(bits, flat, Math.max(3.5, (widthM || 10) * 0.5));
+    if (cls !== 'river' && cls !== 'canal' && cls !== 'stream' && !(widthM >= 4)) continue;
+    fillRibbon(bits, flat, Math.max(2.5, (widthM || (cls === 'stream' ? 5 : 10)) * 0.5));
     any = true;
   }
   return any ? { bits, n: N, cell: CELL, min: MIN } : null;

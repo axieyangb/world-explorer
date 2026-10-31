@@ -144,9 +144,12 @@ function baroqueDome(k) {
     const pts = prof.map(([r, y]) => [c * (r + 0.16), S0 + y, s * (r + 0.16)]);
     for (let j = 0; j < pts.length - 1; j++) k.strut(pts[j], pts[j + 1], 0.48);
     if (hi && i % 2 === 0) {
-      // Ornate gold-framed Baroque dormer window near base of dome
+      // Ornate gold-framed Baroque dormer windows (lower & middle tiers) with scrolled pediments
       const rd = prof[2][0] + 0.35, yd = S0 + prof[2][1];
       k.color(GOLD_LT).box(c * rd, yd, s * rd, 1.6, 2.6, 1.6);
+      k.sphere(c * rd, yd + 2.8, s * rd, 0.65, 8, 5);
+      const rd2 = prof[5][0] + 0.28, yd2 = S0 + prof[5][1];
+      k.box(c * rd2, yd2, s * rd2, 1.15, 1.8, 1.15);
       k.color(GOLD);
     }
   }

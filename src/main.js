@@ -98,11 +98,11 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r1"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r2"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
-import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r1"; // [feature/space-launch]
+import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r2"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -598,6 +598,7 @@ class WorldExplorerApp {
     this._showToast = (msg) => showVehicleToast(String(msg || ""), "");
     this.places = new PlacesSystem(this.scene); // feature/places
     this.airliner = new AirlinerSystem(this);
+    this.airliner.maritime = this.maritime;
     this.airlinerMesh = this.airliner.mesh;
     this.railTransit = new RailTransit(this); // [feature/rail-transit]
     this.liveSky = initLiveSky(this); // [live-sky-weather] real aircraft (needs places' airliner geometry)
@@ -1697,6 +1698,9 @@ class WorldExplorerApp {
         const wk = this.water.resolveWalk(this.pos.x, this.pos.z, col.x, col.z, this.pos.y); // fix/water: stop at the shore
         this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.x));
         this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, wk.z));
+        if (this.airliner) {
+          this.airliner.resolveExternalCollision(this.pos, this.yaw, 0.55, 0, this.speed, false);
+        }
       }
 
       if (this.keys.has("Space") && this.isGrounded && !jacking) {
@@ -1713,7 +1717,14 @@ class WorldExplorerApp {
         getChunkTerrainMeshElevation(this.pos.x, this.pos.z) + 0.08
       );
       const roofY = this.getRoofSupportAt(this.pos.x, this.pos.y, this.pos.z);
-      const groundY = Math.max(surf ? Math.max(surf.y, minTerrY) : minTerrY, roofY + 0.12);
+      const shipDeck = this.maritime?.getDeckHeightAt?.(this.pos.x, this.pos.z, this.pos.y + 1.2);
+      const airRoofY = this.airliner?.getSupportHeightAt?.(this.pos.x, this.pos.z, this.pos.y + 1.2) ?? -Infinity;
+      const groundY = Math.max(
+        surf ? Math.max(surf.y, minTerrY) : minTerrY,
+        roofY + 0.12,
+        shipDeck && Number.isFinite(shipDeck.y) ? shipDeck.y : -Infinity,
+        Number.isFinite(airRoofY) ? airRoofY : -Infinity
+      );
       if (surf) {
         this.currentRoadName = surf.seg.name;
         this._noteRoadZh(surf.seg);
@@ -1863,8 +1874,13 @@ class WorldExplorerApp {
       if (!rSurf && refY > baseTerr + 3.0) {
         rSurf = this.sampleRoadSurface(x, baseTerr, z);
       }
+      let bestY = rSurf ? Math.max(rSurf.y, baseTerr) : baseTerr;
+      const shipDeck = this.maritime?.getDeckHeightAt?.(x, z, refY + 1.5);
+      if (shipDeck && Number.isFinite(shipDeck.y) && shipDeck.y > bestY) {
+        bestY = shipDeck.y;
+      }
       return {
-        y: rSurf ? Math.max(rSurf.y, baseTerr) : baseTerr,
+        y: bestY,
         surf: rSurf,
       };
     };
@@ -1876,6 +1892,9 @@ class WorldExplorerApp {
     const supportSteps = Math.max(1, Math.min(6, Math.ceil(Math.abs(totalMove) / 4.0)));
     const supportEvery = Math.max(1, Math.floor(steps / supportSteps));
     const stepDt = dt / steps;
+    const isPlaneSpec = spec.id === "fighter_jet" || spec.id === "propeller_plane" || spec.id === "plane";
+    const colRad = Math.max(1.25, (spec.width || 2.1) * 0.55);
+    const colSpan = isPlaneSpec ? 11.5 : (spec.length || 4.8);
     for (let s = 0; s < steps; s++) {
       const nx = this.pos.x + Math.sin(this.yaw) * this.speed * stepDt;
       const nz = this.pos.z + Math.cos(this.yaw) * this.speed * stepDt;
@@ -1885,6 +1904,41 @@ class WorldExplorerApp {
       if (col.hit) {
         const impact = this.collision.applyImpact(col.nx, col.nz);
         if (impact > 0 && !isTank && this.vehicleDamage) this.vehicleDamage.crashPlayer(impact, 1, "wall"); // [crash-damage]
+      }
+      // Collide player vehicle / plane against all airliners (parked, hero, runway, sky)
+      if (this.airliner) {
+        const airHit = this.airliner.resolveExternalCollision(
+          this.pos,
+          this.yaw,
+          colRad,
+          colSpan,
+          { x: Math.sin(this.yaw) * this.speed, y: this.driveVelY || 0, z: Math.cos(this.yaw) * this.speed },
+          isPlaneSpec
+        );
+        if (airHit && airHit.hit) {
+          this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.x));
+          this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.z));
+          const impact = this.collision.applyImpact(airHit.nx, airHit.nz);
+          if (impact > 0 && !isTank && this.vehicleDamage) this.vehicleDamage.crashPlayer(impact, 1, "wall");
+        }
+      }
+      // Collide player vehicle / plane against maritime ships & boats
+      if (this.maritime && typeof this.maritime.resolveAircraftCollision === "function") {
+        const shipHit = this.maritime.resolveAircraftCollision(
+          this.pos,
+          colRad,
+          isPlaneSpec ? colSpan * 0.5 : 0,
+          this.pos.y + 1.1,
+          this.yaw,
+          { x: Math.sin(this.yaw) * this.speed, y: this.driveVelY || 0, z: Math.cos(this.yaw) * this.speed },
+          { halfLen: (spec.length || 4.8) * 0.5, halfH: (spec.height || 1.5) * 0.5, applyPosition: true }
+        );
+        if (shipHit && shipHit.hit && !shipHit.isDeckContact) {
+          this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.x));
+          this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.z));
+          const impact = this.collision.applyImpact(shipHit.nx, shipHit.nz);
+          if (impact > 0 && !isTank && this.vehicleDamage) this.vehicleDamage.crashPlayer(impact, 1, "wall");
+        }
       }
       if ((s + 1) % supportEvery !== 0 && s !== steps - 1) continue;
       const stepCenter = evalSupportAt(this.pos.x, this.pos.z, this.pos.y);

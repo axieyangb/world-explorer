@@ -18,7 +18,9 @@ const BLADE_CULL_M = 260;
 
 // ---------- geometry helpers (merged, vertex-colored, non-indexed) ----------
 function colored(geom, rgb, tx = 0, ty = 0, tz = 0) {
+  if (geom.index) geom.computeVertexNormals();
   const g = geom.index ? geom.toNonIndexed() : geom;
+  if (!g.attributes.normal) g.computeVertexNormals();
   g.translate(tx, ty, tz);
   const n = g.attributes.position.count;
   const c = new Float32Array(n * 3);
@@ -52,7 +54,9 @@ function merge(parts) {
 }
 
 function uvColored(geom, rgb, u0, v0, u1, v1, tx = 0, ty = 0, tz = 0) {
+  if (geom.index) geom.computeVertexNormals();
   const g = geom.index ? geom.toNonIndexed() : geom;
+  if (!g.attributes.normal) g.computeVertexNormals();
   g.translate(tx, ty, tz);
   const n = g.attributes.position.count;
   const c = new Float32Array(n * 3);
@@ -97,12 +101,39 @@ function mergeUV(parts) {
 }
 
 const box = (w, h, d, rgb, x, y, z) => colored(new THREE.BoxGeometry(w, h, d), rgb, x, y, z);
-const cyl = (rt, rb, h, rgb, x, y, z, seg = 8) => colored(new THREE.CylinderGeometry(rt, rb, h, seg, 1), rgb, x, y + h / 2, z);
-function beam(x0, y0, x1, y1, t, rgb) {
+const cyl = (rt, rb, h, rgb, x, y, z, seg = 10) => {
+  const g = new THREE.CylinderGeometry(rt, rb, h, seg, 1);
+  g.computeVertexNormals();
+  return colored(g, rgb, x, y + h / 2, z);
+};
+const cylRot = (rt, rb, h, rgb, x, y, z, rx = 0, ry = 0, rz = 0, seg = 10, open = false) => {
+  const g = new THREE.CylinderGeometry(rt, rb, h, seg, 1, open);
+  g.computeVertexNormals();
+  if (rx) g.rotateX(rx);
+  if (ry) g.rotateY(ry);
+  if (rz) g.rotateZ(rz);
+  return colored(g, rgb, x, y, z);
+};
+const dome = (r, sx, sy, sz, rgb, x, y, z, ws = 12, hs = 6, th0 = 0, thL = Math.PI) => {
+  const g = new THREE.SphereGeometry(r, ws, hs, 0, Math.PI * 2, th0, thL);
+  g.computeVertexNormals();
+  g.scale(sx, sy, sz);
+  return colored(g, rgb, x, y, z);
+};
+const ring = (r, tubeR, rgb, x, y, z, rx = Math.PI / 2, ry = 0, rz = 0, seg = 12, arc = Math.PI * 2) => {
+  const g = new THREE.TorusGeometry(r, tubeR, 6, seg, arc);
+  g.computeVertexNormals();
+  if (rx) g.rotateX(rx);
+  if (ry) g.rotateY(ry);
+  if (rz) g.rotateZ(rz);
+  return colored(g, rgb, x, y, z);
+};
+function beam(x0, y0, x1, y1, t, rgb, z = 0) {
   const len = Math.hypot(x1 - x0, y1 - y0);
-  const g = new THREE.BoxGeometry(len, t, t);
-  g.rotateZ(Math.atan2(y1 - y0, x1 - x0));
-  return colored(g, rgb, (x0 + x1) / 2, (y0 + y1) / 2, 0);
+  const g = new THREE.CylinderGeometry(t * 0.5, t * 0.5, len, 8, 1);
+  g.computeVertexNormals();
+  g.rotateZ(Math.atan2(y1 - y0, x1 - x0) - Math.PI / 2);
+  return colored(g, rgb, (x0 + x1) / 2, (y0 + y1) / 2, z);
 }
 
 const POLE = [0.46, 0.48, 0.5];
@@ -879,60 +910,190 @@ function buildStreetBladeTexture(streetName) {
 
 export function buildModels() {
   const m = {};
+  const LED = [0.92, 0.9, 0.84];
+  const CAST = [0.07, 0.09, 0.08];
+  const BRASS = [0.72, 0.58, 0.22];
+  const REFL_W = [0.92, 0.92, 0.88];
+  const REFL_Y = [0.86, 0.64, 0.06];
+
   // Generic single-arm light (JP/EU/intl major roads). Bulb at (2.3, 8.35).
+  // Fluted octagonal base plinth, decorative collar rings, curved gooseneck arm + scroll strut, cobra luminaire & LED diffuser.
   m.lampArm = merge([
-    cyl(0.08, 0.12, 8.5, POLE, 0, 0, 0),
-    box(0.3, 0.5, 0.3, POLE, 0, 0.25, 0),
-    beam(0, 8.2, 2.4, 8.45, 0.08, POLE),
-    box(0.75, 0.14, 0.32, DARK, 2.3, 8.46, 0),
+    cyl(0.24, 0.28, 0.08, [0.5, 0.49, 0.46], 0, 0, 0, 8),
+    cyl(0.14, 0.19, 0.72, POLE, 0, 0.08, 0, 8),
+    ring(0.15, 0.018, STEEL_DARK, 0, 0.8, 0),
+    cyl(0.072, 0.12, 7.5, POLE, 0, 0.8, 0, 10),
+    ring(0.105, 0.016, STEEL_DARK, 0, 4.2, 0),
+    ring(0.082, 0.015, STEEL_DARK, 0, 7.95, 0),
+    dome(0.08, 1, 0.6, 1, POLE, 0, 8.3, 0, 10, 4, 0, Math.PI / 2),
+    beam(0, 7.98, 0.75, 8.38, 0.085, POLE),
+    beam(0.72, 8.38, 1.95, 8.5, 0.075, POLE),
+    beam(0.06, 7.55, 0.95, 8.41, 0.04, STEEL_DARK),
+    dome(1, 0.44, 0.09, 0.18, DARK, 2.3, 8.44, 0, 14, 5, 0, Math.PI / 2),
+    box(0.76, 0.06, 0.32, POLE, 2.3, 8.43, 0),
+    box(0.6, 0.018, 0.22, LED, 2.3, 8.382, 0),
   ]);
-  // US cobra-head: tall pole, curved mast arm, elongated head. Bulb at (2.6, 8.75).
+
+  // US cobra-head: tall pole, fluted transformer plinth, collar rings, curved davit mast arm, cobra head & refractor lens. Bulb at (2.6, 8.75).
+  const G_POLE = [0.55, 0.56, 0.55];
   m.lampCobra = merge([
-    cyl(0.08, 0.13, 8.7, [0.55, 0.56, 0.55], 0, 0, 0),
-    beam(0, 8.4, 1.3, 8.95, 0.09, [0.55, 0.56, 0.55]),
-    beam(1.25, 8.95, 2.3, 8.95, 0.08, [0.55, 0.56, 0.55]),
-    box(1.0, 0.2, 0.42, [0.5, 0.52, 0.5], 2.6, 8.88, 0),
+    cyl(0.26, 0.3, 0.08, [0.5, 0.49, 0.46], 0, 0, 0, 8),
+    cyl(0.14, 0.2, 0.74, G_POLE, 0, 0.08, 0, 8),
+    ring(0.155, 0.018, STEEL_DARK, 0, 0.82, 0),
+    cyl(0.082, 0.13, 7.85, G_POLE, 0, 0.82, 0, 10),
+    ring(0.115, 0.016, STEEL_DARK, 0, 4.6, 0),
+    ring(0.092, 0.016, STEEL_DARK, 0, 8.15, 0),
+    dome(0.09, 1, 0.6, 1, G_POLE, 0, 8.67, 0, 10, 4, 0, Math.PI / 2),
+    beam(0, 8.2, 0.9, 8.86, 0.09, G_POLE),
+    beam(0.88, 8.86, 2.2, 8.99, 0.08, G_POLE),
+    beam(0.08, 7.75, 1.35, 8.9, 0.042, STEEL_DARK),
+    dome(1, 0.58, 0.16, 0.24, [0.42, 0.44, 0.45], 2.66, 8.82, 0, 14, 5, 0, Math.PI / 2),
+    box(0.96, 0.05, 0.38, [0.48, 0.5, 0.5], 2.64, 8.81, 0),
+    dome(1, 0.42, 0.075, 0.18, LED, 2.66, 8.79, 0, 12, 4, Math.PI / 2, Math.PI / 2),
+    cyl(0.035, 0.035, 0.06, DARK, 2.48, 8.96, 0, 8),
   ]);
+
   // Chinese boulevard double-arm light. Bulbs at (+-2.4, 9.85).
+  const B_POLE = [0.62, 0.64, 0.66];
   m.lampDouble = merge([
-    cyl(0.1, 0.16, 10.0, [0.62, 0.64, 0.66], 0, 0, 0),
-    box(0.4, 0.8, 0.4, [0.5, 0.52, 0.54], 0, 0.4, 0),
-    beam(0, 9.6, 2.5, 9.95, 0.09, [0.62, 0.64, 0.66]),
-    beam(0, 9.6, -2.5, 9.95, 0.09, [0.62, 0.64, 0.66]),
-    box(0.8, 0.14, 0.34, [0.3, 0.32, 0.34], 2.4, 9.96, 0),
-    box(0.8, 0.14, 0.34, [0.3, 0.32, 0.34], -2.4, 9.96, 0),
+    cyl(0.34, 0.38, 0.1, [0.5, 0.49, 0.46], 0, 0, 0, 10),
+    cyl(0.17, 0.25, 0.98, [0.5, 0.52, 0.54], 0, 0.1, 0, 10),
+    ring(0.185, 0.02, STEEL_DARK, 0, 1.08, 0),
+    cyl(0.1, 0.16, 8.7, B_POLE, 0, 1.08, 0, 12),
+    ring(0.135, 0.018, STEEL_DARK, 0, 5.2, 0),
+    ring(0.11, 0.018, STEEL_DARK, 0, 9.25, 0),
+    dome(0.12, 1, 0.7, 1, B_POLE, 0, 9.78, 0, 10, 4, 0, Math.PI / 2),
+    cyl(0.02, 0.045, 0.24, BRASS, 0, 9.85, 0, 8),
+    beam(0, 9.25, 1.25, 9.94, 0.09, B_POLE),
+    beam(1.22, 9.94, 2.1, 10.04, 0.078, B_POLE),
+    beam(0, 8.88, 0.95, 9.86, 0.045, STEEL_DARK),
+    beam(0, 9.25, -1.25, 9.94, 0.09, B_POLE),
+    beam(-1.22, 9.94, -2.1, 10.04, 0.078, B_POLE),
+    beam(0, 8.88, -0.95, 9.86, 0.045, STEEL_DARK),
+    dome(1, 0.46, 0.1, 0.19, [0.3, 0.32, 0.34], 2.42, 9.95, 0, 12, 4, 0, Math.PI / 2),
+    box(0.84, 0.06, 0.35, B_POLE, 2.42, 9.93, 0),
+    box(0.64, 0.018, 0.24, LED, 2.42, 9.88, 0),
+    dome(1, 0.46, 0.1, 0.19, [0.3, 0.32, 0.34], -2.42, 9.95, 0, 12, 4, 0, Math.PI / 2),
+    box(0.84, 0.06, 0.35, B_POLE, -2.42, 9.93, 0),
+    box(0.64, 0.018, 0.24, LED, -2.42, 9.88, 0),
   ]);
+
   // European post-top lantern (residential). Glass at y 3.6..4.1.
   m.lampPost = merge([
-    cyl(0.05, 0.08, 3.6, [0.07, 0.09, 0.08], 0, 0, 0),
-    box(0.22, 0.4, 0.22, [0.07, 0.09, 0.08], 0, 0.2, 0),
-    cyl(0.02, 0.3, 0.18, [0.07, 0.09, 0.08], 0, 4.08, 0, 6),
+    cyl(0.22, 0.25, 0.08, CAST, 0, 0, 0, 8),
+    cyl(0.11, 0.17, 0.78, CAST, 0, 0.08, 0, 8),
+    ring(0.12, 0.018, CAST, 0, 0.86, 0),
+    cyl(0.052, 0.075, 2.74, CAST, 0, 0.86, 0, 10),
+    ring(0.078, 0.016, CAST, 0, 1.6, 0),
+    ring(0.075, 0.016, CAST, 0, 3.1, 0),
+    cylRot(0.014, 0.014, 0.44, CAST, 0, 3.02, 0, Math.PI / 2, 0, 0, 8),
+    box(0.4, 0.035, 0.4, CAST, 0, 3.61, 0),
+    box(0.028, 0.48, 0.028, CAST, 0.17, 3.85, 0.17),
+    box(0.028, 0.48, 0.028, CAST, 0.17, 3.85, -0.17),
+    box(0.028, 0.48, 0.028, CAST, -0.17, 3.85, 0.17),
+    box(0.028, 0.48, 0.028, CAST, -0.17, 3.85, -0.17),
+    box(0.42, 0.035, 0.42, CAST, 0, 4.09, 0),
+    cyl(0.025, 0.3, 0.22, CAST, 0, 4.1, 0, 4),
+    dome(0.04, 1, 1, 1, BRASS, 0, 4.38, 0, 8, 5),
   ]);
   m.bulb = merge([box(0.55, 0.05, 0.26, [1, 1, 1], 0, 0, 0)]);
   m.bulbPost = merge([box(0.34, 0.46, 0.34, [1, 1, 1], 0, 0, 0)]);
 
-  // Traffic signals
-  m.tlPole = merge([cyl(0.11, 0.14, 6.1, [0.32, 0.34, 0.36], 0, 0, 0), box(0.4, 0.3, 0.4, [0.3, 0.32, 0.34], 0, 0.15, 0)]);
-  m.tlArm = merge([box(1, 0.14, 0.14, [0.32, 0.34, 0.36], 0.5, 5.92, 0)]);
-  const vParts = [box(0.3, 1.05, 0.38, HOUSING, 0, 0, 0), box(0.04, 1.25, 0.58, HOUSING, -0.17, 0, 0)];
-  const hParts = [box(0.3, 0.38, 1.05, HOUSING, 0, 0, 0), box(0.04, 0.58, 1.25, HOUSING, -0.17, 0, 0)];
-  for (const o of [-0.33, 0, 0.33]) {
-    vParts.push(box(0.02, 0.24, 0.24, LENS_OFF, 0.155, o, 0), box(0.16, 0.03, 0.28, HOUSING, 0.22, o + 0.14, 0));
-    hParts.push(box(0.02, 0.24, 0.24, LENS_OFF, 0.155, 0, o), box(0.16, 0.03, 0.28, HOUSING, 0.22, 0.14, o));
+  // Traffic signals: pole with anchor flange, controller cabinet, pedestrian walk/don't-walk box & crosswalk push-button box
+  const TL_POLE = [0.32, 0.34, 0.36];
+  m.tlPole = merge([
+    cyl(0.28, 0.32, 0.08, [0.5, 0.49, 0.46], 0, 0, 0, 8),
+    cyl(0.22, 0.24, 0.04, TL_POLE, 0, 0.08, 0, 8),
+    cyl(0.11, 0.15, 6.65, TL_POLE, 0, 0.12, 0, 12),
+    ring(0.14, 0.016, STEEL_DARK, 0, 2.4, 0),
+    box(0.12, 0.36, 0.3, STEEL_DARK, 0.13, 5.92, 0),
+    box(0.08, 0.14, 0.14, STEEL_DARK, 0.12, 6.62, 0),
+    dome(0.115, 1, 0.6, 1, TL_POLE, 0, 6.77, 0, 10, 4, 0, Math.PI / 2),
+    // Crosswalk push-button box (+X)
+    box(0.08, 0.2, 0.12, REFL_Y, 0.18, 1.1, 0),
+    box(0.015, 0.09, 0.09, REFL_W, 0.222, 1.14, 0),
+    cylRot(0.025, 0.025, 0.03, DARK, 0.225, 1.05, 0, 0, 0, Math.PI / 2, 8),
+    // Pedestrian walk/don't-walk box (+X) with visor hood
+    box(0.18, 0.045, 0.045, STEEL_DARK, 0.18, 2.7, 0),
+    box(0.24, 0.4, 0.36, HOUSING, 0.38, 2.7, 0),
+    box(0.02, 0.3, 0.3, [0.04, 0.04, 0.05], 0.502, 2.7, 0),
+    box(0.02, 0.11, 0.09, [0.95, 0.42, 0.08], 0.51, 2.78, -0.05),
+    box(0.02, 0.11, 0.08, [0.82, 0.88, 0.92], 0.51, 2.61, 0.05),
+    box(0.14, 0.03, 0.36, HOUSING, 0.56, 2.9, 0),
+  ]);
+  // Tapered signal mast arm + upper tie-rod + signal hanger clamps
+  m.tlArm = merge([
+    cylRot(0.07, 0.098, 0.92, TL_POLE, 0.54, 5.92, 0, 0, 0, -Math.PI / 2, 10),
+    beam(0.08, 6.62, 0.58, 5.96, 0.042, STEEL_DARK),
+    box(0.03, 0.22, 0.18, STEEL, 0.58, 5.92, 0),
+    box(0.03, 0.22, 0.18, STEEL, 0.96, 5.92, 0),
+    cyl(0.03, 0.03, 0.18, STEEL_DARK, 0.995, 5.84, 0, 8),
+  ]);
+  // Ribbed signal heads (vertical & horizontal) with high-contrast bordered backplates, 3 R/Y/G lenses, and tunnel sun visors
+  const SIG_YEL = [0.76, 0.55, 0.05];
+  const LENS_COLS = [[0.24, 0.03, 0.02], [0.28, 0.16, 0.02], [0.02, 0.18, 0.11]];
+  const vParts = [
+    box(0.3, 1.06, 0.39, HOUSING, 0, 0, 0),
+    box(0.022, 1.28, 0.6, [0.04, 0.04, 0.05], -0.165, 0, 0),
+    box(0.028, 0.045, 0.64, REFL_W, -0.165, 0.62, 0),
+    box(0.028, 0.045, 0.64, REFL_W, -0.165, -0.62, 0),
+    box(0.028, 1.28, 0.045, REFL_W, -0.165, 0, 0.3),
+    box(0.028, 1.28, 0.045, REFL_W, -0.165, 0, -0.3),
+    cyl(0.032, 0.032, 0.26, STEEL_DARK, 0, 0.53, 0, 8),
+  ];
+  const hParts = [
+    box(0.3, 0.39, 1.06, HOUSING, 0, 0, 0),
+    box(0.022, 0.6, 1.28, [0.04, 0.04, 0.05], -0.165, 0, 0),
+    box(0.028, 0.045, 1.32, REFL_W, -0.165, 0.3, 0),
+    box(0.028, 0.045, 1.32, REFL_W, -0.165, -0.3, 0),
+    box(0.028, 0.6, 0.045, REFL_W, -0.165, 0, 0.62),
+    box(0.028, 0.6, 0.045, REFL_W, -0.165, 0, -0.62),
+    cyl(0.032, 0.032, 0.26, STEEL_DARK, 0, 0.195, 0, 8),
+  ];
+  for (const ro of [-0.33, -0.165, 0, 0.165, 0.33]) {
+    vParts.push(box(0.28, 0.02, 0.41, SIG_YEL, -0.01, ro, 0));
+    hParts.push(box(0.28, 0.41, 0.02, SIG_YEL, -0.01, 0, ro));
   }
+  [0.33, 0, -0.33].forEach((o, idx) => {
+    const lc = LENS_COLS[idx];
+    const visorV = new THREE.CylinderGeometry(0.15, 0.15, 0.24, 12, 1, true, Math.PI * 0.8, Math.PI * 1.4);
+    visorV.computeVertexNormals();
+    visorV.rotateZ(-Math.PI / 2);
+    vParts.push(
+      ring(0.128, 0.016, HOUSING, 0.152, o, 0, 0, Math.PI / 2, 0, 12),
+      dome(1, 0.02, 0.12, 0.12, lc, 0.145, o, 0, 12, 4),
+      colored(visorV, HOUSING, 0.27, o + 0.005, 0),
+    );
+    const visorH = new THREE.CylinderGeometry(0.15, 0.15, 0.24, 12, 1, true, Math.PI * 0.8, Math.PI * 1.4);
+    visorH.computeVertexNormals();
+    visorH.rotateZ(-Math.PI / 2);
+    hParts.push(
+      ring(0.128, 0.016, HOUSING, 0.152, 0, -o, 0, Math.PI / 2, 0, 12),
+      dome(1, 0.02, 0.12, 0.12, lc, 0.145, 0, -o, 12, 4),
+      colored(visorH, HOUSING, 0.27, 0.005, -o),
+    );
+  });
   m.tlHeadV = merge(vParts);
   m.tlHeadH = merge(hParts);
-  const lamp = new THREE.CircleGeometry(0.125, 12);
+  const lamp = new THREE.CircleGeometry(0.125, 14);
+  lamp.computeVertexNormals();
   lamp.rotateY(Math.PI / 2);
   m.tlLamp = merge([colored(lamp, [1, 1, 1])]);
 
-  // 3D Overhead Highway Gantry Support Column (height = 7.45m, concrete pedestal + dual steel column)
-  m.gantryLeg = merge([
-    box(0.65, 0.65, 0.65, [0.68, 0.69, 0.67], 0, 0.32, 0),
-    cyl(0.18, 0.22, 7.45, STEEL, 0, 0, 0, 10),
-    box(0.42, 0.24, 0.72, STEEL_DARK, 0, 7.38, 0),
-    beam(0, 5.6, 0.95, 6.8, 0.14, STEEL_DARK),
-  ]);
+  // 3D Overhead Highway Gantry Support Column (height = 7.45m, bolted concrete pedestal + braced steel column)
+  const gantryLegParts = [
+    box(0.72, 0.65, 0.72, [0.68, 0.69, 0.67], 0, 0.32, 0),
+    box(0.54, 0.05, 0.54, STEEL_DARK, 0, 0.66, 0),
+    cyl(0.18, 0.22, 7.45, STEEL, 0, 0, 0, 12),
+    ring(0.21, 0.022, STEEL_DARK, 0, 3.8, 0),
+    box(0.46, 0.26, 0.76, STEEL_DARK, 0, 7.38, 0),
+    beam(0, 5.5, 0.98, 6.82, 0.14, STEEL_DARK),
+    beam(0, 6.2, 0.58, 6.82, 0.09, STEEL),
+  ];
+  for (const [bx, bz] of [[-0.2, -0.2], [-0.2, 0.2], [0.2, -0.2], [0.2, 0.2]]) {
+    gantryLegParts.push(cyl(0.024, 0.024, 0.08, STEEL_DARK, bx, 0.68, bz, 6));
+  }
+  m.gantryLeg = merge(gantryLegParts);
 
   // 3D Overhead Highway Gantry Truss Arch (unit length [-0.5..+0.5] along X, scaled by spanW = roadWidth + 3m, clearance = 6.8m)
   const trussParts = [
@@ -940,61 +1101,155 @@ export function buildModels() {
     box(1.0, 0.14, 0.14, STEEL, 0, 7.42, -0.28),
     box(1.0, 0.14, 0.14, STEEL, 0, 6.72, 0.28),
     box(1.0, 0.14, 0.14, STEEL, 0, 6.72, -0.28),
-    box(1.0, 0.05, 0.62, STEEL_DARK, 0, 6.66, 0),
+    box(1.0, 0.05, 0.64, STEEL_DARK, 0, 6.66, 0),
   ];
   for (let k = -4; k <= 4; k++) {
     const xk = k * 0.11;
-    trussParts.push(box(0.025, 0.72, 0.58, STEEL_DARK, xk, 7.07, 0));
+    trussParts.push(
+      box(0.024, 0.72, 0.04, STEEL_DARK, xk, 7.07, 0.28),
+      box(0.024, 0.72, 0.04, STEEL_DARK, xk, 7.07, -0.28),
+      box(0.024, 0.04, 0.58, STEEL_DARK, xk, 7.42, 0),
+      box(0.024, 0.04, 0.58, STEEL_DARK, xk, 6.72, 0),
+    );
+    if (k < 4) {
+      const xn = (k + 1) * 0.11;
+      trussParts.push(
+        beam(xk, 6.74, xn, 7.4, 0.028, STEEL_DARK, 0.28),
+        beam(xk, 7.4, xn, 6.74, 0.028, STEEL_DARK, -0.28),
+      );
+    }
   }
   m.gantryTruss = merge(trussParts);
 
-  // Intersection Street Name Blade Sign Post
+  // Intersection Street Name Blade Sign Post (fluted base plinth, decorative rings, finial ball cap)
   m.bladePost = merge([
-    cyl(0.048, 0.065, 3.15, STEEL, 0, 0, 0, 8),
-    box(0.22, 0.18, 0.22, STEEL_DARK, 0, 0.09, 0),
-    cyl(0.07, 0.07, 0.08, STEEL_DARK, 0, 3.15, 0, 8),
+    cyl(0.14, 0.16, 0.05, STEEL_DARK, 0, 0, 0, 8),
+    cyl(0.08, 0.12, 0.42, STEEL_DARK, 0, 0.05, 0, 8),
+    ring(0.085, 0.015, STEEL, 0, 0.47, 0),
+    cyl(0.048, 0.065, 2.72, STEEL, 0, 0.47, 0, 10),
+    ring(0.062, 0.014, STEEL_DARK, 0, 2.86, 0),
+    cyl(0.072, 0.072, 0.09, STEEL_DARK, 0, 3.15, 0, 10),
+    dome(0.058, 1, 1, 1, BRASS, 0, 3.27, 0, 10, 5),
   ]);
 
-  // Bus stop shelter: open side faces +X (road), 4.4m long along Z
+  // Bus stop shelter: arched tempered-glass canopy, rear windbreak panels with mullions, illuminated ad lightbox, wooden slat bench, route totem
   const frame = [0.3, 0.32, 0.35];
   const glass = [0.55, 0.68, 0.74];
-  m.busStop = merge([
-    box(1.7, 0.12, 4.6, [0.85, 0.86, 0.88], 0, 2.5, 0),
-    box(0.04, 2.0, 4.2, glass, -0.7, 1.25, 0),
-    box(1.2, 2.0, 0.04, glass, -0.1, 1.25, 2.15),
-    box(0.08, 2.5, 0.08, frame, -0.72, 1.25, -2.2),
-    box(0.08, 2.5, 0.08, frame, -0.72, 1.25, 2.2),
-    box(0.08, 2.5, 0.08, frame, 0.6, 1.25, -2.2),
-    box(0.08, 2.5, 0.08, frame, 0.6, 1.25, 2.2),
-    box(0.06, 1.8, 1.2, [0.95, 0.93, 0.85], -0.66, 1.3, -1.5),
-    box(0.4, 0.06, 2.2, [0.45, 0.32, 0.2], -0.45, 0.48, 0.6),
-    box(0.06, 2.6, 0.12, [0.2, 0.45, 0.75], 0.75, 1.3, -2.6),
-    box(0.06, 0.45, 0.5, [0.2, 0.45, 0.75], 0.75, 2.45, -2.6),
+  const canopyArc = new THREE.CylinderGeometry(3.2, 3.2, 4.7, 18, 1, true, -0.3, 0.6);
+  canopyArc.computeVertexNormals();
+  canopyArc.rotateX(Math.PI / 2);
+  canopyArc.rotateZ(Math.PI / 2);
+  const busStopParts = [
+    colored(canopyArc, [0.85, 0.86, 0.88], -0.06, 2.56 - 3.2, 0),
+    box(0.09, 0.1, 4.56, frame, -0.72, 2.48, 0),
+    box(0.09, 0.1, 4.56, frame, 0.6, 2.48, 0),
+    box(0.03, 1.96, 4.28, glass, -0.72, 1.22, 0),
+    box(1.24, 1.96, 0.03, glass, -0.06, 1.22, 2.18),
+    cyl(0.048, 0.048, 2.5, frame, -0.72, 0, -2.2, 10),
+    cyl(0.048, 0.048, 2.5, frame, -0.72, 0, 2.2, 10),
+    cyl(0.048, 0.048, 2.5, frame, 0.6, 0, -2.2, 10),
+    cyl(0.048, 0.048, 2.5, frame, 0.6, 0, 2.2, 10),
+    // Rear window mullions
+    box(0.045, 2.0, 0.045, frame, -0.72, 1.22, -1.45),
+    box(0.045, 2.0, 0.045, frame, -0.72, 1.22, -0.72),
+    box(0.045, 2.0, 0.045, frame, -0.72, 1.22, 0),
+    box(0.045, 2.0, 0.045, frame, -0.72, 1.22, 0.72),
+    box(0.045, 2.0, 0.045, frame, -0.72, 1.22, 1.45),
+    // Illuminated double-sided ad lightbox at -Z
+    box(1.26, 1.88, 0.14, frame, -0.08, 1.3, -2.25),
+    box(1.1, 1.7, 0.16, [0.95, 0.94, 0.88], -0.08, 1.3, -2.25),
+    // Contoured wooden slat bench & brackets
+    box(0.16, 0.035, 2.1, [0.48, 0.32, 0.18], -0.38, 0.47, 0.62),
+    box(0.16, 0.035, 2.1, [0.42, 0.27, 0.15], -0.56, 0.47, 0.62),
+    box(0.03, 0.18, 2.1, [0.48, 0.32, 0.18], -0.68, 0.66, 0.62),
+    box(0.36, 0.05, 0.05, frame, -0.5, 0.42, -0.22),
+    box(0.36, 0.05, 0.05, frame, -0.5, 0.42, 1.46),
+    // Curbside bus route totem sign
+    cyl(0.042, 0.046, 2.9, STEEL, 0.75, 0, -2.6, 10),
+    box(0.07, 0.52, 0.56, [0.06, 0.24, 0.58], 0.75, 2.52, -2.6),
+    box(0.08, 0.14, 0.44, REFL_W, 0.75, 2.62, -2.6),
+    box(0.05, 0.5, 0.32, REFL_W, 0.75, 1.6, -2.6),
+  ];
+  m.busStop = merge(busStopParts);
+
+  // Park/street bench: curved wooden slat seat & backrest on ornate cast-iron scroll armrests
+  const wood1 = [0.52, 0.34, 0.2];
+  const wood2 = [0.44, 0.28, 0.16];
+  const benchParts = [
+    cylRot(0.018, 0.018, 1.72, CAST, -0.02, 0.24, 0, Math.PI / 2, 0, 0, 8),
+  ];
+  for (const z of [-0.84, 0, 0.84]) {
+    benchParts.push(
+      box(0.08, 0.45, 0.055, CAST, 0.2, 0.22, z),
+      box(0.08, 0.94, 0.055, CAST, -0.26, 0.47, z),
+      box(0.52, 0.055, 0.055, CAST, -0.03, 0.42, z),
+    );
+    if (z !== 0) {
+      benchParts.push(
+        box(0.36, 0.042, 0.055, CAST, 0.06, 0.63, z),
+        ring(0.065, 0.016, CAST, 0.21, 0.57, z, 0, 0, 0, 12),
+        ring(0.052, 0.014, CAST, -0.04, 0.55, z, 0, 0, 0, 10),
+      );
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    benchParts.push(box(0.075, 0.03, 1.88, i % 2 ? wood2 : wood1, 0.18 - i * 0.09, 0.46 + (i === 1 || i === 2 ? 0.012 : 0), 0));
+  }
+  for (let i = 0; i < 3; i++) {
+    benchParts.push(box(0.03, 0.09, 1.88, i % 2 ? wood1 : wood2, -0.23 - i * 0.03, 0.6 + i * 0.13, 0));
+  }
+  m.bench = merge(benchParts);
+
+  // Bollard: bolted octagonal base flange, tapered cast-iron body, dual reflective bands, domed finial cap & chain rings
+  m.bollard = merge([
+    cyl(0.135, 0.145, 0.035, CAST, 0, 0, 0, 8),
+    cyl(0.09, 0.105, 0.84, [0.22, 0.24, 0.26], 0, 0.035, 0, 14),
+    cyl(0.095, 0.095, 0.05, REFL_W, 0, 0.72, 0, 14),
+    cyl(0.095, 0.095, 0.04, REFL_Y, 0, 0.64, 0, 14),
+    dome(0.092, 1, 0.75, 1, [0.22, 0.24, 0.26], 0, 0.875, 0, 14, 5, 0, Math.PI / 2),
+    ring(0.024, 0.007, CAST, 0, 0.78, 0.095, 0, Math.PI / 2, 0, 8),
+    ring(0.024, 0.007, CAST, 0, 0.78, -0.095, 0, Math.PI / 2, 0, 8),
   ]);
-  const wood = [0.5, 0.34, 0.2];
-  m.bench = merge([
-    box(0.45, 0.06, 1.8, wood, 0, 0.45, 0),
-    box(0.06, 0.4, 1.8, wood, -0.22, 0.72, 0),
-    box(0.4, 0.45, 0.06, DARK, 0, 0.22, -0.8),
-    box(0.4, 0.45, 0.06, DARK, 0, 0.22, 0.8),
-  ]);
-  m.bollard = merge([cyl(0.09, 0.1, 0.9, [0.33, 0.35, 0.36], 0, 0, 0), cyl(0.095, 0.095, 0.12, [0.88, 0.88, 0.85], 0, 0.64, 0)]);
-  const red = [0.78, 0.12, 0.1];
+
+  // Fire hydrant: base flange, barrel, upper flange ring, domed bonnet, pentagon nut, 2 side hose nozzles + 1 front steamer nozzle
+  const red = [0.76, 0.1, 0.08];
+  const capCol = [0.78, 0.78, 0.74];
   m.hydrant = merge([
-    cyl(0.13, 0.15, 0.55, red, 0, 0, 0),
-    cyl(0.04, 0.15, 0.14, red, 0, 0.55, 0),
-    box(0.34, 0.09, 0.09, red, 0, 0.38, 0),
-    box(0.09, 0.09, 0.2, [0.85, 0.82, 0.78], 0.12, 0.38, 0),
+    cyl(0.175, 0.185, 0.05, red, 0, 0, 0, 12),
+    cyl(0.12, 0.13, 0.46, red, 0, 0.05, 0, 14),
+    cyl(0.152, 0.152, 0.05, red, 0, 0.51, 0, 14),
+    dome(0.13, 1, 1.15, 1, red, 0, 0.56, 0, 14, 5, 0, Math.PI / 2),
+    cyl(0.036, 0.036, 0.06, capCol, 0, 0.69, 0, 5),
+    // Front pumper steamer nozzle (+X)
+    cylRot(0.068, 0.072, 0.08, red, 0.14, 0.37, 0, 0, 0, -Math.PI / 2, 12),
+    cylRot(0.078, 0.078, 0.038, capCol, 0.19, 0.37, 0, 0, 0, -Math.PI / 2, 12),
+    cylRot(0.032, 0.032, 0.03, capCol, 0.22, 0.37, 0, 0, 0, -Math.PI / 2, 5),
+    // Side 2.5" hose nozzles (+Z and -Z)
+    cylRot(0.044, 0.048, 0.07, red, 0, 0.41, 0.135, Math.PI / 2, 0, 0, 10),
+    cylRot(0.052, 0.052, 0.032, capCol, 0, 0.41, 0.18, Math.PI / 2, 0, 0, 10),
+    cylRot(0.044, 0.048, 0.07, red, 0, 0.41, -0.135, -Math.PI / 2, 0, 0, 10),
+    cylRot(0.052, 0.052, 0.032, capCol, 0, 0.41, -0.18, -Math.PI / 2, 0, 0, 10),
   ]);
-  m.bin = merge([cyl(0.27, 0.27, 0.86, [0.07, 0.16, 0.11], 0, 0, 0, 10), cyl(0.29, 0.2, 0.16, [0.07, 0.16, 0.11], 0, 0.86, 0, 10)]);
+
+  // Litter bin: stepped base plinth, slatted body with gold bands, dark inner liner, domed hood with apertures & brass stubber plate
+  const binG = [0.07, 0.16, 0.11];
+  m.bin = merge([
+    cyl(0.28, 0.29, 0.07, binG, 0, 0, 0, 14),
+    cyl(0.26, 0.245, 0.79, binG, 0, 0.07, 0, 14),
+    ring(0.268, 0.015, BRASS, 0, 0.46, 0, Math.PI / 2, 0, 0, 14),
+    ring(0.272, 0.015, binG, 0, 0.82, 0, Math.PI / 2, 0, 0, 14),
+    dome(0.29, 1, 0.62, 1, binG, 0, 0.86, 0, 14, 5, 0, Math.PI / 2),
+    box(0.52, 0.1, 0.32, [0.02, 0.02, 0.02], 0, 0.92, 0),
+    cyl(0.07, 0.07, 0.016, BRASS, 0, 1.035, 0, 10),
+  ]);
   return m;
 }
 
 /**
- * Builds UV-mapped 3D roadside traffic sign geometries (steel post + mounting clasps + double-sided sign face)
+ * Builds UV-mapped 3D roadside traffic sign geometries (flanged base + steel post + cap + mounting clasps + double-sided sign face)
  * referencing cells in buildTrafficSignAtlasTexture() (4x2 grid).
  */
-function buildSignModels() {
+export function buildSignModels() {
   const sm = {};
   // Swatch UV in Cell 7 (col=3, row=1 -> u in [0.82, 0.94], v in [0.12, 0.38])
   const su0 = 0.82, sv0 = 0.12, su1 = 0.94, sv1 = 0.38;
@@ -1014,10 +1269,12 @@ function buildSignModels() {
     backFace.rotateY(-Math.PI / 2); // faces -X
 
     return mergeUV([
-      uvColored(new THREE.CylinderGeometry(0.042, 0.055, postH, 8, 1), STEEL, su0, sv0, su1, sv1, 0, postH * 0.5, 0),
-      uvColored(new THREE.BoxGeometry(0.18, 0.14, 0.18), STEEL_DARK, su0, sv0, su1, sv1, 0, 0.07, 0),
-      uvColored(new THREE.BoxGeometry(0.095, 0.08, 0.18), STEEL_DARK, su0, sv0, su1, sv1, 0, centerY + boardH * 0.28, 0),
-      uvColored(new THREE.BoxGeometry(0.095, 0.08, 0.18), STEEL_DARK, su0, sv0, su1, sv1, 0, centerY - boardH * 0.28, 0),
+      uvColored(new THREE.CylinderGeometry(0.044, 0.056, postH, 10, 1), STEEL, su0, sv0, su1, sv1, 0, postH * 0.5, 0),
+      uvColored(new THREE.CylinderGeometry(0.12, 0.14, 0.04, 8, 1), STEEL_DARK, su0, sv0, su1, sv1, 0, 0.02, 0),
+      uvColored(new THREE.BoxGeometry(0.18, 0.16, 0.18), STEEL_DARK, su0, sv0, su1, sv1, 0, 0.08, 0),
+      uvColored(new THREE.CylinderGeometry(0.058, 0.058, 0.05, 10, 1), STEEL_DARK, su0, sv0, su1, sv1, 0, postH + 0.02, 0),
+      uvColored(new THREE.BoxGeometry(0.105, 0.08, 0.22), STEEL_DARK, su0, sv0, su1, sv1, 0, centerY + boardH * 0.28, 0),
+      uvColored(new THREE.BoxGeometry(0.105, 0.08, 0.22), STEEL_DARK, su0, sv0, su1, sv1, 0, centerY - boardH * 0.28, 0),
       uvColored(frontFace, [1, 1, 1], u0, v0, u1, v1, 0.048, centerY, 0),
       uvColored(backFace, [0.92, 0.92, 0.92], u0, v0, u1, v1, -0.048, centerY, 0),
     ]);

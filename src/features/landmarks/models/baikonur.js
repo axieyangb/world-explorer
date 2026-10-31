@@ -115,6 +115,26 @@ function buildSoyuzRocket(k, rx, rz) {
 
   // Iconic Bright Orange Interstage Lattice Skirt & Third Stage (Block I)
   k.color(SOYUZ_ORANGE).cyl(rx, y0 + 27.7, rz, 1.52, 1.52, 2.8, seg);
+  if (hi) {
+    // Open-truss diagonal hot-staging lattice ribs & RD-107A quad engine bells per booster
+    k.color(ENGINE_DK);
+    for (let i = 0; i < 12; i++) {
+      const a0 = (i / 12) * Math.PI * 2, a1 = ((i + 1) / 12) * Math.PI * 2;
+      k.strut(
+        [rx + Math.cos(a0) * 1.55, y0 + 27.8, rz + Math.sin(a0) * 1.55],
+        [rx + Math.cos(a1) * 1.55, y0 + 30.4, rz + Math.sin(a1) * 1.55],
+        0.14
+      );
+    }
+    // 4 folding lattice grid panels on the Soyuz MS upper fairing
+    k.color(SOYUZ_WHITE);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      k.push().translate(rx + Math.cos(a) * 1.78, y0 + 38.2, rz + Math.sin(a) * 1.78).rotateY(-a);
+      k.box(0, 0, 0, 1.25, 1.65, 0.16);
+      k.pop();
+    }
+  }
   k.color(SOYUZ_GREY).cyl(rx, y0 + 30.5, rz, 1.5, 1.5, 4.2, seg);
 
   // White Soyuz MS Spacecraft Fairing with upper folding grid panels & SAS Escape Tower

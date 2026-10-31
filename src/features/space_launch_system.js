@@ -1218,13 +1218,33 @@ export function buildArticulatedRocketStack(sp) {
   if (sp.id === "spacex_starbase") {
     // 1. SpaceX Starship (50m upper stage) + Super Heavy Booster (71m lower stage)
     const bGroup = new THREE.Group();
-    const bBody = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 69, 24), steelMat);
+    const bBody = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 69, 32), steelMat);
     bBody.position.y = 34.5;
     bGroup.add(bBody);
-    const hotRing = new THREE.Mesh(new THREE.CylinderGeometry(4.65, 4.65, 2.2, 24), darkMat);
+    // Super Heavy COPV aerodynamic chines & Raptor engine cluster bells
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const chine = new THREE.Mesh(new THREE.BoxGeometry(0.55, 58, 0.55), steelMat);
+      chine.position.set(Math.cos(a) * 4.62, 31.0, Math.sin(a) * 4.62);
+      bGroup.add(chine);
+    }
+    const bellGeo = new THREE.CylinderGeometry(0.32, 0.58, 1.8, 12);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const bell = new THREE.Mesh(bellGeo, darkMat);
+      bell.position.set(Math.cos(a) * 3.65, -0.7, Math.sin(a) * 3.65);
+      bGroup.add(bell);
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const bell = new THREE.Mesh(bellGeo, darkMat);
+      bell.position.set(Math.cos(a) * 1.15, -0.7, Math.sin(a) * 1.15);
+      bGroup.add(bell);
+    }
+    const hotRing = new THREE.Mesh(new THREE.CylinderGeometry(4.65, 4.65, 2.2, 32), darkMat);
     hotRing.position.y = 70.0;
     bGroup.add(hotRing);
-    // 4 waffle grid fins
+    // 4 waffle grid fins with cross-lattice ribs
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
       const fin = new THREE.Mesh(new THREE.BoxGeometry(2.8, 2.5, 0.45), darkMat);
@@ -1239,17 +1259,39 @@ export function buildArticulatedRocketStack(sp) {
     boosters.push(bGroup);
     root.add(bGroup);
 
-    // Upper Stage: Starship S30 (stainless steel + black TPS heatshield + aft & fwd flaps)
+    // Upper Stage: Starship S30 (stainless steel + curved black TPS heatshield + ogive nose + 6 Raptors)
     upperStage.position.y = 71.0;
-    const shipCyl = new THREE.Mesh(new THREE.CylinderGeometry(4.55, 4.55, 32, 24), steelMat);
+    const shipCyl = new THREE.Mesh(new THREE.CylinderGeometry(4.55, 4.55, 32, 32), steelMat);
     shipCyl.position.y = 16.0;
     upperStage.add(shipCyl);
-    const shipNose = new THREE.Mesh(new THREE.ConeGeometry(4.55, 18, 24), steelMat);
-    shipNose.position.y = 41.0;
+    const nosePts = [
+      new THREE.Vector2(4.55, 0),
+      new THREE.Vector2(4.25, 4.8),
+      new THREE.Vector2(3.55, 9.6),
+      new THREE.Vector2(2.35, 13.8),
+      new THREE.Vector2(0.95, 16.8),
+      new THREE.Vector2(0.0, 18.2),
+    ];
+    const shipNose = new THREE.Mesh(new THREE.LatheGeometry(nosePts, 32), steelMat);
+    shipNose.position.y = 32.0;
     upperStage.add(shipNose);
-    const tps = new THREE.Mesh(new THREE.BoxGeometry(5.2, 34, 2.2), darkMat);
-    tps.position.set(0, 18.0, 3.5);
-    upperStage.add(tps);
+    // Curved TPS heatshield shell hugging windward (+Z) side
+    const tpsShell = new THREE.Mesh(
+      new THREE.CylinderGeometry(4.61, 4.61, 32.0, 20, 1, false, -Math.PI * 0.42, Math.PI * 0.84),
+      darkMat
+    );
+    tpsShell.position.y = 16.0;
+    upperStage.add(tpsShell);
+    // 3 RVac + 3 Sea-level Raptor bells inside aft skirt
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const rvac = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.95, 2.2, 14), darkMat);
+      rvac.position.set(Math.cos(a) * 2.55, -0.6, Math.sin(a) * 2.55);
+      upperStage.add(rvac);
+      const rsl = new THREE.Mesh(bellGeo, darkMat);
+      rsl.position.set(Math.cos(a + Math.PI / 3) * 0.95, -0.5, Math.sin(a + Math.PI / 3) * 0.95);
+      upperStage.add(rsl);
+    }
     for (const sx of [-1, 1]) {
       const aftFlap = new THREE.Mesh(new THREE.BoxGeometry(2.8, 8.8, 0.45), darkMat);
       aftFlap.position.set(sx * 5.4, 6.0, 0);
@@ -1265,27 +1307,41 @@ export function buildArticulatedRocketStack(sp) {
     upperStage.userData.plume = uPlume;
     root.add(upperStage);
   } else if (sp.id === "nasa_ksc") {
-    // 2. NASA SLS Block 1 (Orange LH2 core + Twin 5-segment White SRBs + Orion MPCV)
-    const coreCyl = new THREE.Mesh(new THREE.CylinderGeometry(4.3, 4.3, 62, 24), orangeMat);
+    // 2. NASA SLS Block 1 (Orange LH2 core + 4 RS-25 bells + Twin 5-segment White SRBs + Orion MPCV)
+    const coreCyl = new THREE.Mesh(new THREE.CylinderGeometry(4.3, 4.3, 62, 32), orangeMat);
     coreCyl.position.y = 31.0;
     coreStage.add(coreCyl);
-    const interstage = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 4.3, 8, 24), whiteMat);
+    const interstage = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 4.3, 8, 32), whiteMat);
     interstage.position.y = 66.0;
     coreStage.add(interstage);
+    const rs25Geo = new THREE.CylinderGeometry(0.45, 0.98, 2.4, 14);
+    for (const [ex, ez] of [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]]) {
+      const bell = new THREE.Mesh(rs25Geo, darkMat);
+      bell.position.set(ex, -1.0, ez);
+      coreStage.add(bell);
+    }
     const cPlume = _makePlumeCone(3.2, 6.5, 42, 0xd8f0ff, 0x62a8ff);
     cPlume.position.y = 0;
     coreStage.add(cPlume);
     coreStage.userData.plume = cPlume;
     root.add(coreStage);
 
-    // Twin Solid Rocket Boosters
+    // Twin Solid Rocket Boosters with black roll-pattern bands & nozzle bells
     for (const sx of [-1, 1]) {
       const srb = new THREE.Group();
       srb.position.set(sx * 6.5, 0, 0);
-      const srbCyl = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 47, 16), whiteMat);
+      const srbCyl = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 47, 24), whiteMat);
       srbCyl.position.y = 23.5;
       srb.add(srbCyl);
-      const srbCone = new THREE.Mesh(new THREE.ConeGeometry(1.9, 6.5, 16), whiteMat);
+      for (const by of [11, 20, 29, 38, 45]) {
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.94, 1.94, 0.85, 24), darkMat);
+        ring.position.y = by;
+        srb.add(ring);
+      }
+      const srbNozzle = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.75, 2.6, 18), darkMat);
+      srbNozzle.position.y = -1.1;
+      srb.add(srbNozzle);
+      const srbCone = new THREE.Mesh(new THREE.ConeGeometry(1.9, 6.5, 24), whiteMat);
       srbCone.position.y = 50.25;
       srb.add(srbCone);
       const bPlume = _makePlumeCone(2.1, 5.2, 48, 0xfff8d6, 0xff8c24);
@@ -1544,18 +1600,38 @@ function buildOrbitalCraftModel(kind, accentHex) {
   });
 
   if (kind === "iss") {
-    // 109m Integrated Truss Structure
+    // 109m Integrated Truss Structure + Solar Alpha Rotary Joints (SARJ)
     const truss = new THREE.Mesh(new THREE.BoxGeometry(26, 1.1, 1.1), trussMat);
     g.add(truss);
-    // Pressurized modules (Zvezda, Zarya, Unity, Destiny, Harmony, Kibo, Columbus)
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 14, 16), whiteMat);
+    for (const sx of [-5.8, 5.8]) {
+      const sarj = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 1.2, 16), silverMat);
+      sarj.rotation.z = Math.PI / 2;
+      sarj.position.x = sx;
+      g.add(sarj);
+    }
+    // Pressurized modules (Zvezda, Zarya, Unity, Destiny, Harmony, Kibo JEM, Columbus)
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 14, 24), whiteMat);
     core.rotation.x = Math.PI / 2;
     g.add(core);
-    const crossMod = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 8.5, 14), silverMat);
+    const crossMod = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 8.5, 20), silverMat);
+    crossMod.rotation.z = Math.PI / 2;
     crossMod.position.z = 2.8;
     g.add(crossMod);
-    // 8 Iconic Copper-Gold Solar Array Wings (4 pairs)
+    const cupola = new THREE.Mesh(new THREE.SphereGeometry(0.75, 14, 10), silverMat);
+    cupola.position.set(0, -1.2, 1.2);
+    g.add(cupola);
+    // 6 White Accordion Thermal Radiator Panels projecting aft from S1/P1 truss
+    for (const rx of [-4.2, -3.0, -1.8, 1.8, 3.0, 4.2]) {
+      const rad = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.06, 4.2), whiteMat);
+      rad.position.set(rx, -0.4, -2.8);
+      g.add(rad);
+    }
+    // 8 Iconic Copper-Gold Solar Array Wings (4 pairs) + central mast booms
     for (const sx of [-11.5, -7.8, 7.8, 11.5]) {
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 16.5, 8), trussMat);
+      mast.rotation.x = Math.PI / 2;
+      mast.position.set(sx, 0, 0);
+      g.add(mast);
       for (const sz of [-1, 1]) {
         const wing = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.08, 7.6), copperSolarMat);
         wing.position.set(sx, 0, sz * 4.4);
@@ -1563,16 +1639,27 @@ function buildOrbitalCraftModel(kind, accentHex) {
       }
     }
   } else if (kind === "tiangong") {
-    // T-Shaped Chinese Space Station: Tianhe Core + Wentian & Mengtian Lab Modules
-    const tianhe = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.25, 13.5, 16), whiteMat);
+    // T-Shaped Chinese Space Station: Tianhe Core + Spherical Docking Hub + Wentian & Mengtian Labs
+    const tianhe = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.25, 13.5, 24), whiteMat);
     tianhe.rotation.x = Math.PI / 2;
     g.add(tianhe);
-    const labs = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 16.5, 16), whiteMat);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(1.42, 18, 14), silverMat);
+    hub.position.z = 3.2;
+    g.add(hub);
+    const labs = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 16.5, 24), whiteMat);
     labs.rotation.z = Math.PI / 2;
     labs.position.z = 3.2;
     g.add(labs);
-    // 4 Giant Golden Flexible Solar Array Wings at the ends of Wentian & Mengtian
+    // Docked Shenzhou Crew Spacecraft (nadir) & Tianzhou Cargo Craft (aft)
+    const shenzhou = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.85, 3.8, 16), goldSolarMat);
+    shenzhou.position.set(0, -2.4, 3.2);
+    g.add(shenzhou);
+    // 4 Giant Golden Flexible Solar Array Wings + central deployment masts
     for (const sx of [-7.8, 7.8]) {
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 18.0, 8), trussMat);
+      mast.rotation.x = Math.PI / 2;
+      mast.position.set(sx, 0, 3.2);
+      g.add(mast);
       for (const sz of [-1, 1]) {
         const wing = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.08, 8.2), goldSolarMat);
         wing.position.set(sx, 0, 3.2 + sz * 4.8);
@@ -1580,26 +1667,51 @@ function buildOrbitalCraftModel(kind, accentHex) {
       }
     }
   } else if (kind === "hubble") {
-    // Silver optical telescope cylinder + aperture door + twin blue solar panels
-    const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.65, 9.5, 20), silverMat);
-    tube.rotation.x = Math.PI / 2;
-    g.add(tube);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.6, 0.25), silverMat);
-    door.position.set(0, 1.8, 4.9);
-    door.rotation.x = -0.5;
+    // Stepped Silver Optical Telescope Cylinder + Aft Equipment Section + HGA Dishes + Twin Blue Solar Wings
+    const aftTube = new THREE.Mesh(new THREE.CylinderGeometry(1.72, 1.72, 4.4, 24), silverMat);
+    aftTube.rotation.x = Math.PI / 2;
+    aftTube.position.z = -2.4;
+    g.add(aftTube);
+    const fwdTube = new THREE.Mesh(new THREE.CylinderGeometry(1.42, 1.48, 5.4, 24), silverMat);
+    fwdTube.rotation.x = Math.PI / 2;
+    fwdTube.position.z = 2.2;
+    g.add(fwdTube);
+    const door = new THREE.Mesh(new THREE.CylinderGeometry(1.42, 1.42, 0.25, 20), silverMat);
+    door.position.set(0, 1.55, 5.0);
+    door.rotation.x = -0.45;
     g.add(door);
+    // High-Gain Antenna (HGA) masts & parabolic dishes
+    for (const sy of [-1, 1]) {
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.6, 8), trussMat);
+      mast.position.set(0, sy * 2.6, -0.5);
+      g.add(mast);
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(0.65, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.45), whiteMat);
+      dish.position.set(0, sy * 3.85, -0.5);
+      g.add(dish);
+    }
     for (const sx of [-1, 1]) {
       const wing = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.08, 1.8), blueSolarMat);
       wing.position.set(sx * 4.2, 0, 0);
       g.add(wing);
     }
   } else {
-    // Active Constellation Satellite
-    const bus = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 2.8), goldSolarMat);
+    // Active Constellation Satellite: octagonal gold-foil bus + parabolic dish + nadir sensor dome + solar wings
+    const bus = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 2.8, 8), goldSolarMat);
+    bus.rotation.x = Math.PI / 2;
     g.add(bus);
+    const dish = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), whiteMat);
+    dish.position.set(0, 1.45, 0.4);
+    g.add(dish);
+    const sensor = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.72, 0.85, 16), silverMat);
+    sensor.position.set(0, -1.45, 0);
+    g.add(sensor);
     for (const sx of [-1, 1]) {
+      const yoke = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.6, 8), trussMat);
+      yoke.rotation.z = Math.PI / 2;
+      yoke.position.set(sx * 1.6, 0, 0);
+      g.add(yoke);
       const wing = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.08, 1.8), blueSolarMat);
-      wing.position.set(sx * 4.4, 0, 0);
+      wing.position.set(sx * 4.6, 0, 0);
       g.add(wing);
     }
   }

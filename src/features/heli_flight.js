@@ -291,6 +291,20 @@ export class HeliFlight {
     });
     const w = this.app.water;
     if (w && typeof w.heliMinY === 'function') y = Math.max(y, w.heliMinY(x, z) || -Infinity);
+    const maritime = this.app.maritime;
+    if (maritime && typeof maritime.getDeckHeightAt === 'function') {
+      const deck = maritime.getDeckHeightAt(x, z, refY);
+      if (deck && Number.isFinite(deck.y) && deck.y <= refY + 1.5 && deck.y > y) {
+        y = deck.y;
+      }
+    }
+    const airliner = this.app.airliner;
+    if (airliner && typeof airliner.getSupportHeightAt === 'function') {
+      const airY = airliner.getSupportHeightAt(x, z, refY);
+      if (Number.isFinite(airY) && airY <= refY + 1.5 && airY > y) {
+        y = airY;
+      }
+    }
     return y;
   }
 
@@ -435,7 +449,14 @@ export class HeliFlight {
       v.set(0, 0, 0);
       vF = 0;
       vR = 0;
-      p.y = sup0;
+      const deckRide = this.app.maritime?.getDeckHeightAt?.(p.x, p.z, p.y + 2.2);
+      if (deckRide && Math.abs(p.y - deckRide.y) < 2.2) {
+        p.x += (deckRide.vx || 0) * dt;
+        p.z += (deckRide.vz || 0) * dt;
+        p.y = deckRide.y;
+      } else {
+        p.y = sup0;
+      }
       this._holdY = p.y;
       s.altitudeHold = false;
     } else if (this.autoLanding) {
@@ -504,6 +525,77 @@ export class HeliFlight {
             v.z += wallOut.nz * vn * 1.15;
             v.x *= 0.75;
             v.z *= 0.75;
+          }
+        }
+        // 3D Collision against Maritime Ships & Boats (hull, cargo stacks, bridge superstructure, masts)
+        if (this.app.maritime && typeof this.app.maritime.resolveAircraftCollision === 'function') {
+          const shipTmp = { x: nx, y: ny + 1.3, z: nz };
+          const shipCol = this.app.maritime.resolveAircraftCollision(
+            shipTmp,
+            CFG.RADIUS,
+            5.2,
+            ny + 1.3,
+            s.yaw,
+            v,
+            { pitch: s.pitch, roll: s.roll, halfLen: 5.5, halfH: 1.8, applyPosition: true }
+          );
+          if (shipCol && shipCol.hit) {
+            nx = shipTmp.x;
+            nz = shipTmp.z;
+            if (shipCol.ny > 0.62) {
+              ny = Math.max(ny, shipCol.topY);
+              if (v.y < 0) {
+                landV = Math.max(landV, -v.y);
+                v.y = 0;
+              }
+              this._holdY = ny;
+            } else {
+              ny = Math.max(sup, shipTmp.y - 1.3);
+              const vn = -(v.x * shipCol.nx + v.y * shipCol.ny + v.z * shipCol.nz);
+              if (vn > 0) {
+                impact = Math.max(impact, vn);
+                v.x += shipCol.nx * vn * 1.18;
+                v.y += shipCol.ny * vn * 0.85;
+                v.z += shipCol.nz * vn * 1.18;
+                v.x *= 0.72;
+                v.z *= 0.72;
+              }
+            }
+          }
+        }
+        // 3D Collision against Airliners (parked, hero, runway, sky)
+        if (this.app.airliner && typeof this.app.airliner.resolveExternalCollision === 'function') {
+          const airTmp = { x: nx, y: ny + 1.3, z: nz };
+          const airCol = this.app.airliner.resolveExternalCollision(
+            airTmp,
+            s.yaw,
+            CFG.RADIUS,
+            10.4,
+            v,
+            true
+          );
+          if (airCol && airCol.hit) {
+            nx = airTmp.x;
+            nz = airTmp.z;
+            if (airCol.ny > 0.62) {
+              ny = Math.max(ny, airCol.topY);
+              if (v.y < 0) {
+                landV = Math.max(landV, -v.y);
+                v.y = 0;
+              }
+              this._holdY = ny;
+            } else {
+              ny = Math.max(sup, airTmp.y - 1.3);
+              const vn = -(v.x * airCol.nx + v.y * airCol.ny + v.z * airCol.nz);
+              if (vn > 0) {
+                impact = Math.max(impact, vn);
+                v.x += airCol.nx * vn * 1.18;
+                v.y += airCol.ny * vn * 0.85;
+                v.z += airCol.nz * vn * 1.18;
+                v.x *= 0.72;
+                v.z *= 0.72;
+              }
+            }
           }
         }
         const sup2 = this._support(nx, nz, Math.max(prevY, ny) + 0.5);
@@ -577,8 +669,88 @@ export class HeliFlight {
     if (surf && surf.seg && surf.seg.name) app.currentRoadName = surf.seg.name;
   }
 
+  _ensureGunshipWeaponPods(mesh) {
+    if (!mesh || !mesh.userData || mesh.userData._gunshipPodsAttached) return;
+    mesh.userData._gunshipPodsAttached = true;
+    const fuselage = mesh.userData.fuselage || mesh;
+    const podGroup = new THREE.Group();
+    podGroup.name = 'heli_fine_ordnance_pods';
+
+    const darkAlloy = new THREE.MeshStandardMaterial({ color: 0x1c222b, roughness: 0.26, metalness: 0.80 });
+    const missileMat = new THREE.MeshStandardMaterial({ color: 0x12161d, roughness: 0.20, metalness: 0.72 });
+    const seekerGlass = new THREE.MeshStandardMaterial({ color: 0x0c384a, roughness: 0.06, metalness: 0.94 });
+    const copperBand = new THREE.MeshStandardMaterial({ color: 0xd49b35, roughness: 0.22, metalness: 0.86 });
+    const flirEmerald = new THREE.MeshBasicMaterial({ color: 0x00ffaa });
+
+    // Chin FLIR Electro-Optical Sensor Turret multi-spectral lenses + M230 30mm Chain Gun cooling jacket
+    const flirEye = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.03, 14), flirEmerald);
+    flirEye.rotation.x = Math.PI * 0.5;
+    flirEye.position.set(0, 0.72, 2.50);
+    podGroup.add(flirEye);
+
+    const gunShroud = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.078, 0.55, 14), darkAlloy);
+    gunShroud.rotation.x = Math.PI * 0.5;
+    gunShroud.position.set(0, 0.68, 2.52);
+    podGroup.add(gunShroud);
+
+    // 19-Tube M261 Hydra 70 Rocket Pod perforated tube cluster & 4 AGM-114 Hellfire Missiles on outboard M299 racks
+    const tubeGeo = new THREE.CylinderGeometry(0.024, 0.024, 0.05, 8);
+    tubeGeo.rotateX(Math.PI * 0.5);
+    const hellfireBodyGeo = new THREE.CylinderGeometry(0.062, 0.062, 1.18, 14);
+    hellfireBodyGeo.rotateX(Math.PI * 0.5);
+    hellfireBodyGeo.computeVertexNormals();
+    const hellfireNoseGeo = new THREE.SphereGeometry(0.062, 12, 10);
+    hellfireNoseGeo.scale(1, 1, 1.6);
+    hellfireNoseGeo.computeVertexNormals();
+
+    for (const sx of [-1, 1]) {
+      // 7 central + 12 outer = 19 rocket tubes on each Hydra pod face (X = ±1.68, Y = 0.94, Z = 0.72)
+      for (let r = 0; r < 19; r++) {
+        let tx = 0, ty = 0;
+        if (r > 0 && r <= 6) {
+          const a = ((r - 1) / 6) * Math.PI * 2;
+          tx = Math.cos(a) * 0.065; ty = Math.sin(a) * 0.065;
+        } else if (r > 6) {
+          const a = ((r - 7) / 12) * Math.PI * 2;
+          tx = Math.cos(a) * 0.13; ty = Math.sin(a) * 0.13;
+        }
+        const bore = new THREE.Mesh(tubeGeo, copperBand);
+        bore.position.set(sx * 1.68 + tx, 0.94 + ty, 0.72);
+        podGroup.add(bore);
+      }
+
+      // Outboard M299 Rail Launcher + 2 AGM-114 Hellfire Missiles per side (4 Hellfire missiles total)
+      const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.55), darkAlloy);
+      pylon.position.set(sx * 1.98, 1.04, -0.05);
+      podGroup.add(pylon);
+
+      for (const mx of [-0.09, 0.09]) {
+        const mGrp = new THREE.Group();
+        mGrp.position.set(sx * 1.98 + mx, 0.88, 0.02);
+        mGrp.add(new THREE.Mesh(hellfireBodyGeo, missileMat));
+        const nose = new THREE.Mesh(hellfireNoseGeo, seekerGlass);
+        nose.position.z = 0.59;
+        mGrp.add(nose);
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.064, 0.06, 12), copperBand);
+        band.rotation.x = Math.PI * 0.5;
+        band.position.z = 0.28;
+        mGrp.add(band);
+        for (let f = 0; f < 4; f++) {
+          const fin = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.18, 0.18), darkAlloy);
+          fin.position.z = -0.45;
+          fin.rotation.z = f * Math.PI * 0.5 + Math.PI * 0.25;
+          mGrp.add(fin);
+        }
+        podGroup.add(mGrp);
+      }
+    }
+
+    fuselage.add(podGroup);
+  }
+
   _updateVisuals(dt) {
     const s = this.state, mesh = this.app.heliMesh, ud = mesh.userData;
+    this._ensureGunshipWeaponPods(mesh);
     // rotate about the centre of mass (~1.3 m above skids)
     mesh.quaternion.copy(s.quaternion);
     const c = this._up; // world up of the airframe (already computed)
@@ -712,39 +884,80 @@ export class HeliFlight {
     this._weaponGroup.name = 'heli_weapons_vfx';
     this.app.scene.add(this._weaponGroup);
 
-    // Muzzle flash at nose cannon barrel
-    const mfGeo = new THREE.SphereGeometry(0.42, 8, 8);
-    const mfMat = new THREE.MeshBasicMaterial({ color: 0xffd24c, transparent: true, opacity: 0.9, depthWrite: false });
+    // Multi-layered muzzle flash at 30mm M230 nose chain gun barrel
+    const mfGeo = new THREE.SphereGeometry(0.42, 14, 12);
+    mfGeo.computeVertexNormals();
+    const mfMat = new THREE.MeshBasicMaterial({ color: 0xffd24c, transparent: true, opacity: 0.92, depthWrite: false });
     this._muzzleFlash = new THREE.Mesh(mfGeo, mfMat);
+    const mfCoreGeo = new THREE.OctahedronGeometry(0.26, 1);
+    mfCoreGeo.scale(1.2, 1.2, 2.4);
+    mfCoreGeo.computeVertexNormals();
+    const mfCoreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.96, depthWrite: false });
+    this._muzzleFlash.add(new THREE.Mesh(mfCoreGeo, mfCoreMat));
     this._muzzleFlash.visible = false;
     this._weaponGroup.add(this._muzzleFlash);
 
-    // Pool of 30mm rotary cannon tracer bolts
+    // Pool of 30mm M230 Chain Gun Armor-Piercing Incendiary (API) tracer bolts
     this._cannonPool = [];
-    // Thick, bright tracers so the stream stays readable from the chase camera.
-    const boltGeo = new THREE.BoxGeometry(0.34, 0.34, 7.0);
-    const boltMat = new THREE.MeshBasicMaterial({ color: 0xffd36a, toneMapped: false });
+    const boltOuterGeo = new THREE.CylinderGeometry(0.15, 0.20, 6.8, 12);
+    boltOuterGeo.rotateX(Math.PI * 0.5);
+    boltOuterGeo.computeVertexNormals();
+    const boltCoreGeo = new THREE.CylinderGeometry(0.075, 0.09, 6.2, 10);
+    boltCoreGeo.rotateX(Math.PI * 0.5);
+    boltCoreGeo.computeVertexNormals();
+    const boltMat = new THREE.MeshBasicMaterial({ color: 0xffc84a, toneMapped: false, transparent: true, opacity: 0.88 });
+    const boltCoreMat = new THREE.MeshBasicMaterial({ color: 0xfffef0, toneMapped: false });
     for (let i = 0; i < 36; i++) {
-      const mesh = new THREE.Mesh(boltGeo, boltMat);
+      const mesh = new THREE.Group();
+      mesh.add(new THREE.Mesh(boltOuterGeo, boltMat), new THREE.Mesh(boltCoreGeo, boltCoreMat));
       mesh.visible = false;
       mesh.frustumCulled = false;
       this._weaponGroup.add(mesh);
       this._cannonPool.push({ active: false, mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, aim: new THREE.Vector3() });
     }
 
-    // Pool of Hydra 70 wing-pod rockets
+    // Pool of Fin-Stabilized Hydra 70 / Hellfire Wing-Pod Rockets
     this._rocketPool = [];
-    const rBodyGeo = new THREE.CylinderGeometry(0.09, 0.09, 1.35, 8);
+    const rBodyGeo = new THREE.CylinderGeometry(0.085, 0.085, 1.18, 16);
     rBodyGeo.rotateX(Math.PI * 0.5);
-    const rBodyMat = new THREE.MeshBasicMaterial({ color: 0xf4f6f8 });
-    const rFlameGeo = new THREE.SphereGeometry(0.28, 8, 8);
-    const rFlameMat = new THREE.MeshBasicMaterial({ color: 0xff6218 });
+    rBodyGeo.computeVertexNormals();
+    const rNoseGeo = new THREE.ConeGeometry(0.085, 0.34, 16);
+    rNoseGeo.rotateX(Math.PI * 0.5);
+    rNoseGeo.translate(0, 0, 0.76);
+    rNoseGeo.computeVertexNormals();
+    const rBandGeo = new THREE.CylinderGeometry(0.088, 0.088, 0.08, 16);
+    rBandGeo.rotateX(Math.PI * 0.5);
+    rBandGeo.translate(0, 0, 0.52);
+    rBandGeo.computeVertexNormals();
+    const rFinGeo = new THREE.BoxGeometry(0.012, 0.28, 0.22);
+    const rBodyMat = new THREE.MeshStandardMaterial({ color: 0xe9eef4, roughness: 0.24, metalness: 0.45 });
+    const rNoseMat = new THREE.MeshStandardMaterial({ color: 0x2a323d, roughness: 0.22, metalness: 0.78 });
+    const rBandMat = new THREE.MeshStandardMaterial({ color: 0xd4a034, roughness: 0.25, metalness: 0.85 });
+    const rFlameGeo = new THREE.ConeGeometry(0.22, 0.85, 14);
+    rFlameGeo.rotateX(-Math.PI * 0.5);
+    rFlameGeo.translate(0, 0, -0.95);
+    rFlameGeo.computeVertexNormals();
+    const rFlameCoreGeo = new THREE.ConeGeometry(0.11, 0.52, 12);
+    rFlameCoreGeo.rotateX(-Math.PI * 0.5);
+    rFlameCoreGeo.translate(0, 0, -0.78);
+    rFlameCoreGeo.computeVertexNormals();
+    const rFlameMat = new THREE.MeshBasicMaterial({ color: 0xff6218, toneMapped: false });
+    const rFlameCoreMat = new THREE.MeshBasicMaterial({ color: 0xfff8d6, toneMapped: false });
     for (let i = 0; i < 16; i++) {
       const grp = new THREE.Group();
-      const body = new THREE.Mesh(rBodyGeo, rBodyMat);
-      const flame = new THREE.Mesh(rFlameGeo, rFlameMat);
-      flame.position.set(0, 0, -0.75);
-      grp.add(body, flame);
+      grp.add(
+        new THREE.Mesh(rBodyGeo, rBodyMat),
+        new THREE.Mesh(rNoseGeo, rNoseMat),
+        new THREE.Mesh(rBandGeo, rBandMat),
+        new THREE.Mesh(rFlameGeo, rFlameMat),
+        new THREE.Mesh(rFlameCoreGeo, rFlameCoreMat)
+      );
+      for (let f = 0; f < 4; f++) {
+        const fin = new THREE.Mesh(rFinGeo, rNoseMat);
+        fin.position.set(0, 0, -0.46);
+        fin.rotation.z = f * Math.PI * 0.5;
+        grp.add(fin);
+      }
       grp.visible = false;
       grp.frustumCulled = false;
       this._weaponGroup.add(grp);
