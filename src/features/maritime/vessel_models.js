@@ -213,20 +213,49 @@ class Acc {
     const l = Math.hypot(1, tilt);
     this.fquad(a, b, c, d, [fx / l, tilt / l, fz / l], hex, pa, em);
   }
-  /** Row of windows along a wall at constant x (side = +1 port / -1 starboard) from z0 to z1. */
+  /** Row of windows along a wall at constant x (side = +1 port / -1 starboard) from z0 to z1, with 3D mullions & sills. */
   winX(x, side, z0, z1, y, w, h, pitch, lit = 0.55, hex = GLASS) {
     const n = Math.max(1, Math.floor((z1 - z0) / pitch));
     const off = (z1 - z0 - (n - 1) * pitch) / 2;
+    const ang = side > 0 ? Math.PI / 2 : -Math.PI / 2;
     for (let k = 0; k < n; k++) {
-      this.panel(x + side * 0.03, y, z0 + off + k * pitch, w, h, side > 0 ? Math.PI / 2 : -Math.PI / 2, hex, this.rnd() < lit ? E_LIT : E_GLASS);
+      const zk = z0 + off + k * pitch;
+      const em = this.rnd() < lit ? E_LIT : E_GLASS;
+      this.panel(x + side * 0.03, y, zk, w, h, ang, hex, em);
+      if (!this.lod) {
+        // Crisp vertical side frames + center mullion bar dividing wide windows into framed panes
+        const mThick = Math.min(0.08, Math.max(0.035, w * 0.055));
+        this.box(0.045, h + 0.06, mThick, x + side * 0.038, y - h * 0.5 - 0.03, zk - w * 0.5, DARK);
+        this.box(0.045, h + 0.06, mThick, x + side * 0.038, y - h * 0.5 - 0.03, zk + w * 0.5, DARK);
+        if (w >= 1.15) {
+          this.box(0.048, h + 0.02, mThick * 0.85, x + side * 0.042, y - h * 0.5 - 0.01, zk, OFFWHITE);
+        }
+      }
+    }
+    if (!this.lod && n >= 2) {
+      const spanZ = (n - 1) * pitch + w + 0.16;
+      const midZ = (z0 + z1) * 0.5;
+      this.box(0.055, 0.05, spanZ, x + side * 0.04, y - h * 0.5 - 0.05, midZ, OFFWHITE);
+      this.box(0.06, 0.055, spanZ, x + side * 0.042, y + h * 0.5, midZ, OFFWHITE);
     }
   }
-  /** Row of windows along a wall at constant z (dir = +1 facing bow, -1 facing stern) from x0 to x1. */
+  /** Row of windows along a wall at constant z (dir = +1 facing bow, -1 facing stern) from x0 to x1, with 3D mullions. */
   winZ(z, dir, x0, x1, y, w, h, pitch, lit = 0.55, hex = GLASS, tilt = 0) {
     const n = Math.max(1, Math.floor((x1 - x0) / pitch));
     const off = (x1 - x0 - (n - 1) * pitch) / 2;
+    const ang = dir > 0 ? 0 : Math.PI;
     for (let k = 0; k < n; k++) {
-      this.panel(x0 + off + k * pitch, y, z + dir * 0.03, w, h, dir > 0 ? 0 : Math.PI, hex, this.rnd() < lit ? E_LIT : E_GLASS, tilt);
+      const xk = x0 + off + k * pitch;
+      const em = this.rnd() < lit ? E_LIT : E_GLASS;
+      this.panel(xk, y, z + dir * 0.03, w, h, ang, hex, em, tilt);
+      if (!this.lod) {
+        const mThick = Math.min(0.08, Math.max(0.035, w * 0.055));
+        this.panel(xk - w * 0.5, y, z + dir * 0.042, mThick, h + 0.05, ang, DARK, 0, tilt);
+        this.panel(xk + w * 0.5, y, z + dir * 0.042, mThick, h + 0.05, ang, DARK, 0, tilt);
+        if (w >= 1.15) {
+          this.panel(xk, y, z + dir * 0.045, mThick * 0.85, h + 0.02, ang, OFFWHITE, 0, tilt);
+        }
+      }
     }
   }
   /** Guard rail along a polyline of deck points [[x, y, z], ...]: posts, top and mid rails. */
@@ -468,17 +497,25 @@ function lifebuoy(A, x, y, z, yaw = 0, r = 0.36) {
   A.torus(r, r * 0.28, x, y, z, ORANGE, { ry: yaw, rs: 6, ts: 10 });
 }
 
-/** White cylindrical inflatable liferaft canister in a deck cradle. */
+/** White cylindrical inflatable liferaft canister in a steel deck cradle with lashing straps & hydrostatic release. */
 function liferaft(A, x, y, z, r = 0.45, len = 1.35) {
   if (A.lod) return;
-  A.box(r * 1.4, r * 0.5, len * 0.7, x, y, z, STEEL);
+  // Steel cradle skids & crossbars
+  A.box(r * 1.45, r * 0.48, len * 0.76, x, y, z, STEEL);
   A.capsule(r, len, x, y + r * 1.15, z, WHITE, { seg: 8 });
-  A.box(r * 2.05, r * 2.05, 0.08, x, y + r * 0.15, z, BLACK);
+  // Twin black webbing lashing straps + circumferential container seal band
+  for (const dz of [-len * 0.22, len * 0.22]) {
+    A.box(r * 2.08, r * 2.08, 0.06, x, y + r * 0.14, z + dz, BLACK);
+  }
+  A.box(r * 2.10, 0.07, len * 0.88, x, y + r * 1.12, z, DARK);
+  // Orange hydrostatic release unit (HRU) cylinder on side of cradle
+  A.cyl(r * 0.16, r * 0.45, x + r * 0.82, y + r * 0.35, z, ORANGE, { seg: 6 });
 }
 
 /**
- * Accommodation block: `tiers` decks of height th on y, each with a row of windows on all four sides,
- * a deck-edge lip per tier, exterior inclined companionway ladders on the aft face, and an optional bridge on top.
+ * Accommodation block: `tiers` decks of height th on y, each with framed windows on all four sides,
+ * a deck-edge lip per tier, exterior inclined staircase flights with treads & handrails on the aft face,
+ * and an optional full-beam bridge on top.
  */
 function accommodation(A, o) {
   const { hw, z0, z1, y, tiers, th } = o;
@@ -500,10 +537,21 @@ function accommodation(A, o) {
     for (const sd of [1, -1]) A.winX(sd * hh, sd, zz0 + 1, zz1 - 1 - (o.ch || 0), wy, ww, wh, ww * 1.9, o.lit ?? 0.55);
     A.winZ(zz1, 1, -hh + 1 + (o.ch || 0), hh - 1 - (o.ch || 0), wy, ww, wh, ww * 1.9, o.lit ?? 0.55);
     A.winZ(zz0, -1, -hh + 1, hh - 1, wy, ww, wh, ww * 1.9, o.lit ?? 0.55);
-    A.box(hh * 2 + 0.3, 0.18, zz1 - zz0 + 0.3, 0, yy + th - 0.05, (zz0 + zz1) / 2, hex, { pa });
-    const sx = (t % 2 ? 1 : -1) * (hh * 0.55);
-    A.rod([sx - 0.7, yy, zz0 - 0.45], [sx + 0.7, yy + th, zz0 - 0.45], 0.09, STEEL, 4);
-    if (t === 1) {
+    A.box(hh * 2 + 0.34, 0.2, zz1 - zz0 + 0.34, 0, yy + th - 0.05, (zz0 + zz1) / 2, hex, { pa });
+    // Exterior bridge staircase flight between accommodation tiers (inclined twin stringers, step treads, handrail & landing)
+    const dir = t % 2 ? 1 : -1;
+    const sx0 = dir * (hh * 0.52 - 1.15), sx1 = dir * (hh * 0.52 + 1.15);
+    const sz = zz0 - 0.55;
+    A.box(1.5, 0.12, 0.95, sx1, yy + th - 0.10, sz, STEEL); // upper stair landing grating
+    for (const dz of [-0.28, 0.28]) {
+      A.rod([sx0, yy + 0.05, sz + dz], [sx1, yy + th - 0.05, sz + dz], 0.065, STEEL, 4); // twin stair stringers
+      A.rod([sx0, yy + 0.95, sz + dz], [sx1, yy + th + 0.85, sz + dz], 0.038, WHITE, 4); // twin safety handrails
+    }
+    for (let st = 1; st <= 6; st++) {
+      const f = st / 7;
+      A.box(0.28, 0.05, 0.56, sx0 + (sx1 - sx0) * f, yy + th * f, sz, DECK_GREY);
+    }
+    if (t === 1 || t === 2) {
       for (const sd of [1, -1]) liferaft(A, sd * (hh - 0.6), yy + th, zz0 + 1.5, 0.48, 1.4);
     }
   }
@@ -512,7 +560,7 @@ function accommodation(A, o) {
   return yb;
 }
 
-/** Wheelhouse with a raked wrap-around window band, enclosed/open bridge wings, satcom radomes, and radar mast. */
+/** Wheelhouse with raked wrap-around framed windows, bridge wing overhang support brackets, satcom radomes, and radar mast. */
 function bridge(A, o) {
   const { hw, z0, z1, y } = o;
   const h = o.bh ?? 3.2, hex = o.hex ?? WHITE, pa = o.pa ?? 0;
@@ -521,11 +569,20 @@ function bridge(A, o) {
   if (A.lod) {
     A.box(hw * 2 * 0.9, wh, 0.06, 0, wy - wh / 2, z1 + 0.03, GLASS, { em: E_LIT });
   } else {
-    const n = Math.max(3, Math.round(hw * 2 / 1.6));
-    const w = (hw * 2 - 2 * (o.ch ?? 1.2)) / n;
-    for (let k = 0; k < n; k++) A.panel(-hw + (o.ch ?? 1.2) + w * (k + 0.5), wy, z1 + 0.05, w * 0.9, wh, 0, GLASS, E_LIT, -0.18);
-    for (const sd of [1, -1]) A.winX(sd * hw, sd, z0 + 1, z1 - (o.ch ?? 1.2) - 0.4, wy, 1.3, wh, 1.6, 0.8);
-    A.box(hw * 2 + 0.6, 0.25, z1 - z0 + 0.6, 0, y + h, (z0 + z1) / 2, hex, { pa });
+    const ch = o.ch ?? 1.2;
+    const n = Math.max(3, Math.round(hw * 2 / 1.5));
+    const w = (hw * 2 - 2 * ch) / n;
+    for (let k = 0; k < n; k++) {
+      const xk = -hw + ch + w * (k + 0.5);
+      A.panel(xk, wy, z1 + 0.05, w * 0.86, wh, 0, GLASS, E_LIT, -0.18);
+      // Forward bridge windscreen vertical mullion pillars + pantograph wiper motor housing
+      A.panel(xk - w * 0.48, wy, z1 + 0.065, 0.09, wh + 0.08, 0, DARK, 0, -0.18);
+      A.box(0.18, 0.08, 0.12, xk, wy + wh * 0.52, z1 + 0.14, DARK);
+    }
+    A.panel(hw - ch, wy, z1 + 0.065, 0.09, wh + 0.08, 0, DARK, 0, -0.18);
+    for (const sd of [1, -1]) A.winX(sd * hw, sd, z0 + 1, z1 - ch - 0.4, wy, 1.3, wh, 1.6, 0.8);
+    // Projecting bridge sun-visor brow
+    A.box(hw * 2 + 0.75, 0.26, z1 - z0 + 0.85, 0, y + h - 0.02, (z0 + z1) / 2 + 0.12, hex, { pa });
     const rSat = Math.max(0.45, Math.min(1.05, hw * 0.07));
     for (const sd of [1, -1]) satcom(A, sd * hw * 0.62, y + h + 0.25, (z0 + z1) / 2 + 0.4, rSat);
   }
@@ -533,58 +590,143 @@ function bridge(A, o) {
   if (wing > hw + 0.5) {
     for (const sd of [1, -1]) {
       const wl = wing - hw;
-      A.box(wl, 0.35, 3.2, sd * (hw + wl / 2), y - 0.35, z1 - 1.8, hex, { pa });
-      A.prism([[sd * hw, z1 - 2.2], [sd * (wing - 0.3), z1 - 2.2], [sd * hw, z1 - 1.4]], y - 2.1, 1.75, hex, { pa });
+      // Bridge wing deck slab
+      A.box(wl, 0.36, 3.3, sd * (hw + wl / 2), y - 0.36, z1 - 1.8, hex, { pa });
+      // Webbed steel overhang support brackets under bridge wing (fore & aft knees + diagonal struts)
+      for (const dz of [-0.6, -1.8, -3.0]) {
+        A.prism([[sd * hw, z1 + dz - 0.18], [sd * (wing - 0.22), z1 + dz - 0.18], [sd * hw, z1 + dz + 0.18]], y - 2.35, 2.0, hex, { pa });
+        if (!A.lod) {
+          A.rod([sd * (hw - 0.1), y - 2.6, z1 + dz], [sd * (wing - 0.35), y - 0.32, z1 + dz], 0.13, STEEL, 5);
+        }
+      }
       if (!A.lod) {
-        A.box(0.12, 1.1, 3.2, sd * (wing - 0.06), y, z1 - 1.8, hex, { pa });
-        A.panel(sd * (hw + wl * 0.5), y + 1.45, z1 - 0.2, wl * 0.92, 0.72, 0, GLASS, E_GLASS, -0.15);
+        A.box(0.14, 1.12, 3.3, sd * (wing - 0.07), y, z1 - 1.8, hex, { pa });
+        A.panel(sd * (hw + wl * 0.5), y + 1.45, z1 - 0.2, wl * 0.90, 0.72, 0, GLASS, E_GLASS, -0.15);
         A.rail([[sd * hw, y, z1 - 0.2], [sd * (wing - 0.1), y, z1 - 0.2]], 1.1, hex);
         A.rail([[sd * hw, y, z1 - 3.4], [sd * (wing - 0.1), y, z1 - 3.4]], 1.1, hex);
-        A.box(0.8, 1.2, 0.8, sd * (wing - 0.7), y, z1 - 1.8, DARK);
-        A.cyl(0.22, 0.35, sd * (wing - 1.5), y + 0.8, z1 - 1.0, STEEL, { seg: 8 });
-        A.box(0.25, 0.25, 0.25, sd * (wing - 0.1), y + 1.3, z1 - 0.9, sd > 0 ? 0xc02020 : 0x20a040, { em: sd > 0 ? E_RED : E_GREEN });
+        // Wing maneuvering console, gyro pelorus repeater & searchlight pedestal
+        A.box(0.85, 1.2, 0.85, sd * (wing - 0.72), y, z1 - 1.8, DARK);
+        A.cyl(0.18, 1.15, sd * (wing - 1.55), y, z1 - 0.95, STEEL, { seg: 8 });
+        A.cyl(0.26, 0.22, sd * (wing - 1.55), y + 1.15, z1 - 0.95, DARK, { seg: 8 });
+        // Navigation light board box on outer bridge wing tip
+        A.box(0.16, 0.55, 0.75, sd * (wing + 0.02), y + 1.12, z1 - 0.9, BLACK);
+        A.box(0.45, 0.55, 0.10, sd * (wing - 0.16), y + 1.12, z1 - 1.26, sd > 0 ? 0x981b1b : 0x187a32);
+        A.box(0.26, 0.28, 0.28, sd * (wing - 0.08), y + 1.24, z1 - 0.9, sd > 0 ? 0xc02020 : 0x20a040, { em: sd > 0 ? E_RED : E_GREEN });
       }
     }
   }
   if (o.mast !== false) mast(A, 0, y + h + 0.2, (z0 + z1) / 2 - 1, o.mastH ?? 6, hw);
 }
 
-function mast(A, x, y, z, h, span = 3) {
-  A.cyl(0.22, h, x, y, z, OFFWHITE, { top: 0.6, seg: 10 });
-  A.box(Math.min(span * 1.4, 7), 0.2, 0.3, x, y + h * 0.6, z, OFFWHITE);
-  A.sphere(0.25, 0.25, 0.25, x, y + h + 0.2, z, 0xffffff, { em: E_WHITE });
+/** Main/forecastle radar mast with crow's nest lookout tub, access ladder, crossbars, open-array scanners & radomes. */
+function mast(A, x, y, z, h, span = 3, crowsNest = true) {
+  A.cyl(0.24, h, x, y, z, OFFWHITE, { top: 0.58, seg: 10 });
+  // Lower and upper radar yardarm crossbars
+  const w1 = Math.min(span * 1.45, 7.2), w2 = Math.min(span * 1.05, 5.0);
+  A.box(w1, 0.22, 0.34, x, y + h * 0.56, z, OFFWHITE);
+  A.box(w2, 0.18, 0.28, x, y + h * 0.80, z, OFFWHITE);
+  A.sphere(0.25, 0.25, 0.25, x, y + h + 0.22, z, 0xffffff, { em: E_WHITE });
   if (!A.lod) {
-    for (const [dz, len, hh] of [[1.5, 4.2, h * 0.35], [-1.2, 3.0, h * 0.75]]) {
-      A.cyl(0.18, 0.6, x, y + hh, z + dz, DARK, { seg: 8 });
-      A.box(len, 0.22, 0.35, x, y + hh + 0.6, z + dz, WHITE);
+    // Forward crow's nest lookout platform with waist-high enclosure & access ladder rungs
+    if (crowsNest && h >= 4.2) {
+      const cy = y + h * 0.42;
+      A.cyl(0.62, 0.16, x, cy, z + 0.42, STEEL, { seg: 10 });
+      A.cyl(0.58, 0.78, x, cy + 0.16, z + 0.42, OFFWHITE, { top: 1.08, seg: 10 });
+      A.torus(0.62, 0.04, x, cy + 0.94, z + 0.42, DARK, { rx: Math.PI / 2, rs: 5, ts: 10 });
+      // Diagonal support strut under crow's nest
+      A.rod([x, cy - 0.65, z + 0.1], [x, cy + 0.05, z + 0.78], 0.07, STEEL, 4);
+      // Vertical mast ladder rails & rungs
+      for (const lx of [-0.16, 0.16]) A.rod([x + lx, y, z - 0.26], [x + lx, y + h * 0.82, z - 0.20], 0.025, STEEL, 4);
     }
-    if (h >= 5) satcom(A, x, y + h * 0.48, z + 0.9, Math.min(0.55, span * 0.12));
-    A.rod([x, y + h * 0.6, z], [x + 1.2, y + h * 0.85, z - 0.2], 0.04, DARK, 4);
-    A.rod([x, y + h * 0.6, z], [x - 1.2, y + h * 0.95, z - 0.2], 0.04, DARK, 4);
+    // Open-array S-band & X-band radar scanners on forward/aft platforms
+    for (const [dz, len, hh] of [[1.35, Math.min(4.4, w1 * 0.78), h * 0.32], [-1.15, Math.min(3.2, w2 * 0.76), h * 0.72]]) {
+      A.rod([x, y + hh - 0.35, z], [x, y + hh + 0.05, z + dz], 0.09, OFFWHITE, 5);
+      A.cyl(0.20, 0.55, x, y + hh, z + dz, DARK, { seg: 8 });
+      A.box(len, 0.22, 0.36, x, y + hh + 0.55, z + dz, WHITE);
+    }
+    // Twin radar/satcom domes on lower yardarm tips
+    if (h >= 4.0) {
+      const rDome = Math.max(0.32, Math.min(0.56, span * 0.13));
+      for (const sd of [-1, 1]) satcom(A, x + sd * (w1 * 0.38), y + h * 0.58, z, rDome);
+    }
+    // Diagonal yardarm stays & VHF whip antennas
+    A.rod([x, y + h * 0.56, z], [x + w1 * 0.42, y + h * 0.80, z - 0.1], 0.035, DARK, 4);
+    A.rod([x, y + h * 0.56, z], [x - w1 * 0.42, y + h * 0.80, z - 0.1], 0.035, DARK, 4);
+    for (const sd of [-1, 1]) A.rod([x + sd * (w2 * 0.44), y + h * 0.80, z], [x + sd * (w2 * 0.46), y + h * 1.16, z], 0.022, STEEL, 4);
   }
 }
 
-/** Funnel: raked, smooth stadium-section stack with shipping-line accent band, side louvers, and exhaust pipes. */
+/** Sculpted 4-leg lattice radar mast with twin radar domes and dual open-array radar scanners (for ferries). */
+function latticeRadarMast(A, x, y, z, h = 5.4, span = 3.2) {
+  const bw = Math.max(0.45, span * 0.22), tw = bw * 0.42;
+  if (A.lod) {
+    A.cyl(0.22, h, x, y, z, OFFWHITE, { top: 0.5, seg: 6 });
+    A.box(span, 0.2, 0.3, x, y + h * 0.65, z, WHITE);
+    return;
+  }
+  // 4 tapered lattice legs + horizontal & diagonal X-bracing tiers
+  const legs = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  for (const [sx, sz] of legs) {
+    A.rod([x + sx * bw, y, z + sz * bw * 0.75], [x + sx * tw, y + h, z + sz * tw * 0.75], 0.065, OFFWHITE, 5);
+  }
+  const tiers = 4;
+  for (let t = 0; t < tiers; t++) {
+    const f0 = t / tiers, f1 = (t + 1) / tiers;
+    const y0 = y + h * f0, y1 = y + h * f1;
+    const w0 = bw + (tw - bw) * f0, w1 = bw + (tw - bw) * f1;
+    A.box(w1 * 2.1, 0.07, w1 * 1.6, x, y1, z, OFFWHITE);
+    for (const sd of [-1, 1]) {
+      A.rod([x - w0, y0, z + sd * w0 * 0.75], [x + w1, y1, z + sd * w1 * 0.75], 0.032, STEEL, 4);
+      A.rod([x + w0, y0, z + sd * w0 * 0.75], [x - w1, y1, z + sd * w1 * 0.75], 0.032, STEEL, 4);
+    }
+  }
+  // Main yardarm crossbar with twin spherical radar/satcom domes
+  const yYard = y + h * 0.62;
+  A.box(span * 1.18, 0.16, 0.32, x, yYard, z, OFFWHITE);
+  const rDome = Math.max(0.32, Math.min(0.55, span * 0.14));
+  for (const sd of [-1, 1]) satcom(A, x + sd * (span * 0.46), yYard + 0.16, z, rDome);
+  // Lower forward S-band open-array radar scanner + upper X-band open-array radar scanner
+  A.rod([x, y + h * 0.45, z], [x, y + h * 0.48, z + 0.95], 0.08, OFFWHITE, 5);
+  A.cyl(0.18, 0.42, x, y + h * 0.48, z + 0.95, DARK, { seg: 8 });
+  A.box(Math.min(3.6, span * 0.95), 0.18, 0.30, x, y + h * 0.48 + 0.42, z + 0.95, WHITE);
+  A.cyl(0.16, 0.40, x, y + h, z, DARK, { seg: 8 });
+  A.box(Math.min(2.6, span * 0.72), 0.16, 0.26, x, y + h + 0.40, z, WHITE);
+  // Masthead navigation light & twin GPS/VHF whips
+  A.sphere(0.18, 0.18, 0.18, x, y + h + 0.82, z - 0.18, 0xffffff, { em: E_WHITE });
+  for (const sd of [-1, 1]) A.rod([x + sd * span * 0.52, yYard + 0.16, z], [x + sd * span * 0.55, y + h + 1.1, z], 0.02, STEEL, 4);
+}
+
+/** Funnel: raked, smooth stadium-section stack with shipping-line livery bands, wing crest plaque, side louvers, and multiple exhaust pipes. */
 function funnel(A, x, y, z, w, d, h, o = {}) {
   const pts = [];
   const r = w / 2, n = A.lod ? 4 : 8;
   for (let k = 0; k <= n; k++) { const a = (k / n) * Math.PI; pts.push([x + Math.cos(a) * r, z + (d / 2 - r) + Math.sin(a) * r]); }
   for (let k = 0; k <= n; k++) { const a = Math.PI + (k / n) * Math.PI; pts.push([x + Math.cos(a) * r, z - (d / 2 - r) + Math.sin(a) * r]); }
   const rk = o.rake ?? 0.12;
-  const hb = h * 0.68, hc = h * 0.22;
+  const hb = h * 0.64, hc = h * 0.24;
   A.prism(pts, y, hb, o.hex ?? WHITE, { taper: 0.97, dz: -hb * rk, pa: o.pa ?? 0, smooth: true });
   const p2 = pts.map((p) => [x + (p[0] - x) * 0.97, p[1] - hb * rk]);
   A.prism(p2, y + hb, hc, o.band ?? 0x1f5fa8, { taper: 0.98, dz: -hc * rk, pa: o.bandPa ?? P_ACC, smooth: true });
   const p3 = p2.map((p) => [x + (p[0] - x) * 0.98, p[1] - hc * rk]);
   A.prism(p3, y + hb + hc, h - hb - hc, BLACK, { taper: 0.98, dz: -(h - hb - hc) * rk, smooth: true });
   if (!A.lod) {
-    const zt = z - h * rk;
-    for (const dx of [-w * 0.18, w * 0.18]) {
-      A.cyl(Math.min(0.6, w * 0.11), 1.6, x + dx, y + h - 0.2, zt + 0.6, DARK, { seg: 10 });
-      A.cyl(Math.min(0.45, w * 0.08), 1.3, x + dx * 0.5, y + h - 0.2, zt - 0.8, DARK, { seg: 8 });
-    }
+    // Contrasting shipping-line pinstripe trim bands & raised side emblem plaque on the stack
+    const stripeCol = (o.band === WHITE) ? 0xd9a21b : WHITE;
+    const zBand = z - (hb + hc * 0.5) * rk;
     for (const sd of [1, -1]) {
-      A.panel(x + sd * (r * 0.98), y + hb * 0.55, z - hb * rk * 0.5, d * 0.35, hb * 0.28, sd * Math.PI / 2, DARK);
+      A.panel(x + sd * (r * 0.99), y + hb + hc * 0.5, zBand, d * 0.46, hc * 0.42, sd * Math.PI / 2, stripeCol);
+      A.panel(x + sd * (r * 1.00), y + hb + hc * 0.5, zBand, d * 0.26, hc * 0.18, sd * Math.PI / 2, DARK);
+      A.panel(x + sd * (r * 0.98), y + hb * 0.48, z - hb * rk * 0.5, d * 0.38, hb * 0.26, sd * Math.PI / 2, DARK);
+    }
+    // Multiple main & auxiliary exhaust pipes protruding from the top casing
+    const zt = z - h * rk;
+    for (const dx of [-w * 0.21, 0, w * 0.21]) {
+      A.cyl(Math.min(0.58, w * 0.105), 1.75, x + dx, y + h - 0.2, zt + 0.65, DARK, { seg: 10 });
+      A.cyl(Math.min(0.66, w * 0.12), 0.18, x + dx, y + h + 1.4, zt + 0.65, STEEL, { seg: 10 });
+    }
+    for (const dx of [-w * 0.16, w * 0.16]) {
+      A.cyl(Math.min(0.44, w * 0.08), 1.35, x + dx, y + h - 0.2, zt - 0.78, DARK, { seg: 8 });
+      A.cyl(Math.min(0.32, w * 0.06), 1.05, x + dx * 0.6, y + h - 0.2, zt - 1.55, STEEL, { seg: 8 });
     }
   }
 }
@@ -595,6 +737,7 @@ function lifeboat(A, x, y, z, len, side, davit = true) {
   A.capsule(r, len, x, y + r, z, ORANGE, { sy: 0.8, seg: A.lod ? 6 : 12 });
   if (!A.lod) {
     A.capsule(r * 0.82, len * 0.86, x, y + r * 1.35, z, WHITE, { sy: 0.7, seg: 10 });
+    A.box(r * 1.85, 0.12, len * 0.92, x, y + r * 1.02, z, DARK); // rubber fender gunwale strip
     A.box(r * 0.9, r * 0.6, len * 0.22, x, y + r * 1.9, z - len * 0.18, ORANGE);
     A.box(r * 0.92, r * 0.25, len * 0.18, x, y + r * 2.1, z - len * 0.18, GLASS, { em: E_GLASS });
   }
@@ -603,6 +746,48 @@ function lifeboat(A, x, y, z, len, side, davit = true) {
       A.rod([x - side * r * 1.6, y - 1.2, z + dz], [x - side * r * 1.6, y + r * 3.2, z + dz], 0.12, OFFWHITE, 6);
       A.rod([x - side * r * 1.6, y + r * 3.2, z + dz], [x, y + r * 3.4, z + dz], 0.1, OFFWHITE, 6);
       A.rod([x, y + r * 3.4, z + dz], [x, y + r * 2.2, z + dz], 0.025, DARK, 4);
+    }
+  }
+}
+
+/** Stern-mounted orange enclosed free-fall lifeboat on an inclined launch skid with twin hydraulic recovery davits. */
+function freefallLifeboat(A, x, y, z, k = 1.0) {
+  if (A.lod) {
+    A.capsule(1.3 * k, 7.6 * k, x, y + 3.2 * k, z, ORANGE, { sy: 0.85, seg: 6 });
+    return;
+  }
+  // Inclined steel launch skid tracks & support A-frame
+  A.box(3.4 * k, 0.35 * k, 9.2 * k, x, y + 2.2 * k, z, STEEL, { rx: 0.46 });
+  for (const sx of [-1.45 * k, 1.45 * k]) {
+    A.rod([x + sx, y, z + 3.2 * k], [x + sx, y + 4.1 * k, z + 2.6 * k], 0.16 * k, STEEL, 5);
+    A.rod([x + sx, y, z - 1.2 * k], [x + sx, y + 1.8 * k, z - 1.8 * k], 0.16 * k, STEEL, 5);
+    // Hydraulic recovery davit arms overhanging the stern
+    A.rod([x + sx, y + 1.6 * k, z - 1.5 * k], [x + sx, y + 6.4 * k, z - 4.4 * k], 0.15 * k, YELLOW, 6);
+    A.rod([x + sx, y + 3.8 * k, z + 1.2 * k], [x + sx, y + 6.4 * k, z - 4.4 * k], 0.09 * k, STEEL, 5);
+  }
+  A.rod([x - 1.55 * k, y + 6.4 * k, z - 4.4 * k], [x + 1.55 * k, y + 6.4 * k, z - 4.4 * k], 0.15 * k, YELLOW, 6);
+  // Enclosed aerodynamic orange free-fall lifeboat with white upper canopy & coxswain turret
+  A.capsule(1.42 * k, 8.2 * k, x, y + 3.6 * k, z - 0.2 * k, ORANGE, { sy: 0.88, seg: 12 });
+  A.capsule(1.18 * k, 6.8 * k, x, y + 4.15 * k, z - 0.1 * k, WHITE, { sy: 0.72, seg: 10 });
+  A.box(1.25 * k, 0.75 * k, 1.6 * k, x, y + 4.55 * k, z + 0.8 * k, ORANGE);
+  A.box(1.28 * k, 0.32 * k, 1.4 * k, x, y + 4.88 * k, z + 0.8 * k, GLASS, { em: E_GLASS });
+}
+
+/** Twin steerable waterjet propulsion nozzles, reversing bucket deflectors & hydraulic rams under stern transom. */
+function waterjetBank(A, x, y, z, nJets = 2, spacing = 1.15, k = 1.0) {
+  if (A.lod) return;
+  const x0 = -((nJets - 1) * spacing * k) * 0.5;
+  // Transom mounting plate & wake deflector lip
+  A.box((nJets * spacing + 0.7) * k, 0.14 * k, 0.55 * k, x, y - 0.32 * k, z - 0.22 * k, STEEL);
+  for (let i = 0; i < nJets; i++) {
+    const jx = x + x0 + i * spacing * k;
+    // Stator tunnel + steerable nozzle cone + split reversing bucket
+    A.rod([jx, y, z + 0.2 * k], [jx, y - 0.04 * k, z - 0.85 * k], 0.34 * k, DARK, 8);
+    A.rod([jx, y - 0.04 * k, z - 0.82 * k], [jx, y - 0.08 * k, z - 1.38 * k], 0.26 * k, STEEL, 8);
+    A.box(0.62 * k, 0.46 * k, 0.42 * k, jx, y - 0.18 * k, z - 1.42 * k, 0x565c62, { rx: 0.22 });
+    // Twin hydraulic steering/reversing rams above nozzle
+    for (const dx of [-0.18 * k, 0.18 * k]) {
+      A.rod([jx + dx, y + 0.28 * k, z + 0.05 * k], [jx + dx * 0.8, y + 0.08 * k, z - 1.25 * k], 0.045 * k, 0xc9cbd0, 5);
     }
   }
 }
@@ -632,15 +817,19 @@ function crane(A, x, y, z, o = {}) {
   }
 }
 
-/** Navigation lights: port red / starboard green sidelights and a stern light. */
+/** Navigation lights: port red & starboard green sidelights mounted inside painted navigation light boards, plus stern light. */
 function navLights(A, hw, y, z, zs, ys, k = 0.3) {
   if (A.lod) return;
-  A.box(k * 0.6, k, k, hw, y, z, 0xc02020, { em: E_RED });
-  A.box(k * 0.6, k, k, -hw, y, z, 0x20a040, { em: E_GREEN });
+  // Port (red, +X) & Starboard (green, -X) L-shaped navigation light screen boards
+  for (const [sd, boardCol, lampCol, em] of [[1, 0x941b1b, 0xc02020, E_RED], [-1, 0x187830, 0x20a040, E_GREEN]]) {
+    A.box(k * 0.22, k * 1.65, k * 2.4, sd * (hw + k * 0.18), y - k * 0.32, z - k * 0.2, boardCol);
+    A.box(k * 1.15, k * 1.65, k * 0.22, sd * (hw - k * 0.22), y - k * 0.32, z - k * 1.35, boardCol);
+    A.box(k * 0.65, k, k, sd * hw, y, z, lampCol, { em });
+  }
   A.box(k, k, k, 0, ys, zs, 0xffffff, { em: E_WHITE });
 }
 
-/** Mooring deck gear on a forecastle / poop: windlasses, anchor chains, bitts, fairleads. */
+/** Mooring deck gear on a forecastle / poop: windlasses, stud-link anchor chains, chain stoppers, bitts & fairleads. */
 function mooring(A, H, z, dir, n = 2) {
   if (A.lod) return;
   const [hb, y] = H.edge(z);
@@ -648,7 +837,11 @@ function mooring(A, H, z, dir, n = 2) {
     const x = sd * hb * 0.42;
     A.cyl(0.9, 1.2, x, y, z, DARK, { seg: 10 });
     A.box(1.6, 1.0, 1.8, x, y, z - dir * 1.6, 0x3a6a4a);
-    A.rod([x, y + 0.6, z], [sd * hb * 0.62, y + 0.1, z + dir * 4.5], 0.16, BLACK, 5);
+    // Chain stopper box & heavy anchor chain run into deck hawse pipe bolster
+    const hx = sd * hb * 0.62, hz = z + dir * 4.5;
+    A.box(0.65, 0.55, 0.95, (x + hx) * 0.5, y, z + dir * 2.2, 0x8c2820);
+    A.cyl(0.52, 0.28, hx, y, hz, STEEL, { seg: 8 });
+    A.rod([x, y + 0.6, z], [hx, y + 0.14, hz], 0.18, BLACK, 6);
     for (let k = 0; k < n; k++) {
       const zz = z - dir * (4 + k * 5);
       const [hb2, y2] = H.edge(zz);
@@ -657,17 +850,24 @@ function mooring(A, H, z, dir, n = 2) {
   }
 }
 
-/** Anchors stowed in their hawse pockets on both bow flanks; k = size scale (1 ~ a 200 m ship). */
+/** Anchors stowed in their hawse pockets with raised hawse pipe lip rings & anchor chains on both bow flanks. */
 function anchors(A, H, z, k) {
   if (A.lod) return;
   const [hb, y] = H.edge(z);
   const yy = y - 3.2 * k;
   for (const sd of [1, -1]) {
     const x = sd * (hb + 0.05);
-    A.sphere(0.32 * k, 1.15 * k, 1.05 * k, x, yy, z, 0x1a1c1e, { w: 10, h: 8 });
+    // Recessed hawse pipe pocket + heavy cast-steel hawse lip ring
+    A.sphere(0.36 * k, 1.25 * k, 1.15 * k, x, yy, z, 0x121416, { w: 10, h: 8 });
+    A.torus(0.75 * k, 0.14 * k, x + sd * 0.04 * k, yy + 0.12 * k, z, STEEL, { ry: Math.PI / 2, rs: 6, ts: 12 });
     A.cyl(0.55 * k, 0.18 * k, x, yy, z, WHITE, { rz: Math.PI / 2, seg: 10 });
+    // Anchor shank, crown & twin flukes + chain links entering hawse pipe
+    A.rod([x + sd * 0.08 * k, yy + 0.95 * k, z + 0.25 * k], [x + sd * 0.16 * k, yy - 0.1 * k, z], 0.14 * k, BLACK, 6);
     A.box(0.3 * k, 1.65 * k, 0.35 * k, x + sd * 0.16 * k, yy - 0.6 * k, z, 0x1a1b1d);
-    A.box(0.32 * k, 0.38 * k, 1.55 * k, x + sd * 0.16 * k, yy - 1.4 * k, z, 0x1a1b1d);
+    A.box(0.34 * k, 0.42 * k, 1.65 * k, x + sd * 0.16 * k, yy - 1.4 * k, z, 0x1a1b1d);
+    for (const dz of [-0.62 * k, 0.62 * k]) {
+      A.box(0.28 * k, 0.95 * k, 0.32 * k, x + sd * 0.18 * k, yy - 1.15 * k, z + dz, 0x1a1b1d, { rx: dz > 0 ? -0.25 : 0.25 });
+    }
   }
 }
 
@@ -700,6 +900,7 @@ function containerShip(A) {
   const zT0 = -104, zT1 = -92;
   const yb = accommodation(A, { hw: 16, z0: zT0, z1: zT1, y: yD, tiers: 7, th: 2.9, hex: WHITE, bridge: true, bz0: zT0 + 2, wing: B / 2 + 0.5, bh: 3.2, mastH: 7, lit: 0.45 });
   for (const sd of [1, -1]) lifeboat(A, sd * 17.3, yD + 2.9 * 2, -98, 8.5, sd);
+  freefallLifeboat(A, 0, yD + 2.2, -145.5, 1.05);
   funnel(A, 0, yD, -123, 9, 13, 18, { band: 0xb5371f });
   if (!A.lod) mast(A, 0, H.deckY(122), 122, 9, 4);
   mooring(A, H, 128, 1);
@@ -774,10 +975,8 @@ function tanker(A) {
   const yb = accommodation(A, { hw: 15, z0: -112, z1: -96, y: yD, tiers: 5, th: 2.9, bridge: true, bz0: -110, wing: B / 2 + 0.5, mastH: 8, lit: 0.45 });
   for (const sd of [1, -1]) lifeboat(A, sd * 16.3, yD + 2.9, -104, 8, sd);
   funnel(A, 0, yD, -117, 8, 9, 21, { band: 0x1f5fa8 });
-  if (!A.lod) {
-    A.box(4, 0.4, 10, 0, yD + 6, -121, STEEL, { rx: 0.5 });
-    A.capsule(1.6, 9, 0, yD + 8, -121, ORANGE, { sy: 0.9 });
-  }
+  freefallLifeboat(A, 0, yD + 4.2, -121.5, 1.05);
+  if (!A.lod) mast(A, 0, H.deckY(102), 102, 8.5, 3.8, true);
   navLights(A, B / 2 - 0.5, yb, -96, -124, yD + 3);
   mooring(A, H, 110, 1);
   anchors(A, H, 114, 1.3);
@@ -834,6 +1033,8 @@ function bulkCarrier(A) {
   const yD = H.deckY(0);
   const yb = accommodation(A, { hw: 12, z0: -86, z1: -74, y: yD, tiers: 5, th: 2.8, bridge: true, bz0: -84, wing: B / 2 + 0.4, mastH: 6, lit: 0.45 });
   for (const sd of [1, -1]) lifeboat(A, sd * 13.2, yD + 2.8, -80, 7, sd);
+  freefallLifeboat(A, 0, yD + 1.8, -93.5, 0.9);
+  if (!A.lod) mast(A, 0, H.deckY(78), 78, 7.5, 3.4, true);
   funnel(A, 0, yD, -90, 6, 7, 17, { band: 0xd9a21b });
   navLights(A, B / 2 - 0.4, yb, -74, -94, yD + 3);
   mooring(A, H, 82, 1);
@@ -885,44 +1086,54 @@ function carFerry(A) {
     for (let ry = 2.2; ry <= 7.8; ry += 1.4) A.box(10.7, 0.16, 0.24, 0, ry, H.zStern - 0.12, 0x60686e);
     for (const sx of [-4.8, 4.8]) A.rod([sx, 8.6, H.zStern + 0.2], [sx, 4.2, H.zStern - 0.22], 0.12, STEEL, 6);
   }
-  // Superstructure: four passenger promenade decks, smooth rounded front, stepped aft.
+  // Superstructure: four passenger promenade decks with raked/sloped forward bulkheads, overhanging sun-visor brows,
+  // livery accent stripes, and crisp window mullions dividing panes.
   const sz0 = -54, sz1 = 57;
   const decks = 4, th = 3.0;
   for (let t = 0; t < decks; t++) {
     const y = yD + t * th;
-    const z1 = sz1 - t * 1.5 - (t === decks - 1 ? 8 : 0), z0 = sz0 + t * 7;
-    const hw = B / 2 - 0.6 - t * 0.3;
-    A.prism(housePts(hw, z0, z1, 0, 8 - t * 0.6), y, th, WHITE, { top: DECK_GREY, smooth: true });
-    A.box(hw * 2 + 0.4, 0.2, z1 - z0 + 0.4, 0, y + th - 0.05, (z0 + z1) / 2, WHITE);
+    const z1 = sz1 - t * 2.2 - (t === decks - 1 ? 7.5 : 0), z0 = sz0 + t * 6.8;
+    const hw = B / 2 - 0.55 - t * 0.38;
+    // Raked/sloped forward cabin bulkhead (taper + aftward top rake dz) so cabin tiers are aerodynamic, never boxy
+    A.prism(housePts(hw, z0, z1, 0, 7.8 - t * 0.6), y, th, WHITE, { taper: 0.975, dz: -0.62, top: DECK_GREY, smooth: true });
+    // Overhanging deck-edge cornice brow + contrasting blue livery pin-stripe between decks
+    A.box(hw * 2 + 0.52, 0.22, z1 - z0 + 0.65, 0, y + th - 0.05, (z0 + z1) / 2 - 0.25, WHITE);
+    A.box(hw * 2 + 0.42, 0.16, z1 - z0 - 2.0, 0, y + 0.12, (z0 + z1) / 2 - 0.5, 0x1d6fb8, { pa: P_ACC });
     if (lod) {
-      for (const sd of [1, -1]) A.box(0.06, th * 0.45, z1 - z0 - 6, sd * (hw + 0.02), y + th * 0.3, (z0 + z1) / 2 - 2, GLASS, { em: E_LIT });
+      for (const sd of [1, -1]) A.box(0.06, th * 0.42, z1 - z0 - 8, sd * (hw + 0.02), y + th * 0.32, (z0 + z1) / 2 - 2, GLASS, { em: E_LIT });
       continue;
     }
     const big = t === 1 || t === 2;
-    for (const sd of [1, -1]) A.winX(sd * hw, sd, z0 + 1.5, z1 - 6, y + th * 0.55, big ? 2.2 : 1.3, big ? th * 0.55 : th * 0.4, big ? 2.6 : 1.9, 0.65);
-    for (let k = -4; k <= 4; k++) A.panel(k * (hw - 6) / 4.5, y + th * 0.55, z1 + 0.03, (hw - 4) / 4.6, th * 0.55, 0, GLASS, E_LIT, -0.1);
-    A.winZ(z0, -1, -hw + 1, hw - 1, y + th * 0.55, 1.6, th * 0.45, 2.4, 0.5);
+    const hwMid = hw * 0.988;
+    for (const sd of [1, -1]) A.winX(sd * hwMid, sd, z0 + 1.8, z1 - 6.5, y + th * 0.54, big ? 2.1 : 1.35, big ? th * 0.52 : th * 0.40, big ? 2.65 : 1.95, 0.65);
+    // Raked forward observation lounge windows with 3D vertical mullions between panes
+    for (let k = -4; k <= 4; k++) {
+      const px = k * (hw - 5.8) / 4.5, pw = (hw - 4.4) / 4.8;
+      A.panel(px, y + th * 0.54, z1 - 0.28, pw * 0.88, th * 0.50, 0, GLASS, E_LIT, -0.32);
+      A.panel(px - pw * 0.48, y + th * 0.54, z1 - 0.25, 0.10, th * 0.54, 0, DARK, 0, -0.32);
+    }
+    A.winZ(z0 - 0.3, -1, -hw + 1.2, hw - 1.2, y + th * 0.54, 1.55, th * 0.44, 2.35, 0.5, GLASS, 0.18);
     if (t > 0) {
-      A.rail([[-hw, y, z0 - 6.5], [hw, y, z0 - 6.5]], 1.1, WHITE);
+      const zAftPrev = sz0 + (t - 1) * 6.8;
+      A.rail([[-hw, y, z0], [-hw, y, zAftPrev], [hw, y, zAftPrev], [hw, y, z0]], 1.1, WHITE, 2.0);
       for (const bx of [-hw * 0.55, 0, hw * 0.55]) A.box(2.2, 0.5, 0.7, bx, y, z0 - 3.2, TEAK);
       for (const sd of [-1, 1]) lifebuoy(A, sd * (hw - 0.1), y + 0.65, z0 - 3.5, Math.PI / 2, 0.4);
     }
   }
   const yTop = yD + decks * th;
-  // Bridge forward on the top deck with full-beam wings; twin radar masts; lifeboats along deck 2; twin funnels aft.
-  bridge(A, { hw: 8, z0: 36, z1: 44, y: yTop, wing: B / 2 + 0.3, bh: 3, mast: false });
-  mast(A, -2.6, yTop + 3.2, 39, 6.8, 4.5);
-  mast(A, 2.6, yTop + 3.2, 39, 6.8, 4.5);
+  // Bridge forward on the top deck with full-beam wings & overhang brackets; sculpted lattice radar masts; lifeboats & liferafts; twin funnels aft.
+  bridge(A, { hw: 8.2, z0: 34, z1: 43.5, y: yTop, wing: B / 2 + 0.4, bh: 3.1, mast: false });
+  latticeRadarMast(A, -2.7, yTop + 3.1, 38.5, 6.6, 4.4);
+  latticeRadarMast(A, 2.7, yTop + 3.1, 38.5, 6.6, 4.4);
   for (const sd of [1, -1]) {
     for (const z of [-34, -22, -10, 2, 14]) lifeboat(A, sd * (B / 2 - 0.4), yD + th * 2 - 0.4, z, 7.5, sd);
-    for (const z of [-28, -16, -4, 8]) liferaft(A, sd * (B / 2 - 0.6), yD + th * 2, z, 0.45, 1.3);
+    for (const z of [-31, -25, -16, -4, 8, 19]) liferaft(A, sd * (B / 2 - 0.6), yD + th * 2, z, 0.45, 1.3);
   }
   for (const sd of [1, -1]) funnel(A, sd * 4.5, yTop, -20, 3.4, 7, 7, { hex: 0x1d6fb8, pa: P_ACC, band: WHITE, bandPa: 0 });
-  // Upper sun-deck benches & life-ring buoys along the railings.
+  // Upper sun-deck perimeter handrails & stanchions, teak benches, life-ring buoys, bow bulwark spray shield & stern waterjet wake deflectors.
   if (!lod) {
-    const hw = B / 2 - 0.6 - (decks - 1) * 0.3;
-    A.rail([[hw - 0.3, yTop, sz0 + 21], [hw - 0.3, yTop, 36]], 1.1, WHITE);
-    A.rail([[-hw + 0.3, yTop, sz0 + 21], [-hw + 0.3, yTop, 36]], 1.1, WHITE);
+    const hw = B / 2 - 0.55 - (decks - 1) * 0.38;
+    A.rail([[-hw + 0.3, yTop, 34], [-hw + 0.3, yTop, sz0 + 20.5], [hw - 0.3, yTop, sz0 + 20.5], [hw - 0.3, yTop, 34]], 1.1, WHITE, 1.8);
     for (let z = -8; z <= 28; z += 6) {
       for (const sx of [-hw * 0.55, hw * 0.55]) {
         A.box(2.4, 0.45, 0.75, sx, yTop, z, TEAK);
@@ -930,17 +1141,24 @@ function carFerry(A) {
       }
       for (const sd of [-1, 1]) lifebuoy(A, sd * (hw - 0.25), yTop + 0.6, z, Math.PI / 2, 0.38);
     }
+    // Bow bulwark spray shield with raked coaming & internal stiffener ribs
+    const yBow = H.deckY(68);
+    A.prism([[-6.8, 65.5], [6.8, 65.5], [3.2, 72.2], [-3.2, 72.2]], yBow, 1.65, WHITE, { taper: 0.88, dz: -0.75, top: OFFWHITE, smooth: true });
+    for (let sx = -4.5; sx <= 4.5; sx += 2.25) A.box(0.14, 1.35, 0.85, sx, yBow, 65.2, STEEL);
   }
-  navLights(A, B / 2, yTop + 1.2, 42, H.zStern + 1, yD + 2);
-  mooring(A, H, 66, 1);
-  anchors(A, H, 68, 0.8);
+  navLights(A, B / 2, yTop + 1.2, 42, H.zStern + 1, yD + 2, 0.36);
+  mooring(A, H, 64, 1);
+  anchors(A, H, 68, 0.85);
   sternGear(A, H, 6, 0.8, true);
+  waterjetBank(A, 0, 0.15, H.zStern + 0.3, 4, 2.2, 1.15);
   A.rail([[-8, yD, 72], [-3, yD + 0.8, 74], [0, H.deckY(74.5), 74.5], [3, yD + 0.8, 74], [8, yD, 72]], 1.1, WHITE);
 }
 
 function catamaranFerry(A) {
-  // Fast passenger/vehicle catamaran: two slender demihulls, open bow/stern vehicle ramp visors,
-  // multi-deck promenade windows, upper sun-deck benches & life-ring buoys, twin radar masts, and twin funnels!
+  // Fast passenger/vehicle catamaran: two slender wave-piercing demihulls, bow bulwark spray shield,
+  // raked/sloped forward cabin bulkheads, crisp framed window mullions, upper sun-deck perimeter handrails,
+  // liferaft canisters in cradles, sculpted lattice radar mast with twin domes + open-array scanners,
+  // port/starboard navigation light boards, and stern twin waterjet nozzles / wake deflectors!
   const L = 40, B = 12;
   const yD = 2.4;
   for (const x of [-4.3, 4.3]) {
@@ -955,36 +1173,65 @@ function catamaranFerry(A) {
   }
   const lod = A.lod;
   A.box(B - 0.2, 0.9, L * 0.86, 0, yD - 0.5, -1.5, WHITE, { pa: P_HULL });             // bridging wet deck
-  A.box(B + 0.05, 0.5, L * 0.82, 0, yD - 0.15, -1.5, 0x1d6fb8, { pa: P_ACC });       // livery band
-  // Bow & stern vehicle/passenger ramp visors between the demihulls
+  A.box(B + 0.08, 0.46, L * 0.83, 0, yD - 0.12, -1.5, 0x1d6fb8, { pa: P_ACC });       // lower livery band
+  // Bow bulwark spray shield & bow/stern vehicle ramp visors between the demihulls
   if (!lod) {
     A.box(5.2, 0.18, 2.8, 0, yD + 0.2, 16.5, STEEL, { rx: -0.18 });
+    // Sculpted forward bow bulwark spray shield with raked deflector hood & stiffener ribs
+    A.prism([[-5.1, 13.0], [5.1, 13.0], [3.5, 17.6], [-3.5, 17.6]], yD + 0.35, 1.05, WHITE, { pa: P_HULL, taper: 0.86, dz: -0.65, top: OFFWHITE, smooth: true });
+    for (const sx of [-3.4, -1.7, 0, 1.7, 3.4]) A.box(0.10, 0.82, 0.55, sx, yD + 0.35, 12.8, STEEL);
     A.box(5.4, 1.8, 0.16, 0, yD + 0.3, -18.6, STEEL, { rx: 0.15 });
     for (const sx of [-2.5, 2.5]) A.rod([sx, yD + 2.4, -17.5], [sx, yD + 1.6, -18.6], 0.06, STEEL, 4);
   }
-  const hw = B / 2 - 0.4, z0 = -14, z1 = 12;
-  A.prism(housePts(hw, z0, z1, 0, 3.2), yD + 0.4, 2.8, WHITE, { pa: P_HULL, top: DECK_GREY, smooth: true });
+  // Main passenger saloon deck with raked forward bulkhead, overhanging sun-visor brow & livery accent band
+  const hw = B / 2 - 0.4, z0 = -14.2, z1 = 12.4;
+  A.prism(housePts(hw, z0, z1, 0, 3.4), yD + 0.4, 2.8, WHITE, { pa: P_HULL, taper: 0.96, dz: -0.75, top: DECK_GREY, smooth: true });
+  A.box(hw * 2 + 0.32, 0.20, z1 - z0 + 0.45, 0, yD + 3.08, (z0 + z1) / 2 - 0.35, WHITE, { pa: P_HULL });
+  A.box(hw * 2 + 0.18, 0.22, z1 - z0 - 2.2, 0, yD + 0.72, (z0 + z1) / 2 - 0.5, 0x1d6fb8, { pa: P_ACC });
   if (lod) {
-    for (const sd of [1, -1]) A.box(0.06, 1.3, 22, sd * (hw + 0.02), yD + 1.3, -1.5, GLASS, { em: E_LIT });
+    for (const sd of [1, -1]) A.box(0.06, 1.15, 21, sd * (hw + 0.02), yD + 1.38, -1.5, GLASS, { em: E_LIT });
   } else {
-    for (const sd of [1, -1]) A.winX(sd * hw, sd, z0 + 0.8, z1 - 3, yD + 2.0, 1.7, 1.4, 1.95, 0.7);
-    for (let k = -3; k <= 3; k++) A.panel(k * 1.25, yD + 2.0, z1 + 0.03, 1.15, 1.4, 0, GLASS, E_LIT, -0.25);
-    A.winZ(z0, -1, -hw + 1, hw - 1, yD + 2.0, 1.4, 1.5, 1.8, 0.6);
-    A.rail([[-hw, yD + 0.4, z0], [-hw, yD + 0.4, -18.5], [hw, yD + 0.4, -18.5], [hw, yD + 0.4, z0]], 1.0, 0xc9cdd0, 1.5);
+    const hwSaloon = hw * 0.98;
+    for (const sd of [1, -1]) A.winX(sd * hwSaloon, sd, z0 + 1.0, z1 - 3.4, yD + 2.0, 1.55, 1.28, 1.92, 0.72);
+    // Raked forward passenger cabin windows with individual 3D mullions
+    for (let k = -3; k <= 3; k++) {
+      const px = k * 1.22;
+      A.panel(px, yD + 2.0, z1 - 0.38, 1.04, 1.26, 0, GLASS, E_LIT, -0.36);
+      A.panel(px - 0.58, yD + 2.0, z1 - 0.35, 0.09, 1.34, 0, DARK, 0, -0.36);
+    }
+    A.panel(3 * 1.22 + 0.58, yD + 2.0, z1 - 0.35, 0.09, 1.34, 0, DARK, 0, -0.36);
+    A.winZ(z0 - 0.35, -1, -hw + 1.1, hw - 1.1, yD + 2.0, 1.35, 1.32, 1.8, 0.6, GLASS, 0.22);
+    A.rail([[-hw, yD + 0.4, z0], [-hw, yD + 0.4, -18.5], [hw, yD + 0.4, -18.5], [hw, yD + 0.4, z0]], 1.05, 0xc9cdd0, 1.4);
+    // Muster station liferaft canisters in cradles along port & starboard quarters
     for (const sd of [-1, 1]) {
-      liferaft(A, sd * (hw - 0.45), yD + 0.4, -16.2, 0.38, 1.1);
-      lifebuoy(A, sd * (hw - 0.02), yD + 1.0, -15.2, Math.PI / 2, 0.32);
+      for (const lz of [-16.6, -14.8, 9.8]) liferaft(A, sd * (hw - 0.48), yD + 0.4, lz, 0.38, 1.12);
+      lifebuoy(A, sd * (hw - 0.02), yD + 1.0, -15.6, Math.PI / 2, 0.32);
     }
   }
-  // Upper deck: panoramic wheelhouse & passenger lounge forward, sun-deck benches, twin funnels & twin radar masts.
+  // Upper sun-deck & raked panoramic wheelhouse / observation lounge with overhang bridge wings
   const y2 = yD + 3.2;
-  A.prism(housePts(3.8, -3.5, 7.2, 0, 1.6), y2, 2.3, WHITE, { pa: P_HULL, top: OFFWHITE, smooth: true });
+  A.prism(housePts(4.0, -4.2, 7.6, 0, 1.8), y2, 2.35, WHITE, { pa: P_HULL, taper: 0.94, dz: -0.65, top: OFFWHITE, smooth: true });
+  A.box(8.3, 0.18, 12.1, 0, y2 + 2.25, 1.35, WHITE, { pa: P_HULL }); // upper wheelhouse sun-visor brow
   if (!lod) {
-    for (let k = -2; k <= 2; k++) A.panel(k * 1.2, y2 + 1.45, 7.23, 1.08, 1.1, 0, GLASS, E_LIT, -0.3);
-    for (const sd of [1, -1]) A.winX(sd * 3.8, sd, -3.0, 5.2, y2 + 1.45, 1.2, 1.0, 1.5, 0.8);
-    A.rail([[-hw + 0.3, y2, -13.2], [hw - 0.3, y2, -13.2], [hw - 0.3, y2, -3.5], [-hw + 0.3, y2, -3.5], [-hw + 0.3, y2, -13.2]], 1.0, 0xc9cdd0, 1.5);
+    // Raked wheelhouse windscreens with individual mullions & wipers
+    for (let k = -2; k <= 2; k++) {
+      const px = k * 1.22;
+      A.panel(px, y2 + 1.45, 7.22, 1.04, 1.05, 0, GLASS, E_LIT, -0.38);
+      A.panel(px - 0.58, y2 + 1.45, 7.25, 0.08, 1.12, 0, DARK, 0, -0.38);
+    }
+    A.panel(2 * 1.22 + 0.58, y2 + 1.45, 7.25, 0.08, 1.12, 0, DARK, 0, -0.38);
+    for (const sd of [1, -1]) {
+      A.winX(sd * 3.88, sd, -3.6, 5.4, y2 + 1.45, 1.18, 0.98, 1.48, 0.8);
+      // Enclosed bridge wing tips with underside support brackets
+      A.box(1.15, 0.28, 2.2, sd * 4.45, y2 - 0.05, 5.2, WHITE, { pa: P_HULL });
+      A.prism([[sd * 3.9, 4.4], [sd * 4.95, 4.4], [sd * 3.9, 5.9]], y2 - 0.95, 0.9, WHITE, { pa: P_HULL });
+      liferaft(A, sd * (hw - 0.55), y2, -4.8, 0.36, 1.02);
+    }
+    // Full upper sun-deck perimeter handrails & stanchions (port, aft, starboard, and forward observation terrace)
+    A.rail([[-hw + 0.25, y2, 7.6], [-hw + 0.25, y2, -13.6], [hw - 0.25, y2, -13.6], [hw - 0.25, y2, 7.6]], 1.05, 0xc9cdd0, 1.35);
+    A.rail([[-3.6, y2, 11.4], [3.6, y2, 11.4]], 1.0, 0xc9cdd0, 1.3);
     // Sun-deck benches & life-ring buoys
-    for (const z of [-10.5, -8.2, -5.8]) {
+    for (const z of [-11.2, -8.8, -6.4]) {
       for (const sx of [-2.4, 0, 2.4]) {
         A.box(1.5, 0.36, 0.55, sx, y2, z, TEAK);
         A.box(1.5, 0.38, 0.10, sx, y2 + 0.36, z - 0.22, WHITE);
@@ -992,14 +1239,17 @@ function catamaranFerry(A) {
       for (const sd of [-1, 1]) lifebuoy(A, sd * (hw - 0.28), y2 + 0.55, z, Math.PI / 2, 0.3);
     }
   }
-  // Twin radar masts on wheelhouse roof + twin raked funnels aft on upper deck
+  // Sculpted lattice radar mast with twin radar domes + open-array radar scanners on wheelhouse roof + twin funnels aft
+  latticeRadarMast(A, 0, y2 + 2.35, 2.4, 3.8, 3.4);
   for (const sd of [-1, 1]) {
-    mast(A, sd * 1.35, y2 + 2.3, 2.2, 3.1, 1.6);
-    funnel(A, sd * 3.6, y2, -11.5, 1.2, 2.4, 2.8, { hex: 0x1d6fb8, pa: P_ACC, band: WHITE, bandPa: 0 });
+    funnel(A, sd * 3.6, y2, -11.5, 1.25, 2.5, 2.9, { hex: 0x1d6fb8, pa: P_ACC, band: WHITE, bandPa: 0 });
   }
-  satcom(A, 0, y2 + 2.3, 3.8, 0.42);
-  navLights(A, 3.85, y2 + 1.7, 5.8, -19.5, yD + 0.8, 0.2);
-  if (!lod) for (const x of [-4.3, 4.3]) A.box(1.4, 0.85, 1.5, x, -0.4, -20.3, DARK);
+  // Port (red) & starboard (green) navigation light boards on bridge wings
+  navLights(A, 4.92, y2 + 1.35, 5.4, -19.5, yD + 0.8, 0.26);
+  // Stern twin waterjet nozzles & wake deflectors on each demihull
+  for (const x of [-4.3, 4.3]) {
+    waterjetBank(A, x, -0.15, -19.6, 2, 0.92, 0.85);
+  }
 }
 
 function tug(A) {
@@ -1018,12 +1268,18 @@ function tug(A) {
     // Stacked cylindrical bow fenders + vertical pushing knees
     for (let k = 0; k < 4; k++) A.rod([-1.8, 0.3 + k * 0.6, 15.2 - k * 0.1], [1.8, 0.3 + k * 0.6, 15.2 - k * 0.1], 0.34, RUBBER, 8);
     for (const sx of [-1.1, 1.1]) A.cyl(0.38, 2.3, sx, 0.2, 15.15, RUBBER, { seg: 8 });
-    // Side & stern rubber tire fenders
-    for (const z of [-10, -6, -2, 2, 6, 10]) {
+    // Side, bow-shoulder & stern rubber tire fenders hung with heavy chain lashings along hull sheer
+    for (const z of [-12.5, -9.5, -6.5, -3.5, -0.5, 2.5, 5.5, 8.5, 11.5]) {
       const [hb, y] = H.edge(z);
-      for (const sd of [1, -1]) A.torus(0.55, 0.22, sd * (hb + 0.22), y - 0.55, z, RUBBER, { ry: Math.PI / 2, rs: 6, ts: 10 });
+      for (const sd of [1, -1]) {
+        A.torus(0.58, 0.24, sd * (hb + 0.24), y - 0.55, z, RUBBER, { ry: Math.PI / 2, rs: 6, ts: 12 });
+        A.rod([sd * (hb - 0.05), y + 0.85, z], [sd * (hb + 0.24), y - 0.12, z], 0.035, STEEL, 4);
+      }
     }
-    for (const x of [-3, -1, 1, 3]) A.torus(0.52, 0.21, x, 1.3, -15.3, RUBBER, { rs: 6, ts: 10 });
+    for (const x of [-3.3, -1.65, 0, 1.65, 3.3]) {
+      A.torus(0.54, 0.22, x, 1.3, -15.32, RUBBER, { rs: 6, ts: 12 });
+      A.rod([x, 2.4, -15.0], [x, 1.65, -15.32], 0.035, STEEL, 4);
+    }
   }
   const yD = H.deckY(0);
   // Deckhouse, raised 360-deg glass wheelhouse, twin exhaust stacks, fire-fighting water monitors.
@@ -1108,17 +1364,31 @@ function fishingBoat(A) {
     }
   }
   A.rod([-2.1, yD + 6.5, -10.8], [2.1, yD + 6.5, -10.8], 0.18, g, lod ? 4 : 8, { pa: P_ACC });
-  // Hydraulic net winch drum & trawl warps
+  // Hydraulic net winch drum, secondary stern net reel & trawl warps
   A.rod([-1.6, yD + 1.4, -6], [1.6, yD + 1.4, -6], 1.0, 0x2a5a8a, lod ? 6 : 14);
   if (!lod) {
-    for (const x of [-1.7, 1.7]) A.box(0.28, 1.95, 1.7, x, yD, -6, DARK);
-    A.rod([-1.5, yD + 1.4, -6], [1.5, yD + 1.4, -6], 1.14, 0x3b7a3a, 14); // green trawl net wound on drum
-    for (const sx of [-1.2, 1.2]) A.rod([sx, yD + 2.1, -6], [sx * 1.15, yD + 5.9, -10.8], 0.025, STEEL, 4); // trawl warps
+    // Primary net reel end-flanges, hydraulic drive motor & wound green trawl net
+    for (const x of [-1.7, 1.7]) {
+      A.box(0.28, 1.95, 1.7, x, yD, -6, DARK);
+      A.cyl(1.38, 0.09, x * 0.88, yD + 1.4, -6, STEEL, { rz: Math.PI / 2, seg: 14 });
+    }
+    A.rod([-1.5, yD + 1.4, -6], [1.5, yD + 1.4, -6], 1.14, 0x3b7a3a, 14);
+    // Secondary aft net reel just ahead of the stern ramp with orange cod-end netting
+    for (const x of [-1.25, 1.25]) {
+      A.box(0.22, 1.45, 1.25, x, yD, -9.2, DARK);
+      A.cyl(0.95, 0.07, x * 0.9, yD + 0.95, -9.2, g, { rz: Math.PI / 2, seg: 12 });
+    }
+    A.rod([-1.1, yD + 0.95, -9.2], [1.1, yD + 0.95, -9.2], 0.78, ORANGE, 12);
+    for (const sx of [-1.2, 1.2]) A.rod([sx, yD + 2.1, -6], [sx * 1.15, yD + 5.9, -10.8], 0.025, STEEL, 4);
     for (const sd of [1, -1]) {
-      // Outrigger boom, topping lift stay, and paravane stabilizer
+      // Outrigger boom, multi-stay rigging (topping lift, forestay, backstay & spreader stays) and paravane stabilizer
       A.rod([sd * 0.3, yD + 4.4, 1.5], [sd * 7.8, yD + 9.2, 0], 0.09, g, 6);
-      A.rod([0, yD + 8.4, 5], [sd * 7.8, yD + 9.2, 0], 0.02, DARK, 4);
-      A.rod([sd * 7.8, yD + 9.2, 0], [sd * 7.8, yD + 3.8, 0], 0.015, DARK, 4);
+      A.rod([sd * 1.8, yD + 5.5, 1.0], [sd * 4.6, yD + 7.2, 0.5], 0.045, STEEL, 4); // strut
+      A.rod([0, yD + 8.4, 5], [sd * 7.8, yD + 9.2, 0], 0.024, DARK, 4);               // topping lift stay
+      A.rod([0, yD + 8.4, 5], [sd * 4.4, yD + 7.1, 0.7], 0.02, DARK, 4);              // intermediate stay
+      A.rod([sd * 1.2, H.deckY(9.8), 9.8], [sd * 7.8, yD + 9.2, 0], 0.02, DARK, 4);   // outrigger forestay
+      A.rod([sd * 3.1, yD + 1.0, -9.8], [sd * 7.8, yD + 9.2, 0], 0.02, DARK, 4);      // outrigger backstay
+      A.rod([sd * 7.8, yD + 9.2, 0], [sd * 7.8, yD + 3.8, 0], 0.018, DARK, 4);
       A.box(0.55, 0.35, 0.85, sd * 7.8, yD + 3.5, 0, ORANGE);
       for (let k = 0; k < 4; k++) A.sphere(0.30, 0.30, 0.30, sd * (B / 2 - 0.2), yD + 0.65, -2.2 - k * 1.3, ORANGE, { w: 8, h: 6 });
     }
@@ -1149,8 +1419,13 @@ function sailboat(A) {
       A.winX(sd * 1.21, sd, -1.1, 2.1, yD + 0.26, 0.78, 0.17, 0.95, 0.4);
       // Teak grab rails on coachroof
       A.rod([sd * 0.78, yD + 0.50, -1.1], [sd * 0.68, yD + 0.50, 2.0], 0.022, TEAK, 4);
-      // Sheet winches on cockpit coaming
-      A.cyl(0.11, 0.18, sd * 0.98, yD + 0.35, -2.6, 0xc9cbd0, { seg: 8 });
+      // Primary & secondary self-tailing sheet winches on cockpit coaming + halyard winch on coachroof
+      for (const wz of [-2.35, -3.15]) {
+        A.cyl(0.115, 0.18, sd * 0.98, yD + 0.35, wz, 0xc9cbd0, { seg: 8 });
+        A.cyl(0.13, 0.035, sd * 0.98, yD + 0.51, wz, DARK, { seg: 8 });
+        A.rod([sd * 0.98, yD + 0.54, wz], [sd * 0.98 + 0.18 * sd, yD + 0.58, wz + 0.12], 0.016, 0xc9cbd0, 4); // winch handle
+      }
+      A.cyl(0.09, 0.14, sd * 0.52, yD + 0.45, -1.25, 0xc9cbd0, { seg: 8 });
     }
     // Foredeck & coachroof translucent skylight hatches
     A.box(0.58, 0.06, 0.58, 0, yD + 0.45, 1.4, GLASS, { em: E_GLASS });
@@ -1180,12 +1455,23 @@ function sailboat(A) {
   sail(A, [0, yD + 0.5, 5.35], [0, yD + mh * 0.86, mz + 0.15], [0, yD + 0.7, mz + 0.25], -0.08, lod ? 3 : 8);
   if (!lod) {
     const top = [0, yD + mh, mz];
-    A.rod([0, yD + 0.1, 5.6], [0, yD + mh * 0.86, mz + 0.1], 0.016, 0x9a9da2, 4);        // roller-furling forestay
-    A.rod([0, H.deckY(-5.8), -5.8], top, 0.012, 0x9a9da2, 4);                              // backstay
+    // Roller-furling drum at bow + forestay + inner baby stay
+    A.cyl(0.11, 0.24, 0, H.deckY(5.6), 5.6, DARK, { seg: 8 });
+    A.rod([0, H.deckY(5.6) + 0.18, 5.6], [0, yD + mh * 0.88, mz + 0.1], 0.018, 0x9a9da2, 4);
+    A.rod([0, yD + 0.42, 3.1], [0, yD + mh * 0.44, mz + 0.05], 0.013, 0x9a9da2, 4);
+    // Split backstay bridle from masthead to port & starboard stern quarters
+    const splitPt = [0, yD + 3.2, -4.6];
+    A.rod(splitPt, top, 0.015, 0x9a9da2, 4);
     for (const sd of [1, -1]) {
-      A.rod([sd * 1.5, yD, mz - 0.3], [sd * 0.92, yD + mh * 0.42, mz], 0.014, 0x9a9da2, 4); // shrouds
-      A.rod([sd * 0.92, yD + mh * 0.42, mz], [sd * 0.62, yD + mh * 0.72, mz], 0.012, 0x9a9da2, 4);
-      A.rod([sd * 0.62, yD + mh * 0.72, mz], [0, yD + mh * 0.97, mz], 0.012, 0x9a9da2, 4);
+      A.rod([sd * 1.05, H.deckY(-5.7), -5.7], splitPt, 0.014, 0x9a9da2, 4);
+      // Chrome chainplate turnbuckles + cap shrouds, intermediate shrouds, and lower D1/D2 diagonal shrouds
+      for (const dz of [-0.45, -0.1, 0.22]) A.cyl(0.032, 0.28, sd * 1.52, yD, mz + dz, 0xc9cbd0, { seg: 6 });
+      A.rod([sd * 1.52, yD + 0.22, mz - 0.1], [sd * 0.94, yD + mh * 0.42, mz - 0.06], 0.016, 0x9a9da2, 4);
+      A.rod([sd * 1.52, yD + 0.22, mz - 0.45], [0, yD + mh * 0.42, mz], 0.014, 0x9a9da2, 4);
+      A.rod([sd * 1.52, yD + 0.22, mz + 0.22], [0, yD + mh * 0.42, mz], 0.014, 0x9a9da2, 4);
+      A.rod([sd * 0.94, yD + mh * 0.42, mz - 0.06], [sd * 0.64, yD + mh * 0.72, mz - 0.04], 0.014, 0x9a9da2, 4);
+      A.rod([sd * 0.94, yD + mh * 0.42, mz - 0.06], [0, yD + mh * 0.72, mz], 0.012, 0x9a9da2, 4);
+      A.rod([sd * 0.64, yD + mh * 0.72, mz - 0.04], [0, yD + mh * 0.97, mz], 0.013, 0x9a9da2, 4);
     }
     // Stainless bow pulpit rail, stern pushpit & lifelines.
     const pts = [];
@@ -1251,11 +1537,17 @@ function speedboat(A) {
   A.rod([0, yD, -4.3], [0, yD + 1.3, -4.3], 0.025, 0xc9cbd0, 4); // stern light pole
   // Two-tone luxury upholstery: cream cushions (`0xebe5d8`) with cognac/navy bolster trim (`0x8c5332` / `0x1d3f6e`)
   const CUSHION = 0xebe5d8, BOLSTER = 0x9a5b36;
+  // Sculpted wrap-around bolster bucket seats on anodized chrome pedestals
   for (const x of [-0.55, 0.55]) {
-    A.box(0.62, 0.45, 0.62, x, yD - 0.35, -0.6, CUSHION);
-    A.box(0.64, 0.14, 0.64, x, yD - 0.02, -0.6, BOLSTER);
-    A.box(0.62, 0.62, 0.16, x, yD + 0.1, -0.95, CUSHION, { rx: -0.2 });
-    A.box(0.56, 0.18, 0.17, x, yD + 0.55, -1.02, BOLSTER, { rx: -0.2 });
+    A.cyl(0.11, 0.26, x, yD - 0.35, -0.62, 0xc9cbd0, { seg: 8 });
+    A.box(0.62, 0.16, 0.64, x, yD - 0.10, -0.60, CUSHION);
+    A.box(0.66, 0.12, 0.66, x, yD + 0.02, -0.58, BOLSTER);
+    A.box(0.58, 0.64, 0.15, x, yD + 0.08, -0.92, CUSHION, { rx: -0.18 });
+    A.box(0.46, 0.20, 0.16, x, yD + 0.58, -1.00, BOLSTER, { rx: -0.18 });
+    // Wrap-around side bolster wings & chrome grab handles on bucket seats
+    for (const bs of [-1, 1]) {
+      A.box(0.11, 0.52, 0.42, x + bs * 0.29, yD + 0.06, -0.72, BOLSTER, { ry: bs * -0.18 });
+    }
   }
   // Two-tone aft bench & sun pad
   A.box(2.12, 0.42, 1.25, 0, yD - 0.35, -3.55, CUSHION);
@@ -1271,7 +1563,11 @@ function speedboat(A) {
     A.box(0.16, 0.92, 0.32, x, -0.72, -4.82, DARK);
     if (!lod) A.cyl(0.16, 0.18, x, -0.58, -5.02, 0x9c7a3c, { rx: Math.PI / 2, seg: 8 });
   }
-  if (!lod) A.rail([[-0.75, yD, 3.5], [0, yD, 4.4], [0.75, yD, 3.5]], 0.45, 0xc9cbd0, 0.8);
+  // Chrome bow rails extending from mid-foredeck to bow stem + center bow cleat
+  if (!lod) {
+    A.rail([[-1.08, H.deckY(1.8), 1.8], [-0.95, H.deckY(2.8), 2.8], [-0.55, H.deckY(3.8), 3.8], [0, H.deckY(4.42), 4.42], [0.55, H.deckY(3.8), 3.8], [0.95, H.deckY(2.8), 2.8], [1.08, H.deckY(1.8), 1.8]], 0.36, 0xd8dce0, 0.65);
+    A.box(0.24, 0.06, 0.08, 0, H.deckY(4.15) + 0.02, 4.15, 0xd8dce0);
+  }
   navLights(A, 0.9, yD + 0.05, 3.6, -4.3, yD + 1.3, 0.1);
 }
 
@@ -1309,6 +1605,13 @@ function patrolBoat(A) {
   if (!lod) {
     A.cyl(0.22, 0.45, 0, ym, 3.5, 0x6d747a, { seg: 8 });
     A.sphere(0.26, 0.26, 0.26, 0, ym + 0.55, 3.5, DARK, { w: 10, h: 8 }); // EO/IR sensor ball
+    // Twin high-powered xenon searchlights on forward pilothouse roof corners
+    for (const sd of [-1, 1]) {
+      const sx = sd * 1.65, sz = 3.9;
+      A.cyl(0.12, 0.38, sx, ym, sz, STEEL, { seg: 8 });
+      A.rod([sx, ym + 0.46, sz - 0.28], [sx, ym + 0.44, sz + 0.32], 0.24, 0x454b52, 10);
+      A.panel(sx, ym + 0.44, sz + 0.34, 0.38, 0.38, 0, 0xffffff, E_WHITE);
+    }
   }
   A.sphere(0.12, 0.12, 0.12, 0, ym + 5.55, -0.8, 0xffffff, { em: E_WHITE });
   // Detailed bow naval autocannon gun mount (pedestal, faceted stealth turret cupola, barrel & muzzle brake).
@@ -1317,11 +1620,17 @@ function patrolBoat(A) {
   A.prism([[-0.65, 9.3], [0.65, 9.3], [0.72, 10.2], [0.42, 10.8], [-0.42, 10.8], [-0.72, 10.2]], yb + 0.72, 0.68, 0x6d747a, { taper: 0.78, smooth: false });
   A.rod([0, yb + 1.05, 10.5], [0, yb + 1.12, 13.0], 0.075, DARK, 8);
   if (!lod) A.cyl(0.11, 0.28, 0, yb + 0.98, 12.95, DARK, { seg: 8 });
-  // Inflatable RIB tender on aft deck cradle with sponsons, center console, outboard motor & launch crane davit.
+  // Inflatable RIB tender on aft deck cradle with sponsons, collar straps, center console, outboard motor & launch crane davit.
   A.capsule(0.62, 5.4, 0, yD + 0.65, -11, 0x2e3136, { sy: 0.8, sx: 1.25, seg: 10 });
   A.box(1.4, 0.3, 4.2, 0, yD + 0.75, -11, 0x7a7d80);
   if (!lod) {
+    // Circumferential RIB collar reinforcement & lashing straps + orange bow flare patch
+    for (const dz of [-12.6, -11.8, -11.0, -10.2, -9.4]) {
+      A.box(1.62, 0.98, 0.11, 0, yD + 0.18, dz, BLACK);
+      for (const sd of [-1, 1]) A.box(0.08, 0.28, 0.22, sd * 0.79, yD + 0.56, dz, ORANGE);
+    }
     A.box(0.55, 0.65, 0.55, 0, yD + 0.95, -10.5, OFFWHITE);           // RIB center console
+    A.panel(0, yD + 1.72, -10.22, 0.48, 0.32, 0, GLASS, E_GLASS, -0.3); // RIB console windscreen
     A.box(0.32, 0.55, 0.38, 0, yD + 0.65, -13.6, BLACK);              // RIB outboard motor
     crane(A, 2.2, yD, -8.2, { r: 0.28, h: 1.8, boom: 3.6, yaw: -2.4, lift: 0.35, hex: 0x6d747a, drop: 1.6 }); // RIB launch davit crane
   }

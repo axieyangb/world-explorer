@@ -589,6 +589,17 @@ export function stepRagdoll(ped, dt) {
     const v = Math.hypot(X[i] - O[i], X[i + 1] - O[i + 1], X[i + 2] - O[i + 2]) / STEP;
     if (v > maxV) maxV = v;
   }
+  const pelX = X[P * 3], pelY = X[P * 3 + 1], pelZ = X[P * 3 + 2];
+  const wApp = typeof window !== 'undefined' ? window.app : null;
+  if (wApp && wApp.water && wApp.water.isPointInWater(pelX, pelZ)) {
+    const waterY = wApp.water.getWaterSurfaceY(pelX, pelZ);
+    if (pelY <= waterY + 0.55) {
+      ped.dead = true;
+      ped.drowned = true;
+      rag.inWater = true;
+      rag.groundY = Math.min(rag.groundY, waterY - 0.38);
+    }
+  }
   rag.calm = maxV < 0.22 ? rag.calm + dt : 0;
   posePartsFromPoints(rag, ped.parts);
   return rag.calm > 0.30 || rag.t > 3.2;

@@ -478,16 +478,62 @@ export class Maritime {
     return true;
   }
 
+  /** Ensure an active player boat exists when entering 'boat' mode directly. */
+  ensurePlayerBoat() {
+    if (this.activeBoat && !this.activeBoat.dead && !this.activeBoat.wrecked && this.activeBoat.state !== 'sink' && this.activeBoat.state !== 'sunk') {
+      return this.activeBoat;
+    }
+    const px = this.app.pos.x, pz = this.app.pos.z;
+    const cand = this.findNearestBoardable(px, pz, 400);
+    if (cand) {
+      const v = cand.v;
+      this.activeBoat = v;
+      v.state = 'player';
+      v.path = null;
+      this.boatSpeed = 0;
+      v.v = 0;
+      this.app.pos.set(v.x, (v.y || 0) + 1.8, v.z);
+      this.app.yaw = v.yaw;
+      this.app.camYaw = v.yaw;
+      return v;
+    }
+    let bx = px, bz = pz;
+    if (this.region && typeof this.region.snap === 'function') {
+      const cid = this.region.mainComponent ? this.region.mainComponent() : -1;
+      const cell = this.region.snap(px, pz, 1, cid, 80);
+      if (cell >= 0 && typeof this.region.cellCenter === 'function') {
+        const cc = this.region.cellCenter(cell);
+        if (cc) { bx = cc[0]; bz = cc[1]; }
+      }
+    }
+    const v = this._vessel('speedboat', 'sail');
+    const water = this.app.water;
+    v.x = bx;
+    v.z = bz;
+    v.y = water ? water.getWaterSurfaceY(bx, bz) : 0;
+    v.yaw = this.app.yaw || 0;
+    v.state = 'player';
+    v.path = null;
+    v.visible = true;
+    this.activeBoat = v;
+    this.boatSpeed = 0;
+    this.app.pos.set(v.x, v.y + 1.8, v.z);
+    this.app.yaw = v.yaw;
+    this.app.camYaw = v.yaw;
+    return v;
+  }
+
   /** Per-frame boat driving physics when app.mode === 'boat'. */
   updatePlayerBoat(dt) {
-    const v = this.activeBoat;
+    let v = this.activeBoat;
+    if (!v) v = this.ensurePlayerBoat();
     if (!v || v.dead || v.wrecked || v.state === 'sink' || v.state === 'sunk') {
       this.exitToWalk();
       return;
     }
     const k = this.app.keys;
-    const fwd = k.has('KeyW') || k.has('ArrowUp');
-    const rev = k.has('KeyS') || k.has('ArrowDown');
+    let fwd = k.has('KeyW') || k.has('ArrowUp');
+    let rev = k.has('KeyS') || k.has('ArrowDown');
     const left = k.has('KeyA') || k.has('ArrowLeft');
     const right = k.has('KeyD') || k.has('ArrowRight');
     const boost = k.has('ShiftLeft') || k.has('ShiftRight');
@@ -495,6 +541,47 @@ export class Maritime {
     const baseMax = v.type === 'speedboat' ? 24 : v.type === 'patrol' ? 20 : (v.type === 'ferry' || v.type === 'carferry') ? 15 : 13;
     const maxSpd = baseMax * (boost ? 1.35 : 1.0);
     const accel = v.type === 'speedboat' ? 14 : 8.5;
+
+    const water = this.app.water;
+    const wy0 = water ? water.getWaterSurfaceY(v.x, v.z) : 0.0;
+    const isDryProbe = (px, pz) => {
+      const ty = getBeijingTerrainElevation(px, pz);
+      if (ty > wy0 + 0.15) return true;
+      if (this.region && typeof this.region.isWater === 'function' && !this.region.isWater(px, pz) && ty > wy0 - 0.15) {
+        return true;
+      }
+      return false;
+    };
+
+    // Universal FSD Autopilot for Maritime Boat
+    let steer = (left ? 1 : 0) - (right ? 1 : 0);
+    const fsd = this.app.fsd;
+    const fsdActive = Boolean(fsd && fsd.active && !fwd && !rev && !left && !right);
+    if (fsdActive) {
+      const dx = fsd.destX - v.x;
+      const dz = fsd.destZ - v.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 16.0) {
+        this.boatSpeed = 0;
+        this.app._onFsdArrived?.();
+      } else {
+        let desiredYaw = Math.atan2(dx, dz);
+        // Probe ahead for dry land / peninsulas and steer around them
+        if (isDryProbe(v.x + Math.sin(desiredYaw) * 16, v.z + Math.cos(desiredYaw) * 16)) {
+          const offsets = [0.45, -0.45, 0.9, -0.9, 1.35, -1.35, 1.8, -1.8];
+          for (const off of offsets) {
+            const cand = desiredYaw + off;
+            if (!isDryProbe(v.x + Math.sin(cand) * 18, v.z + Math.cos(cand) * 18)) {
+              desiredYaw = cand;
+              break;
+            }
+          }
+        }
+        const yawErr = Math.atan2(Math.sin(desiredYaw - v.yaw), Math.cos(desiredYaw - v.yaw));
+        steer = clamp(yawErr * 1.8, -1, 1);
+        fwd = true;
+      }
+    }
 
     if (fwd) {
       this.boatSpeed = Math.min(maxSpd, this.boatSpeed + accel * dt);
@@ -508,14 +595,11 @@ export class Maritime {
       if (Math.abs(this.boatSpeed) < 0.08) this.boatSpeed = 0;
     }
 
-    const steer = (left ? 1 : 0) - (right ? 1 : 0);
     const turnAuth = v.type === 'speedboat' || v.type === 'sailboat' || v.type === 'patrol' ? 1.35 : 0.75;
     const speedFactor = Math.min(1, Math.abs(this.boatSpeed) / 2.2 + 0.25);
     const dirSign = this.boatSpeed >= -0.1 ? 1 : -1;
     v.yaw += steer * turnAuth * speedFactor * dirSign * dt;
 
-    const water = this.app.water;
-    const wy0 = water ? water.getWaterSurfaceY(v.x, v.z) : 0.0;
     const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
 
     // Decay external impact velocity & roll impulse
@@ -611,8 +695,14 @@ export class Maritime {
 
     const spec = VESSEL_TYPES[v.type] || { height: 4 };
     this.app.pos.set(v.x, v.y + Math.min(4.5, spec.height * 0.55 + 1.2), v.z);
+    this.app.yaw = v.yaw;
     this.app.speed = this.boatSpeed;
     this.app.heading = v.yaw + Math.PI;
+    const mouseIdleSec = (performance.now() - (this.app.lastMouseOrbitTime || 0)) * 0.001;
+    if (mouseIdleSec > 1.2) {
+      const diff = Math.atan2(Math.sin(v.yaw - this.app.camYaw), Math.cos(v.yaw - this.app.camYaw));
+      this.app.camYaw += diff * Math.min(1, dt * 3.2);
+    }
   }
 
   /** Disembark from the active boat back onto the nearest pier or shoreline. */

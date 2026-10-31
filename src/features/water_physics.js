@@ -386,18 +386,24 @@ export class WaterPhysics {
   }
 
   // ---------------------------------------------------------------- walk / heli
-  /** Walk mode: returns the allowed (x, z) for a move from (px, pz) to (nx, nz); stops at the shoreline. */
+  /** Walk mode: allows entering/dropping into water (where unsupported water triggers drowning) while recording dry shore poses. */
   resolveWalk(px, pz, nx, nz, wy) {
-    const blocked = (x, z) => {
-      if (!this.isPointInWater(x, z)) return false;
-      const surf = this.app.sampleRoadSurface(x, wy, z);
-      return this.isUnsupportedWater(x, z, wy, surf);
-    };
-    if (!blocked(nx, nz)) return { x: nx, z: nz };
-    if (blocked(px, pz)) return { x: nx, z: nz }; // already in water (e.g. teleported): let them walk out
-    if (!blocked(nx, pz)) return { x: nx, z: pz }; // slide along the shore
-    if (!blocked(px, nz)) return { x: px, z: nz };
-    return { x: px, z: pz };
+    const surfHere = this.app.sampleRoadSurface(px, wy, pz);
+    if (!this.isPointInWater(px, pz) || (surfHere && surfHere.seg && surfHere.seg.bridge)) {
+      this.safe = { x: px, z: pz, yaw: this.app.yaw, seg: surfHere ? surfHere.seg : null };
+      const last = this.safeHist[this.safeHist.length - 1];
+      if (!last || Math.hypot(last.x - px, last.z - pz) > 4.0) {
+        this.safeHist.push(this.safe);
+        if (this.safeHist.length > 24) this.safeHist.shift();
+      }
+    }
+    return { x: nx, z: nz };
+  }
+
+  /** Spawns a water splash and respawns a drowned walker on the nearest safe dry road/shore. */
+  splashAt(wx, wz, hSpeed = 2.0, vSpeed = 6.0) {
+    const waterY = this.getWaterSurfaceY(wx, wz);
+    this._splash(wx, waterY, wz, hSpeed, vSpeed);
   }
 
   /** [integration] heli_flight.js API (rotor-wash colour): alias of isPointInWater. */

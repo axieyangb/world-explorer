@@ -694,10 +694,11 @@ export function emitRoof(out, ring, holes, plan, yEave, opts = {}) {
   const topY = yStart + k * res.t;
   if (res.rings.length) capRings(out, res.rings, topY, [rgb[0] * 1.02, rgb[1] * 1.02, rgb[2] * 1.02], mat);
 
-  // 3. fascia + soffit under the overhang
+  // 3. fascia + stepped drip-edge molding + soffit under the overhang
   if (eUse > 0.05 && opts.soffit !== false) {
     const trim = plan.trim || [wallRgb[0] * 0.92, wallRgb[1] * 0.92, wallRgb[2] * 0.92];
-    const fh = full ? 0.2 : 0.0;
+    const trimHi = [Math.min(1, trim[0] * 1.06), Math.min(1, trim[1] * 1.06), Math.min(1, trim[2] * 1.06)];
+    const fh = full ? 0.22 : 0.0;
     const n = wallRing.x.length;
     for (let i = 0; i < n; i++) {
       if (wallEdges[i].w < 1e-3) continue;
@@ -709,11 +710,27 @@ export function emitRoof(out, ring, holes, plan, yEave, opts = {}) {
       if (fh > 0) {
         const E = wallEdges[i];
         quad(out, ex, ys, ez, fx, ys, fz, fx, yStart, fz, ex, yStart, ez, -E.nx, 0, -E.nz, trim);
+        if (opts.detail) {
+          const ox = -E.nx * 0.032, oz = -E.nz * 0.032;
+          quad(opts.detail, ex + ox, yStart - 0.06, ez + oz, fx + ox, yStart - 0.06, fz + oz, fx + ox, yStart + 0.02, fz + oz, ex + ox, yStart + 0.02, ez + oz, -E.nx, 0, -E.nz, trimHi);
+        }
       }
     }
   }
 
-  // 4. chimney (detail LOD)
+  // 3b. ridge cap along the main roof ridge (detail LOD)
+  if (opts.detail && obb && full && !res.rings.length) {
+    const ridgeHalf = gable ? Math.max(0, obb.len * 0.5 - 0.08) : Math.max(0, (obb.len - obb.wid) * 0.5);
+    if (ridgeHalf > 0.25) {
+      const rRgb = [Math.min(1, rgb[0] * 1.14 + 0.03), Math.min(1, rgb[1] * 1.12 + 0.02), Math.min(1, rgb[2] * 1.10 + 0.02)];
+      orientedBox(opts.detail, obb.cx, topY - 0.04, obb.cz, obb.ax, obb.az, ridgeHalf, 0.11, 0.09, rRgb, true, true);
+      for (const s of [-1, 1]) {
+        orientedBox(opts.detail, obb.cx + obb.ax * s * (ridgeHalf - 0.08), topY + 0.05, obb.cz + obb.az * s * (ridgeHalf - 0.08), obb.ax, obb.az, 0.09, 0.13, 0.06, rRgb, true, true);
+      }
+    }
+  }
+
+  // 4. chimney stack with corbelled brick collar, stone drip crown & dual clay flue pots (detail LOD)
   if (plan.chimney && opts.detail && obb && full) {
     const r = rnd(opts.seed || 1, 53);
     const side = r < 0.5 ? -1 : 1;
@@ -724,8 +741,15 @@ export function emitRoof(out, ring, holes, plan, yEave, opts = {}) {
     const yBase = yEave + Math.min(plan.maxRise, dist * k) - 0.6;
     const brick = opts.chimneyRgb || [0.52, 0.30, 0.24];
     const hTop = Math.max(topY + 0.7, yBase + 1.3);
-    orientedBox(opts.detail, cx, yBase, cz, obb.ax, obb.az, 0.42, 0.32, hTop - yBase, brick);
-    orientedBox(opts.detail, cx, hTop, cz, obb.ax, obb.az, 0.5, 0.4, 0.14, [0.6, 0.6, 0.58]);
+    orientedBox(opts.detail, cx, yBase, cz, obb.ax, obb.az, 0.44, 0.32, hTop - yBase, brick);
+    orientedBox(opts.detail, cx, hTop - 0.10, cz, obb.ax, obb.az, 0.48, 0.36, 0.10, [brick[0] * 0.90, brick[1] * 0.90, brick[2] * 0.90]);
+    orientedBox(opts.detail, cx, hTop, cz, obb.ax, obb.az, 0.52, 0.40, 0.12, [0.64, 0.63, 0.60]);
+    for (const fs of [-0.18, 0.18]) {
+      const fx = cx + obb.ax * fs, fz = cz + obb.az * fs;
+      orientedBox(opts.detail, fx, hTop + 0.12, fz, obb.ax, obb.az, 0.10, 0.10, 0.32, [0.68, 0.38, 0.26]);
+      orientedBox(opts.detail, fx, hTop + 0.40, fz, obb.ax, obb.az, 0.125, 0.125, 0.05, [0.60, 0.32, 0.22]);
+      orientedBox(opts.detail, fx, hTop + 0.45, fz, obb.ax, obb.az, 0.075, 0.075, 0.015, [0.12, 0.12, 0.13]);
+    }
   }
   return { ridgeY: topY };
 }
@@ -814,22 +838,35 @@ function emitMansard(out, outer, holes, plan, yEave, opts) {
           -E.ux * 0.6, 0.8, -E.uz * 0.6, cap);
         quad(det, px + hx + fx, y0, pz + hz + fz, px + fx, yR, pz + fz, px + bx, yR, pz + bz, px + hx + bx, y0, pz + hz + bz,
           E.ux * 0.6, 0.8, E.uz * 0.6, cap);
-        // dark glazing on the dormer face
+        // pediment tympanum triangle + ridge cap + projecting stone sill & lintel cornice
+        tri(det, px - hx + fx, y0, pz - hz + fz, px + hx + fx, y0, pz + hz + fz, px + fx, yR, pz + fz, -E.nx, 0, -E.nz, dRgb, null);
+        orientedBox(det, px, yR - 0.02, pz, E.nx, E.nz, 0.62, 0.05, 0.05, cap);
         const gx = px - E.nx * 0.56, gz = pz - E.nz * 0.56;
+        const trimRgb = [0.91, 0.89, 0.85];
+        orientedBox(det, gx - E.nx * 0.04, yEave + 0.68, gz - E.nz * 0.04, E.ux, E.uz, 0.52, 0.08, 0.08, trimRgb);
+        orientedBox(det, gx - E.nx * 0.04, yEave + 1.97, gz - E.nz * 0.04, E.ux, E.uz, 0.58, 0.09, 0.09, trimRgb);
+        // dark glazing on the dormer face + casement frame stiles & central mullion/transom crossbars
         quad(det, gx - E.ux * 0.38, yEave + 0.75, gz - E.uz * 0.38, gx + E.ux * 0.38, yEave + 0.75, gz + E.uz * 0.38,
           gx + E.ux * 0.38, yEave + 1.95, gz + E.uz * 0.38, gx - E.ux * 0.38, yEave + 1.95, gz - E.uz * 0.38,
           -E.nx, 0, -E.nz, [0.16, 0.19, 0.23]);
+        orientedBox(det, gx - E.nx * 0.018, yEave + 0.75, gz - E.nz * 0.018, E.ux, E.uz, 0.028, 0.02, 1.20, trimRgb);
+        orientedBox(det, gx - E.nx * 0.018, yEave + 1.48, gz - E.nz * 0.018, E.ux, E.uz, 0.38, 0.02, 0.045, trimRgb);
         budget--;
       }
     }
-    // chimney stacks along the party walls
+    // chimney stacks along the party walls with stone cornice crown & 4 individual clay flue pots
     if (plan.chimney && plan.obb) {
       const o = plan.obb;
       for (let c = 0; c < 2; c++) {
         const a = (c === 0 ? -1 : 1) * (o.len * 0.5 - 2.5);
         const cx = o.cx + o.ax * a, cz = o.cz + o.az * a;
         orientedBox(det, cx, yTop - 0.2, cz, o.az, -o.ax, 1.6, 0.4, 1.5, [0.74, 0.66, 0.56]);
-        orientedBox(det, cx, yTop + 1.3, cz, o.az, -o.ax, 1.2, 0.14, 0.45, [0.62, 0.36, 0.28], true, true); // pot row
+        orientedBox(det, cx, yTop + 1.22, cz, o.az, -o.ax, 1.70, 0.46, 0.12, [0.82, 0.79, 0.73]);
+        for (const ps of [-1.05, -0.35, 0.35, 1.05]) {
+          const px = cx + o.az * ps, pz = cz - o.ax * ps;
+          orientedBox(det, px, yTop + 1.34, pz, o.az, -o.ax, 0.12, 0.12, 0.38, [0.66, 0.38, 0.28]);
+          orientedBox(det, px, yTop + 1.68, pz, o.az, -o.ax, 0.15, 0.15, 0.05, [0.58, 0.32, 0.22]);
+        }
       }
     }
   }
@@ -1001,14 +1038,29 @@ export function buildYards(houses, others, roads, pools, getY, sinkFor) {
         const y1 = getY(p1[0], p1[1]) + 0.135, y2 = getY(p2[0], p2[1]) + 0.135, y3 = getY(p3[0], p3[1]) + 0.135, y4 = getY(p4[0], p4[1]) + 0.135;
         quad(sink, p1[0], y1, p1[1], p2[0], y2, p2[1], p3[0], y3, p3[1], p4[0], y4, p4[1], 0, 1, 0, walkRgb);
       }
-      // Foundation flowerbed / blooming shrub planters flanking the front wall
+      // Front entrance stoop (2-tier stone landing + flanking masonry cheek walls with coping caps)
+      const [sx0, sz0] = W(walkA, f1 + 0.34);
+      const sy0 = getY(sx0, sz0);
+      const stoopRgb = [0.78, 0.75, 0.70], cheekRgb = [0.62, 0.44, 0.36], copeRgb = [0.86, 0.84, 0.79];
+      orientedBox(sink, sx0, sy0 + 0.04, sz0, ax, az, walkHalfW + 0.08, 0.36, 0.28, stoopRgb);
+      const [sx1, sz1] = W(walkA, f1 + 0.82);
+      orientedBox(sink, sx1, sy0 + 0.04, sz1, ax, az, walkHalfW + 0.04, 0.20, 0.15, stoopRgb);
+      for (const cs of [-1, 1]) {
+        const ca = walkA + cs * (walkHalfW + 0.16);
+        const [cxW, czW] = W(ca, f1 + 0.46);
+        orientedBox(sink, cxW, sy0 + 0.04, czW, ax, az, 0.12, 0.48, 0.50, cheekRgb);
+        orientedBox(sink, cxW, sy0 + 0.54, czW, ax, az, 0.15, 0.52, 0.06, copeRgb);
+      }
+
+      // Foundation flowerbed / blooming shrub planters + projecting front bay window with cornice
       const shrubRgb = [0.16, 0.36, 0.15];
       const flowerPick = Math.floor(rnd(h.seed, 131) * 3);
       const bloomRgb = flowerPick === 0 ? [0.86, 0.32, 0.42] : flowerPick === 1 ? [0.64, 0.44, 0.82] : [0.92, 0.72, 0.22];
       const bedSpans = [
-        [driveSide < 0 ? a0 + 3.5 : a0 + 0.45, walkA - walkHalfW - 0.25],
-        [walkA + walkHalfW + 0.25, driveSide > 0 ? a1 - 3.5 : a1 - 0.45],
+        [driveSide < 0 ? a0 + 3.5 : a0 + 0.45, walkA - walkHalfW - 0.35],
+        [walkA + walkHalfW + 0.35, driveSide > 0 ? a1 - 3.5 : a1 - 0.45],
       ];
+      let bayAdded = false;
       for (let bIdx = 0; bIdx < bedSpans.length; bIdx++) {
         const [ba0, ba1] = bedSpans[bIdx];
         const bLen = (ba1 - ba0) * 0.5;
@@ -1018,6 +1070,17 @@ export function buildYards(houses, others, roads, pools, getY, sinkFor) {
         const by = getY(bx, bz);
         orientedBox(sink, bx, by + 0.04, bz, ax, az, bLen, 0.42, 0.52, shrubRgb);
         orientedBox(sink, bx, by + 0.56, bz, ax, az, Math.max(0.35, bLen - 0.08), 0.34, 0.12, bloomRgb);
+        if (!bayAdded && bLen >= 0.95) {
+          bayAdded = true;
+          const [bayX, bayZ] = W(bcA, f1 + 0.26);
+          const bayW = Math.min(0.95, bLen * 0.72);
+          orientedBox(sink, bayX, by + 0.68, bayZ, ax, az, bayW + 0.06, 0.32, 0.12, copeRgb);
+          orientedBox(sink, bayX, by + 0.80, bayZ, ax, az, bayW, 0.28, 1.38, [0.90, 0.88, 0.84]);
+          orientedBox(sink, bayX + fx * 0.03, by + 0.92, bayZ + fz * 0.03, ax, az, bayW - 0.10, 0.27, 1.12, [0.16, 0.22, 0.28]);
+          orientedBox(sink, bayX + fx * 0.29, by + 0.90, bayZ + fz * 0.29, ax, az, 0.035, 0.02, 1.16, copeRgb);
+          orientedBox(sink, bayX, by + 2.18, bayZ, ax, az, bayW + 0.10, 0.36, 0.10, copeRgb);
+          orientedBox(sink, bayX, by + 2.28, bayZ, ax, az, bayW + 0.04, 0.32, 0.08, [0.28, 0.30, 0.34]);
+        }
       }
     }
 

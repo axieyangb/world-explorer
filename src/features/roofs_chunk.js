@@ -9,7 +9,7 @@ import { parseOsmBuildingColour } from '../wfc/wfc_mesh_builder.js';
  * that drops it beyond ROOF_DETAIL_DIST (main thread; the worker only tags the meshes with `userData.roofLod`).
  */
 
-export const ROOF_DETAIL_DIST = 420;
+export const ROOF_DETAIL_DIST = 460;
 export const archRegionFor = archRegionForOrigin;
 
 const LC_SWIMMING_POOL = 18;
@@ -90,7 +90,7 @@ export function addHouse(ctx, ring, cx, cz, id, shape, btype = 'yes') {
   if (!HOUSE_YARD_TYPES.has(bt)) return;
   if (roofFlav(ctx, cx, cz) < 0.28) return; // never fence commercial, office, institutional or industrial parcels
   const obb = footprintObb(ring);
-  if (!obb || obb.area > 360 || obb.area < 45) return;
+  if (!obb || obb.area > 380 || obb.area < 40) return;
   const seed = ((Math.round((ctx.ox + cx) * 7.1) * 73856093) ^ (Math.round((ctx.oz + cz) * 7.1) * 19349663)) >>> 0;
   ctx.houses.push({ ring, cx, cz, obb, region: ctx.arch, seed, id, warm: ctx.warm });
 }

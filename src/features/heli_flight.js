@@ -243,6 +243,43 @@ export class HeliFlight {
       }
     }
     if (!this.inputEnabled) { inp.collective = inp.yaw = inp.pitch = inp.roll = 0; }
+    const fsd = this.app.fsd;
+    if (fsd && fsd.active && this.inputEnabled && Math.abs(inp.pitch) < 0.05 && Math.abs(inp.yaw) < 0.05 && Math.abs(inp.collective) < 0.05 && Math.abs(inp.roll) < 0.05) {
+      const pos = this.app.pos;
+      const dx = fsd.destX - pos.x;
+      const dz = fsd.destZ - pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 18.0) {
+        inp.pitch = 0;
+        inp.roll = 0;
+        inp.yaw = 0;
+        inp.collective = 0;
+        this.app._onFsdArrived?.();
+      } else {
+        const s = this.state;
+        const desiredYaw = Math.atan2(dx, dz);
+        const yawErr = angDiff(s.yaw, desiredYaw);
+        const supHere = this._support(pos.x, pos.z, pos.y + 80);
+        const lookD = Math.min(dist, 55);
+        const supAhead = this._support(pos.x + Math.sin(desiredYaw) * lookD, pos.z + Math.cos(desiredYaw) * lookD, pos.y + 120);
+        const destSup = this._terrain(fsd.destX, fsd.destZ);
+        const targetY = Math.max(supHere, supAhead, destSup) + (dist < 90 ? 38 : 72);
+        if (s.grounded || this.autoLanding) {
+          this.autoLanding = false;
+          s.autoLanding = false;
+          s.grounded = false;
+          s.rpm = 1.0;
+          inp.collective = 0.85;
+        } else {
+          const altErr = targetY - pos.y;
+          inp.collective = Math.abs(altErr) > 3.5 ? clamp(altErr * 0.08, -0.65, 0.9) : 0;
+          this._holdY = targetY;
+        }
+        inp.yaw = clamp(yawErr * 1.85, -1, 1);
+        const align = Math.max(0.18, Math.cos(Math.min(Math.PI * 0.45, Math.abs(yawErr))));
+        inp.pitch = clamp(dist / 70.0, 0.28, 1.0) * align;
+      }
+    }
     return inp;
   }
 

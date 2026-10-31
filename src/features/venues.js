@@ -616,9 +616,10 @@ function buildStadium(acc, s, ox, oz, cols) {
       prof.push([fa, yb, 1], [fb, yb, 0]);
     }
   };
-  tier(0, 0.5, 2.4, H * 0.45, 7);
-  prof.push([0.5, H * 0.53, 2]);
-  tier(0.5, 0.96, H * 0.53, H * 0.9, 8);
+  // Finer tiered seating bowl steps with mid-bowl concourse walkway & luxury suite fascia
+  tier(0, 0.47, 2.4, H * 0.45, 10);
+  prof.push([0.52, H * 0.45, 3], [0.52, H * 0.54, 2]);
+  tier(0.52, 0.96, H * 0.54, H * 0.92, 10);
   prof.push([0.96, H, 3], [1.0, H, 0]);
   // Outer facade: concourse levels read as dark glazed bands between concrete floors
   const levels = Math.max(2, Math.round(H / 12));
@@ -631,6 +632,9 @@ function buildStadium(acc, s, ox, oz, cols) {
     const yk = y > 2.4 ? 2.4 + ((y - 2.4) * (Hk[k % N] - 2.4)) / (H - 2.4) : y;
     return [cx + Math.cos(t) * r, gy + yk, cz + Math.sin(t) * r];
   };
+  const PORTAL_DARK = [0.07, 0.08, 0.10];
+  const TRUSS_STEEL = [0.64, 0.67, 0.71];
+  const LED_GLOW = [1.0, 0.98, 0.88];
   for (let k = 0; k < N; k++) {
     const sec = Math.floor(k / 4) % 2 === 0 ? team : team2;
     for (let j = 0; j + 1 < prof.length; j++) {
@@ -638,29 +642,107 @@ function buildStadium(acc, s, ox, oz, cols) {
       const rgb = kind === 0 ? sec : kind === 1 ? CONCRETE_DK : kind === 2 || kind === 4 ? GLASS : CONCRETE;
       acc.quad(P(k, f0, y0), P(k + 1, f0, y0), P(k + 1, f1, y1), P(k, f1, y1), rgb);
     }
+    // Radial concrete stairway aisles at every sector boundary
+    if (k % 4 === 0) {
+      acc.beam(P(k, 0.02, 2.55), P(k, 0.47, H * 0.45 + 0.15), 0.72, 0.16, CONCRETE);
+      acc.beam(P(k, 0.53, H * 0.54 + 0.15), P(k, 0.95, H * 0.92 + 0.15), 0.72, 0.16, CONCRETE);
+    }
+    // Concourse vomitoria portals (recessed dark tunnel mouths + concrete lintel & jamb frames)
+    if (k % 6 === 2) {
+      for (const [vf0, vf1, vy0, vy1] of [[0.22, 0.34, H * 0.16, H * 0.27], [0.64, 0.76, H * 0.62, H * 0.73]]) {
+        const va0 = P(k, vf0, vy0), va1 = P(k + 1, vf0, vy0);
+        const vb0 = P(k, vf1, vy1), vb1 = P(k + 1, vf1, vy1);
+        acc.quad([va0[0], va0[1] + 0.12, va0[2]], [va1[0], va1[1] + 0.12, va1[2]], [vb1[0], vb1[1] + 0.12, vb1[2]], [vb0[0], vb0[1] + 0.12, vb0[2]], PORTAL_DARK);
+        acc.beam(va0, vb0, 0.28, 0.38, CONCRETE);
+        acc.beam(va1, vb1, 0.28, 0.38, CONCRETE);
+        acc.beam([vb0[0], vb0[1] + 0.25, vb0[2]], [vb1[0], vb1[1] + 0.25, vb1[2]], 0.36, 0.32, CONCRETE);
+      }
+    }
+    // Field-level players/service tunnel portals at main ends + exterior vertical structural facade ribs
+    if (k === 0 || k === (N >> 1)) {
+      const ta = P(k, 0, 0), tb = P(k + 1, 0, 0), tc = P(k + 1, 0, 2.2), td = P(k, 0, 2.2);
+      acc.quad(ta, tb, tc, td, PORTAL_DARK);
+      acc.beam(td, tc, 0.35, 0.28, CONCRETE);
+    }
+    if (k % 3 === 0) {
+      acc.beam(P(k, 1.005, 0), P(k, 1.005, H), 0.42, 0.42, CONCRETE);
+    }
   }
-  // Canopy ring over the upper tier for big modern stadiums (open centre), else 4 light masts
-  if (H >= 38) {
+  // Roof canopy with radial cantilever trusses over the upper tier
+  if (H >= 20) {
     for (let k = 0; k < N; k++) {
-      if (Hk[k] < H * 0.8 || Hk[(k + 1) % N] < H * 0.8) continue;
-      const y0 = gy + Hk[k] + 4, y1 = gy + Hk[(k + 1) % N] + 4;
-      const a0 = P(k, 0.8, 0), a1 = P(k + 1, 0.8, 0), b0 = P(k, 1.02, 0), b1 = P(k + 1, 1.02, 0);
+      if (Hk[k] < H * 0.72 || Hk[(k + 1) % N] < H * 0.72) continue;
+      const y0 = gy + Hk[k] + 4.2, y1 = gy + Hk[(k + 1) % N] + 4.2;
+      const a0 = P(k, 0.75, 0), a1 = P(k + 1, 0.75, 0), b0 = P(k, 1.03, 0), b1 = P(k + 1, 1.03, 0);
       a0[1] = b0[1] = y0; a1[1] = b1[1] = y1;
-      acc.quad(a0, a1, b1, b0, [0.88, 0.89, 0.9]);
-      acc.quad([a0[0], y0 - 1.6, a0[2]], [a1[0], y1 - 1.6, a1[2]], a1, a0, [0.6, 0.62, 0.65]);
-      if (k % 6 === 0) acc.box(a0[0], a0[2], y0 - 2.4, y0 - 1.6, 1.6, 0.6, (k / N) * Math.PI * 2, [1, 0.97, 0.85]);
-      if (k % 9 === 0) { const q = P(k, 1.0, 0); acc.beam([q[0], gy + Hk[k], q[2]], [q[0], y0, q[2]], 0.5, 0.5, CONCRETE_DK); }
+      acc.quad(a0, a1, b1, b0, [0.88, 0.89, 0.91]);
+      acc.quad([a0[0], y0 - 1.4, a0[2]], [a1[0], y1 - 1.4, a1[2]], a1, a0, [0.58, 0.60, 0.64]);
+      if (k % 4 === 0) acc.box(a0[0], a0[2], y0 - 2.1, y0 - 1.4, 1.6, 0.55, (k / N) * Math.PI * 2, LED_GLOW);
+      // Radial cantilever roof truss (rear mast pylon, sloped top tension chord, bottom chord & web struts)
+      if (k % 3 === 0) {
+        const rim = P(k, 1.0, 0), mid = P(k, 0.88, 0), tip = P(k, 0.75, 0);
+        const yRim = gy + Hk[k];
+        acc.beam([rim[0], yRim, rim[2]], [rim[0], y0 + 2.8, rim[2]], 0.38, 0.38, TRUSS_STEEL);
+        acc.beam([rim[0], y0 + 2.6, rim[2]], [tip[0], y0 + 0.15, tip[2]], 0.24, 0.24, TRUSS_STEEL);
+        acc.beam([rim[0], y0 - 0.9, rim[2]], [tip[0], y0 - 1.2, tip[2]], 0.28, 0.28, CONCRETE_DK);
+        acc.beam([mid[0], y0 - 1.05, mid[2]], [mid[0], y0 + 1.35, mid[2]], 0.18, 0.18, TRUSS_STEEL);
+        acc.beam([rim[0], y0 - 0.9, rim[2]], [mid[0], y0 + 1.35, mid[2]], 0.16, 0.16, TRUSS_STEEL);
+      }
     }
-  } else {
-    for (const [su, sv] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const dirx = su * ux * 0.8 - sv * uz * 0.6, dirz = su * uz * 0.8 + sv * ux * 0.6;
-      const ang = Math.atan2(dirz, dirx);
-      const k = Math.round(((ang < 0 ? ang + Math.PI * 2 : ang) / (Math.PI * 2)) * N) % N;
-      const q = P(k, 1.03, 0);
-      const top = gy + Hk[k] + 18;
-      acc.beam([q[0], gy, q[2]], [q[0], top, q[2]], 0.7, 0.7, [0.55, 0.57, 0.6]);
-      acc.box(q[0], q[2], top, top + 4, 4.5, 0.6, ang + Math.PI / 2, [0.35, 0.36, 0.38], [1, 0.97, 0.85]);
+  }
+  // 4 Corner Floodlight Towers with lattice cross-bracing, catwalk & angled multi-row LED light banks
+  for (const [su, sv] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const dirx = su * ux * 0.8 - sv * uz * 0.6, dirz = su * uz * 0.8 + sv * ux * 0.6;
+    const ang = Math.atan2(dirz, dirx);
+    const k = Math.round(((ang < 0 ? ang + Math.PI * 2 : ang) / (Math.PI * 2)) * N) % N;
+    const q = P(k, 1.04, 0);
+    const top = gy + Hk[k] + 20;
+    const tx = -Math.sin(ang), tz = Math.cos(ang);
+    const rx = -Math.cos(ang), rz = -Math.sin(ang); // inward toward field center
+    // Twin-leg steel lattice mast + horizontal & diagonal cross-braces
+    for (const sLeg of [-1.4, 1.4]) {
+      acc.beam([q[0] + tx * sLeg, gy, q[2] + tz * sLeg], [q[0] + tx * sLeg * 0.65, top, q[2] + tz * sLeg * 0.65], 0.42, 0.42, TRUSS_STEEL);
     }
+    for (let br = 0.25; br <= 0.85; br += 0.2) {
+      const by = gy + (top - gy) * br;
+      const bw = 1.4 * (1 - br * 0.32);
+      acc.beam([q[0] - tx * bw, by, q[2] - tz * bw], [q[0] + tx * bw, by, q[2] + tz * bw], 0.22, 0.22, CONCRETE_DK);
+    }
+    // Upper catwalk platform + tilted LED floodlight bank facing inward toward (cx, gy, cz)
+    acc.box(q[0], q[2], top - 0.8, top - 0.3, 4.8, 1.1, ang + Math.PI / 2, CONCRETE_DK);
+    for (let row = 0; row < 3; row++) {
+      const ry = top + 0.4 + row * 1.35;
+      const rf = row * 0.42; // tilted forward at top
+      const bx = q[0] + rx * rf, bz = q[2] + rz * rf;
+      acc.beam([bx - tx * 4.4, ry, bz - tz * 4.4], [bx + tx * 4.4, ry, bz + tz * 4.4], 0.32, 0.48, [0.26, 0.28, 0.31]);
+      for (let col = -2; col <= 2; col++) {
+        const lx = bx + tx * (col * 1.65) + rx * 0.34, lz = bz + tz * (col * 1.65) + rz * 0.34;
+        acc.box(lx, lz, ry - 0.42, ry + 0.42, 0.68, 0.16, ang + Math.PI / 2, LED_GLOW, LED_GLOW);
+      }
+    }
+  }
+  // End-Zone Jumbotron Video Scoreboards (mounted above both end-zone stands facing the field)
+  for (const sgn of [-1, 1]) {
+    const endAng = Math.atan2(sgn * uz, sgn * ux);
+    const kEnd = Math.round(((endAng < 0 ? endAng + Math.PI * 2 : endAng) / (Math.PI * 2)) * N) % N;
+    const qEnd = P(kEnd, 0.94, 0);
+    const sbBaseY = gy + Hk[kEnd] + (H >= 20 ? 4.4 : 0.6);
+    const sbTopY = sbBaseY + 7.2;
+    const tx = -sgn * uz, tz = sgn * ux;
+    const inX = -sgn * ux, inZ = -sgn * uz;
+    const halfW = Math.min(8.5, Math.max(5.5, depth * 0.24));
+    for (const sx of [-halfW * 0.65, halfW * 0.65]) {
+      acc.beam([qEnd[0] + tx * sx, gy + Hk[kEnd] * 0.85, qEnd[2] + tz * sx], [qEnd[0] + tx * sx, sbTopY, qEnd[2] + tz * sx], 0.38, 0.38, CONCRETE_DK);
+    }
+    const sbYaw = endAng + Math.PI / 2;
+    acc.box(qEnd[0], qEnd[2], sbBaseY, sbTopY, halfW, 0.75, sbYaw, [0.16, 0.18, 0.21]);
+    // Illuminated LED screen face + team header banner + score ticker strip
+    const fx = qEnd[0] + inX * 0.82, fz = qEnd[2] + inZ * 0.82;
+    const pL = [fx - tx * (halfW - 0.5), fz - tz * (halfW - 0.5)];
+    const pR = [fx + tx * (halfW - 0.5), fz + tz * (halfW - 0.5)];
+    acc.quad([pL[0], sbBaseY + 1.4, pL[1]], [pR[0], sbBaseY + 1.4, pR[1]], [pR[0], sbTopY - 1.2, pR[1]], [pL[0], sbTopY - 1.2, pL[1]], [0.14, 0.58, 0.92]);
+    acc.quad([pL[0], sbTopY - 1.15, pL[1]], [pR[0], sbTopY - 1.15, pR[1]], [pR[0], sbTopY - 0.3, pR[1]], [pL[0], sbTopY - 0.3, pL[1]], team);
+    acc.quad([pL[0], sbBaseY + 0.35, pL[1]], [pR[0], sbBaseY + 0.35, pR[1]], [pR[0], sbBaseY + 1.3, pR[1]], [pL[0], sbBaseY + 1.3, pL[1]], LED_GLOW);
   }
 
   // Stand colliders: 18 sectors x 2 bands (lower tier / upper tier), so vehicles and the heli hit the bowl

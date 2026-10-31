@@ -76,8 +76,16 @@ function arcadeStorey(k, y0, h, R, n, seg, open) {
 export function build(k) {
   const hi = k.hi;
   const seg = hi ? 40 : 14;
-  // lawn of the Piazza dei Miracoli (not tilted)
-  if (hi) k.color(GRASS).cyl(0, 0, 0, 13.5, 13.5, 0.06, 24);
+  // lawn of the Piazza dei Miracoli + sunken marble basin (catino) with perimeter stone balustrade (not tilted)
+  if (hi) {
+    k.color(GRASS).cyl(0, 0, 0, 14.5, 14.5, 0.06, 32);
+    k.color(MARBLE).cyl(0, 0.02, 0, 11.6, 11.6, 0.12, 32);
+    k.color(MARBLE_DK).cyl(0, 0.08, 0, 11.4, 11.4, 0.85, 32, { caps: false });
+    for (let p = 0; p < 24; p++) {
+      const pa = (p / 24) * Math.PI * 2;
+      k.color(MARBLE).box(Math.cos(pa) * 11.4, 0.1, Math.sin(pa) * 11.4, 0.28, 0.92, 0.28);
+    }
+  }
   k.color(MARBLE_DK).cyl(0, -1.5, 0, 9.4, 9.4, 1.9, seg);
   k.push().translate(0, 0.35, 0).rotateX(TILT);
   k.glow(true);
@@ -87,6 +95,9 @@ export function build(k) {
   const R = 7.74;
   k.color(MARBLE).cyl(0, 0.3, 0, R, R, 11.0, seg, { caps: false });
   if (hi) {
+    // Dichromatic horizontal Pisan Romanesque grey-limestone inlay bands across the ground storey
+    k.color(0x9a968e);
+    for (let by = 1.4; by < 9.0; by += 1.2) k.cyl(0, by, 0, R + 0.02, R + 0.02, 0.22, seg, { caps: false });
     for (let i = 0; i < 15; i++) {
       const a = (i / 15) * Math.PI * 2;
       k.color(MARBLE_DK).cyl(Math.cos(a) * (R + 0.15), 0.3, Math.sin(a) * (R + 0.15), 0.45, 0.42, 8.6, 6, { caps: false });
@@ -99,8 +110,10 @@ export function build(k) {
       }
       k.pop();
     }
-    // main door on the south side
+    // main door on the south side with Romanesque lunette arch & Madonna-and-Child relief sculpture
     k.color(CORE_DK).box(0, 0.3, R - 0.1, 1.9, 4.2, 0.4);
+    k.color(MARBLE).box(0, 4.4, R + 0.05, 2.5, 0.3, 0.45);
+    k.color(MARBLE_SH).cyl(0, 4.7, R + 0.02, 0.25, 0.2, 0.9, 6).sphere(0, 5.75, R + 0.02, 0.16, 6, 4);
   }
   k.color(MARBLE).cyl(0, 10.4, 0, R + 0.3, R + 0.3, 0.9, seg);
   // six loggia storeys
@@ -120,8 +133,27 @@ export function build(k) {
       const a = (i / 12) * Math.PI * 2;
       k.color(MARBLE).cyl(Math.cos(a) * RB, yTop + 0.55, Math.sin(a) * RB, 0.38, 0.36, 2.9, 6, { caps: false });
     }
-    // bells glimpsed inside
-    k.color(0x7a6a44).cyl(0, yTop + 1.3, 0, 0.9, 0.5, 1.6, 8);
+    // 7 historic Bronze Bells (L'Assunta, Il Crocifisso, San Ranieri, La Terza, La Pasquereccia, Il Vespruccio, Dal Pozzo)
+    // suspended in the 7 arched openings around the bell chamber perimeter with timber headstocks
+    for (let b = 0; b < 7; b++) {
+      const ba = (b / 7) * Math.PI * 2 + 0.25;
+      const bx = Math.cos(ba) * (RB - 0.42), bz = Math.sin(ba) * (RB - 0.42);
+      const br = 0.42 + (b % 3) * 0.08;
+      k.color(0x523a26).box(bx, yTop + 3.05, bz, br * 2.1, 0.28, br * 1.4);
+      k.color(0x7a6a44).lathe(bx, yTop + 1.95, bz, [[br, 0], [br * 0.78, 0.35], [br * 0.62, 0.85], [br * 0.35, 1.1]], 8);
+      k.color(0x3b3322).sphere(bx, yTop + 1.92, bz, 0.12, 5, 3);
+    }
+    // Iron safety railing around the 7th-level observation walk and crimson Pisan Cross banner at the summit
+    k.color(0x3a3e42);
+    for (let r = 0; r < 24; r++) {
+      const ra = (r / 24) * Math.PI * 2;
+      k.box(Math.cos(ra) * (R + 0.15), yTop + 1.15, Math.sin(ra) * (R + 0.15), 0.08, 0.9, 0.08);
+      k.box(Math.cos(ra) * (RB - 0.35), yTop + 6.15, Math.sin(ra) * (RB - 0.35), 0.08, 0.85, 0.08);
+    }
+    // Flagpole with crimson banner & white Pisan Cross (Croce Pisana)
+    k.color(0xc0c4c8).cyl(0, yTop + 6.15, -RB + 0.6, 0.06, 0.04, 4.2, 6);
+    k.color(0xc81d25).box(0.95, yTop + 8.8, -RB + 0.6, 1.8, 1.2, 0.08);
+    k.color(0xffffff).box(0.95, yTop + 9.25, -RB + 0.6, 0.8, 0.22, 0.1).box(0.95, yTop + 8.95, -RB + 0.6, 0.22, 0.8, 0.1);
   }
   // little bell-chamber roof + parapet top
   k.color(MARBLE_DK).cyl(0, yTop + 5.0, 0, RB - 0.2, RB - 1.2, 1.15, seg);

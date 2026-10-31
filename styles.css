@@ -1037,3 +1037,30 @@ body.touch-ui #walker-weapon-badge {
   /* below the minimap / speedometer row, centred */
   body.touch-ui #walker-weapon-badge { top: calc(196px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 24px); }
 }
+
+/* Universal FSD (Full Self-Driving) Pill & Search Action */
+#fsd-btn.active {
+  background: rgba(5, 150, 105, 0.92) !important;
+  border-color: rgba(52, 211, 153, 0.95) !important;
+  color: #ecfdf5 !important;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
+}
+.loc-fsd-btn {
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.48);
+  background: rgba(14, 165, 233, 0.16);
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.loc-fsd-btn:hover {
+  background: rgba(14, 165, 233, 0.32);
+  border-color: rgba(56, 189, 248, 0.85);
+  color: #e0f2fe;
+}

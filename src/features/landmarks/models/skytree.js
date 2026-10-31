@@ -71,12 +71,28 @@ export function build(k) {
     k.lathe(0, 0, 0, [[15.4, 356], [13.8, 444]], 10, { caps: false });
     k.color(WHITE);
   }
-  // base: three corner leg shoes
+  // base: three corner leg shoes & Tokyo Solamachi entrance podium
   if (hi) {
     for (let v = 0; v < 3; v++) {
       const th = -Math.PI / 2 + v * 2 * Math.PI / 3;
-      k.color(WHITE_DK).cyl(Math.cos(th) * TRI_R * 0.97, 0, Math.sin(th) * TRI_R * 0.97, 3.2, 2.2, 40, 8);
+      const lx = Math.cos(th) * TRI_R * 0.97, lz = Math.sin(th) * TRI_R * 0.97;
+      k.color(WHITE_DK).cyl(lx, 0, lz, 3.2, 2.2, 40, 8);
+      // Heavy steel A-frame ankle bracing & concrete foundation plinths at each vertex
+      k.glow(false).color(0x9ea5ac).cyl(lx, 0, lz, 5.2, 4.6, 5.5, 8);
+      const thL = th - 0.35, thR = th + 0.35;
+      k.glow(true).color(WHITE).strut([lx, 5, lz], [Math.cos(thL) * TRI_R * 0.72, 28, Math.sin(thL) * TRI_R * 0.72], 1.1);
+      k.strut([lx, 5, lz], [Math.cos(thR) * TRI_R * 0.72, 28, Math.sin(thR) * TRI_R * 0.72], 1.1);
     }
+    // Tokyo Solamachi 4th-floor Skytree entrance lobby podium between the legs
+    k.glow(false);
+    const baseTri = [];
+    for (let v = 0; v < 3; v++) {
+      const th = -Math.PI / 2 + v * 2 * Math.PI / 3;
+      baseTri.push([Math.cos(th) * (TRI_R * 0.88), Math.sin(th) * (TRI_R * 0.88)]);
+    }
+    k.color(0xd8dde2).extrude(baseTri, 0, 14);
+    k.glow(true).color(LIT).extrude(baseTri.map(([x, z]) => [x * 0.94, z * 0.94]), 14, 3.5);
+    k.glow(false).color(WHITE_DK).extrude(baseTri.map(([x, z]) => [x * 0.96, z * 0.96]), 17.5, 1.5);
     k.color(WHITE);
   }
   k.glow(false);
@@ -88,10 +104,59 @@ export function build(k) {
   k.glow(false).color(WHITE).lathe(0, 0, 0, [[26, 350], [26.6, 350.6], [25.4, 351.5]], seg, { caps: false });
   k.glow(true).color(LIT).lathe(0, 0, 0, [[25.4, 351.5], [24.6, 354.5]], seg, { caps: false });
   k.glow(false).color(WHITE_DK).lathe(0, 0, 0, [[24.6, 354.5], [20, 357], [15.6, 358.5]], seg, { caps: false });
+  if (hi) {
+    // Outward-leaning diamond window mullion lattice around Tembo Deck (Floors 340, 345, 350)
+    k.color(WHITE);
+    const nMull = 36;
+    for (let i = 0; i < nMull; i++) {
+      const a0 = (i / nMull) * Math.PI * 2, a1 = ((i + 0.5) / nMull) * Math.PI * 2, a2 = ((i + 1) / nMull) * Math.PI * 2;
+      const p0 = [Math.cos(a0) * 26.05, 340.5, Math.sin(a0) * 26.05];
+      const pMid = [Math.cos(a1) * 26.45, 345.0, Math.sin(a1) * 26.45];
+      const pTop = [Math.cos(a0) * 26.05, 350.0, Math.sin(a0) * 26.05];
+      const pTop2 = [Math.cos(a2) * 26.05, 350.0, Math.sin(a2) * 26.05];
+      k.strut(p0, pMid, 0.22);
+      k.strut(pMid, pTop, 0.22);
+      k.strut(pMid, pTop2, 0.22);
+      // Upper Floor 350 window mullions
+      k.strut([Math.cos(a0) * 25.45, 351.5, Math.sin(a0) * 25.45], [Math.cos(a0) * 24.65, 354.5, Math.sin(a0) * 24.65], 0.2);
+    }
+    // 4 Floor-340 Lookdown Glass Floor bays on the underside of Tembo Deck
+    for (let b = 0; b < 4; b++) {
+      const ba = (b / 4) * Math.PI * 2 + Math.PI / 4;
+      k.push().translate(Math.cos(ba) * 20.5, 336.5, Math.sin(ba) * 20.5).rotateY(-ba);
+      k.color(WHITE_DK).box(0, 0, 0, 3.6, 0.5, 4.8);
+      k.glow(true).color(0x88e0ff).box(0, -0.1, 0, 3.0, 0.3, 4.2);
+      k.glow(false).pop();
+    }
+  }
   // Tembo Galleria 445-452 m
   k.color(WHITE_DK).lathe(0, 0, 0, [[14, 442], [19.2, 445.5]], seg, { caps: false });
   k.glow(true).color(LIT).lathe(0, 0, 0, [[19.2, 445.5], [19.6, 448.5], [19.2, 451.5]], seg, { caps: false });
   k.glow(false).color(WHITE_DK).lathe(0, 0, 0, [[19.2, 451.5], [13.4, 455]], seg, { caps: false });
+  if (hi) {
+    // Spiraling glass-and-steel Tembo Galleria skywalk ramp tube (445 m -> 451.2 m Sorakara Point)
+    const spiralPts = [];
+    const turns = 1.35, steps = 42;
+    for (let s = 0; s <= steps; s++) {
+      const f = s / steps;
+      const a = f * turns * Math.PI * 2;
+      const y = 445.2 + f * 6.0;
+      const r = 19.8;
+      spiralPts.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+    }
+    k.glow(true).color(0x9ee0ff).tube(spiralPts, 1.35, 8);
+    k.glow(false).color(WHITE);
+    for (let s = 0; s <= steps; s += 2) {
+      const [sx, sy, sz] = spiralPts[s];
+      const a = Math.atan2(sz, sx);
+      k.push().translate(sx, sy - 1.2, sz).rotateY(-a);
+      k.box(0, 0, 0, 1.6, 2.5, 0.28);
+      k.pop();
+    }
+    // Sorakara Point (451.2 m) protruding apex observation bay
+    k.glow(true).color(0xb8ecff).box(0, 450.2, -20.4, 5.2, 2.8, 2.4);
+    k.glow(false).color(WHITE).box(0, 453.0, -20.4, 5.6, 0.4, 2.8);
+  }
   // upper shaft to the gain tower
   k.color(WHITE).lathe(0, 0, 0, [[13.4, 454], [11, 475], [9, 497], [6.5, 500]], seg, { caps: true });
   // gain tower (antenna lattice) 500-625 m and mast

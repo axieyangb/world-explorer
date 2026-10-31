@@ -1,14 +1,17 @@
 // feature/famous-landmarks: Arc de Triomphe, Paris — 1:1 (50 m tall, 45 m wide, 22 m deep).
-// Main arch 29.19 m x 14.62 m through the long faces (local -Z faces down the Champs-Élysées),
-// transverse arches 18.68 m x 8.44 m through the short faces, high relief groups on the pier
-// fronts, frieze, heavy cornice and attic with shields. Limestone floodlit warm at night.
+// Place Charles de Gaulle 12-ray Étoile cobblestone rond-point & cast-iron chain bollards, main arch
+// 29.19 m x 14.62 m through the long faces (local -Z faces down the Champs-Élysées), transverse arches
+// 18.68 m x 8.44 m, 4 sculpted high-relief pier groups (La Marseillaise, Triumph of 1810, Resistance, Peace),
+// coffered vaults with rosette ribs, engraved inner pier battle plaques, and the Tomb of the Unknown Soldier
+// with its bronze cannon-shield Eternal Flame & French tricolor wreaths.
 const STONE = 0xddd5c1, STONE_DK = 0xc4baa2, STONE_LT = 0xe9e2d0, RELIEF = 0xa89e88, SHADOW = 0x7d7564;
 const SCULPT = 0x9a917d, SCULPT_DK = 0x847b69, GRIME = 0xb3a993, COFFER = 0x9c9380;
+const PAVE = 0x968f83, BRONZE = 0x4a4033, GOLD = 0xd9b148;
 const W = 45, D = 22, HB = 37.6; // width, depth, top of main body (cornice base)
 const MA_W = 14.62, MA_H = 29.19, SA_W = 8.44, SA_H = 18.68;
 
 export const lodDist = 1400;
-export const glowStrength = 0.42; // floodlit; at 1.0 the pale stone washed out to flat white and hid the reliefs
+export const glowStrength = 0.42;
 
 export const colliders = [
   { x: -15, z: -7.4, hw: 7.5, hd: 3.6, h: 50 },
@@ -17,19 +20,16 @@ export const colliders = [
   { x: 15, z: 7.4, hw: 7.5, hd: 3.6, h: 50 },
 ];
 
-// round arch outline points from (-r, ys) over to (r, ys), centre cx
 function arcPts(cx, ys, r, n) {
   const p = [];
   for (let i = 0; i <= n; i++) { const a = Math.PI - (i / n) * Math.PI; p.push([cx + Math.cos(a) * r, ys + Math.sin(a) * r]); }
   return p;
 }
-// extrude an XY polygon through z in [za, zb]
 function slabXY(k, pts, za, zb) {
   k.push().rotateX(-Math.PI / 2);
   k.extrude(pts, -zb, zb - za);
   k.pop();
 }
-// extrude a ZY polygon ([z, y], symmetric in z) through x in [xa, xb]
 function slabZY(k, pts, xa, xb) {
   k.push().rotateY(Math.PI / 2).rotateX(-Math.PI / 2);
   k.extrude(pts, -xb, xb - xa);
@@ -56,7 +56,6 @@ function body(k) {
   for (let i = 0; i < n; i++) {
     const a0 = (i / n) * Math.PI, a1 = ((i + 1) / n) * Math.PI;
     const p0 = [Math.cos(a0) * (r - 0.02), Math.sin(a0) * (r - 0.02)], p1 = [Math.cos(a1) * (r - 0.02), Math.sin(a1) * (r - 0.02)];
-    // vault surface in rotated frame: x, (z->y) ; rotateX(+90) maps y->z, z->-y
     k.quad([p1[0], -D / 2, -p1[1]], [p0[0], -D / 2, -p0[1]], [p0[0], D / 2, -p0[1]], [p1[0], D / 2, -p1[1]]);
   }
   k.pop();
@@ -81,34 +80,42 @@ function details(k) {
   k.color(STONE_DK).box(0, HB + 10.9, 0, W + 0.8, 0.9, D + 0.8);
   k.color(STONE).box(0, HB + 11.8, 0, W - 0.4, 0.6, D - 0.4);
   if (!hi) return;
-  // attic shields (30 around) + pilaster strips
+  // attic shields (30 around, inscribed with Revolutionary & Napoleonic victories) + pilaster strips & rooftop balustrade
   k.color(RELIEF);
   const shield = (x, z, nx) => {
-    if (nx) k.box(x, HB + 5.4, z, 0.25, 2.2, 1.6); else k.box(x, HB + 5.4, z, 1.6, 2.2, 0.25);
+    if (nx) {
+      k.color(STONE_DK).box(x, HB + 3.2, z, 0.18, 6.8, 2.2);
+      k.color(RELIEF).cyl(x + (x < 0 ? -0.15 : 0.15), HB + 5.4, z, 0.95, 0.95, 0.25, 10);
+    } else {
+      k.color(STONE_DK).box(x, HB + 3.2, z, 2.2, 6.8, 0.18);
+      k.color(RELIEF).cyl(x, HB + 5.4, z + (z < 0 ? -0.15 : 0.15), 0.95, 0.95, 0.25, 10);
+    }
   };
   for (let i = 0; i < 10; i++) { const x = -W / 2 + 2.25 + i * (W - 4.5) / 9; shield(x, -D / 2 - 0.1, false); shield(x, D / 2 + 0.1, false); }
   for (let i = 0; i < 5; i++) { const z = -D / 2 + 2.2 + i * (D - 4.4) / 4; shield(-W / 2 - 0.1, z, true); shield(W / 2 + 0.1, z, true); }
-  // main archivolt rings (front/back)
+
+  // main archivolt rings (front/back) + keystone Victory mask
   k.color(STONE_LT);
   for (const z of [-D / 2 - 0.15, D / 2 + 0.15]) {
     const pts = arcPts(0, MA_H - r, r + 0.6, 16).map(([x, y]) => [x, y, z]);
-    k.tube(pts, 0.45, 4);
+    k.tube(pts, 0.45, 5);
+    k.color(SCULPT).box(0, MA_H - 0.4, z + (z < 0 ? -0.25 : 0.25), 1.3, 1.9, 0.55).color(STONE_LT);
   }
-  // spandrel Victories: winged figures leaning into the arch, trumpet raised
+  // spandrel Victories: winged figures leaning into the arch, trumpet & laurel wreath raised
   for (const z of [-D / 2 - 0.2, D / 2 + 0.2]) {
     for (const sx of [-1, 1]) {
       k.color(SCULPT);
       k.push().translate(sx * (r + 3.0), MA_H - 2.2, z).rotateZ(sx * 1.15);
       k.box(0, 0, 0, 1.0, 4.6, 0.6);                                   // reclining body
       k.box(-sx * 0.1, 4.6, 0, 0.6, 0.7, 0.6);                         // head
+      k.strut([0, 3.8, 0], [-sx * 1.8, 5.4, 0], 0.18);                 // long fame trumpet
       k.push().translate(sx * 0.5, 2.6, 0).rotateZ(-sx * 0.5);
       k.box(sx * 0.8, 0, 0, 1.8, 2.6, 0.35);                           // swept wing
       k.pop();
       k.pop();
     }
   }
-  // the four great high-relief groups on the pier fronts (La Marseillaise, Triumph of 1810, Resistance,
-  // Peace): pedestal, a crowd of standing figures, a winged genius above, then the upper bas-relief panel
+  // the four great high-relief groups on the pier fronts (La Marseillaise by Rude, Triumph of 1810, Resistance, Peace)
   const rnd = (i) => { const v = Math.sin(i * 12.9898 + 4.1) * 43758.5453; return v - Math.floor(v); };
   let n = 0;
   for (const z of [-D / 2 - 0.2, D / 2 + 0.2]) {
@@ -123,13 +130,14 @@ function details(k) {
         k.color(f % 2 ? SCULPT : SCULPT_DK);
         k.cyl(fx, 5.6, fz, 0.7, 0.45, fh, 6);                              // draped figure
         k.color(SCULPT).sphere(fx, 5.6 + fh + 0.35, fz, 0.38, 6, 4);      // head
-        if (f % 2 === 0) k.strut([fx, 5.6 + fh - 1.0, fz], [fx + (rnd(n + 11) - 0.5) * 2.2, 5.6 + fh + 0.9, fz - dz * 0.3], 0.3); // raised arm
+        if (f % 2 === 0) k.strut([fx, 5.6 + fh - 1.0, fz], [fx + (rnd(n + 11) - 0.5) * 2.2, 5.6 + fh + 0.9, fz - dz * 0.3], 0.3);
       }
-      // winged genius flying above the group
+      // winged genius (Bellona / La Marseillaise) flying above the group with sword & shield
       k.color(SCULPT);
       k.push().translate(cx + sx * 0.6, 12.6, z + dz * 0.6).rotateZ(-sx * 0.3);
       k.box(0, -1.2, 0, 1.0, 3.0, 0.7);                                 // body
       k.sphere(0, 2.1, 0, 0.42, 6, 4);                                  // head
+      k.strut([0.4, 1.2, 0], [1.9, 2.6, 0], 0.22);                      // outstretched sword arm
       for (const w of [-1, 1]) {
         k.push().translate(w * 0.4, 1.0, 0).rotateZ(w * -0.7);
         k.box(w * 0.2, 0, 0, 0.9, 2.8, 0.3);                            // raised wings
@@ -149,6 +157,14 @@ function details(k) {
       k.color(GRIME).box(cx + 3.6, 24, z + dz * 0.05, 0.9, 7, 0.04).box(cx - 2.8, 25.5, z + dz * 0.05, 0.7, 5.5, 0.04);
     }
   }
+  // Inner pier walls inside the vault: engraved names of 660 French Generals & battle honors
+  k.color(STONE_LT);
+  for (const sx of [-r + 0.08, r - 0.08]) {
+    for (const sz of [-7.5, 7.5]) {
+      k.box(sx, 3.2, sz, 0.14, 16.5, 4.8);
+      k.color(COFFER).box(sx + (sx < 0 ? 0.06 : -0.06), 17.2, sz, 0.12, 1.8, 4.2).color(STONE_LT);
+    }
+  }
   // grand frieze (the departure and return of the armies): darker band crowded with small figures
   k.color(SCULPT);
   for (const z of [-D / 2 - 0.15, D / 2 + 0.15]) {
@@ -160,12 +176,15 @@ function details(k) {
   // modillions under the great cornice
   k.color(STONE_LT);
   for (const z of [-D / 2 - 0.55, D / 2 + 0.55]) for (let i = 0; i < 30; i++) k.box(-W / 2 + 0.6 + i * ((W - 1.2) / 29), HB - 0.45, z, 0.45, 0.45, 0.5);
-  // coffered vault: rosette grid inside the main arch
+  // coffered vault: longitudinal + transverse ribs & sculpted rosettes inside the main arch
   k.color(COFFER);
   for (let i = 1; i < 8; i++) {
     const a = (i / 8) * Math.PI, rr = r - 0.06;
     k.push().translate(Math.cos(a) * rr, MA_H - r + Math.sin(a) * rr, 0).rotateZ(a + Math.PI / 2);
-    k.box(0, 0, 0, 0.35, 0.12, D - 1);
+    k.box(0, 0, 0, 0.35, 0.14, D - 1);
+    for (let zc = -D / 2 + 2.2; zc <= D / 2 - 2.2; zc += 2.6) {
+      k.color(STONE_LT).sphere(0.85, -0.05, zc, 0.26, 5, 4).color(COFFER);
+    }
     k.pop();
   }
   // transverse archivolts
@@ -179,12 +198,39 @@ function details(k) {
 }
 
 export function build(k) {
+  const hi = k.hi;
+  if (hi) {
+    // Place Charles de Gaulle (Place de l'Étoile) circular granite paving with 12 radiating star rays & bollard ring
+    k.glow(false).color(PAVE).cyl(0, -0.25, 0, 34.0, 34.0, 0.25, 36);
+    k.color(STONE_LT);
+    for (let r = 0; r < 12; r++) {
+      const a = (r / 12) * Math.PI * 2;
+      k.strut([Math.cos(a) * 4.5, 0.02, Math.sin(a) * 4.5], [Math.cos(a) * 33.8, 0.02, Math.sin(a) * 33.8], 0.45);
+    }
+    // Perimeter ring of 24 granite & cast-iron bollards linked by heavy chains (bornes et chaînes)
+    for (let b = 0; b < 24; b++) {
+      const a0 = (b / 24) * Math.PI * 2, a1 = ((b + 1) / 24) * Math.PI * 2;
+      const p0 = [Math.cos(a0) * 31.5, 0, Math.sin(a0) * 31.5];
+      const p1 = [Math.cos(a1) * 31.5, 0, Math.sin(a1) * 31.5];
+      k.color(STONE_DK).cyl(p0[0], 0, p0[2], 0.28, 0.24, 1.15, 6);
+      k.color(BRONZE).strut([p0[0], 0.85, p0[2]], [p1[0], 0.85, p1[2]], 0.08);
+    }
+  }
   body(k);
   details(k);
-  if (k.hi) {
-    // Tomb of the Unknown Soldier: flame (glows) under the vault
-    k.glow(false).color(0x6b6355).box(0, 0, 0, 2.2, 0.15, 3.6);
-    k.glow(true).color(0xffb347).cyl(0, 0.15, -1.6, 0.25, 0.02, 0.8, 5);
+  if (hi) {
+    // Tomb of the Unknown Soldier (Tombe du Soldat Inconnu): granite slab, bronze cannon-mouth shield & Eternal Flame
+    k.glow(false).color(0x524c42).box(0, 0, 0, 2.6, 0.16, 4.2);
+    k.color(GOLD).box(0, 0.16, 0.4, 1.6, 0.04, 2.2); // bronze inscription lines ("ICI REPOSE UN SOLDAT FRANÇAIS...")
+    k.color(BRONZE).cyl(0, 0.16, -1.4, 0.85, 0.95, 0.14, 16);
+    k.cyl(0, 0.30, -1.4, 0.28, 0.22, 0.18, 12);
+    k.glow(true).color(0xffb347).cone(0, 0.48, -1.4, 0.24, 0.85, 8);
+    k.color(0xfff0a8).cone(0, 0.52, -1.4, 0.12, 0.55, 6);
+    k.glow(false);
+    // Low bronze stanchions & chain surrounding the sacred tomb
+    for (const [bx, bz] of [[-1.6, -2.4], [1.6, -2.4], [-1.6, 2.4], [1.6, 2.4]]) {
+      k.color(BRONZE).cyl(bx, 0, bz, 0.10, 0.08, 0.85, 6);
+    }
   }
   k.glow(false);
 }

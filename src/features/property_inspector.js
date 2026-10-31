@@ -742,6 +742,7 @@ export class PropertyInspector {
             <div class="prop-insp-meta" id="prop-insp-meta"></div>
           </div>
           <div class="prop-insp-actions">
+            <button type="button" id="prop-insp-fsd-btn">FSD Here</button>
             <button type="button" id="prop-insp-photo-btn">Real Photo</button>
             <button type="button" id="prop-insp-orbit-btn">Drone Orbit</button>
             <button type="button" id="prop-insp-close-btn" title="Close [Esc]" aria-label="Close">×</button>
@@ -771,6 +772,7 @@ export class PropertyInspector {
     this.thumbImgEl = card.querySelector("#prop-insp-thumb-img");
     this.titleEl = card.querySelector("#prop-insp-title");
     this.metaEl = card.querySelector("#prop-insp-meta");
+    this.fsdBtnEl = card.querySelector("#prop-insp-fsd-btn");
     this.photoBtnEl = card.querySelector("#prop-insp-photo-btn");
     this.orbitBtnEl = card.querySelector("#prop-insp-orbit-btn");
     this.closeBtnEl = card.querySelector("#prop-insp-close-btn");
@@ -796,6 +798,18 @@ export class PropertyInspector {
     };
     this.thumbBtnEl.addEventListener("click", toggleDrawer);
     this.photoBtnEl.addEventListener("click", toggleDrawer);
+
+    if (this.fsdBtnEl) {
+      this.fsdBtnEl.addEventListener("click", () => {
+        if (!this.selected || !this.app) return;
+        if (this.orbitActive) this.stopOrbit();
+        const zh = getLang() === "zh";
+        const label = zh ? this.selected.titleZh : this.selected.titleEn;
+        if (typeof this.app.setFsdDestination === "function") {
+          this.app.setFsdDestination(this.selected.cx, this.selected.cz, label);
+        }
+      });
+    }
 
     this.orbitBtnEl.addEventListener("click", () => {
       if (this.orbitActive) {
@@ -1729,6 +1743,9 @@ export class PropertyInspector {
     this.titleEl.textContent = zh ? this.selected.titleZh : this.selected.titleEn;
     this.metaEl.textContent = zh ? this.selected.metaZh : this.selected.metaEn;
 
+    if (this.fsdBtnEl) {
+      this.fsdBtnEl.textContent = zh ? "自动驾驶" : "FSD Here";
+    }
     this.photoBtnEl.textContent = zh ? "实景与3D" : "Real Photo";
     this.photoBtnEl.classList.toggle("active", this.drawerOpen);
 

@@ -55,6 +55,32 @@ export function build(k) {
   const nose = hi ? 10 : 3;
   // podium / entrance base
   k.color(PODIUM).extrude(Kit.ngon(6, 52, Math.PI / 6), 0, hi ? 8 : 6);
+  if (hi) {
+    // Hymenocallis (spider-lily) 3-petal glass entrance pavilions & terraced Burj Lake steps
+    k.color(0xb4bcc4).extrude(Kit.ngon(6, 58, Math.PI / 6), 0, 2.2);
+    k.color(0xc8d0d8).extrude(Kit.ngon(6, 55, Math.PI / 6), 2.2, 2.0);
+    for (let a = 0; a < 3; a++) {
+      const ang = WING_ANG[a] + Math.PI / 3; // between the 3 main wings
+      const c = Math.cos(ang), s = Math.sin(ang);
+      const petal = rot(wingPts(56, 22, 8), ang);
+      k.color(GLASS_DK).extrude(petal, 0, 5.8);
+      k.color(FIN).extrude(rot(wingPts(57, 23, 8), ang), 5.8, 0.7);
+      // spider-lily radial roof ribs & glowing entrance lobby
+      k.glow(true).color(0xdfe9ff).box(c * 46, 0.4, s * 46, 8, 4.8, 8);
+      k.glow(false).color(FIN);
+      for (const off of [-6, 0, 6]) {
+        k.strut([c * 20 - s * off, 6.5, s * 20 + c * off], [c * 54 - s * (off * 0.4), 6.5, s * 54 + c * (off * 0.4)], 0.35);
+      }
+    }
+    // Burj Lake turquoise water reflection basins & palm-lined promenade piers
+    k.color(0x287892);
+    for (let a = 0; a < 3; a++) {
+      const ang = WING_ANG[a], c = Math.cos(ang), s = Math.sin(ang);
+      k.cyl(c * 60, 0, s * 60, 14, 14, 0.35, 12);
+      k.color(0xd8d2c5).cyl(c * 60, 0, s * 60, 14.8, 14.8, 0.5, 12, { caps: false });
+      k.color(0x287892);
+    }
+  }
 
   for (let i = 0; i < NT; i++) {
     const y0 = i * TIER, h = TIER;
@@ -63,13 +89,32 @@ export function build(k) {
     const core = 17 - 5 * t;
     k.color(GLASS);
     k.extrude(Kit.ngon(6, core, 0), y0, h);
+    if (hi && i % 4 === 3) {
+      // Dark double-height mechanical louver band & stainless bullnose ring every 4th tier
+      k.color(0x525e6a).extrude(Kit.ngon(6, core + 0.25, 0), y0 + h - 3.6, 2.4);
+    }
     for (let a = 0; a < 3; a++) {
       const L = PLAN[i][a];
       if (L < core + 2) continue;
-      const pts = rot(wingPts(L, Math.min(w, L * 0.9), nose), WING_ANG[a]);
+      const ww = Math.min(w, L * 0.9);
+      const pts = rot(wingPts(L, ww, nose), WING_ANG[a]);
       k.color(GLASS).extrude(pts, y0, h);
       // mechanical band/parapet at each setback roof
-      if (hi) k.color(FIN).extrude(rot(wingPts(L + 0.3, Math.min(w, L * 0.9) + 0.6, nose), WING_ANG[a]), y0 + h - 1.2, 1.2);
+      if (hi) {
+        k.color(FIN).extrude(rot(wingPts(L + 0.3, ww + 0.6, nose), WING_ANG[a]), y0 + h - 1.2, 1.2);
+        // Setback terrace skylight / beacon at wing step-down
+        if (i < NT - 1 && PLAN[i + 1][a] < L - 1) {
+          const c = Math.cos(WING_ANG[a]), s = Math.sin(WING_ANG[a]);
+          const rNose = ww / 2, cxNose = Math.max(rNose, L - rNose);
+          k.glow(true).color(0xdfe9ff).cyl(cxNose * c, y0 + h, cxNose * s, rNose * 0.55, rNose * 0.55, 0.6, 8);
+          k.glow(false);
+        }
+        // Dark mechanical louver band every 4th tier
+        if (i % 4 === 3) {
+          k.color(0x525e6a).extrude(rot(wingPts(L + 0.18, ww + 0.3, nose), WING_ANG[a]), y0 + h - 3.6, 2.2);
+          k.color(FIN).extrude(rot(wingPts(L + 0.28, ww + 0.45, nose), WING_ANG[a]), y0 + h - 3.9, 0.35);
+        }
+      }
       if (hi) {
         // stainless vertical fins on the flanks
         const c = Math.cos(WING_ANG[a]), s = Math.sin(WING_ANG[a]);
@@ -90,7 +135,7 @@ export function build(k) {
         // [lm-materials] the dense stainless fin rhythm: a fin every 3.2 m along both flanks and round the nose
         if (!k.fine) continue;
         k.color(FIN);
-        const ww = Math.min(w, L * 0.9), r = ww / 2, cx = Math.max(r, L - r);
+        const r = ww / 2, cx = Math.max(r, L - r);
         for (let d = core + 1.6; d < cx; d += 3.2) {
           for (const side of [-1, 1]) {
             k.push().translate(d * c - side * (r + 0.3) * s, y0, d * s + side * (r + 0.3) * c).rotateY(-WING_ANG[a]);
@@ -107,6 +152,24 @@ export function build(k) {
       }
     }
   }
+  // Observation decks: Level 124 ("At the Top", y ≈ 452 m) and Level 148 ("At the Top SKY", y ≈ 555 m)
+  if (hi) {
+    for (const [yObs, rObs, wIdx] of [[452, 16.5, 1], [555, 13.8, 2]]) {
+      const ang = WING_ANG[wIdx], c = Math.cos(ang), s = Math.sin(ang);
+      const deckPts = rot(wingPts(rObs + 9, 13, 8), ang);
+      k.color(FIN).extrude(deckPts, yObs, 1.0);
+      k.glow(true).color(0xfff0c8).extrude(rot(wingPts(rObs + 8.6, 12.2, 8), ang), yObs + 1.0, 3.2);
+      k.glow(false).color(STEEL).extrude(rot(wingPts(rObs + 9.2, 13.4, 8), ang), yObs + 4.2, 0.6);
+      // Glass observation parapet & steel posts around outdoor terrace
+      for (let q = -3; q <= 3; q++) {
+        const a = ang + (q / 3) * (Math.PI / 2.2);
+        k.color(FIN).box(Math.cos(a) * (rObs + 6.5), yObs + 1.0, Math.sin(a) * (rObs + 6.5), 0.25, 2.2, 0.25);
+      }
+      // Core warm-lit observation band
+      k.glow(true).color(0xffeab8).extrude(Kit.ngon(6, rObs - 2.2, 0), yObs + 0.8, 3.0);
+      k.glow(false);
+    }
+  }
   // crown: core cluster above the last setback
   const yTop = NT * TIER; // 583.2
   k.color(GLASS).lathe(0, yTop, 0, [[12, 0], [11, 14], [10.2, 30]], hi ? 12 : 6, { smooth: false });
@@ -119,6 +182,11 @@ export function build(k) {
       const a = (f / 6) * Math.PI * 2 + Math.PI / 6;
       k.strut([Math.cos(a) * 10.2, yTop + 31.5, Math.sin(a) * 10.2], [Math.cos(a) * 5.0, yTop + 126.5, Math.sin(a) * 5.0], 0.9);
     }
+    // Horizontal bullnose collar rings along glazed spire base
+    for (let r = 1; r <= 5; r++) {
+      const yr = yTop + 31.5 + r * 16, rr = 9.6 - (r / 6) * 4.8;
+      k.lathe(0, yr, 0, [[rr + 0.35, 0], [rr + 0.35, 0.7]], 12, { smooth: false });
+    }
   }
   // steel pinnacle (710 -> 828 m)
   const yP = yTop + 126.5;
@@ -126,6 +194,10 @@ export function build(k) {
   if (hi) {
     k.color(FIN);
     for (let r = 0; r < 6; r++) k.lathe(0, yP + 8 + r * 15, 0, [[4.4 - r * 0.25, 0], [4.4 - r * 0.25, 0.8]], 10);
+    // Upper communication whip rings & white xenon strobe beacons
+    k.glow(true).color(0xffffff);
+    for (const ys of [745, 780, 808]) k.sphere(0, ys, 0, 0.65, 6, 4);
+    k.glow(false);
   }
   k.glow(true).color(0xff4a3a).sphere(0, 822, 0, hi ? 1.0 : 2.0, 6, 4);
   k.color(0xeaf2ff).lathe(0, yP - 4, 0, [[5.0, 0], [5.0, 2.5]], hi ? 10 : 5);

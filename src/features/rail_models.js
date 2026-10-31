@@ -129,7 +129,7 @@ function makeNoseGeometry(W, y0, y1, noseLen, dir, duckBill = false) {
   return g;
 }
 
-/** Detailed under-floor bogie trucks with side frames, bolster coil springs, axles, flanged wheels & underbelly equipment. */
+/** Detailed under-floor bogie trucks with side frames, visible primary & secondary coil springs, axleboxes, ventilated disc brakes & underbelly equipment. */
 function bogies(body, len, wid, opts = {}) {
   const off = len * (opts.offRatio || 0.34);
   const wheelR = opts.wheelR || 0.42;
@@ -139,11 +139,29 @@ function bogies(body, len, wid, opts = {}) {
 
   for (const bz of [-off, off]) {
     for (const sx of [-1, 1]) {
-      part(body, B(0.14, wheelR * 0.65, wheelR * 1.65, axleSpan + 0.85, sx * (gaugeHW + 0.08), bz), DARK);
+      const fx = sx * (gaugeHW + 0.09);
+      // Bogie side frame longitudinal beam + central drop-equalizer cradle
+      part(body, B(0.14, wheelR * 0.72, wheelR * 1.62, axleSpan + 0.88, fx, bz), DARK);
+      part(body, B(0.16, wheelR * 0.52, wheelR * 0.78, axleSpan * 0.56, fx, bz), IRON);
       for (const az of [-axleSpan * 0.5, axleSpan * 0.5]) {
-        part(body, Cyl(0.09, 0.09, 0.24, 8, sx * (gaugeHW + 0.09), wheelR * 1.45, bz + az), STEEL);
+        const wz = bz + az;
+        // Cast-steel axlebox housing & cylindrical roller-bearing end cap
+        part(body, B(0.18, wheelR - 0.13, wheelR + 0.15, 0.30, sx * (gaugeHW + 0.12), wz), IRON);
+        part(body, Cyl(0.11, 0.11, 0.18, 8, sx * (gaugeHW + 0.13), wheelR, wz, 0, 0, Math.PI / 2), STEEL);
+        // Twin visible primary coil springs (helical spring stacks flanking each axlebox)
+        for (const dz of [-0.14, 0.14]) {
+          part(body, Cyl(0.075, 0.075, 0.24, 8, sx * (gaugeHW + 0.11), wheelR * 1.38, wz + dz), STEEL);
+          for (const cy of [wheelR * 1.24, wheelR * 1.38, wheelR * 1.52]) {
+            part(body, Cyl(0.088, 0.088, 0.032, 8, sx * (gaugeHW + 0.11), cy, wz + dz), CHROME);
+          }
+        }
       }
-      part(body, Cyl(0.12, 0.12, 0.28, 8, sx * (gaugeHW + 0.06), wheelR * 1.65, bz), IRON);
+      // Twin secondary bolster coil springs + vertical hydraulic damper strut
+      for (const dz of [-0.15, 0.15]) {
+        part(body, Cyl(0.11, 0.11, 0.28, 8, sx * (gaugeHW + 0.07), wheelR * 1.62, bz + dz), IRON);
+        part(body, Cyl(0.125, 0.125, 0.04, 8, sx * (gaugeHW + 0.07), wheelR * 1.62, bz + dz), SILVER);
+      }
+      part(body, Cyl(0.038, 0.038, 0.58, 6, sx * (gaugeHW + 0.17), wheelR * 1.25, bz, 0.35, 0, 0), [0.72, 0.18, 0.14]);
     }
     part(body, B(frameW, wheelR * 0.85, wheelR * 1.55, 0.55, 0, bz), DARK);
     if (opts.thirdRail) {
@@ -155,9 +173,14 @@ function bogies(body, len, wid, opts = {}) {
       const wz = bz + az;
       part(body, Cyl(0.07, 0.07, frameW + 0.06, 8, 0, wheelR, wz, 0, 0, Math.PI / 2), IRON);
       for (const sx of [-1, 1]) {
+        // Flanged steel wheel + polished tread
         part(body, Cyl(wheelR, wheelR, 0.11, 12, sx * gaugeHW, wheelR, wz, 0, 0, Math.PI / 2), STEEL);
         part(body, Cyl(wheelR + 0.05, wheelR + 0.05, 0.03, 12, sx * (gaugeHW - 0.05), wheelR, wz, 0, 0, Math.PI / 2), CHROME);
-        part(body, Cyl(0.12, 0.12, 0.16, 8, sx * (gaugeHW + 0.10), wheelR, wz, 0, 0, Math.PI / 2), DARK);
+        // Axle-mounted ventilated disc brake rotor + caliper assembly
+        const bx = sx * (gaugeHW * 0.54);
+        part(body, Cyl(wheelR * 0.74, wheelR * 0.74, 0.045, 12, bx, wheelR, wz, 0, 0, Math.PI / 2), SILVER);
+        part(body, Cyl(wheelR * 0.42, wheelR * 0.42, 0.065, 8, bx, wheelR, wz, 0, 0, Math.PI / 2), DARK);
+        part(body, B(0.09, wheelR + 0.06, wheelR + 0.30, 0.22, bx, wz - Math.sign(az) * 0.16), [0.68, 0.20, 0.15]);
       }
     }
   }
@@ -199,7 +222,20 @@ function pantograph(body, z, roofY, reach, shroud = false) {
   part(body, B(0.45, reach - 0.10, reach - 0.04, 0.28, 0, z), STEEL);
 }
 
-/** Corrugated stainless-steel roof ribs + HVAC pods. */
+/** Framed window mullions, sill/header rails & upper hopper transom bar along car sides. */
+function windowFrameMullions(body, W, winY0, winY1, spanL, pitch = 1.45, frameRgb = SILVER) {
+  // Upper lintel, lower sill, and transom hopper divider rail
+  part(body, B(W + 0.034, winY0 - 0.035, winY0 + 0.02, spanL), frameRgb);
+  part(body, B(W + 0.034, winY1 - 0.02, winY1 + 0.035, spanL), frameRgb);
+  const hopperY = winY1 - (winY1 - winY0) * 0.24;
+  part(body, B(W + 0.032, hopperY - 0.015, hopperY + 0.015, spanL), CHROME);
+  // Crisp vertical inner sash mullions subdividing window bays
+  for (let z = -spanL * 0.44 + pitch * 0.5; z <= spanL * 0.44 - pitch * 0.3; z += pitch) {
+    part(body, B(W + 0.032, winY0, winY1, 0.045, 0, z), DARK);
+  }
+}
+
+/** Corrugated stainless-steel roof ribs + HVAC pods with louvered roof ventilator grilles. */
 function roofCorrugation(body, W, y1, L, ribs = 7, roofKit = true) {
   part(body, B(W * 0.92, y1, y1 + 0.14, L - 0.35), ROOF_GREY);
   const span = W * 0.80;
@@ -207,23 +243,43 @@ function roofCorrugation(body, W, y1, L, ribs = 7, roofKit = true) {
     const x = -span / 2 + (span * i) / (ribs - 1);
     part(body, B(0.035, y1 + 0.14, y1 + 0.175, L - 0.6, x, 0), SILVER);
   }
+  // Centerline roof ventilator grilles (slatted intake louver banks)
+  for (const vz of [-L * 0.06, L * 0.06]) {
+    part(body, B(W * 0.44, y1 + 0.14, y1 + 0.26, L * 0.09, 0, vz), STEEL);
+    for (let k = -2; k <= 2; k++) {
+      part(body, B(W * 0.46, y1 + 0.16, y1 + 0.24, 0.035, 0, vz + k * (L * 0.015)), DARK);
+    }
+  }
   if (roofKit) {
     for (const z of [-L * 0.24, L * 0.24]) {
       part(body, B(W * 0.58, y1 + 0.14, y1 + 0.42, L * 0.18, 0, z), [0.44, 0.46, 0.49]);
+      // Side ventilator grille slats on HVAC pod + twin circular exhaust fan grilles on top
+      for (let k = -3; k <= 3; k++) {
+        part(body, B(W * 0.60, y1 + 0.18, y1 + 0.38, 0.04, 0, z + k * (L * 0.022)), DARK);
+      }
       for (const dx of [-W * 0.16, W * 0.16]) {
-        part(body, Cyl(0.28, 0.28, 0.04, 10, dx, y1 + 0.43, z), DARK);
+        part(body, Cyl(0.30, 0.30, 0.035, 10, dx, y1 + 0.43, z), SILVER);
+        part(body, Cyl(0.25, 0.25, 0.045, 10, dx, y1 + 0.435, z), DARK);
       }
     }
   }
 }
 
-/** Headlights, red taillights, destination LED board, and inter-car gangway bellows at both ends. */
+/** Headlights, red taillights, destination LED board, coupler knuckles & side buffers, and inter-car gangway bellows at both ends. */
 function endDetails(body, W, y0, y1, zEnd, hasBellows = true, hasLED = true) {
   for (const s of [-1, 1]) {
     const z = s * zEnd;
-    part(body, B(W * 0.94, y0 - 0.04, y0 + 0.14, 0.14, 0, z + s * 0.04), DARK);
-    part(body, B(0.26, y0 - 0.22, y0 - 0.04, 0.42, 0, z + s * 0.18), IRON);
+    // Anti-climber ribbed headstock beam
+    part(body, B(W * 0.94, y0 - 0.06, y0 + 0.14, 0.16, 0, z + s * 0.04), DARK);
+    // Drawbar shank + automatic coupler knuckle head & gathering horn
+    part(body, B(0.22, y0 - 0.24, y0 - 0.08, 0.46, 0, z + s * 0.20), IRON);
+    part(body, B(0.34, y0 - 0.28, y0 - 0.04, 0.24, 0, z + s * 0.40), STEEL);
+    part(body, Cyl(0.09, 0.09, 0.26, 8, s * 0.08, y0 - 0.16, z + s * 0.48), DARK);
+    // Twin side hydraulic crash buffers (cylindrical plungers + convex buffer plates)
     for (const sx of [-1, 1]) {
+      const bx = sx * W * 0.33;
+      part(body, Cyl(0.075, 0.085, 0.26, 8, bx, y0 - 0.10, z + s * 0.14, Math.PI / 2, 0, 0), IRON);
+      part(body, Cyl(0.15, 0.15, 0.04, 10, bx, y0 - 0.10, z + s * 0.27, Math.PI / 2, 0, 0), DARK);
       part(body, Cyl(0.11, 0.11, 0.06, 10, sx * W * 0.34, y0 + 0.42, z + s * 0.02, Math.PI / 2, 0, 0), HEADLIGHT);
       part(body, Cyl(0.08, 0.08, 0.06, 10, sx * W * 0.23, y0 + 0.42, z + s * 0.02, Math.PI / 2, 0, 0), TAILLIGHT);
     }
@@ -388,6 +444,7 @@ function modernTram({ L, W, y0, y1, bodyRgb, stripe, accentRgb, lowFloor = false
   for (let z = -coreL * 0.42; z <= coreL * 0.42; z += 1.45) {
     part(body, B(W + 0.03, winY0 - 0.02, winY1 + 0.02, 0.10, 0, z), DARK);
   }
+  windowFrameMullions(body, W, winY0, winY1, coreL - 0.3, 1.45, SILVER);
   if (stripe) {
     part(accent, B(W + 0.035, stripe[0], stripe[1], coreL), WHITE);
     part(accent, B(W + 0.03, y1 - 0.24, y1 - 0.06, coreL), WHITE);
@@ -428,6 +485,7 @@ function rapidTransitCar({ L, W, y0, y1, bodyRgb, stripe, accentRgb, slantedNose
   for (let z = -coreL * 0.44; z <= coreL * 0.44; z += 1.65) {
     part(body, B(W + 0.03, 1.90, 2.98, 0.14, 0, z), bodyRgb);
   }
+  windowFrameMullions(body, W, 1.92, 2.96, coreL - 0.8, 1.65, SILVER);
   if (stripe) {
     part(accent, B(W + 0.04, stripe[0], stripe[1], coreL), WHITE);
   }
@@ -474,6 +532,7 @@ function commuterCar() {
     for (let z = -coreL * 0.42; z <= coreL * 0.42; z += 1.65) {
       part(body, B(W + 0.035, b0 - 0.02, b1 + 0.02, 0.14, 0, z), [0.84, 0.85, 0.87]);
     }
+    windowFrameMullions(body, W, b0, b1, coreL - 1.2, 1.65, SILVER);
   }
   part(accent, B(W + 0.045, 1.18, 1.52, coreL), WHITE);
   part(accent, B(W + 0.04, 2.82, 3.06, coreL), WHITE);
@@ -515,6 +574,8 @@ function hsrTrain() {
   for (let z = -coreL * 0.42; z <= coreL * 0.42; z += 1.25) {
     part(body, B(W + 0.03, 2.12, 2.85, 0.28, 0, z), [0.95, 0.96, 0.98]);
   }
+  windowFrameMullions(body, W, 2.15, 2.82, coreL - 1.6, 1.25, SILVER);
+  endDetails(body, W * 0.65, y0, 2.2, L * 0.5 - 0.25, false, false);
   sideDoors(body, accent, W, y0, 3.35, coreL, 2, 1.10);
 
   for (const sz of [-1, 1]) {
@@ -575,6 +636,7 @@ function funicularCar() {
   for (let z = -L * 0.38; z <= L * 0.38; z += 1.55) {
     part(body, B(W + 0.03, 1.66, 2.90, 0.10, 0, z), [0.92, 0.93, 0.95]);
   }
+  windowFrameMullions(body, W, 1.68, 2.88, L - 0.7, 1.55, CHROME);
   for (const sz of [-1, 1]) {
     part(body, B(W * 0.88, 1.68, 2.88, 0.08, 0, sz * (L * 0.5 + 0.01)), CAB_GLASS);
   }

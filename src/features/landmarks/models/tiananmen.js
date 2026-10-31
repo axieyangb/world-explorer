@@ -145,6 +145,14 @@ function bridge(k, x, w, nArch) {
     rail(k, x + sx * (w / 2 - 0.2), z1, x + sx * (w / 2 - 0.2), zc - L * 0.2, yd, { h: 1.0, spacing: 2.0 });
     rail(k, x + sx * (w / 2 - 0.2), zc - L * 0.2, x + sx * (w / 2 - 0.2), zc + L * 0.2, yd + 0.45, { h: 1.0, spacing: 2.0 });
     rail(k, x + sx * (w / 2 - 0.2), zc + L * 0.2, x + sx * (w / 2 - 0.2), z0, yd, { h: 1.0, spacing: 2.0 });
+    // Carved dragon-cloud wangzhu (望柱) newel finials at bridge ends and hump transitions
+    if (k.hi) {
+      k.color(C.MARBLE);
+      for (const [pz, py] of [[z1, yd], [zc - L * 0.2, yd + 0.3], [zc + L * 0.2, yd + 0.3], [z0, yd]]) {
+        k.box(x + sx * (w / 2 - 0.2), py + 1.0, pz, 0.28, 0.35, 0.28);
+        k.sphere(x + sx * (w / 2 - 0.2), py + 1.42, pz, 0.16, 6, 4);
+      }
+    }
   }
 }
 
@@ -177,6 +185,35 @@ export function build(k) {
     slogan(k, 8.5, 41, 8.3, -PD / 2 - 0.08, 11);
     slogan(k, -41, -8.5, 8.3, -PD / 2 - 0.08, 37);
     k.glow(false);
+    // White Hanbaiyu marble dragon water spouts (螭首) protruding along the rostrum cornice
+    k.color(C.MARBLE);
+    for (let sx = -54; sx <= 54; sx += 6) {
+      if (Math.abs(sx) < 4) continue;
+      k.box(sx, TOP - 0.3, -PD / 2 - 0.45, 0.26, 0.24, 0.9);
+      k.box(sx, TOP - 0.3, PD / 2 + 0.45, 0.26, 0.24, 0.9);
+    }
+    // 8 fluttering Red Silk Flags (红旗) atop the rostrum south parapet
+    for (let i = 1; i <= 4; i++) {
+      for (const sx of [-1, 1]) {
+        const fx = sx * (10 + i * 11.2), fz = -PD / 2 + 0.4;
+        k.color(C.GOLD).cyl(fx, TOP + 1.25, fz, 0.07, 0.05, 5.2, 6);
+        k.sphere(fx, TOP + 6.5, fz, 0.14, 6, 4);
+        k.glow(true).color(0xd81e1e);
+        k.box(fx - 1.1, TOP + 4.2, fz - 0.15, 2.2, 1.8, 0.12);
+        k.box(fx - 1.9, TOP + 4.05, fz + 0.05, 1.2, 1.7, 0.12);
+        k.glow(false);
+      }
+    }
+    // Permanent stepped red-walled Reviewing Stands (观礼台) flanking the south base between rostrum & river
+    for (const sx of [-1, 1]) {
+      const rx = sx * 44.5, rz = -34.5, rw = 26, rd = 15;
+      for (let step = 0; step < 4; step++) {
+        const sy = step * 0.95, sd = rd - step * 3.2, sz = rz + step * 1.6;
+        k.glow(true).color(C.WALL).box(rx, sy, sz, rw, 0.95, sd);
+        k.glow(false).color(C.MARBLE).box(rx, sy + 0.9, sz - sd / 2 + 0.2, rw + 0.2, 0.55, 0.22);
+      }
+      rail(k, rx - rw / 2, rz - rd / 2, rx + rw / 2, rz - rd / 2, 0.95, { h: 0.85, spacing: 2.2 });
+    }
   }
   // --- the gate tower hall (城楼): 9 x 5 bays, double-eave hip-and-gable roof, total 34.7 m
   hall(k, {
@@ -185,6 +222,34 @@ export function build(k) {
     roof: "xieshan", double: true, upperH: 2.2, upperInset: 3.4, rise: 9.4, rise2: 7.0,
     ribs: 0.9, beasts: 7, glow: true, glowRoof: true, doors: "front",
   });
+  if (hi) {
+    // 3D National Emblem of China (中华人民共和国国徽) hanging centrally under the upper eave
+    const ey = TOP + 1.0 + 6.0 + 1.9, ez = -20.5 / 2 + 1.2;
+    k.glow(true);
+    k.color(C.GOLD).push().translate(0, ey, ez).rotateX(Math.PI / 2);
+    k.cyl(0, 0, 0, 1.35, 1.35, 0.24, 16); // outer golden wheat & gear ring
+    k.color(0xc81818).cyl(0, -0.05, 0, 1.08, 1.08, 0.34, 16); // crimson field
+    k.pop();
+    // 5 golden stars + miniature Tiananmen silhouette on the emblem face
+    k.color(C.GOLD);
+    k.sphere(0, ey + 0.55, ez - 0.22, 0.22, 6, 4);
+    for (const [ox, oy] of [[-0.45, 0.38], [-0.22, 0.18], [0.22, 0.18], [0.45, 0.38]]) {
+      k.sphere(ox, ey + oy, ez - 0.2, 0.11, 5, 3);
+    }
+    k.box(0, ey - 0.45, ez - 0.2, 0.85, 0.35, 0.1);
+    k.box(0, ey - 0.95, ez - 0.2, 0.65, 0.28, 0.1); // bottom cogwheel
+    // Qinglü & Gold Dougong bracket friezes under both lower and upper eaves
+    for (let x = -24; x <= 24; x += 2.0) {
+      k.color(0x1f6b52).box(x, TOP + 1.0 + 5.5, -20.5 / 2 - 0.15, 0.55, 0.45, 0.6);
+      k.color(C.GOLD).box(x, TOP + 1.0 + 5.7, -20.5 / 2 - 0.25, 0.38, 0.22, 0.65);
+    }
+    for (let x = -20; x <= 20; x += 2.0) {
+      if (Math.abs(x) < 1.8) continue;
+      k.color(0x1f6b52).box(x, TOP + 1.0 + 7.8, -20.5 / 2 + 1.55, 0.5, 0.42, 0.55);
+      k.color(C.GOLD).box(x, TOP + 1.0 + 8.0, -20.5 / 2 + 1.45, 0.35, 0.2, 0.6);
+    }
+    k.glow(false);
+  }
   // eight red lanterns under the lower eave (between the front columns, not the centre bay)
   const bw = 52 / 9;
   for (let i = 1; i <= 4; i++) for (const sx of [-1, 1]) lantern(k, sx * bw * i, TOP + 1.0 + 3.9, -20.5 / 2 - 0.6, 1.05);

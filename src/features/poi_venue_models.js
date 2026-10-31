@@ -179,14 +179,21 @@ function pump() {
   return merge(P);
 }
 function pumpFar() {
-  return merge([
-    box(0.64, 0.12, 1.28, S.concrete, { y: 0.06 }),
+  const P = [
+    rslab(0.72, 1.38, 0.14, 0.12, S.concrete, { y: 0.07, rx: Math.PI / 2 }),
     box(0.54, 0.92, 1.12, S.paintW, { y: 0.58 }),
     box(0.56, 0.34, 1.0, S.tint, { y: 0.82 }),
     box(0.52, 0.76, 1.06, S.paintW, { y: 1.42 }),
-    box(0.56, 0.24, 0.4, S.screen, { y: 1.55, z: -0.18 }),
-    box(0.6, 0.16, 1.22, S.tintGlow, { y: 1.93 }),
-  ]);
+    box(0.56, 0.24, 0.44, S.screen, { y: 1.55, z: -0.18 }),
+    rslab(0.62, 1.24, 0.20, 0.06, S.tintGlow, { y: 1.94, rx: Math.PI / 2 }),
+    // Side columns + nozzle holster boots + hanging hose loops
+    box(0.58, 1.72, 0.10, S.steel, { y: 1.0, z: -0.56 }),
+    box(0.58, 1.72, 0.10, S.steel, { y: 1.0, z: 0.56 }),
+    box(0.60, 0.22, 0.32, S.black, { y: 1.18, z: 0.22 }),
+    torus(0.24, 0.022, 8, 14, S.rubber, { x: 0.30, y: 0.95, z: 0.36, ry: Math.PI / 2 }),
+    torus(0.24, 0.022, 8, 14, S.rubber, { x: -0.30, y: 0.95, z: 0.36, ry: Math.PI / 2 }),
+  ];
+  return merge(P);
 }
 function bollard() {
   const P = [
@@ -233,17 +240,27 @@ function letters(P, word, x0, y0, z, h, s, depth = 0.02) {
 }
 function iceChest() {
   const P = [];
+  // Skids, compressor grille, insulated white cabinet, sloped steel lid & drain plug
   P.push(box(1.56, 0.1, 0.78, S.black, { y: 0.05 }));
+  for (const sx of [-0.62, 0, 0.62]) P.push(box(0.12, 0.08, 0.80, S.steelDk, { x: sx, y: 0.04 }));
   P.push(rslab(1.6, 1.16, 0.8, 0.04, S.white, { y: 0.68 }));
-  P.push(box(1.62, 0.06, 0.82, S.paintG, { y: 1.27 }));
-  // two doors with handles, a lit blue band with block "ICE" letters
+  P.push(box(1.64, 0.07, 0.84, S.paintG, { y: 1.27 }));
+  P.push(box(1.60, 0.04, 0.80, S.steel, { y: 1.31 }));
+  // Two insulated doors with rubber gaskets, chrome hinges, T-latches & padlock hasp
   for (const sx of [-1, 1]) {
-    P.push(box(0.74, 0.62, 0.02, S.white, { x: sx * 0.39, y: 0.5, z: 0.41 }));
-    P.push(box(0.04, 0.3, 0.05, S.chrome, { x: sx * 0.08, y: 0.55, z: 0.44 }));
+    P.push(box(0.75, 0.64, 0.022, S.rubber, { x: sx * 0.39, y: 0.5, z: 0.406 }));
+    P.push(box(0.72, 0.61, 0.026, S.white, { x: sx * 0.39, y: 0.5, z: 0.414 }));
+    P.push(cyl(0.018, 0.018, 0.32, 10, S.chrome, { x: sx * 0.08, y: 0.55, z: 0.445 }));
+    P.push(box(0.03, 0.04, 0.04, S.chrome, { x: sx * 0.08, y: 0.68, z: 0.43 }));
+    P.push(box(0.03, 0.04, 0.04, S.chrome, { x: sx * 0.08, y: 0.42, z: 0.43 }));
+    for (const hy of [0.32, 0.68]) P.push(box(0.06, 0.04, 0.03, S.chrome, { x: sx * 0.74, y: hy, z: 0.425 }));
   }
-  P.push(box(1.5, 0.34, 0.02, S.iceBlue, { y: 1.0, z: 0.41 }));
-  letters(P, 'ICE', -0.36, 0.88, 0.425, 0.24, S.white);
-  P.push(box(0.2, 0.04, 0.03, S.steelDk, { x: 0.6, y: 0.26, z: 0.42 }));
+  // Lit blue marquee header with snow/ice trim & "ICE" block letters + side compressor louver + temperature dial
+  P.push(box(1.52, 0.36, 0.024, S.steelDk, { y: 1.0, z: 0.408 }));
+  P.push(box(1.48, 0.32, 0.028, S.iceBlue, { y: 1.0, z: 0.414 }));
+  letters(P, 'ICE', -0.36, 0.88, 0.43, 0.24, S.white);
+  P.push(cyl(0.035, 0.035, 0.02, 12, S.chrome, { x: 0.64, y: 1.0, z: 0.43, rx: Math.PI / 2 }));
+  P.push(box(0.24, 0.12, 0.03, S.steelDk, { x: 0.6, y: 0.22, z: 0.415 }));
   return merge(P);
 }
 function airPump() {
@@ -282,70 +299,118 @@ function vacuum() {
 }
 function payKiosk() {
   const P = [];
-  P.push(rslab(0.9, 1.1, 0.2, 0.12, S.yellow, { y: 0.1, rx: Math.PI / 2 }));
+  // Yellow safety island pad + twin guard bollards + heavy steel pedestal
+  P.push(rslab(0.92, 1.12, 0.2, 0.12, S.yellow, { y: 0.1, rx: Math.PI / 2 }));
+  for (const sx of [-0.34, 0.34]) {
+    P.push(cyl(0.045, 0.045, 0.88, 12, S.yellow, { x: sx, y: 0.54, z: 0.36 }));
+    P.push(dome(0.045, 12, 6, S.yellow, { x: sx, y: 0.98, z: 0.36 }));
+  }
+  P.push(box(0.42, 0.06, 0.38, S.steel, { y: 0.22 }));
   P.push(box(0.36, 1.05, 0.32, S.steelDk, { y: 0.72 }));
+  // Angled upper console housing + brand stripe + curved rain visor hood + LED downlight
   P.push(rslab(0.62, 0.62, 0.38, 0.05, S.paintG, { y: 1.5, z: 0.04, rx: -0.12 }));
   P.push(box(0.64, 0.08, 0.4, S.tint, { y: 1.2, z: 0.04 }));
   P.push(box(0.4, 0.26, 0.02, S.black, { y: 1.58, z: 0.25, rx: -0.12 }));
   P.push(box(0.34, 0.2, 0.022, S.screen, { y: 1.58, z: 0.255, rx: -0.12 }));
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) P.push(box(0.035, 0.03, 0.012, S.steel, { x: -0.06 + j * 0.05, y: 1.37 - i * 0.04, z: 0.24 }));
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) P.push(box(0.035, 0.03, 0.012, S.chrome, { x: -0.06 + j * 0.05, y: 1.37 - i * 0.04, z: 0.24 }));
+  // NFC contactless pad + bill acceptor + receipt printer slot + overhead canopy hood
   P.push(box(0.1, 0.06, 0.05, S.black, { x: 0.15, y: 1.37, z: 0.24 }));
-  P.push(box(0.72, 0.05, 0.6, S.tint, { y: 1.88, z: 0.08, rx: 0.12 }));
   P.push(box(0.08, 0.06, 0.04, S.screenG, { x: 0.15, y: 1.42, z: 0.265 }));
+  P.push(box(0.12, 0.03, 0.03, S.black, { x: -0.16, y: 1.35, z: 0.245 }));
+  P.push(rslab(0.74, 0.62, 0.06, 0.06, S.tint, { y: 1.88, z: 0.08, rx: Math.PI / 2 + 0.12 }));
+  P.push(box(0.56, 0.02, 0.12, S.lampCool, { y: 1.84, z: 0.18, rx: 0.12 }));
   return merge(P);
 }
 function brushV() {
-  const P = [cyl(0.06, 0.06, 2.75, 10, S.steel, { y: 1.375 }), box(0.32, 0.3, 0.32, S.steelDk, { y: 2.85 })];
-  const fins = 18;
+  const P = [
+    // Lower pivot bearing + central galvanized torque shaft + top hydraulic drive motor & gearbox
+    cyl(0.14, 0.16, 0.08, 14, S.steelDk, { y: 0.04 }),
+    cyl(0.065, 0.065, 2.75, 14, S.steel, { y: 1.375 }),
+    box(0.34, 0.28, 0.34, S.steelDk, { y: 2.82 }),
+    cyl(0.14, 0.14, 0.26, 14, S.paintG, { y: 3.06 }),
+    // Segmented drum retaining hubs
+    cyl(0.18, 0.18, 0.06, 16, S.black, { y: 0.24 }),
+    cyl(0.18, 0.18, 0.06, 16, S.black, { y: 0.98 }),
+    cyl(0.18, 0.18, 0.06, 16, S.black, { y: 1.72 }),
+    cyl(0.18, 0.18, 0.06, 16, S.black, { y: 2.46 }),
+  ];
+  const fins = 24;
   for (let i = 0; i < fins; i++) {
     const a = (i / fins) * Math.PI * 2;
     const s = i % 3 === 0 ? S.foamY : i % 3 === 1 ? S.foamB : S.foamR;
-    P.push(box(0.5, 2.3, 0.035, s, { x: Math.cos(a) * 0.3, y: 1.35, z: Math.sin(a) * 0.3, ry: -a }));
+    P.push(box(0.52, 2.32, 0.032, s, { x: Math.cos(a) * 0.31, y: 1.35, z: Math.sin(a) * 0.31, ry: -a }));
   }
   return merge(P);
 }
 function brushH() {
   // axis along Z (scaled per instance to the bay width); fins radiate in the XY plane
-  const P = [cyl(0.06, 0.06, 1.05, 10, S.steel, { rx: Math.PI / 2 })];
-  const fins = 18;
+  const P = [
+    cyl(0.065, 0.065, 1.05, 14, S.steel, { rx: Math.PI / 2 }),
+    cyl(0.18, 0.18, 0.05, 16, S.black, { z: -0.46, rx: Math.PI / 2 }),
+    cyl(0.18, 0.18, 0.05, 16, S.black, { z: 0, rx: Math.PI / 2 }),
+    cyl(0.18, 0.18, 0.05, 16, S.black, { z: 0.46, rx: Math.PI / 2 }),
+    box(0.24, 0.28, 0.12, S.steelDk, { z: -0.54 }),
+    box(0.24, 0.28, 0.12, S.steelDk, { z: 0.54 }),
+  ];
+  const fins = 24;
   for (let i = 0; i < fins; i++) {
     const a = (i / fins) * Math.PI * 2;
     const s = i % 3 === 0 ? S.foamY : i % 3 === 1 ? S.foamB : S.foamR;
-    P.push(box(0.5, 0.035, 0.95, s, { x: Math.cos(a) * 0.3, y: Math.sin(a) * 0.3, rz: a }));
+    P.push(box(0.52, 0.032, 0.96, s, { x: Math.cos(a) * 0.31, y: Math.sin(a) * 0.31, rz: a }));
   }
   return merge(P);
 }
 function atm() {
   const P = [];
-  P.push(box(0.86, 1.95, 0.16, S.steelDk, { y: 0.975, z: 0.08 }));
-  P.push(box(0.76, 0.3, 0.14, S.tintGlow, { y: 1.78, z: 0.14 }));
-  P.push(box(0.7, 1.1, 0.4, S.paintG, { y: 0.95, z: 0.32 }));
-  P.push(box(0.72, 0.04, 0.42, S.steelDk, { y: 1.5, z: 0.33 }));
-  // privacy hood + screen
-  for (const sx of [-1, 1]) P.push(box(0.03, 0.42, 0.34, S.steelDk, { x: sx * 0.36, y: 1.32, z: 0.36 }));
-  P.push(box(0.4, 0.3, 0.02, S.black, { y: 1.33, z: 0.2, rx: -0.2 }));
-  P.push(box(0.34, 0.25, 0.022, S.screen, { y: 1.33, z: 0.208, rx: -0.2 }));
-  // keypad shelf, card slot, receipt + cash slots
-  P.push(box(0.6, 0.04, 0.22, S.steel, { y: 1.02, z: 0.58, rx: 0.25 }));
-  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) P.push(box(0.045, 0.012, 0.035, S.chrome, { x: -0.06 + j * 0.06, y: 1.05 - i * 0.012, z: 0.52 + i * 0.04, rx: 0.25 }));
-  P.push(box(0.1, 0.04, 0.03, S.black, { x: 0.22, y: 1.12, z: 0.53 }));
-  P.push(box(0.01, 0.02, 0.012, S.screenG, { x: 0.28, y: 1.12, z: 0.55 }));
-  P.push(box(0.3, 0.035, 0.03, S.black, { y: 0.8, z: 0.53 }));
-  P.push(box(0.14, 0.02, 0.03, S.black, { x: -0.22, y: 1.12, z: 0.53 }));
+  // Brushed stainless security surround + backlit ATM header + anti-glare canopy + convex security mirror
+  P.push(box(0.92, 2.02, 0.16, S.steelDk, { y: 1.01, z: 0.08 }));
+  P.push(box(0.86, 1.94, 0.04, S.steel, { y: 1.00, z: 0.16 }));
+  P.push(rslab(0.78, 0.30, 0.16, 0.04, S.tintGlow, { y: 1.78, z: 0.16 }));
+  letters(P, 'ATM', -0.22, 1.70, 0.245, 0.16, S.white);
+  P.push(box(0.72, 1.12, 0.40, S.paintG, { y: 0.95, z: 0.32 }));
+  P.push(box(0.74, 0.05, 0.44, S.steelDk, { y: 1.52, z: 0.34 }));
+  P.push(sphere(0.065, 14, 8, S.chrome, { y: 1.58, z: 0.42, sy: 0.65, sz: 0.45 }));
+  // Deep privacy wings + recessed LCD monitor + side FDK function keys
+  for (const sx of [-1, 1]) {
+    P.push(box(0.035, 0.44, 0.36, S.steelDk, { x: sx * 0.36, y: 1.32, z: 0.36 }));
+    for (let k = 0; k < 4; k++) {
+      P.push(box(0.025, 0.022, 0.015, S.chrome, { x: sx * 0.21, y: 1.40 - k * 0.048, z: 0.21, rx: -0.2 }));
+    }
+  }
+  P.push(box(0.42, 0.31, 0.02, S.black, { y: 1.33, z: 0.2, rx: -0.2 }));
+  P.push(box(0.35, 0.25, 0.022, S.screen, { y: 1.33, z: 0.208, rx: -0.2 }));
+  // Encrypted PIN pad with privacy shield, glowing green card readerthroat, cash dispenser & receipt slot
+  P.push(box(0.62, 0.04, 0.24, S.steel, { y: 1.02, z: 0.58, rx: 0.25 }));
+  P.push(box(0.22, 0.06, 0.18, S.steelDk, { y: 1.06, z: 0.56, rx: 0.25 }));
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) P.push(box(0.042, 0.014, 0.032, S.chrome, { x: -0.06 + j * 0.06, y: 1.055 - i * 0.012, z: 0.52 + i * 0.04, rx: 0.25 }));
+  P.push(box(0.11, 0.045, 0.035, S.black, { x: 0.22, y: 1.12, z: 0.53 }));
+  P.push(torus(0.032, 0.008, 8, 14, S.screenG, { x: 0.22, y: 1.12, z: 0.55 }));
+  P.push(box(0.32, 0.045, 0.035, S.black, { y: 0.80, z: 0.53 }));
+  P.push(box(0.28, 0.02, 0.038, S.chrome, { y: 0.80, z: 0.535 }));
+  P.push(box(0.14, 0.025, 0.03, S.black, { x: -0.22, y: 1.12, z: 0.53 }));
   return merge(P);
 }
 function newsRack() {
   const P = [];
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) P.push(cyl(0.012, 0.012, 1.1, 6, S.steelDk, { x: sx * 0.34, y: 0.55, z: sz * 0.2 }));
-  for (const [y, z, rx] of [[0.35, 0.02, -0.35], [0.75, -0.04, -0.35]]) {
-    P.push(box(0.68, 0.02, 0.36, S.steelDk, { y, z, rx }));
+  // Tubular steel frame with rubber caster feet, wire mesh side grilles, 3倾斜 shelf tiers & coin-box header
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      P.push(cyl(0.016, 0.016, 1.14, 10, S.steelDk, { x: sx * 0.35, y: 0.57, z: sz * 0.21 }));
+      P.push(cyl(0.028, 0.028, 0.025, 10, S.rubber, { x: sx * 0.35, y: 0.012, z: sz * 0.21 }));
+    }
+    P.push(box(0.02, 0.025, 0.42, S.steelDk, { x: sx * 0.35, y: 0.12 }));
+    P.push(box(0.02, 0.025, 0.42, S.steelDk, { x: sx * 0.35, y: 1.02 }));
+  }
+  for (const [y, z, rx] of [[0.28, 0.03, -0.35], [0.58, 0.0, -0.35], [0.88, -0.03, -0.35]]) {
+    P.push(box(0.68, 0.022, 0.36, S.steelDk, { y, z, rx }));
+    P.push(box(0.68, 0.06, 0.018, S.steel, { y: y - 0.04, z: z + 0.17, rx }));
     for (let k = 0; k < 3; k++) {
-      P.push(box(0.2, 0.05, 0.3, k % 2 ? S.paper : S.paperB, { x: -0.22 + k * 0.22, y: y + 0.04, z: z + 0.01, rx }));
-      P.push(box(0.19, 0.012, 0.12, S.black, { x: -0.22 + k * 0.22, y: y + 0.07, z: z + 0.08, rx }));
+      P.push(box(0.20, 0.055, 0.30, k % 2 ? S.paper : S.paperB, { x: -0.22 + k * 0.22, y: y + 0.04, z: z + 0.01, rx }));
+      P.push(box(0.19, 0.014, 0.12, k === 1 ? S.red : S.black, { x: -0.22 + k * 0.22, y: y + 0.07, z: z + 0.08, rx }));
     }
   }
-  P.push(box(0.72, 0.16, 0.02, S.red, { y: 1.12, z: 0.2 }));
-  P.push(box(0.6, 0.05, 0.022, S.white, { y: 1.12, z: 0.202 }));
+  P.push(rslab(0.74, 0.18, 0.04, 0.03, S.red, { y: 1.14, z: 0.20 }));
+  P.push(box(0.62, 0.06, 0.045, S.white, { y: 1.14, z: 0.205 }));
   return merge(P);
 }
 function shopBin() {
@@ -394,24 +459,37 @@ function cart() {
 }
 function lotLamp() {
   const P = [];
+  // Chamfered yellow-striped concrete crash pier + anchor bolt flange + tapered steel column + security camera dome
   P.push(cyl(0.38, 0.42, 0.8, 20, S.concrete, { y: 0.4 }));
-  P.push(cyl(0.39, 0.39, 0.06, 20, S.yellow, { y: 0.78 }));
-  P.push(box(0.28, 0.06, 0.28, S.steelDk, { y: 0.83 }));
-  P.push(box(0.16, 9.2, 0.16, S.paintG, { y: 0.8 + 4.6 }));
-  for (const sx of [-1, 1]) {
-    P.push(box(0.9, 0.08, 0.1, S.paintG, { x: sx * 0.5, y: 9.6 }));
-    P.push(rod([sx * 0.08, 9.2, 0], [sx * 0.65, 9.58, 0], 0.022, 10, S.steelDk));
-    P.push(rslab(0.76, 0.52, 0.18, 0.04, S.paintG, { x: sx * 1.15, y: 9.6, rx: Math.PI / 2 }));
-    P.push(box(0.62, 0.025, 0.4, S.lamp, { x: sx * 1.15, y: 9.5 }));
+  P.push(cyl(0.395, 0.395, 0.08, 20, S.yellow, { y: 0.76 }));
+  P.push(box(0.32, 0.06, 0.32, S.steelDk, { y: 0.83 }));
+  for (const [bx, bz] of [[-0.12, -0.12], [0.12, -0.12], [-0.12, 0.12], [0.12, 0.12]]) {
+    P.push(cyl(0.018, 0.018, 0.05, 8, S.chrome, { x: bx, y: 0.87, z: bz }));
   }
+  P.push(box(0.16, 9.0, 0.16, S.paintG, { y: 0.8 + 4.5 }));
+  P.push(box(0.20, 0.22, 0.20, S.steelDk, { y: 9.75 }));
+  // Twin outreach arms + diagonal gusset struts + finned LED shoebox luminaires + photocell sensor
+  for (const sx of [-1, 1]) {
+    P.push(box(0.92, 0.08, 0.1, S.paintG, { x: sx * 0.5, y: 9.6 }));
+    P.push(rod([sx * 0.08, 9.15, 0], [sx * 0.68, 9.58, 0], 0.024, 10, S.steelDk));
+    P.push(rslab(0.80, 0.54, 0.18, 0.04, S.paintG, { x: sx * 1.15, y: 9.6, rx: Math.PI / 2 }));
+    P.push(box(0.68, 0.03, 0.44, S.steelDk, { x: sx * 1.15, y: 9.51 }));
+    P.push(box(0.62, 0.025, 0.4, S.lamp, { x: sx * 1.15, y: 9.49 }));
+  }
+  P.push(cyl(0.045, 0.045, 0.08, 10, S.plasticB, { y: 9.90 }));
   return merge(P);
 }
 function lotLampFar() {
   return merge([
     cyl(0.4, 0.42, 0.8, 14, S.concrete, { y: 0.4 }),
-    box(0.18, 9.2, 0.18, S.paintG, { y: 5.2 }),
-    box(3.0, 0.2, 0.5, S.paintG, { y: 9.6 }),
-    box(2.9, 0.03, 0.42, S.lamp, { y: 9.48 }),
+    cyl(0.41, 0.41, 0.08, 14, S.yellow, { y: 0.76 }),
+    box(0.32, 0.06, 0.32, S.steelDk, { y: 0.83 }),
+    box(0.18, 9.0, 0.18, S.paintG, { y: 5.2 }),
+    box(1.8, 0.10, 0.14, S.paintG, { y: 9.6 }),
+    box(0.82, 0.20, 0.54, S.paintG, { x: -1.15, y: 9.6 }),
+    box(0.82, 0.20, 0.54, S.paintG, { x: 1.15, y: 9.6 }),
+    box(0.68, 0.03, 0.42, S.lamp, { x: -1.15, y: 9.48 }),
+    box(0.68, 0.03, 0.42, S.lamp, { x: 1.15, y: 9.48 }),
   ]);
 }
 function cartReturn() {
@@ -447,13 +525,20 @@ function menuBoard() {
 }
 function greenCross() {
   const P = [];
-  P.push(box(0.16, 0.72, 0.05, S.steelDk, { y: -0.15, z: -0.58 }));
+  // Wall mounting cleat with 4 anchor bolts + twin cantilevered box arms + diagonal tie rod
+  P.push(box(0.20, 0.76, 0.05, S.steelDk, { y: -0.15, z: -0.58 }));
+  for (const [bx, by] of [[-0.06, 0.15], [0.06, 0.15], [-0.06, -0.45], [0.06, -0.45]]) {
+    P.push(cyl(0.016, 0.016, 0.04, 8, S.chrome, { x: bx, y: by, z: -0.55, rx: Math.PI / 2 }));
+  }
   P.push(box(0.08, 0.08, 1.1, S.steelDk, { z: -0.05 }));
+  P.push(box(0.06, 0.06, 0.75, S.steelDk, { y: -0.28, z: -0.22 }));
   P.push(rod([0, -0.45, -0.55], [0, -0.02, 0.05], 0.025, 10, S.steelDk));
-  const c0 = 0.92, t = 0.32;
-  P.push(cyl(0.24, 0.24, 0.16, 20, S.steelDk, { z: 0.55, rz: Math.PI / 2 }));
+  // Stepped neon/LED pharmacy cross casing with outer green ring, stepped cross bevels & bright white core
+  const c0 = 0.94, t = 0.32;
+  P.push(cyl(0.28, 0.28, 0.15, 20, S.steelDk, { z: 0.55, rz: Math.PI / 2 }));
+  P.push(torus(0.49, 0.024, 8, 24, S.green, { z: 0.55, ry: Math.PI / 2 }));
   for (const [w, h] of [[c0, t], [t, c0]]) {
-    P.push(box(0.16, h + 0.06, w + 0.06, S.steelDk, { z: 0.55 }));
+    P.push(box(0.16, h + 0.07, w + 0.07, S.steelDk, { z: 0.55 }));
     P.push(box(0.175, h, w, S.green, { z: 0.55 }));
     P.push(box(0.185, h * 0.62, w * 0.86, S.white, { z: 0.55 }));
   }
@@ -484,12 +569,25 @@ function trailer() {
   return merge(P);
 }
 function trailerFar() {
-  return merge([
+  const P = [
+    // Box van body + top & bottom aluminum rub rails + nose refrigeration reefer unit + rear doors & tail lamps
     box(2.55, 2.75, 13.4, S.trailerW, { y: 2.62 }),
     box(2.59, 0.14, 13.42, S.paintG, { y: 1.31 }),
+    box(2.59, 0.10, 13.42, S.paintG, { y: 3.95 }),
+    box(2.05, 1.45, 0.46, S.paintW, { y: 2.95, z: -6.92 }),
     box(2.2, 0.95, 0.22, S.steelDk, { y: 0.55, z: -3.7 }),
-    box(2.4, 0.9, 4.2, S.black, { y: 0.5, z: 4.1 }),
-  ]);
+    // Rear underride Mansfield bar + brake light cluster + dual tandem axles
+    box(2.42, 0.14, 0.12, S.steel, { y: 0.62, z: 6.68 }),
+    box(0.45, 0.12, 0.06, S.screenR, { x: -0.95, y: 1.18, z: 6.71 }),
+    box(0.45, 0.12, 0.06, S.screenR, { x: 0.95, y: 1.18, z: 6.71 }),
+  ];
+  for (const wz of [3.4, 4.7]) {
+    for (const wx of [-1.05, 1.05]) {
+      P.push(cyl(0.52, 0.52, 0.44, 12, S.rubber, { x: wx, y: 0.52, z: wz, rz: Math.PI / 2 }));
+      P.push(cyl(0.28, 0.28, 0.46, 10, S.steel, { x: wx, y: 0.52, z: wz, rz: Math.PI / 2 }));
+    }
+  }
+  return merge(P);
 }
 function carFar() {
   const P = [

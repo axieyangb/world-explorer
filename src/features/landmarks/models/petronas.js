@@ -1,10 +1,12 @@
 // feature/famous-landmarks: Petronas Twin Towers, Kuala Lumpur — 1:1 (pinnacle tips 451.9 m).
 // Two towers on an 8-point-star (Rub el Hizb) plan with lobes filling the inner corners, stainless
-// steel with continuous glass ribbon windows, stacked setback tiers tapering into the crown, the
-// 73 m pinnacles with ring and mast ball, the 44-storey round "bustle" annexes and the double-deck
-// skybridge at levels 41/42 (170 m) carried by the two-hinged A-frame legs. Towers lie on local X.
+// steel with continuous glass ribbon windows & corner pilasters, stacked setback tiers tapering into
+// the crown, the 73 m pinnacles with ring ball and mast, the 44-storey round "bustle" annexes, the
+// double-deck skybridge at levels 41/42 (170 m) carried by the two-hinged A-frame legs with central
+// spherical bearing, and the Suria KLCC geometric entrance canopy & fountains at the base.
 
 const STEEL = 0xcfd5db, STEEL2 = 0xbcc4cc, GLASS = 0x5f7486, PODIUM = 0xb7b2a6, BRIDGE = 0xa9b2bb;
+const POOL = 0x3898ba;
 
 export const lodDist = 2200;
 export const glowStrength = 2.5;
@@ -76,6 +78,15 @@ function tower(k, cx, side) {
     k.push().translate(cx, 0, 0).scale(s1, 1, s1);
     k.extrude(P, y1 - 0.2, 0.2);
     k.pop();
+    if (hi && y1 - y0 >= 10) {
+      // Vertical stainless-steel columns along the 8 star points and 8 inner corners
+      k.color(STEEL);
+      for (let p = 0; p < 8; p++) {
+        const a = (p / 8) * Math.PI * 2 + Math.PI / 8;
+        k.strut([cx + Math.cos(a) * R * s0 * 1.01, y0, Math.sin(a) * R * s0 * 1.01],
+                [cx + Math.cos(a) * R * s1 * 1.01, y1, Math.sin(a) * R * s1 * 1.01], 0.45);
+      }
+    }
   });
   if (hi) {
     // glass ribbon windows (outset bands every floor pair) — lit at night
@@ -88,6 +99,13 @@ function tower(k, cx, side) {
       }
     }
     k.glow(false);
+    // Sloped stainless-steel buttress ribs on the upper setbacks (levels 60-88)
+    k.color(STEEL);
+    for (let p = 0; p < 8; p++) {
+      const a = (p / 8) * Math.PI * 2 + Math.PI / 8;
+      k.strut([cx + Math.cos(a) * R * 0.9, 252, Math.sin(a) * R * 0.9],
+              [cx + Math.cos(a) * R * 0.32, 377, Math.sin(a) * R * 0.32], 0.55);
+    }
   }
   // crown & pinnacle (377 -> 451.9 m)
   const seg = hi ? 16 : 8;
@@ -95,13 +113,17 @@ function tower(k, cx, side) {
   k.color(STEEL2).lathe(cx, 387, 0, [[4.4, 0], [3.6, 14], [2.6, 26]], seg);
   k.color(STEEL).sphere(cx, 405, 0, hi ? 3.0 : 2.8, seg, 6);                       // ring ball
   if (hi) {
+    // 14 crescent-ring bands around the mast ball (representing the 14 Malaysian states)
     k.color(STEEL2);
-    for (const [y, r] of [[392, 6.2], [398, 5.0], [412, 3.6]]) k.lathe(cx, y, 0, [[r, 0], [r, 0.9]], seg);
-    // eight ring-spikes around the pinnacle base
+    for (const [y, r] of [[390, 6.4], [394, 5.8], [398, 5.0], [402, 4.2], [409, 3.8], [414, 3.2]]) {
+      k.lathe(cx, y, 0, [[r, 0], [r, 0.75]], seg);
+    }
+    // eight curved ring-spikes around the pinnacle base
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
       k.strut([cx + Math.cos(a) * 5.5, 383, Math.sin(a) * 5.5], [cx + Math.cos(a) * 1.5, 404, Math.sin(a) * 1.5], 0.5);
     }
+    k.glow(true).color(0xff3020).sphere(cx, 451.8, 0, 0.45, 6, 4).glow(false);
   }
   k.color(STEEL).lathe(cx, 408, 0, [[1.8, 0], [1.2, 18], [0.6, 36], [0.08, 43.9]], hi ? 10 : 5);
   k.glow(true).color(0xfff2d8).lathe(cx, 377, 0, [[6.6, 0], [6.0, 4]], seg);         // lit crown band
@@ -114,27 +136,57 @@ function tower(k, cx, side) {
     k.glow(true).color(GLASS);
     for (let y = 4; y < 148; y += 4.1) k.lathe(bx, y, bz, [[12.08, 0], [12.08, 2.2]], 24, { caps: false });
     k.glow(false);
+    // Mini spire finial on top of each bustle annex (178 .. 190 m)
+    k.color(STEEL).cyl(bx, 178, bz, 0.65, 0.1, 12, 8);
   }
 }
 
 export function build(k) {
   const hi = k.hi;
-  // podium (Suria KLCC base)
+  // podium (Suria KLCC base) + stepped Islamic-geometric entrance rotunda & KLCC fountain pools
   k.color(PODIUM).box(0, 0, 4, 170, 12, 64);
+  if (hi) {
+    // Stepped glass-and-steel main entrance canopy (-Z front)
+    k.color(STEEL).cyl(0, 0, -28, 16, 18, 9.5, 8);
+    k.color(GLASS).cyl(0, 9.5, -28, 13, 8, 4.5, 8);
+    k.color(STEEL2).cyl(0, 14.0, -28, 8, 0.5, 4.0, 8);
+    // Twin circular reflection pools & water jets flanking the entrance plaza
+    for (const fx of [-38, 38]) {
+      k.color(PODIUM).cyl(fx, 0, -34, 9.5, 9.5, 0.8, 16);
+      k.glow(true).color(POOL).cyl(fx, 0.1, -34, 8.8, 8.8, 0.78, 16).glow(false);
+    }
+  }
   tower(k, -CX, -1);
   tower(k, CX, 1);
-  // skybridge at levels 41/42 between the faces
+  // double-deck skybridge at levels 41/42 (170 m) between the faces
   const xf = CX - R * 0.92;
   k.color(BRIDGE).box(0, 170, 0, 2 * xf + 2, 9, 5.5);
   if (hi) {
     k.glow(true).color(GLASS).box(0, 171.2, 0, 2 * xf + 1.4, 2.4, 5.8).box(0, 175.2, 0, 2 * xf + 1.4, 2.4, 5.8).glow(false);
     k.color(STEEL).box(0, 179, 0, 2 * xf + 2, 0.8, 6.2);
+    // Vertical stainless mullions along the skybridge glazing
+    for (let x = -xf + 3; x <= xf - 3; x += 4.5) {
+      k.color(STEEL).box(x, 170, -2.95, 0.28, 9.2, 0.25).box(x, 170, 2.95, 0.28, 9.2, 0.25);
+    }
   }
-  // A-frame legs from level 29 (~120 m) of each tower to the bridge centre
+  // A-frame legs from level 29 (~120 m) of each tower to the bridge centre + central spherical bearing
   k.color(STEEL2);
   for (const sz of [-1.6, 1.6]) {
     k.strut([-xf + 1, 121, sz], [-1.2, 169.5, sz], 1.4);
     k.strut([xf - 1, 121, sz], [1.2, 169.5, sz], 1.4);
+    if (hi) {
+      // Spherical rotational pin bearing at the crown of each A-frame arch leg
+      k.color(STEEL).sphere(0, 168.8, sz, 1.45, 10, 6);
+      k.color(STEEL2);
+    }
+  }
+  if (hi) {
+    // Horizontal cross-ties between the twin A-frame arch legs
+    for (const f of [0.25, 0.5, 0.75]) {
+      const lx = (xf - 1) * (1 - f) + 1.2 * f, ly = 121 + 48.5 * f;
+      k.strut([-lx, ly, -1.6], [-lx, ly, 1.6], 0.55);
+      k.strut([lx, ly, -1.6], [lx, ly, 1.6], 0.55);
+    }
   }
   k.box(0, 168.5, 0, 4, 1.6, 5.2);
 }

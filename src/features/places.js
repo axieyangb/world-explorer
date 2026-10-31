@@ -125,57 +125,146 @@ function buildUnitGeometries() {
     [cyl(0.08, 0.08, 0.06, 16), [0.85, 0.2, 0.18], mat(0, 0.86, 0)],
     [sphere(0.055, 12, 8), [0.98, 0.22, 0.16], mat(0, 1.01, 0)],
   ]);
-  G.solar = mergeParts([
-    [box(1, 0.05, 1), [0.12, 0.17, 0.3], mat(0, 0.55, 0, -0.42, 0, 0)],
-    [box(0.04, 0.5, 0.04), [0.55, 0.56, 0.58], mat(-0.45, 0.25, -0.3)],
-    [box(0.04, 0.5, 0.04), [0.55, 0.56, 0.58], mat(0.45, 0.25, -0.3)],
-  ]);
-  const gardenParts = [
-    [box(1, 0.3, 1), [0.42, 0.36, 0.3], mat(0, 0.15, 0)],
-    [box(0.94, 0.05, 0.94), [0.33, 0.55, 0.26], mat(0, 0.32, 0)],
-  ];
-  const shrubs = [[-0.3, -0.25, 0.5], [0.28, -0.3, 0.7], [0.05, 0.1, 0.45], [-0.25, 0.3, 0.6], [0.32, 0.28, 0.4], [-0.05, -0.36, 0.35]];
-  for (const [sx, sz, h] of shrubs) gardenParts.push([box(0.14, h, 0.14), [0.2, 0.42, 0.2], mat(sx, 0.34 + h / 2, sz)]);
-  G.garden = mergeParts(gardenParts);
+  // Tilted photovoltaic rack with A-frame ballast supports, aluminum module frames, cell busbars & inverter junction box
+  {
+    const sp = [
+      // Concrete ballast blocks
+      [box(0.16, 0.07, 0.92), [0.52, 0.53, 0.55], mat(-0.42, 0.035, 0)],
+      [box(0.16, 0.07, 0.92), [0.52, 0.53, 0.55], mat(0.42, 0.035, 0)],
+      // A-frame rear & front legs + diagonal struts
+      [cyl(0.022, 0.024, 0.66, 8), [0.64, 0.66, 0.69], mat(-0.42, 0.38, -0.34)],
+      [cyl(0.022, 0.024, 0.66, 8), [0.64, 0.66, 0.69], mat(0.42, 0.38, -0.34)],
+      [cyl(0.022, 0.024, 0.26, 8), [0.64, 0.66, 0.69], mat(-0.42, 0.18, 0.34)],
+      [cyl(0.022, 0.024, 0.26, 8), [0.64, 0.66, 0.69], mat(0.42, 0.18, 0.34)],
+      [box(0.025, 0.025, 0.72), [0.58, 0.60, 0.63], mat(-0.42, 0.35, 0, 0.32, 0, 0)],
+      [box(0.025, 0.025, 0.72), [0.58, 0.60, 0.63], mat(0.42, 0.35, 0, 0.32, 0, 0)],
+      // Cross purlins & junction box under panel
+      [box(0.96, 0.03, 0.035), [0.70, 0.72, 0.75], mat(0, 0.65, -0.26, -0.42, 0, 0)],
+      [box(0.96, 0.03, 0.035), [0.70, 0.72, 0.75], mat(0, 0.38, 0.26, -0.42, 0, 0)],
+      [box(0.18, 0.12, 0.14), [0.22, 0.24, 0.27], mat(0, 0.44, -0.28)],
+      // Aluminum outer frame + dark blue monocrystalline cell deck + silver busbar grid lines
+      [box(1.02, 0.055, 1.02), [0.78, 0.80, 0.83], mat(0, 0.54, 0, -0.42, 0, 0)],
+      [box(0.96, 0.062, 0.96), [0.10, 0.16, 0.32], mat(0, 0.545, 0, -0.42, 0, 0)],
+    ];
+    for (const gx of [-0.32, 0, 0.32]) {
+      sp.push([box(0.014, 0.066, 0.94), [0.68, 0.72, 0.78], mat(gx, 0.548, 0, -0.42, 0, 0)]);
+    }
+    for (const gz of [-0.24, 0.24]) {
+      sp.push([box(0.94, 0.066, 0.014), [0.68, 0.72, 0.78], mat(0, 0.548 - gz * Math.sin(0.42), gz * Math.cos(0.42), -0.42, 0, 0)]);
+    }
+    G.solar = mergeParts(sp);
+  }
+  // Rooftop planter garden: stone/timber raised bed, rich soil, rounded shrubs, and timber pergola border
+  {
+    const gardenParts = [
+      [box(1.02, 0.28, 1.02), [0.46, 0.38, 0.30], mat(0, 0.14, 0)],
+      [box(1.06, 0.05, 1.06), [0.58, 0.50, 0.40], mat(0, 0.29, 0)],
+      [box(0.92, 0.06, 0.92), [0.28, 0.22, 0.16], mat(0, 0.28, 0)],
+      [box(0.90, 0.04, 0.90), [0.30, 0.52, 0.24], mat(0, 0.31, 0)],
+    ];
+    // Corner pergola posts + overhead trellis beams
+    for (const [px, pz] of [[-0.44, -0.44], [0.44, -0.44], [-0.44, 0.44], [0.44, 0.44]]) {
+      gardenParts.push([box(0.05, 0.68, 0.05), [0.48, 0.32, 0.20], mat(px, 0.62, pz)]);
+    }
+    gardenParts.push(
+      [box(0.98, 0.04, 0.04), [0.48, 0.32, 0.20], mat(0, 0.95, -0.44)],
+      [box(0.98, 0.04, 0.04), [0.48, 0.32, 0.20], mat(0, 0.95, 0.44)],
+      [box(0.035, 0.035, 0.96), [0.52, 0.35, 0.22], mat(-0.28, 0.98, 0)],
+      [box(0.035, 0.035, 0.96), [0.52, 0.35, 0.22], mat(0, 0.98, 0)],
+      [box(0.035, 0.035, 0.96), [0.52, 0.35, 0.22], mat(0.28, 0.98, 0)],
+    );
+    const shrubs = [
+      [-0.26, -0.22, 0.22, [0.18, 0.44, 0.20]],
+      [0.24, -0.26, 0.25, [0.22, 0.50, 0.22]],
+      [0.04, 0.06, 0.20, [0.26, 0.54, 0.24]],
+      [-0.22, 0.24, 0.24, [0.20, 0.46, 0.18]],
+      [0.26, 0.22, 0.19, [0.24, 0.48, 0.22]],
+    ];
+    for (const [sx, sz, r, col] of shrubs) {
+      gardenParts.push([cyl(0.03, 0.04, 0.18, 6), [0.38, 0.25, 0.15], mat(sx, 0.38, sz)]);
+      gardenParts.push([sphere(r, 10, 8), col, mat(sx, 0.48 + r * 0.5, sz, 0, 0, 0, 1, 0.85, 1)]);
+    }
+    G.garden = mergeParts(gardenParts);
+  }
 
   // Striped storefront awning: local X along the wall, +Z out of the wall, y 0..1
+  // Includes striped slope, scalloped valance tabs, end cheek flaps, and wrought-iron wall support brackets
   {
-    const pos = [];
-    const col = [];
-    const strips = 6;
+    const awParts = [];
+    const strips = 8;
     for (let i = 0; i < strips; i++) {
       const x0 = -0.5 + i / strips, x1 = -0.5 + (i + 1) / strips;
-      const c = i % 2 === 0 ? [1, 1, 1] : [0.8, 0.8, 0.8];
-      const quad = (a, b, cc, d) => {
-        pos.push(...a, ...b, ...cc, ...a, ...cc, ...d);
-        for (let k = 0; k < 6; k++) col.push(...c);
-      };
-      quad([x0, 1, 0], [x0, 0.28, 1], [x1, 0.28, 1], [x1, 1, 0]);
-      quad([x0, 0.28, 1], [x0, 0.0, 1], [x1, 0.0, 1], [x1, 0.28, 1]);
+      const xm = (x0 + x1) * 0.5, sw = 1 / strips;
+      const c = i % 2 === 0 ? [1.0, 1.0, 1.0] : [0.78, 0.78, 0.80];
+      // Sloped canopy strip from (y=1, z=0) to (y=0.30, z=0.98)
+      awParts.push([box(sw + 0.002, 0.035, 1.20), c, mat(xm, 0.65, 0.49, 0.62, 0, 0)]);
+      // Front valance drop tab + rounded bottom scallop
+      awParts.push([box(sw * 0.94, 0.20, 0.03), c, mat(xm, 0.20, 0.98)]);
+      awParts.push([cyl(sw * 0.46, sw * 0.46, 0.03, 10), c, mat(xm, 0.10, 0.98, Math.PI / 2, 0, 0)]);
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    g.computeVertexNormals();
-    G.awning = g;
+    // Wrought-iron wall-mounting brackets & front roller bar
+    awParts.push([cyl(0.025, 0.025, 1.02, 10), [0.22, 0.24, 0.27], mat(0, 0.30, 0.96, 0, 0, Math.PI / 2)]);
+    awParts.push([box(1.02, 0.05, 0.05), [0.24, 0.26, 0.29], mat(0, 0.98, 0.02)]);
+    for (const bx of [-0.46, 0, 0.46]) {
+      awParts.push(
+        [box(0.03, 0.72, 0.04), [0.20, 0.22, 0.25], mat(bx, 0.56, 0.02)],
+        [box(0.028, 0.028, 0.96), [0.20, 0.22, 0.25], mat(bx, 0.30, 0.48)],
+        [box(0.024, 0.024, 0.86), [0.22, 0.24, 0.27], mat(bx, 0.48, 0.44, -0.45, 0, 0)],
+      );
+    }
+    G.awning = mergeParts(awParts);
   }
-  G.sign = mergeParts([
-    [box(0.12, 0.88, 0.06), [0.22, 0.24, 0.26], mat(0, 0.50, 0.03)],
-    [cyl(0.03, 0.03, 0.22, 12), [0.25, 0.27, 0.30], mat(0, 0.80, 0.10, Math.PI / 2, 0, 0)],
-    [cyl(0.03, 0.03, 0.22, 12), [0.25, 0.27, 0.30], mat(0, 0.20, 0.10, Math.PI / 2, 0, 0)],
-    [box(1, 1, 0.92), [1, 1, 1], mat(0, 0.5, 0.54)],
-    [box(1.04, 0.08, 0.96), [0.30, 0.32, 0.34], mat(0, 0.98, 0.54)],
-    [box(1.04, 0.08, 0.96), [0.30, 0.32, 0.34], mat(0, 0.02, 0.54)],
-  ]);
-  // Transit entrance totem (real size), tinted per line color
-  G.transit = mergeParts([
-    [cyl(0.28, 0.32, 0.12, 16), [0.46, 0.48, 0.50], mat(0, 0.06, 0)],
-    [cyl(0.075, 0.08, 2.8, 16), [0.55, 0.57, 0.60], mat(0, 1.4, 0)],
-    [cyl(0.46, 0.46, 0.16, 24), [0.20, 0.22, 0.26], mat(0, 3.1, 0, Math.PI / 2, 0, 0)],
-    [cyl(0.40, 0.40, 0.18, 24), [1, 1, 1], mat(0, 3.1, 0, Math.PI / 2, 0, 0)],
-    [box(0.56, 0.13, 0.20), [1.8, 1.8, 1.8], mat(0, 3.1, 0)],
-    [sphere(0.14, 16, 12), [1.7, 1.65, 1.45], mat(0, 3.72, 0)],
-  ]);
+  // Projecting blade sign with wrought-iron wall bracket, scroll braces, bezel frame, mounting bolts & top gooseneck lamps
+  {
+    const sgParts = [
+      // Wall mounting plate + 4 corner bolts
+      [box(0.18, 0.94, 0.05), [0.20, 0.22, 0.25], mat(0, 0.50, 0.025)],
+      [cyl(0.032, 0.032, 0.26, 12), [0.24, 0.26, 0.29], mat(0, 0.82, 0.12, Math.PI / 2, 0, 0)],
+      [cyl(0.032, 0.032, 0.26, 12), [0.24, 0.26, 0.29], mat(0, 0.18, 0.12, Math.PI / 2, 0, 0)],
+      [torus(0.14, 0.018, 8, 16), [0.22, 0.24, 0.27], mat(0, 0.65, 0.14, 0, Math.PI / 2, 0)],
+      [torus(0.14, 0.018, 8, 16), [0.22, 0.24, 0.27], mat(0, 0.35, 0.14, 0, Math.PI / 2, 0)],
+      // Illuminated sign face panel + extruded metal bezel frame
+      [box(0.12, 0.92, 0.86), [1, 1, 1], mat(0, 0.50, 0.55)],
+      [box(0.16, 0.07, 0.94), [0.26, 0.28, 0.31], mat(0, 0.97, 0.55)],
+      [box(0.16, 0.07, 0.94), [0.26, 0.28, 0.31], mat(0, 0.03, 0.55)],
+      [box(0.16, 0.96, 0.07), [0.26, 0.28, 0.31], mat(0, 0.50, 0.11)],
+      [box(0.16, 0.96, 0.07), [0.26, 0.28, 0.31], mat(0, 0.50, 0.99)],
+      // Twin top gooseneck lamp shades
+      [cyl(0.06, 0.10, 0.08, 12), [0.22, 0.24, 0.27], mat(-0.14, 1.04, 0.55)],
+      [cyl(0.06, 0.10, 0.08, 12), [0.22, 0.24, 0.27], mat(0.14, 1.04, 0.55)],
+    ];
+    for (const [by, bz] of [[0.90, 0.06], [0.10, 0.06], [0.97, 0.25], [0.97, 0.85], [0.03, 0.25], [0.03, 0.85]]) {
+      sgParts.push([sphere(0.028, 8, 6), [0.65, 0.68, 0.72], mat(0, by, bz)]);
+    }
+    G.sign = mergeParts(sgParts);
+  }
+  // Transit entrance totem + subway stairway balustrade collar (real size), tinted per line color
+  {
+    const tr = [
+      // Granite base curb + flanged anchor collar
+      [box(0.84, 0.12, 0.84), [0.42, 0.44, 0.47], mat(0, 0.06, 0)],
+      [cyl(0.28, 0.32, 0.14, 16), [0.46, 0.48, 0.50], mat(0, 0.16, 0)],
+      [torus(0.14, 0.025, 8, 16), [0.34, 0.36, 0.40], mat(0, 0.24, 0, Math.PI / 2, 0, 0)],
+      // Fluted steel totem mast + mid timetable map panel
+      [cyl(0.075, 0.085, 2.8, 16), [0.55, 0.57, 0.60], mat(0, 1.5, 0)],
+      [box(0.42, 0.58, 0.08), [0.22, 0.25, 0.30], mat(0, 1.48, 0)],
+      [box(0.36, 0.48, 0.095), [0.92, 0.94, 0.96], mat(0, 1.50, 0)],
+      [box(0.36, 0.06, 0.10), [1, 1, 1], mat(0, 1.70, 0)],
+      // Neck bracket + circular transit roundel (outer bezel, line-tinted disc, bold crossbar)
+      [box(0.22, 0.24, 0.14), [0.34, 0.36, 0.40], mat(0, 2.68, 0)],
+      [cyl(0.46, 0.46, 0.16, 24), [0.20, 0.22, 0.26], mat(0, 3.1, 0, Math.PI / 2, 0, 0)],
+      [torus(0.46, 0.028, 10, 24), [0.76, 0.78, 0.82], mat(0, 3.1, 0)],
+      [cyl(0.40, 0.40, 0.18, 24), [1, 1, 1], mat(0, 3.1, 0, Math.PI / 2, 0, 0)],
+      [cyl(0.24, 0.24, 0.19, 20), [0.16, 0.18, 0.22], mat(0, 3.1, 0, Math.PI / 2, 0, 0)],
+      [box(1.04, 0.16, 0.21), [0.18, 0.22, 0.32], mat(0, 3.1, 0)],
+      [box(0.98, 0.12, 0.22), [1.8, 1.8, 1.8], mat(0, 3.1, 0)],
+      // Top beacon pedestal & illuminated globe lantern
+      [cyl(0.06, 0.08, 0.22, 12), [0.46, 0.48, 0.52], mat(0, 3.58, 0)],
+      [sphere(0.15, 16, 12), [1.7, 1.65, 1.45], mat(0, 3.76, 0)],
+      [cyl(0.10, 0.14, 0.05, 12), [0.28, 0.30, 0.34], mat(0, 3.91, 0)],
+    ];
+    G.transit = mergeParts(tr);
+  }
 
   // Helipad (unit radius = 1, scaled by hr in X/Z): dark landing deck, white aiming circle, bold white "H", 8 green perimeter lights
   {
@@ -210,90 +299,152 @@ function buildUnitGeometries() {
     G.helipad = mergeParts(hp);
   }
 
-  // Gas Station: illuminated canopy + 2 fuel pump islands + roadside price totem (brand stripe tinted by instance color)
-  G.gasStation = mergeParts([
-    // Concrete fuel island
-    [box(5.4, 0.18, 1.4), [0.72, 0.73, 0.75], mat(0, 0.09, 0)],
-    // 2 Canopy columns
-    [cyl(0.20, 0.22, 4.2, 10), [0.85, 0.86, 0.88], mat(-1.85, 2.1, 0)],
-    [cyl(0.20, 0.22, 4.2, 10), [0.85, 0.86, 0.88], mat(1.85, 2.1, 0)],
-    // 2 Fuel dispensers
-    [box(0.75, 1.50, 0.46), [0.92, 0.93, 0.95], mat(-0.85, 0.92, 0)],
-    [box(0.52, 0.38, 0.50), [0.15, 0.20, 0.26], mat(-0.85, 1.18, 0)],
-    [box(0.78, 0.26, 0.50), [1.0, 1.0, 1.0], mat(-0.85, 1.58, 0)],
-    [box(0.75, 1.50, 0.46), [0.92, 0.93, 0.95], mat(0.85, 0.92, 0)],
-    [box(0.52, 0.38, 0.50), [0.15, 0.20, 0.26], mat(0.85, 1.18, 0)],
-    [box(0.78, 0.26, 0.50), [1.0, 1.0, 1.0], mat(0.85, 1.58, 0)],
-    // Overhead canopy deck + brand fascia stripe
-    [box(7.6, 0.34, 4.6), [0.94, 0.95, 0.97], mat(0, 4.25, 0)],
-    [box(7.72, 0.22, 4.72), [1.0, 1.0, 1.0], mat(0, 4.32, 0)],
-    // Price totem sign
-    [box(1.0, 3.7, 0.26), [0.22, 0.24, 0.28], mat(4.2, 1.85, 1.7)],
-    [box(1.06, 0.9, 0.30), [1.0, 1.0, 1.0], mat(4.2, 3.22, 1.7)],
-    [box(0.82, 1.1, 0.30), [0.96, 0.84, 0.22], mat(4.2, 1.95, 1.7)],
-  ]);
+  // Gas Station: illuminated canopy fascia + soffit downlights + 2 dual-hose fuel dispensers + crash bollards + roadside price totem
+  {
+    const gs = [
+      // Concrete fuel island with yellow safety end curbs
+      [box(5.4, 0.18, 1.4), [0.72, 0.73, 0.75], mat(0, 0.09, 0)],
+      [cyl(0.70, 0.70, 0.18, 14), [0.92, 0.74, 0.10], mat(-2.7, 0.09, 0)],
+      [cyl(0.70, 0.70, 0.18, 14), [0.92, 0.74, 0.10], mat(2.7, 0.09, 0)],
+      // Protective yellow steel crash bollards at island ends
+      [cyl(0.09, 0.09, 0.85, 10), [0.95, 0.76, 0.12], mat(-2.55, 0.50, -0.45)],
+      [cyl(0.09, 0.09, 0.85, 10), [0.95, 0.76, 0.12], mat(-2.55, 0.50, 0.45)],
+      [cyl(0.09, 0.09, 0.85, 10), [0.95, 0.76, 0.12], mat(2.55, 0.50, -0.45)],
+      [cyl(0.09, 0.09, 0.85, 10), [0.95, 0.76, 0.12], mat(2.55, 0.50, 0.45)],
+      // 2 Canopy columns with brand base wraps
+      [cyl(0.22, 0.24, 4.2, 14), [0.88, 0.89, 0.91], mat(-1.85, 2.1, 0)],
+      [cyl(0.26, 0.26, 1.1, 14), [1.0, 1.0, 1.0], mat(-1.85, 0.65, 0)],
+      [cyl(0.22, 0.24, 4.2, 14), [0.88, 0.89, 0.91], mat(1.85, 2.1, 0)],
+      [cyl(0.26, 0.26, 1.1, 14), [1.0, 1.0, 1.0], mat(1.85, 0.65, 0)],
+      // Overhead canopy deck + tiered brand fascia trim + recessed soffit light bays
+      [box(7.6, 0.36, 4.6), [0.94, 0.95, 0.97], mat(0, 4.25, 0)],
+      [box(7.76, 0.24, 4.76), [1.0, 1.0, 1.0], mat(0, 4.32, 0)],
+      [box(7.80, 0.08, 4.80), [0.95, 0.78, 0.14], mat(0, 4.14, 0)],
+      [box(1.4, 0.04, 0.65), [0.98, 0.98, 0.95], mat(-2.2, 4.06, -1.1)],
+      [box(1.4, 0.04, 0.65), [0.98, 0.98, 0.95], mat(0, 4.06, -1.1)],
+      [box(1.4, 0.04, 0.65), [0.98, 0.98, 0.95], mat(2.2, 4.06, -1.1)],
+      [box(1.4, 0.04, 0.65), [0.98, 0.98, 0.95], mat(-2.2, 4.06, 1.1)],
+      [box(1.4, 0.04, 0.65), [0.98, 0.98, 0.95], mat(0, 4.06, 1.1)],
+      [box(1.4, 0.04, 0.65), [0.98, 0.98, 0.65], mat(2.2, 4.06, 1.1)],
+      // Roadside price totem sign with LED grade rows
+      [box(1.15, 0.28, 0.52), [0.58, 0.60, 0.62], mat(4.2, 0.14, 1.7)],
+      [box(1.02, 3.7, 0.28), [0.20, 0.22, 0.26], mat(4.2, 1.95, 1.7)],
+      [box(1.08, 0.92, 0.32), [1.0, 1.0, 1.0], mat(4.2, 3.30, 1.7)],
+      [box(0.86, 0.32, 0.33), [0.96, 0.22, 0.16], mat(4.2, 2.42, 1.7)],
+      [box(0.86, 0.32, 0.33), [0.96, 0.78, 0.14], mat(4.2, 2.02, 1.7)],
+      [box(0.86, 0.32, 0.33), [0.16, 0.88, 0.36], mat(4.2, 1.62, 1.7)],
+    ];
+    // 2 Dual-hose fuel dispensers with screens, nozzle boots, and hanging rubber hoses
+    for (const px of [-0.85, 0.85]) {
+      gs.push(
+        [box(0.78, 1.54, 0.48), [0.92, 0.93, 0.95], mat(px, 0.94, 0)],
+        [box(0.54, 0.40, 0.52), [0.14, 0.18, 0.24], mat(px, 1.20, 0)],
+        [box(0.36, 0.22, 0.54), [0.24, 0.78, 0.96], mat(px, 1.24, 0)],
+        [box(0.82, 0.28, 0.52), [1.0, 1.0, 1.0], mat(px, 1.62, 0)],
+        [box(0.10, 0.22, 0.22), [0.16, 0.68, 0.30], mat(px - 0.41, 1.02, 0)],
+        [box(0.10, 0.22, 0.22), [0.88, 0.20, 0.16], mat(px + 0.41, 1.02, 0)],
+        [cyl(0.025, 0.025, 0.95, 8), [0.12, 0.13, 0.15], mat(px - 0.46, 1.12, 0, 0, 0, 0.12)],
+        [cyl(0.025, 0.025, 0.95, 8), [0.12, 0.13, 0.15], mat(px + 0.46, 1.12, 0, 0, 0, -0.12)],
+      );
+    }
+    G.gasStation = mergeParts(gs);
+  }
 
-  // EV Supercharger Station: concrete pad + 4 white/crimson Supercharger stalls + utility cabinet
+  // EV Supercharger Station: concrete pad + transformer cabinet + 4 arched-hoop Supercharger stalls with holstered cables
   {
     const ev = [
-      [box(5.4, 0.15, 1.2), [0.68, 0.70, 0.72], mat(0, 0.075, 0)],
-      [box(0.92, 1.45, 0.72), [0.78, 0.80, 0.82], mat(-2.85, 0.75, -0.1)],
+      [box(5.6, 0.16, 1.3), [0.68, 0.70, 0.72], mat(0, 0.08, 0)],
+      // Utility transformer cabinet with cooling louvers
+      [box(0.96, 1.52, 0.76), [0.78, 0.80, 0.82], mat(-2.85, 0.80, -0.1)],
+      [box(0.98, 0.48, 0.60), [0.46, 0.48, 0.52], mat(-2.85, 1.05, -0.1)],
+      [box(1.02, 0.08, 0.82), [0.58, 0.60, 0.64], mat(-2.85, 1.56, -0.1)],
     ];
     for (const sx of [-1.8, -0.6, 0.6, 1.8]) {
       ev.push(
-        [box(0.50, 1.66, 0.24), [0.96, 0.97, 0.98], mat(sx, 0.90, 0)],
-        [box(0.26, 1.06, 0.26), [0.88, 0.14, 0.18], mat(sx, 0.86, 0)],
-        [box(0.42, 0.10, 0.27), [0.12, 0.94, 0.72], mat(sx, 1.60, 0)],
-        [box(0.72, 0.10, 0.15), [0.92, 0.76, 0.14], mat(sx, 0.05, 0.82)],
+        // Outer white monolith frame + rounded arch top + crimson inner hoop
+        [box(0.54, 1.58, 0.24), [0.96, 0.97, 0.99], mat(sx, 0.86, 0)],
+        [cyl(0.27, 0.27, 0.24, 14), [0.96, 0.97, 0.99], mat(sx, 1.65, 0, Math.PI / 2, 0, 0)],
+        [box(0.28, 1.08, 0.26), [0.88, 0.12, 0.16], mat(sx, 0.86, 0)],
+        // Glowing status bar + touchscreen + holstered charging handle & cable loop
+        [box(0.42, 0.09, 0.27), [0.12, 0.94, 0.72], mat(sx, 1.58, 0)],
+        [box(0.20, 0.26, 0.28), [0.16, 0.22, 0.30], mat(sx, 1.18, 0)],
+        [box(0.10, 0.20, 0.16), [0.18, 0.20, 0.22], mat(sx + 0.29, 0.96, 0)],
+        [torus(0.18, 0.024, 8, 14), [0.12, 0.13, 0.15], mat(sx + 0.30, 0.68, 0, 0, Math.PI / 2, 0)],
+        // Wheel stop curb block
+        [box(0.76, 0.10, 0.16), [0.92, 0.76, 0.14], mat(sx, 0.05, 0.82)],
       );
     }
     G.evCharger = mergeParts(ev);
   }
 
-  // Bike-Share Dock: sidewalk dock plate + payment terminal kiosk + 5 docked bicycles
+  // Bike-Share Dock: sidewalk dock plate + solar payment terminal kiosk + 5 detailed docked bicycles
   {
     const bk = [
-      [box(4.6, 0.08, 0.75), [0.36, 0.38, 0.42], mat(0, 0.04, 0)],
-      // Kiosk terminal
-      [box(0.38, 1.62, 0.28), [0.22, 0.25, 0.30], mat(-2.0, 0.84, 0)],
-      [box(0.28, 0.34, 0.31), [0.30, 0.78, 0.98], mat(-2.0, 1.20, 0)],
-      [box(0.44, 0.05, 0.40), [0.14, 0.20, 0.34], mat(-2.0, 1.72, 0, -0.35, 0, 0)],
+      [box(4.6, 0.08, 0.82), [0.36, 0.38, 0.42], mat(0, 0.04, 0)],
+      // Solar payment terminal kiosk
+      [box(0.40, 1.64, 0.28), [0.20, 0.24, 0.30], mat(-2.0, 0.85, 0)],
+      [box(0.30, 0.36, 0.31), [0.28, 0.78, 0.98], mat(-2.0, 1.22, 0)],
+      [box(0.48, 0.05, 0.44), [0.12, 0.18, 0.34], mat(-2.0, 1.74, 0, -0.35, 0, 0)],
     ];
     for (const bx of [-1.1, -0.4, 0.3, 1.0, 1.7]) {
       bk.push(
-        [box(0.13, 0.70, 0.13), [0.55, 0.58, 0.62], mat(bx, 0.38, -0.22)],
-        [cyl(0.27, 0.27, 0.05, 10), [0.16, 0.17, 0.19], mat(bx, 0.32, -0.04, 0, 0, Math.PI / 2)],
-        [cyl(0.27, 0.27, 0.05, 10), [0.16, 0.17, 0.19], mat(bx, 0.32, 0.54, 0, 0, Math.PI / 2)],
-        [box(0.07, 0.40, 0.50), [1.0, 1.0, 1.0], mat(bx, 0.42, 0.25)],
-        [box(0.36, 0.05, 0.05), [0.76, 0.78, 0.80], mat(bx, 0.76, -0.02)],
-        [box(0.13, 0.06, 0.20), [0.16, 0.16, 0.18], mat(bx, 0.70, 0.42)],
+        // Bollard dock stanchion with green LED indicator
+        [box(0.14, 0.72, 0.14), [0.55, 0.58, 0.62], mat(bx, 0.38, -0.24)],
+        [box(0.10, 0.04, 0.15), [0.16, 0.92, 0.42], mat(bx, 0.68, -0.24)],
+        // Front & rear tire rings + hubs
+        [torus(0.26, 0.032, 8, 14), [0.14, 0.15, 0.17], mat(bx, 0.32, -0.04, 0, Math.PI / 2, 0)],
+        [torus(0.26, 0.032, 8, 14), [0.14, 0.15, 0.17], mat(bx, 0.32, 0.56, 0, Math.PI / 2, 0)],
+        // Step-through frame tubes, fork, seatpost, saddle, handlebars & front basket
+        [cyl(0.022, 0.022, 0.52, 8), [1.0, 1.0, 1.0], mat(bx, 0.52, -0.02, -0.22, 0, 0)],
+        [cyl(0.026, 0.026, 0.54, 8), [1.0, 1.0, 1.0], mat(bx, 0.42, 0.24, 1.15, 0, 0)],
+        [cyl(0.022, 0.022, 0.44, 8), [1.0, 1.0, 1.0], mat(bx, 0.50, 0.42, 0.18, 0, 0)],
+        [box(0.38, 0.035, 0.035), [0.76, 0.78, 0.82], mat(bx, 0.78, -0.06)],
+        [box(0.22, 0.16, 0.18), [0.24, 0.26, 0.28], mat(bx, 0.66, -0.16)],
+        [box(0.14, 0.06, 0.22), [0.16, 0.16, 0.18], mat(bx, 0.72, 0.44)],
       );
     }
     G.bikeDock = mergeParts(bk);
   }
 
-  // Highway Toll Booth Plaza: 3 crash-barrier islands + 2 booth kiosks + overhead ETC canopy + gate arms
+  // Highway Toll Booth Plaza: 3 crash-barrier islands + 2 glazed booth cabs + rooftop HVAC + overhead ETC canopy + lane signal lights + striped barrier arms
   {
     const tb = [
-      // Overhead canopy + blue ETC sign band
-      [box(11.0, 0.80, 3.2), [0.92, 0.93, 0.95], mat(0, 4.80, 0)],
-      [box(11.1, 0.50, 3.3), [0.12, 0.38, 0.78], mat(0, 4.86, 0)],
-      [box(0.40, 4.5, 0.40), [0.62, 0.64, 0.66], mat(-4.5, 2.35, 0)],
-      [box(0.40, 4.5, 0.40), [0.62, 0.64, 0.66], mat(4.5, 2.35, 0)],
-      // Toll barrier arms
-      [box(3.1, 0.10, 0.10), [0.92, 0.18, 0.16], mat(-2.2, 1.15, 1.2)],
-      [box(3.1, 0.10, 0.10), [0.92, 0.18, 0.16], mat(2.2, 1.15, 1.2)],
+      // Overhead canopy + blue ETC sign fascia + structural trusses
+      [box(11.2, 0.82, 3.4), [0.92, 0.93, 0.95], mat(0, 4.82, 0)],
+      [box(11.3, 0.52, 3.5), [0.12, 0.38, 0.78], mat(0, 4.88, 0)],
+      [box(11.4, 0.12, 3.6), [0.78, 0.80, 0.83], mat(0, 5.24, 0)],
+      [cyl(0.24, 0.26, 4.5, 12), [0.62, 0.64, 0.66], mat(-4.5, 2.35, 0)],
+      [cyl(0.24, 0.26, 4.5, 12), [0.62, 0.64, 0.66], mat(4.5, 2.35, 0)],
+      // Lane traffic signal heads (green arrow / red cross) & ETC radar transponders under canopy
+      [box(0.75, 0.45, 0.25), [0.16, 0.18, 0.20], mat(-2.25, 4.25, 1.65)],
+      [sphere(0.14, 10, 8), [0.12, 0.95, 0.38], mat(-2.25, 4.25, 1.78)],
+      [box(0.75, 0.45, 0.25), [0.16, 0.18, 0.20], mat(2.25, 4.25, 1.65)],
+      [sphere(0.14, 10, 8), [0.12, 0.95, 0.38], mat(2.25, 4.25, 1.78)],
+      [box(0.45, 0.28, 0.18), [0.92, 0.94, 0.96], mat(-2.25, 4.18, 1.2, 0.35, 0, 0)],
+      [box(0.45, 0.28, 0.18), [0.92, 0.94, 0.96], mat(2.25, 4.18, 1.2, 0.35, 0, 0)],
     ];
+    // Striped red/white toll barrier arms + drive pedestals
+    for (const lx of [-2.2, 2.2]) {
+      tb.push(
+        [box(0.36, 1.05, 0.36), [0.92, 0.46, 0.12], mat(lx - 1.55, 0.68, 1.2)],
+        [box(1.05, 0.10, 0.08), [0.92, 0.16, 0.16], mat(lx - 0.85, 1.15, 1.2)],
+        [box(1.05, 0.10, 0.08), [0.96, 0.97, 0.99], mat(lx + 0.15, 1.15, 1.2)],
+        [box(1.05, 0.10, 0.08), [0.92, 0.16, 0.16], mat(lx + 1.15, 1.15, 1.2)],
+      );
+    }
     for (const ix of [-4.5, 0, 4.5]) {
       tb.push(
-        [box(0.72, 0.82, 5.0), [0.75, 0.76, 0.74], mat(ix, 0.41, 0)],
-        [cyl(0.32, 0.34, 0.80, 10), [0.95, 0.76, 0.12], mat(ix, 0.41, -2.6)],
+        [box(0.76, 0.82, 5.2), [0.75, 0.76, 0.74], mat(ix, 0.41, 0)],
+        [cyl(0.36, 0.38, 0.84, 12), [0.95, 0.76, 0.12], mat(ix, 0.42, -2.65)],
+        [cyl(0.37, 0.37, 0.16, 12), [0.16, 0.17, 0.18], mat(ix, 0.55, -2.65)],
       );
     }
     for (const ix of [-4.5, 0]) {
       tb.push(
-        [box(0.66, 2.30, 2.1), [0.88, 0.90, 0.92], mat(ix, 1.35, 0)],
-        [box(0.70, 0.92, 1.7), [0.22, 0.38, 0.52], mat(ix, 1.65, 0)],
+        [box(0.68, 2.32, 2.15), [0.88, 0.90, 0.92], mat(ix, 1.36, 0)],
+        [box(0.72, 0.94, 1.75), [0.22, 0.38, 0.52], mat(ix, 1.66, 0)],
+        // Rooftop mini HVAC unit on toll cab
+        [box(0.52, 0.32, 0.68), [0.76, 0.78, 0.80], mat(ix, 2.68, -0.2)],
       );
     }
     G.tollBooth = mergeParts(tb);
@@ -350,7 +501,7 @@ function buildUnitGeometries() {
     G.plane = airlinerGeoms.plane;
     G.planeTail = airlinerGeoms.planeTail;
   }
-  // Cargo ship (bow +Z), 120 m; small vessels reuse it scaled down
+  // Cargo ship (bow +Z), 120 m; hull with bulbous bow, forecastle, colorful container stacks, bridge superstructure, radar mast & lifeboats
   {
     const shape = new THREE.Shape();
     shape.moveTo(-9, 60);
@@ -362,44 +513,114 @@ function buildUnitGeometries() {
     const hull = new THREE.ExtrudeGeometry(shape, { depth: 10, bevelEnabled: false });
     hull.rotateX(-Math.PI / 2);
     hull.translate(0, -4, 0);
-    const parts = [[hull, [0.17, 0.21, 0.3], null]];
-    parts.push([box(18.3, 1.0, 97), [0.62, 0.16, 0.14], mat(0, -0.2, -11)]);
-    parts.push([box(17.4, 0.3, 95), [0.36, 0.38, 0.36], mat(0, 6.05, -10)]);
-    const cont = [[0.75, 0.25, 0.18], [0.18, 0.4, 0.62], [0.85, 0.65, 0.2], [0.3, 0.55, 0.35], [0.62, 0.62, 0.64]];
+    const parts = [[hull, [0.16, 0.20, 0.28], null]];
+    // Anti-fouling crimson boot-topping + bulbous bow + forecastle deck
+    parts.push([box(18.4, 1.4, 98), [0.64, 0.15, 0.13], mat(0, -0.2, -10)]);
+    parts.push([sphere(3.6, 14, 10), [0.64, 0.15, 0.13], mat(0, -1.2, 59, 0, 0, 0, 0.85, 0.75, 2.1)]);
+    parts.push([box(17.4, 0.4, 96), [0.34, 0.37, 0.35], mat(0, 6.05, -10)]);
+    parts.push([box(14.5, 1.8, 12), [0.22, 0.26, 0.34], mat(0, 6.8, 48)]);
+    // Multi-row colorful shipping container stacks with longitudinal & transverse aisles
+    const cont = [
+      [0.78, 0.22, 0.16], [0.16, 0.42, 0.68], [0.88, 0.66, 0.16],
+      [0.24, 0.56, 0.34], [0.14, 0.52, 0.56], [0.68, 0.28, 0.18],
+    ];
     for (let i = 0; i < 6; i++) {
-      const h = 3 + ((i * 7) % 5);
-      parts.push([box(15, h, 9.5), cont[i % cont.length], mat(0, 6 + h / 2, 28 - i * 11)]);
+      const zc = 30 - i * 11.2;
+      for (const xc of [-4.8, 0, 4.8]) {
+        const tiers = 2 + ((i + (xc === 0 ? 1 : 0)) % 3);
+        for (let t = 0; t < tiers; t++) {
+          const c = cont[(i * 3 + t + (xc > 0 ? 2 : 0)) % cont.length];
+          parts.push([box(4.4, 2.5, 9.6), c, mat(xc, 7.45 + t * 2.55, zc)]);
+        }
+      }
     }
-    parts.push([box(16, 14, 10), [0.94, 0.94, 0.92], mat(0, 13, -45)]);
-    parts.push([box(20, 1.6, 4), [0.9, 0.9, 0.88], mat(0, 19.2, -42)]);
-    parts.push([box(16.2, 1.0, 10.2), [0.2, 0.24, 0.3], mat(0, 18, -45)]);
-    parts.push([box(3.2, 5, 3.2), [0.7, 0.2, 0.16], mat(0, 22.5, -51)]);
+    // Tiered white aft superstructure + bridge wings + panoramic glazing + funnel + radar mast + orange lifeboats
+    parts.push([box(15.6, 10.5, 10.5), [0.94, 0.94, 0.92], mat(0, 11.2, -45)]);
+    parts.push([box(13.8, 4.5, 8.5), [0.95, 0.95, 0.93], mat(0, 18.2, -44.5)]);
+    parts.push([box(21.2, 1.8, 4.4), [0.92, 0.92, 0.90], mat(0, 20.6, -42)]);
+    parts.push([box(21.4, 0.9, 4.6), [0.16, 0.22, 0.30], mat(0, 20.8, -42)]);
+    parts.push([box(15.8, 0.8, 10.7), [0.22, 0.26, 0.32], mat(0, 14.2, -45)]);
+    // Exhaust funnel casing + black uptake crown
+    parts.push([cyl(1.9, 2.3, 5.8, 14), [0.76, 0.20, 0.15], mat(0, 23.2, -50.5)]);
+    parts.push([cyl(1.85, 1.95, 1.2, 14), [0.14, 0.15, 0.17], mat(0, 26.2, -50.5)]);
+    // Radar mast & scanner bars
+    parts.push([cyl(0.22, 0.38, 6.5, 10), [0.85, 0.87, 0.90], mat(0, 24.5, -42.5)]);
+    parts.push([box(4.2, 0.35, 0.45), [0.95, 0.96, 0.98], mat(0, 26.8, -42.5)]);
+    // Port & starboard orange free-fall lifeboats
+    parts.push([cyl(0.9, 0.9, 4.2, 10), [0.94, 0.38, 0.10], mat(-8.4, 13.5, -46, Math.PI / 2, 0, 0)]);
+    parts.push([cyl(0.9, 0.9, 4.2, 10), [0.94, 0.38, 0.10], mat(8.4, 13.5, -46, Math.PI / 2, 0, 0)]);
     G.ship = mergeParts(parts);
   }
-  G.trainCar = mergeParts([
-    [box(3, 3.3, 20), [0.93, 0.93, 0.91], mat(0, 2.75, 0)],
-    [box(3.04, 0.9, 18.4), [0.16, 0.19, 0.24], mat(0, 3.1, 0)],
-    [box(3.05, 0.28, 19.8), [0.85, 0.3, 0.2], mat(0, 2.15, 0)],
-    [box(2.5, 0.3, 19), [0.62, 0.63, 0.65], mat(0, 4.55, 0)],
-    [box(2.4, 0.9, 3), [0.18, 0.18, 0.2], mat(0, 0.75, 6.5)],
-    [box(2.4, 0.9, 3), [0.18, 0.18, 0.2], mat(0, 0.75, -6.5)],
-  ]);
+  // High-speed commuter/intercity rail coach: aerodynamic carbody, individual windows, doors, roof HVAC pods, pantograph & wheel bogies
+  {
+    const tc = [
+      // Lower chassis skirt + main carbody + rounded roof crown
+      [box(2.92, 0.55, 19.6), [0.24, 0.26, 0.29], mat(0, 1.15, 0)],
+      [box(3.0, 2.65, 20.0), [0.93, 0.94, 0.92], mat(0, 2.72, 0)],
+      [cyl(1.48, 1.48, 19.8, 14), [0.84, 0.86, 0.88], mat(0, 3.92, 0, Math.PI / 2, 0, 0, 1, 1, 0.32)],
+      // Crimson/orange livery cheatslines + dark window band + end gangway diaphragms
+      [box(3.05, 0.28, 19.9), [0.86, 0.26, 0.18], mat(0, 2.12, 0)],
+      [box(3.04, 0.12, 19.9), [0.86, 0.26, 0.18], mat(0, 3.68, 0)],
+      [box(2.35, 2.55, 20.3), [0.18, 0.20, 0.22], mat(0, 2.68, 0)],
+      // Rooftop HVAC pods + pantograph frame
+      [box(2.1, 0.34, 3.8), [0.64, 0.66, 0.69], mat(0, 4.48, -4.5)],
+      [box(2.1, 0.34, 3.8), [0.64, 0.66, 0.69], mat(0, 4.48, 4.5)],
+      [box(1.5, 0.08, 2.2), [0.35, 0.37, 0.40], mat(0, 4.52, 0)],
+      [box(1.6, 0.06, 0.08), [0.72, 0.74, 0.78], mat(0, 5.05, 0)],
+    ];
+    // Individual passenger windows & double sliding doors along sides
+    for (let wz = -7.8; wz <= 7.8; wz += 1.95) {
+      const isDoor = Math.abs( Math.abs(wz) - 5.85 ) < 0.5;
+      if (isDoor) {
+        tc.push([box(3.06, 2.15, 1.32), [0.78, 0.80, 0.82], mat(0, 2.48, wz)]);
+        tc.push([box(3.08, 0.82, 1.05), [0.14, 0.18, 0.24], mat(0, 3.02, wz)]);
+      } else {
+        tc.push([box(3.06, 0.88, 1.42), [0.14, 0.18, 0.24], mat(0, 3.05, wz)]);
+      }
+    }
+    // 2 Dual-axle bogie trucks with 4 steel wheels each
+    for (const bz of [-6.5, 6.5]) {
+      tc.push([box(2.45, 0.52, 3.1), [0.18, 0.19, 0.21], mat(0, 0.68, bz)]);
+      for (const az of [bz - 1.05, bz + 1.05]) {
+        tc.push([cyl(0.46, 0.46, 2.32, 12), [0.14, 0.15, 0.17], mat(0, 0.46, az, 0, 0, Math.PI / 2)]);
+      }
+    }
+    G.trainCar = mergeParts(tc);
+  }
 
   // ---------------- Batch 1: Civic, Emergency, Postal, Healthcare & Education ----------------
-  // Parked black-and-white police patrol cruiser with red/blue roof lightbar
-  G.policeCruiser = mergeParts([
-    [box(1.92, 0.54, 4.65), [0.12, 0.14, 0.18], mat(0, 0.44, 0)],
-    [box(1.94, 0.52, 1.95), [0.96, 0.97, 0.99], mat(0, 0.45, 0)],
-    [box(1.66, 0.52, 2.05), [0.96, 0.97, 0.99], mat(0, 0.94, -0.10)],
-    [box(1.70, 0.38, 1.85), [0.16, 0.22, 0.30], mat(0, 0.92, -0.10)],
-    [box(0.55, 0.12, 0.24), [0.92, 0.14, 0.16], mat(-0.30, 1.25, -0.05)],
-    [box(0.55, 0.12, 0.24), [0.12, 0.38, 0.96], mat(0.30, 1.25, -0.05)],
-    [box(0.90, 0.42, 0.12), [0.15, 0.16, 0.18], mat(0, 0.42, 2.36)],
-    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(-0.88, 0.34, 1.42, 0, 0, Math.PI / 2)],
-    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(0.88, 0.34, 1.42, 0, 0, Math.PI / 2)],
-    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(-0.88, 0.34, -1.42, 0, 0, Math.PI / 2)],
-    [cyl(0.34, 0.34, 0.24, 10), [0.14, 0.15, 0.16], mat(0.88, 0.34, -1.42, 0, 0, Math.PI / 2)],
-  ]);
+  // Parked black-and-white police patrol cruiser with push bumper, A-pillar spotlight, red/blue lightbar & alloy wheels
+  {
+    const pc = [
+      [box(1.92, 0.54, 4.65), [0.12, 0.14, 0.18], mat(0, 0.44, 0)],
+      [box(1.94, 0.52, 1.95), [0.96, 0.97, 0.99], mat(0, 0.45, 0)],
+      [box(1.66, 0.52, 2.05), [0.96, 0.97, 0.99], mat(0, 0.94, -0.10)],
+      [box(1.70, 0.38, 1.85), [0.16, 0.22, 0.30], mat(0, 0.92, -0.10)],
+      // Lightbar mounting feet + red/blue LED pods + center takedown lamp
+      [box(1.12, 0.05, 0.18), [0.22, 0.24, 0.28], mat(0, 1.21, -0.05)],
+      [box(0.52, 0.12, 0.24), [0.94, 0.12, 0.15], mat(-0.30, 1.26, -0.05)],
+      [box(0.52, 0.12, 0.24), [0.10, 0.40, 0.98], mat(0.30, 1.26, -0.05)],
+      [box(0.16, 0.13, 0.26), [0.98, 0.98, 1.0], mat(0, 1.26, -0.05)],
+      // Front push bumper + grille + headlights + taillights + side mirrors + A-pillar spotlight + antennas
+      [box(0.92, 0.46, 0.12), [0.14, 0.15, 0.18], mat(0, 0.44, 2.38)],
+      [cyl(0.03, 0.03, 0.52, 8), [0.14, 0.15, 0.18], mat(-0.42, 0.46, 2.42)],
+      [cyl(0.03, 0.03, 0.52, 8), [0.14, 0.15, 0.18], mat(0.42, 0.46, 2.42)],
+      [box(0.42, 0.14, 0.06), [0.95, 0.97, 1.0], mat(-0.68, 0.52, 2.32)],
+      [box(0.42, 0.14, 0.06), [0.95, 0.97, 1.0], mat(0.68, 0.52, 2.32)],
+      [box(0.44, 0.14, 0.06), [0.90, 0.12, 0.14], mat(-0.66, 0.54, -2.32)],
+      [box(0.44, 0.14, 0.06), [0.90, 0.12, 0.14], mat(0.66, 0.54, -2.32)],
+      [sphere(0.09, 8, 6), [0.92, 0.94, 0.98], mat(-0.92, 0.82, 0.78)],
+      [cyl(0.015, 0.015, 0.55, 6), [0.20, 0.22, 0.25], mat(0, 1.45, -0.65)],
+      [cyl(0.015, 0.015, 0.45, 6), [0.20, 0.22, 0.25], mat(0, 0.92, -1.65)],
+    ];
+    for (const [wx, wz] of [[-0.88, 1.42], [0.88, 1.42], [-0.88, -1.42], [0.88, -1.42]]) {
+      pc.push(
+        [cyl(0.34, 0.34, 0.24, 14), [0.14, 0.15, 0.16], mat(wx, 0.34, wz, 0, 0, Math.PI / 2)],
+        [cyl(0.20, 0.20, 0.25, 10), [0.76, 0.78, 0.82], mat(wx, 0.34, wz, 0, 0, Math.PI / 2)],
+      );
+    }
+    G.policeCruiser = mergeParts(pc);
+  }
 
   // Station entrance blue police lamp globe on a dark steel column with gold crest band
   G.policeBeacon = mergeParts([
@@ -413,68 +634,141 @@ function buildUnitGeometries() {
     [sphere(0.06, 12, 8), [0.92, 0.76, 0.18], mat(0, 4.10, 0)],
   ]);
 
-  // Red fire engine apparatus with white roof ladder & chrome bumper
-  G.fireTruck = mergeParts([
-    [box(2.42, 2.15, 7.60), [0.84, 0.12, 0.14], mat(0, 1.52, -0.30)],
-    [box(2.44, 0.28, 7.64), [0.96, 0.97, 0.99], mat(0, 1.32, -0.30)],
-    [box(2.42, 2.25, 2.45), [0.88, 0.14, 0.15], mat(0, 1.58, 2.55)],
-    [box(2.30, 0.72, 0.18), [0.16, 0.22, 0.30], mat(0, 2.10, 3.72)],
-    [box(2.50, 0.34, 0.28), [0.85, 0.87, 0.90], mat(0, 0.56, 3.84)],
-    [box(1.90, 0.78, 3.90), [0.74, 0.77, 0.80], mat(0, 1.55, -0.80)],
-    // White aluminum roof extension ladder + red lightbar
-    [box(0.68, 0.18, 6.40), [0.95, 0.96, 0.98], mat(0.45, 2.75, -0.10)],
-    [box(1.55, 0.16, 0.32), [0.96, 0.16, 0.14], mat(0, 2.78, 3.25)],
-    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(-1.12, 0.48, 2.35, 0, 0, Math.PI / 2)],
-    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(1.12, 0.48, 2.35, 0, 0, Math.PI / 2)],
-    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(-1.12, 0.48, -2.25, 0, 0, Math.PI / 2)],
-    [cyl(0.48, 0.48, 0.32, 10), [0.14, 0.15, 0.16], mat(1.12, 0.48, -2.25, 0, 0, Math.PI / 2)],
-  ]);
+  // Red fire engine apparatus with roll-up equipment lockers, pump panel, hose reel, white roof ladder & chrome bumper
+  {
+    const ft = [
+      [box(2.42, 2.15, 7.60), [0.84, 0.12, 0.14], mat(0, 1.52, -0.30)],
+      [box(2.44, 0.28, 7.64), [0.96, 0.97, 0.99], mat(0, 1.32, -0.30)],
+      [box(2.42, 2.25, 2.45), [0.88, 0.14, 0.15], mat(0, 1.58, 2.55)],
+      [box(2.30, 0.72, 0.18), [0.16, 0.22, 0.30], mat(0, 2.10, 3.72)],
+      [box(2.46, 0.68, 1.65), [0.16, 0.22, 0.30], mat(0, 2.08, 2.55)],
+      [box(2.50, 0.34, 0.28), [0.85, 0.87, 0.90], mat(0, 0.56, 3.84)],
+      [box(1.40, 0.65, 0.12), [0.78, 0.80, 0.84], mat(0, 1.12, 3.80)],
+      // Aluminum roll-up equipment compartment bays + dark pump control panel
+      [box(2.46, 1.15, 1.15), [0.76, 0.79, 0.82], mat(0, 1.58, -0.10)],
+      [box(2.46, 1.15, 1.15), [0.76, 0.79, 0.82], mat(0, 1.58, -1.45)],
+      [box(2.46, 1.15, 1.15), [0.76, 0.79, 0.82], mat(0, 1.58, -2.80)],
+      [box(2.45, 0.95, 0.82), [0.22, 0.24, 0.28], mat(0, 1.52, 0.95)],
+      // White aluminum roof extension ladder with rungs + suction hoses + red/white lightbars
+      [box(0.10, 0.18, 6.40), [0.95, 0.96, 0.98], mat(0.18, 2.75, -0.10)],
+      [box(0.10, 0.18, 6.40), [0.95, 0.96, 0.98], mat(0.72, 2.75, -0.10)],
+      [cyl(0.14, 0.14, 5.80, 10), [0.24, 0.26, 0.28], mat(-0.65, 2.72, -0.30, Math.PI / 2, 0, 0)],
+      [box(1.65, 0.16, 0.32), [0.96, 0.14, 0.14], mat(0, 2.78, 3.25)],
+      [box(0.55, 0.18, 0.34), [0.98, 0.98, 1.0], mat(0, 2.79, 3.25)],
+    ];
+    for (let lz = -3.0; lz <= 2.7; lz += 0.65) {
+      ft.push([box(0.54, 0.05, 0.05), [0.88, 0.90, 0.93], mat(0.45, 2.75, lz)]);
+    }
+    for (const [wx, wz] of [[-1.12, 2.35], [1.12, 2.35], [-1.12, -2.25], [1.12, -2.25]]) {
+      ft.push(
+        [cyl(0.48, 0.48, 0.34, 14), [0.14, 0.15, 0.16], mat(wx, 0.48, wz, 0, 0, Math.PI / 2)],
+        [cyl(0.26, 0.26, 0.36, 10), [0.82, 0.84, 0.88], mat(wx, 0.48, wz, 0, 0, Math.PI / 2)],
+      );
+    }
+    G.fireTruck = mergeParts(ft);
+  }
 
-  // Red roll-up fire station apparatus bay door fascia
-  G.fireDoor = mergeParts([
-    [box(4.20, 4.10, 0.36), [0.90, 0.88, 0.84], mat(0, 2.05, 0)],
-    [box(3.60, 3.55, 0.42), [0.84, 0.12, 0.14], mat(0, 1.78, 0.04)],
-    [box(3.40, 0.52, 0.46), [0.22, 0.28, 0.36], mat(0, 2.35, 0.05)],
-    [box(4.36, 0.28, 0.48), [0.86, 0.14, 0.16], mat(0, 3.92, 0.06)],
-    [cyl(0.16, 0.16, 0.24, 8), [0.98, 0.22, 0.14], mat(0, 4.24, 0.18)],
-  ]);
+  // Red roll-up fire station apparatus bay door fascia with glazed vision lites, bollards & alarm strobe
+  {
+    const fd = [
+      // Stone/concrete portal surround + cornice header
+      [box(4.28, 4.12, 0.36), [0.90, 0.88, 0.84], mat(0, 2.06, 0)],
+      [box(4.48, 0.28, 0.48), [0.86, 0.14, 0.16], mat(0, 3.96, 0.06)],
+      // Crimson sectional overhead door + horizontal panel ribs + 4 glazed vision windows
+      [box(3.60, 3.56, 0.40), [0.84, 0.12, 0.14], mat(0, 1.78, 0.04)],
+      // Twin yellow/black safety bumper bollards flanking bay entrance
+      [cyl(0.11, 0.11, 1.05, 10), [0.95, 0.76, 0.12], mat(-1.92, 0.52, 0.34)],
+      [cyl(0.11, 0.11, 1.05, 10), [0.95, 0.76, 0.12], mat(1.92, 0.52, 0.34)],
+      // Flashing red alarm beacon + acoustic bell housing above lintel
+      [cyl(0.16, 0.18, 0.24, 12), [0.98, 0.18, 0.12], mat(0, 4.28, 0.20)],
+      [sphere(0.16, 12, 8), [1.0, 0.30, 0.18], mat(0, 4.40, 0.20)],
+      [cyl(0.14, 0.14, 0.10, 12), [0.88, 0.72, 0.18], mat(1.45, 4.18, 0.22, Math.PI / 2, 0, 0)],
+    ];
+    for (const ry of [0.65, 1.25, 1.85, 2.95, 3.45]) {
+      fd.push([box(3.64, 0.05, 0.44), [0.62, 0.08, 0.10], mat(0, ry, 0.05)]);
+    }
+    for (const wx of [-1.20, -0.40, 0.40, 1.20]) {
+      fd.push([box(0.64, 0.48, 0.45), [0.22, 0.26, 0.32], mat(wx, 2.40, 0.05)]);
+      fd.push([box(0.56, 0.40, 0.47), [0.58, 0.78, 0.90], mat(wx, 2.40, 0.06)]);
+    }
+    G.fireDoor = mergeParts(fd);
+  }
 
-  // Iconic 3D street mailbox (arched blue USPS / red pillar box with mail slot, tinted by instance color)
-  G.postBox = mergeParts([
-    [box(0.66, 0.12, 0.66), [0.30, 0.32, 0.35], mat(0, 0.06, 0)],
-    [box(0.10, 0.22, 0.10), [0.85, 0.85, 0.88], mat(-0.22, 0.18, -0.22)],
-    [box(0.10, 0.22, 0.10), [0.85, 0.85, 0.88], mat(0.22, 0.18, -0.22)],
-    [box(0.10, 0.22, 0.10), [0.85, 0.85, 0.88], mat(-0.22, 0.18, 0.22)],
-    [box(0.10, 0.22, 0.10), [0.85, 0.85, 0.88], mat(0.22, 0.18, 0.22)],
-    [box(0.56, 0.92, 0.56), [1.0, 1.0, 1.0], mat(0, 0.68, 0)],
-    [cyl(0.28, 0.28, 0.56, 20), [1.0, 1.0, 1.0], mat(0, 1.14, 0, 0, 0, Math.PI / 2)],
-    [box(0.42, 0.12, 0.12), [0.92, 0.94, 0.96], mat(0, 1.06, 0.30, 0.35, 0, 0)],
-    [box(0.38, 0.08, 0.60), [0.14, 0.16, 0.20], mat(0, 1.02, 0)],
-    [box(0.34, 0.22, 0.59), [0.95, 0.96, 0.98], mat(0, 0.74, 0)],
-  ]);
+  // Iconic 3D street mailbox (arched USPS / pillar box with mail chute hood, collection plate, base ribs & rivets)
+  {
+    const pb = [
+      [box(0.68, 0.12, 0.68), [0.30, 0.32, 0.35], mat(0, 0.06, 0)],
+      [box(0.10, 0.24, 0.10), [0.85, 0.85, 0.88], mat(-0.22, 0.18, -0.22)],
+      [box(0.10, 0.24, 0.10), [0.85, 0.85, 0.88], mat(0.22, 0.18, -0.22)],
+      [box(0.10, 0.24, 0.10), [0.85, 0.85, 0.88], mat(-0.22, 0.18, 0.22)],
+      [box(0.10, 0.24, 0.10), [0.85, 0.85, 0.88], mat(0.22, 0.18, 0.22)],
+      [box(0.56, 0.92, 0.56), [1.0, 1.0, 1.0], mat(0, 0.68, 0)],
+      [box(0.60, 0.06, 0.60), [0.88, 0.90, 0.92], mat(0, 0.28, 0)],
+      [box(0.60, 0.06, 0.60), [0.88, 0.90, 0.92], mat(0, 1.12, 0)],
+      [cyl(0.28, 0.28, 0.56, 20), [1.0, 1.0, 1.0], mat(0, 1.14, 0, 0, 0, Math.PI / 2)],
+      // Pull-down mail chute hood + chrome handle + collection schedule card frame + brass keyhole
+      [box(0.44, 0.14, 0.14), [0.92, 0.94, 0.96], mat(0, 1.06, 0.31, 0.35, 0, 0)],
+      [cyl(0.015, 0.015, 0.22, 8), [0.82, 0.85, 0.88], mat(0, 1.13, 0.38, 0, 0, Math.PI / 2)],
+      [box(0.40, 0.08, 0.60), [0.14, 0.16, 0.20], mat(0, 1.02, 0)],
+      [box(0.36, 0.24, 0.59), [0.95, 0.96, 0.98], mat(0, 0.74, 0)],
+      [box(0.30, 0.18, 0.61), [0.20, 0.42, 0.78], mat(0, 0.74, 0)],
+      [cyl(0.025, 0.025, 0.60, 8), [0.88, 0.72, 0.20], mat(0.18, 0.52, 0, Math.PI / 2, 0, 0)],
+    ];
+    G.postBox = mergeParts(pb);
+  }
 
-  // Yellow/dark-grey multi-column automated parcel locker bank with touchscreen console
-  G.parcelLocker = mergeParts([
-    [box(2.85, 0.12, 0.78), [0.34, 0.36, 0.38], mat(0, 0.06, 0)],
-    [box(2.72, 2.05, 0.64), [0.95, 0.78, 0.12], mat(0, 1.12, 0)],
-    [box(0.56, 2.07, 0.68), [0.20, 0.22, 0.26], mat(0, 1.12, 0)],
-    [box(0.36, 0.44, 0.71), [0.22, 0.76, 0.96], mat(0, 1.38, 0)],
-    [box(2.60, 0.04, 0.67), [0.76, 0.60, 0.08], mat(0, 0.65, 0)],
-    [box(2.60, 0.04, 0.67), [0.76, 0.60, 0.08], mat(0, 1.15, 0)],
-    [box(2.60, 0.04, 0.67), [0.76, 0.60, 0.08], mat(0, 1.65, 0)],
-    [box(2.92, 0.14, 0.92), [0.22, 0.24, 0.28], mat(0, 2.20, 0.08)],
-  ]);
+  // Yellow/dark-grey multi-column automated parcel locker bank with compartment doors, scanner console, security camera & canopy LED
+  {
+    const pl = [
+      [box(2.90, 0.12, 0.82), [0.34, 0.36, 0.38], mat(0, 0.06, 0)],
+      [box(2.74, 2.06, 0.64), [0.95, 0.78, 0.12], mat(0, 1.12, 0)],
+      // Center dark console pillar + touchscreen + barcode reader + card reader
+      [box(0.54, 2.08, 0.68), [0.18, 0.20, 0.24], mat(0, 1.12, 0)],
+      [box(0.38, 0.46, 0.71), [0.22, 0.78, 0.96], mat(0, 1.40, 0)],
+      [box(0.24, 0.12, 0.71), [0.92, 0.18, 0.16], mat(0, 1.05, 0)],
+      [box(0.14, 0.16, 0.71), [0.78, 0.80, 0.84], mat(0.12, 1.05, 0)],
+      // Overhanging canopy roof + warm LED light strip + dome security camera
+      [box(2.94, 0.14, 0.96), [0.20, 0.22, 0.26], mat(0, 2.20, 0.08)],
+      [box(2.70, 0.04, 0.12), [0.98, 0.96, 0.88], mat(0, 2.12, 0.44)],
+      [sphere(0.07, 10, 8), [0.12, 0.14, 0.16], mat(0, 2.11, 0.48)],
+      // Vertical column dividers
+      [box(0.03, 1.96, 0.67), [0.72, 0.56, 0.08], mat(-0.82, 1.12, 0)],
+      [box(0.03, 1.96, 0.67), [0.72, 0.56, 0.08], mat(0.82, 1.12, 0)],
+    ];
+    for (const hy of [0.42, 0.74, 1.06, 1.38, 1.70, 1.96]) {
+      pl.push([box(2.68, 0.03, 0.67), [0.72, 0.56, 0.08], mat(0, hy, 0)]);
+    }
+    for (const lx of [-1.10, -0.54, 0.54, 1.10]) {
+      for (const ly of [0.58, 0.90, 1.22, 1.54, 1.84]) {
+        pl.push([box(0.04, 0.05, 0.68), [0.76, 0.78, 0.82], mat(lx, ly, 0)]);
+      }
+    }
+    G.parcelLocker = mergeParts(pl);
+  }
 
-  // Medical / dental / veterinary cross canopy pylon totem sign
-  G.clinicCross = mergeParts([
-    [box(1.10, 0.22, 0.68), [0.68, 0.72, 0.76], mat(0, 0.11, 0)],
-    [box(0.88, 3.20, 0.32), [0.96, 0.98, 1.0], mat(0, 1.78, 0)],
-    [box(0.94, 0.36, 0.36), [0.08, 0.56, 0.78], mat(0, 3.32, 0)],
-    [box(1.15, 0.38, 0.44), [0.08, 0.62, 0.82], mat(0, 2.45, 0)],
-    [box(0.38, 1.15, 0.44), [0.08, 0.62, 0.82], mat(0, 2.45, 0)],
-    [box(0.92, 0.18, 0.18), [1.0, 1.0, 1.0], mat(0, 2.45, 0.16)],
-    [box(0.18, 0.92, 0.18), [1.0, 1.0, 1.0], mat(0, 2.45, 0.16)],
-  ]);
+  // Medical / dental / veterinary cross canopy pylon totem sign with Caduceus/cross medallion & LED trim
+  {
+    const cc = [
+      [box(1.24, 0.24, 0.76), [0.64, 0.68, 0.72], mat(0, 0.12, 0)],
+      [box(1.06, 0.14, 0.58), [0.76, 0.80, 0.84], mat(0, 0.28, 0)],
+      // Side aluminum pilasters + white central monolith
+      [cyl(0.08, 0.08, 3.25, 12), [0.72, 0.76, 0.80], mat(-0.46, 1.82, 0)],
+      [cyl(0.08, 0.08, 3.25, 12), [0.72, 0.76, 0.80], mat(0.46, 1.82, 0)],
+      [box(0.88, 3.20, 0.32), [0.96, 0.98, 1.0], mat(0, 1.82, 0)],
+      [box(1.04, 0.36, 0.40), [0.08, 0.56, 0.78], mat(0, 3.38, 0)],
+      // Circular halo ring + 3D teal/emerald cross + glowing white inner cross
+      [torus(0.62, 0.045, 10, 20), [0.12, 0.74, 0.88], mat(0, 2.48, 0, 0, 0, 0)],
+      [box(1.18, 0.40, 0.44), [0.08, 0.62, 0.82], mat(0, 2.48, 0)],
+      [box(0.40, 1.18, 0.44), [0.08, 0.62, 0.82], mat(0, 2.48, 0)],
+      [box(0.94, 0.20, 0.48), [1.0, 1.0, 1.0], mat(0, 2.48, 0)],
+      [box(0.20, 0.94, 0.48), [1.0, 1.0, 1.0], mat(0, 2.48, 0)],
+      // Lower directory slats
+      [box(0.72, 0.16, 0.36), [0.08, 0.56, 0.78], mat(0, 1.38, 0)],
+      [box(0.72, 0.16, 0.36), [0.08, 0.56, 0.78], mat(0, 1.12, 0)],
+      [box(0.72, 0.16, 0.36), [0.08, 0.56, 0.78], mat(0, 0.86, 0)],
+    ];
+    G.clinicCross = mergeParts(cc);
+  }
 
   // Tall 9m silver/white flagpole with fluttering civic/national banner and stone pedestal
   G.flagpole = mergeParts([
@@ -488,19 +782,34 @@ function buildUnitGeometries() {
     [box(0.62, 0.52, 0.07), [0.12, 0.32, 0.76], mat(0.36, 8.62, 0)],
   ]);
 
-  // Tall concrete/steel perimeter guard watchtower with observation cabin and searchlight roof
-  G.watchtower = mergeParts([
-    [box(3.4, 0.45, 3.4), [0.56, 0.58, 0.60], mat(0, 0.225, 0)],
-    [box(2.1, 7.6, 2.1), [0.72, 0.73, 0.70], mat(0, 4.20, 0)],
-    [box(2.3, 0.22, 2.3), [0.60, 0.62, 0.60], mat(0, 3.00, 0)],
-    [box(2.3, 0.22, 2.3), [0.60, 0.62, 0.60], mat(0, 5.60, 0)],
-    [box(3.8, 0.35, 3.8), [0.48, 0.50, 0.52], mat(0, 8.15, 0)],
-    [box(3.6, 0.95, 3.6), [0.64, 0.66, 0.64], mat(0, 8.75, 0)],
-    [box(3.1, 1.35, 3.1), [0.22, 0.30, 0.38], mat(0, 9.75, 0)],
-    [cone(2.65, 1.35, 12), [0.32, 0.35, 0.38], mat(0, 11.05, 0, 0, Math.PI / 8, 0)],
-    [cyl(0.26, 0.20, 0.48, 16), [0.22, 0.24, 0.28], mat(0.85, 8.95, 1.75, Math.PI / 3, 0, 0)],
-    [cyl(0.24, 0.24, 0.08, 16), [1.0, 0.95, 0.62], mat(0.85, 8.85, 1.95, Math.PI / 3, 0, 0)],
-  ]);
+  // Tall concrete/steel perimeter guard watchtower with catwalk railings, access ladder, observation cabin & searchlight roof
+  {
+    const wt = [
+      [box(3.4, 0.45, 3.4), [0.56, 0.58, 0.60], mat(0, 0.225, 0)],
+      [box(2.1, 7.6, 2.1), [0.72, 0.73, 0.70], mat(0, 4.20, 0)],
+      [box(2.35, 0.24, 2.35), [0.60, 0.62, 0.60], mat(0, 3.00, 0)],
+      [box(2.35, 0.24, 2.35), [0.60, 0.62, 0.60], mat(0, 5.60, 0)],
+      // Corner pilasters + exterior caged ladder
+      [box(0.22, 7.6, 0.22), [0.58, 0.60, 0.58], mat(-1.02, 4.20, -1.02)],
+      [box(0.22, 7.6, 0.22), [0.58, 0.60, 0.58], mat(1.02, 4.20, -1.02)],
+      [box(0.22, 7.6, 0.22), [0.58, 0.60, 0.58], mat(-1.02, 4.20, 1.02)],
+      [box(0.22, 7.6, 0.22), [0.58, 0.60, 0.58], mat(1.02, 4.20, 1.02)],
+      [box(0.45, 7.5, 0.08), [0.34, 0.36, 0.38], mat(0, 4.20, -1.12)],
+      // Cantilevered catwalk deck + guardrails + glazed cabin + roof + searchlight + comm whip
+      [box(3.9, 0.36, 3.9), [0.48, 0.50, 0.52], mat(0, 8.15, 0)],
+      [box(3.75, 0.08, 3.75), [0.32, 0.34, 0.36], mat(0, 9.25, 0)],
+      [box(3.4, 0.95, 3.4), [0.64, 0.66, 0.64], mat(0, 8.75, 0)],
+      [box(3.1, 1.35, 3.1), [0.22, 0.32, 0.42], mat(0, 9.75, 0)],
+      [cone(2.68, 1.38, 16), [0.32, 0.35, 0.38], mat(0, 11.05, 0, 0, Math.PI / 8, 0)],
+      [cyl(0.26, 0.20, 0.48, 16), [0.22, 0.24, 0.28], mat(0.85, 8.95, 1.75, Math.PI / 3, 0, 0)],
+      [cyl(0.24, 0.24, 0.08, 16), [1.0, 0.95, 0.62], mat(0.85, 8.85, 1.95, Math.PI / 3, 0, 0)],
+      [cyl(0.03, 0.04, 1.8, 8), [0.75, 0.78, 0.82], mat(-0.6, 12.1, 0)],
+    ];
+    for (const [rx, rz] of [[-1.82, -1.82], [1.82, -1.82], [-1.82, 1.82], [1.82, 1.82]]) {
+      wt.push([cyl(0.04, 0.04, 1.05, 8), [0.32, 0.34, 0.36], mat(rx, 8.78, rz)]);
+    }
+    G.watchtower = mergeParts(wt);
+  }
 
   // ---------------- Batch 4: Street Furniture, Micro-Mobility, Barriers, Sanitation & Wayfinding ----------------
   // 3-hoop stainless steel Sheffield bike rack with 2 colorful parked 3D bicycles
@@ -551,45 +860,96 @@ function buildUnitGeometries() {
     G.motoBay = mergeParts(mb);
   }
 
-  // Real OSM bus_stop / bus_station 3D glazed transit shelter with cantilevered roof, bench, route map panel & flag pole
-  G.realBusStop = mergeParts([
-    [box(4.4, 0.10, 1.85), [0.66, 0.68, 0.70], mat(0, 0.05, 0)],
-    [cyl(0.09, 0.09, 2.55, 8), [0.22, 0.25, 0.30], mat(-1.65, 1.32, -0.68)],
-    [cyl(0.09, 0.09, 2.55, 8), [0.22, 0.25, 0.30], mat(1.65, 1.32, -0.68)],
-    [box(3.50, 2.15, 0.06), [0.58, 0.76, 0.88], mat(0, 1.28, -0.68)],
-    [box(0.95, 2.15, 1.25), [0.18, 0.22, 0.28], mat(1.65, 1.28, -0.08)],
-    [box(1.01, 1.55, 0.95), [0.92, 0.95, 0.99], mat(1.65, 1.32, -0.08)],
-    [box(2.20, 0.10, 0.42), [0.68, 0.46, 0.24], mat(-0.25, 0.52, -0.42)],
-    [box(0.12, 0.45, 0.38), [0.24, 0.26, 0.30], mat(-1.10, 0.28, -0.42)],
-    [box(0.12, 0.45, 0.38), [0.24, 0.26, 0.30], mat(0.60, 0.28, -0.42)],
-    [box(4.20, 0.16, 1.75), [0.20, 0.23, 0.28], mat(0, 2.62, -0.04)],
-    [box(4.26, 0.08, 0.14), [0.14, 0.52, 0.92], mat(0, 2.64, 0.82)],
-    // Transit stop flag pole beside shelter
-    [cyl(0.05, 0.05, 2.95, 8), [0.75, 0.78, 0.82], mat(-2.05, 1.52, 0.55)],
-    [box(0.52, 0.62, 0.10), [0.12, 0.48, 0.88], mat(-2.05, 2.68, 0.55)],
-  ]);
+  // Real OSM bus_stop / bus_station 3D glazed transit shelter (long axis along X, open front along +Z):
+  // cantilevered barrel/arch roof ribs, spider-clamped glass panels, route map lightbox, digital arrival display, bench slats & trash receptacle
+  {
+    const rbs = [
+      // Concrete curb pad + tactile yellow boarding strip along +Z front edge
+      [box(4.5, 0.10, 1.90), [0.66, 0.68, 0.70], mat(0, 0.05, 0)],
+      [box(4.4, 0.02, 0.28), [0.94, 0.78, 0.14], mat(0, 0.105, 0.76)],
+      // 3 Rear structural columns (z = -0.68)
+      [cyl(0.085, 0.095, 2.58, 12), [0.20, 0.23, 0.28], mat(-1.68, 1.34, -0.68)],
+      [cyl(0.075, 0.085, 2.58, 12), [0.20, 0.23, 0.28], mat(0, 1.34, -0.68)],
+      [cyl(0.085, 0.095, 2.58, 12), [0.20, 0.23, 0.28], mat(1.68, 1.34, -0.68)],
+      // Tempered rear glass panels + stainless spider clamps
+      [box(3.48, 2.12, 0.05), [0.56, 0.76, 0.88], mat(0, 1.30, -0.68)],
+      // Illuminated route map & ad lightbox on +X end (x = 1.68)
+      [box(0.18, 2.18, 1.28), [0.18, 0.22, 0.28], mat(1.68, 1.30, -0.06)],
+      [box(0.22, 1.58, 0.98), [0.94, 0.96, 1.0], mat(1.68, 1.34, -0.06)],
+      [box(0.24, 0.42, 0.78), [0.18, 0.56, 0.86], mat(1.68, 1.52, -0.06)],
+      // Cantilevered roof deck + 3 arched ribs + blue transit fascia band + LED digital arrival display
+      [box(4.24, 0.12, 1.78), [0.22, 0.25, 0.30], mat(0, 2.62, -0.02)],
+      [box(4.28, 0.09, 0.14), [0.12, 0.50, 0.92], mat(0, 2.65, 0.84)],
+      [box(1.15, 0.22, 0.16), [0.12, 0.14, 0.18], mat(0.65, 2.42, 0.52)],
+      [box(1.05, 0.14, 0.18), [0.98, 0.68, 0.12], mat(0.65, 2.42, 0.52)],
+      // Slatted wooden bench with armrests + steel legs
+      [box(2.24, 0.04, 0.12), [0.68, 0.46, 0.24], mat(-0.28, 0.52, -0.52)],
+      [box(2.24, 0.04, 0.12), [0.68, 0.46, 0.24], mat(-0.28, 0.52, -0.36)],
+      [box(2.24, 0.04, 0.12), [0.68, 0.46, 0.24], mat(-0.28, 0.52, -0.20)],
+      [box(2.24, 0.16, 0.04), [0.64, 0.42, 0.22], mat(-0.28, 0.72, -0.60)],
+      [box(0.10, 0.46, 0.38), [0.24, 0.26, 0.30], mat(-1.15, 0.28, -0.38)],
+      [box(0.10, 0.46, 0.38), [0.24, 0.26, 0.30], mat(0.58, 0.28, -0.38)],
+      [box(0.05, 0.14, 0.36), [0.24, 0.26, 0.30], mat(-1.35, 0.58, -0.38)],
+      [box(0.05, 0.14, 0.36), [0.24, 0.26, 0.30], mat(-0.28, 0.58, -0.38)],
+      [box(0.05, 0.14, 0.36), [0.24, 0.26, 0.30], mat(0.78, 0.58, -0.38)],
+      // Cylindrical trash receptacle + transit stop flag totem on -X side
+      [cyl(0.20, 0.18, 0.68, 12), [0.22, 0.25, 0.30], mat(-1.95, 0.42, -0.25)],
+      [torus(0.20, 0.025, 8, 12), [0.72, 0.75, 0.78], mat(-1.95, 0.76, -0.25, Math.PI / 2, 0, 0)],
+      [cyl(0.055, 0.06, 2.98, 10), [0.75, 0.78, 0.82], mat(-2.05, 1.54, 0.55)],
+      [box(0.54, 0.64, 0.10), [0.12, 0.48, 0.88], mat(-2.05, 2.68, 0.55)],
+      [box(0.46, 0.32, 0.12), [0.96, 0.98, 1.0], mat(-2.05, 2.15, 0.55)],
+    ];
+    for (const rx of [-1.68, 0, 1.68]) {
+      rbs.push([box(0.10, 0.14, 1.82), [0.18, 0.20, 0.25], mat(rx, 2.66, -0.02, 0.06, 0, 0)]);
+      for (const cy of [0.65, 1.95]) {
+        rbs.push([cyl(0.04, 0.04, 0.12, 8), [0.78, 0.80, 0.84], mat(rx, cy, -0.68, Math.PI / 2, 0, 0)]);
+      }
+    }
+    G.realBusStop = mergeParts(rbs);
+  }
 
-  // Security / parking boom barrier arm with orange/white control pedestal
-  G.liftGate = mergeParts([
-    [box(0.46, 1.15, 0.46), [0.92, 0.42, 0.12], mat(-1.65, 0.58, 0)],
-    [box(0.48, 0.26, 0.48), [0.18, 0.20, 0.24], mat(-1.65, 1.08, 0)],
-    [box(1.15, 0.11, 0.08), [0.92, 0.16, 0.16], mat(-0.90, 0.92, 0)],
-    [box(1.15, 0.11, 0.08), [0.96, 0.97, 0.98], mat(0.25, 0.92, 0)],
-    [box(1.15, 0.11, 0.08), [0.92, 0.16, 0.16], mat(1.40, 0.92, 0)],
-    [box(0.14, 0.92, 0.14), [0.85, 0.86, 0.88], mat(1.85, 0.46, 0)],
-  ]);
+  // Security / parking boom barrier arm with orange/white control pedestal, RFID reader & warning beacon
+  {
+    const lg = [
+      [box(0.62, 0.10, 0.62), [0.52, 0.54, 0.56], mat(-1.65, 0.05, 0)],
+      [box(0.46, 1.15, 0.46), [0.92, 0.42, 0.12], mat(-1.65, 0.62, 0)],
+      [box(0.48, 0.26, 0.48), [0.18, 0.20, 0.24], mat(-1.65, 1.12, 0)],
+      // Amber flashing beacon on top of pedestal + RFID card reader window
+      [cyl(0.08, 0.09, 0.14, 12), [0.98, 0.68, 0.10], mat(-1.65, 1.32, 0)],
+      [sphere(0.08, 12, 8), [1.0, 0.78, 0.16], mat(-1.65, 1.39, 0)],
+      [box(0.26, 0.32, 0.49), [0.14, 0.16, 0.20], mat(-1.65, 0.82, 0)],
+      [box(0.18, 0.14, 0.51), [0.22, 0.82, 0.96], mat(-1.65, 0.88, 0)],
+      // Pivot hub + counterweight + striped boom arm + end fork rest post
+      [cyl(0.14, 0.14, 0.52, 12), [0.22, 0.24, 0.28], mat(-1.65, 0.92, 0, Math.PI / 2, 0, 0)],
+      [box(0.38, 0.22, 0.14), [0.22, 0.24, 0.28], mat(-1.92, 0.92, 0)],
+      [box(1.15, 0.11, 0.08), [0.92, 0.16, 0.16], mat(-0.90, 0.92, 0)],
+      [box(1.15, 0.11, 0.08), [0.96, 0.97, 0.98], mat(0.25, 0.92, 0)],
+      [box(1.15, 0.11, 0.08), [0.92, 0.16, 0.16], mat(1.40, 0.92, 0)],
+      [box(0.14, 0.92, 0.14), [0.85, 0.86, 0.88], mat(1.85, 0.46, 0)],
+      [box(0.22, 0.16, 0.22), [0.92, 0.16, 0.16], mat(1.85, 0.88, 0)],
+    ];
+    G.liftGate = mergeParts(lg);
+  }
 
-  // Yellow/galvanized steel U-frame chicane cycle barrier
-  G.cycleBarrier = mergeParts([
-    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(-0.75, 0.51, -0.28)],
-    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(0.25, 0.51, -0.28)],
-    [box(1.06, 0.09, 0.09), [0.94, 0.76, 0.12], mat(-0.25, 0.98, -0.28)],
-    [box(0.88, 0.10, 0.10), [0.88, 0.16, 0.16], mat(-0.25, 0.62, -0.28)],
-    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(-0.25, 0.51, 0.28)],
-    [cyl(0.05, 0.05, 1.02, 8), [0.94, 0.76, 0.12], mat(0.75, 0.51, 0.28)],
-    [box(1.06, 0.09, 0.09), [0.94, 0.76, 0.12], mat(0.25, 0.98, 0.28)],
-    [box(0.88, 0.10, 0.10), [0.88, 0.16, 0.16], mat(0.25, 0.62, 0.28)],
-  ]);
+  // Yellow/galvanized steel U-frame chicane cycle barrier with rounded elbow bends, base flanges & reflective bands
+  {
+    const cb = [];
+    for (const [ox, oz] of [[-0.25, -0.28], [0.25, 0.28]]) {
+      cb.push(
+        // Base mounting plates + vertical posts + rounded top corners + crossbar + red/white reflective warning plate
+        [cyl(0.11, 0.12, 0.04, 10), [0.42, 0.44, 0.46], mat(ox - 0.50, 0.02, oz)],
+        [cyl(0.11, 0.12, 0.04, 10), [0.42, 0.44, 0.46], mat(ox + 0.50, 0.02, oz)],
+        [cyl(0.048, 0.048, 0.92, 10), [0.94, 0.76, 0.12], mat(ox - 0.50, 0.48, oz)],
+        [cyl(0.048, 0.048, 0.92, 10), [0.94, 0.76, 0.12], mat(ox + 0.50, 0.48, oz)],
+        [cyl(0.048, 0.048, 1.00, 10), [0.94, 0.76, 0.12], mat(ox, 0.98, oz, 0, 0, Math.PI / 2)],
+        [sphere(0.052, 10, 8), [0.94, 0.76, 0.12], mat(ox - 0.50, 0.96, oz)],
+        [sphere(0.052, 10, 8), [0.94, 0.76, 0.12], mat(ox + 0.50, 0.96, oz)],
+        [box(0.92, 0.12, 0.08), [0.88, 0.14, 0.14], mat(ox, 0.62, oz)],
+        [box(0.32, 0.13, 0.09), [0.96, 0.97, 0.99], mat(ox, 0.62, oz)],
+      );
+    }
+    G.cycleBarrier = mergeParts(cb);
+  }
 
   // Trio of color-coded (blue paper, green glass, yellow plastic) domed recycling igloo bins
   G.recyclingBank = mergeParts([
@@ -645,38 +1005,82 @@ function buildUnitGeometries() {
     [dome(0.66, 18, 10), [0.84, 0.12, 0.14], mat(0, 2.30, 0, 0, 0, 0, 1, 0.45, 1)],
   ]);
 
-  // Standalone illuminated street banking ATM totem kiosk
-  G.streetAtm = mergeParts([
-    [box(0.92, 0.14, 0.76), [0.30, 0.32, 0.36], mat(0, 0.07, 0)],
-    [box(0.82, 2.15, 0.58), [0.18, 0.24, 0.34], mat(0, 1.18, 0)],
-    [box(0.86, 0.38, 0.64), [0.12, 0.46, 0.88], mat(0, 2.12, 0)],
-    [box(0.64, 0.54, 0.14), [0.12, 0.16, 0.22], mat(0, 1.42, 0.30)],
-    [box(0.56, 0.46, 0.62), [0.36, 0.88, 0.98], mat(0, 1.42, 0.04)],
-    [box(0.58, 0.10, 0.68), [0.76, 0.79, 0.82], mat(0, 1.12, 0.08)],
-    [box(0.18, 0.06, 0.04), [0.14, 0.92, 0.46], mat(0.18, 1.22, 0.36)],
-  ]);
+  // Standalone illuminated street banking ATM totem kiosk with privacy hood, keypad, card reader, cash dispenser & security dome
+  {
+    const atm = [
+      [box(0.94, 0.14, 0.78), [0.30, 0.32, 0.36], mat(0, 0.07, 0)],
+      [box(0.82, 2.15, 0.58), [0.18, 0.24, 0.34], mat(0, 1.18, 0)],
+      [cyl(0.06, 0.06, 2.15, 10), [0.72, 0.75, 0.80], mat(-0.41, 1.18, 0.26)],
+      [cyl(0.06, 0.06, 2.15, 10), [0.72, 0.75, 0.80], mat(0.41, 1.18, 0.26)],
+      // Illuminated top header sign + security camera dome
+      [box(0.88, 0.38, 0.66), [0.12, 0.46, 0.88], mat(0, 2.12, 0)],
+      [cyl(0.44, 0.44, 0.66, 14), [0.14, 0.52, 0.94], mat(0, 2.31, 0, 0, 0, Math.PI / 2)],
+      [sphere(0.06, 10, 8), [0.10, 0.12, 0.15], mat(0, 1.92, 0.34)],
+      // Recessed screen bay + side privacy wings + glowing LCD screen + keypad shelf + glowing green card slot + cash slot
+      [box(0.66, 0.56, 0.16), [0.12, 0.16, 0.22], mat(0, 1.42, 0.30)],
+      [box(0.04, 0.58, 0.26), [0.22, 0.26, 0.32], mat(-0.32, 1.42, 0.34)],
+      [box(0.04, 0.58, 0.26), [0.22, 0.26, 0.32], mat(0.32, 1.42, 0.34)],
+      [box(0.54, 0.44, 0.62), [0.36, 0.88, 0.98], mat(0, 1.44, 0.04)],
+      [box(0.60, 0.10, 0.70), [0.76, 0.79, 0.82], mat(0, 1.12, 0.09)],
+      [box(0.24, 0.04, 0.16), [0.42, 0.45, 0.50], mat(-0.06, 1.17, 0.35, 0.22, 0, 0)],
+      [box(0.18, 0.06, 0.05), [0.14, 0.94, 0.46], mat(0.18, 1.24, 0.36)],
+      [box(0.32, 0.05, 0.04), [0.10, 0.12, 0.14], mat(0, 0.96, 0.30)],
+    ];
+    G.streetAtm = mergeParts(atm);
+  }
 
-  // Timber-framed glazed park/city map information board with pitched roof cap
-  G.infoBoard = mergeParts([
-    [cyl(0.085, 0.095, 2.25, 14), [0.46, 0.30, 0.18], mat(-0.88, 1.12, 0)],
-    [cyl(0.085, 0.095, 2.25, 14), [0.46, 0.30, 0.18], mat(0.88, 1.12, 0)],
-    [box(1.92, 1.18, 0.14), [0.52, 0.35, 0.20], mat(0, 1.48, 0)],
-    [box(1.68, 0.96, 0.18), [0.92, 0.94, 0.88], mat(0, 1.48, 0)],
-    [box(0.65, 0.58, 0.20), [0.28, 0.64, 0.42], mat(-0.36, 1.46, 0)],
-    [box(0.65, 0.32, 0.20), [0.22, 0.54, 0.82], mat(0.38, 1.60, 0)],
-    [box(1.22, 0.08, 0.72), [0.36, 0.24, 0.16], mat(-0.56, 2.24, 0, 0, 0, 0.22)],
-    [box(1.22, 0.08, 0.72), [0.36, 0.24, 0.16], mat(0.56, 2.24, 0, 0, 0, -0.22)],
-  ]);
+  // Timber-framed glazed park/city map information board with stone bases, knee braces, map legend & pitched roof cap
+  {
+    const ib = [
+      // Stone footing plinths + timber posts + diagonal knee braces
+      [cyl(0.16, 0.19, 0.26, 12), [0.54, 0.52, 0.48], mat(-0.88, 0.13, 0)],
+      [cyl(0.16, 0.19, 0.26, 12), [0.54, 0.52, 0.48], mat(0.88, 0.13, 0)],
+      [cyl(0.085, 0.095, 2.25, 14), [0.46, 0.30, 0.18], mat(-0.88, 1.15, 0)],
+      [cyl(0.085, 0.095, 2.25, 14), [0.46, 0.30, 0.18], mat(0.88, 1.15, 0)],
+      [box(0.07, 0.48, 0.07), [0.46, 0.30, 0.18], mat(-0.68, 2.02, 0, 0, 0, -0.65)],
+      [box(0.07, 0.48, 0.07), [0.46, 0.30, 0.18], mat(0.68, 2.02, 0, 0, 0, 0.65)],
+      // Cabinet frame + cream map backing + green park zone + blue water feature + red "You Are Here" pin
+      [box(1.94, 1.18, 0.14), [0.52, 0.35, 0.20], mat(0, 1.48, 0)],
+      [box(1.70, 0.96, 0.18), [0.93, 0.94, 0.88], mat(0, 1.48, 0)],
+      [box(0.68, 0.60, 0.20), [0.26, 0.64, 0.40], mat(-0.36, 1.46, 0)],
+      [box(0.66, 0.34, 0.20), [0.20, 0.54, 0.84], mat(0.38, 1.62, 0)],
+      [box(0.66, 0.22, 0.20), [0.86, 0.82, 0.72], mat(0.38, 1.24, 0)],
+      [sphere(0.05, 8, 6), [0.92, 0.16, 0.14], mat(-0.22, 1.50, 0.09)],
+      // Pitched timber roof slopes + ridge beam
+      [box(1.26, 0.08, 0.76), [0.36, 0.24, 0.16], mat(-0.56, 2.24, 0, 0, 0, 0.24)],
+      [box(1.26, 0.08, 0.76), [0.36, 0.24, 0.16], mat(0.56, 2.24, 0, 0, 0, -0.24)],
+      [cyl(0.05, 0.05, 2.32, 10), [0.30, 0.20, 0.12], mat(0, 2.39, 0, 0, 0, Math.PI / 2)],
+    ];
+    G.infoBoard = mergeParts(ib);
+  }
 
-  // Wooden trail guidepost with 3 directional arrow sign blades
-  G.guidepost = mergeParts([
-    [cyl(0.24, 0.28, 0.28, 14), [0.52, 0.50, 0.48], mat(0, 0.14, 0)],
-    [cyl(0.075, 0.085, 2.65, 14), [0.48, 0.32, 0.18], mat(0, 1.42, 0)],
-    [sphere(0.10, 12, 8), [0.38, 0.25, 0.14], mat(0, 2.78, 0)],
-    [box(0.95, 0.18, 0.06), [0.95, 0.78, 0.14], mat(0.38, 2.48, 0)],
-    [box(0.95, 0.18, 0.06), [0.96, 0.97, 0.95], mat(-0.32, 2.22, 0.18, 0, 0.65, 0)],
-    [box(0.88, 0.18, 0.06), [0.18, 0.58, 0.32], mat(0.24, 1.96, -0.24, 0, -0.75, 0)],
-  ]);
+  // Wooden trail guidepost with stone cairn collar, iron clamp bands, pointed arrow blades & elevation plaque
+  {
+    const gp = [
+      // Stacked stone base & galvanized post shoe
+      [cyl(0.32, 0.38, 0.18, 12), [0.50, 0.48, 0.46], mat(0, 0.09, 0)],
+      [cyl(0.24, 0.28, 0.22, 12), [0.56, 0.54, 0.51], mat(0, 0.26, 0)],
+      [box(0.20, 0.26, 0.20), [0.36, 0.38, 0.40], mat(0, 0.44, 0)],
+      // Chamfered timber post + pyramidal zinc weather cap + finial ball
+      [cyl(0.078, 0.092, 2.65, 12), [0.48, 0.32, 0.18], mat(0, 1.48, 0)],
+      [cone(0.13, 0.12, 8), [0.34, 0.36, 0.38], mat(0, 2.84, 0)],
+      [sphere(0.065, 10, 8), [0.78, 0.64, 0.22], mat(0, 2.93, 0)],
+      // Elevation / trail junction plaque at chest height
+      [box(0.28, 0.20, 0.04), [0.24, 0.18, 0.12], mat(0, 1.45, 0.09)],
+      [box(0.24, 0.16, 0.045), [0.92, 0.88, 0.76], mat(0, 1.45, 0.092)],
+      // 3 Directional sign blades with iron collar rings & pointed arrow tips
+      [torus(0.088, 0.016, 8, 14), [0.26, 0.28, 0.30], mat(0, 2.48, 0, Math.PI / 2, 0, 0)],
+      [box(0.88, 0.18, 0.045), [0.95, 0.78, 0.14], mat(0.38, 2.48, 0)],
+      [box(0.14, 0.13, 0.048), [0.85, 0.16, 0.14], mat(0.84, 2.48, 0, 0, 0, Math.PI / 4)],
+      [torus(0.088, 0.016, 8, 14), [0.26, 0.28, 0.30], mat(0, 2.22, 0, Math.PI / 2, 0, 0)],
+      [box(0.88, 0.18, 0.045), [0.96, 0.97, 0.95], mat(-0.32, 2.22, 0.18, 0, 0.65, 0)],
+      [box(0.20, 0.18, 0.05), [0.86, 0.18, 0.16], mat(-0.62, 2.22, 0.41, 0, 0.65, 0)],
+      [torus(0.088, 0.016, 8, 14), [0.26, 0.28, 0.30], mat(0, 1.96, 0, Math.PI / 2, 0, 0)],
+      [box(0.84, 0.18, 0.045), [0.18, 0.58, 0.32], mat(0.24, 1.96, -0.24, 0, -0.75, 0)],
+      [box(0.18, 0.18, 0.05), [0.94, 0.95, 0.92], mat(0.52, 1.96, -0.50, 0, -0.75, 0)],
+    ];
+    G.guidepost = mergeParts(gp);
+  }
 
   // ---------------- Batch 5: Religion Archetypes, Monuments, Public Art, Castles, Viewpoints & Cliffs ----------------
   // Mosque: golden/emerald ribbed onion dome + slender cylindrical minaret tower with crescent finial
@@ -751,16 +1155,33 @@ function buildUnitGeometries() {
     [sphere(0.26, 18, 14), [0.96, 0.84, 0.28], mat(0, 2.22, 0)],
   ]);
 
-  // Tall stepped stone memorial obelisk on a classical plinth
-  G.monumentObelisk = mergeParts([
-    [box(3.8, 0.45, 3.8), [0.72, 0.71, 0.68], mat(0, 0.225, 0)],
-    [box(2.7, 0.65, 2.7), [0.78, 0.77, 0.73], mat(0, 0.75, 0)],
-    [box(1.75, 1.45, 1.75), [0.84, 0.82, 0.78], mat(0, 1.78, 0)],
-    [box(1.82, 0.65, 0.65), [0.46, 0.36, 0.22], mat(0, 1.78, 0)],
-    [box(0.65, 0.65, 1.82), [0.46, 0.36, 0.22], mat(0, 1.78, 0)],
-    [cyl(0.42, 0.72, 6.2, 4), [0.88, 0.86, 0.82], mat(0, 5.55, 0, 0, Math.PI / 4, 0)],
-    [cone(0.42, 0.92, 4), [0.95, 0.78, 0.20], mat(0, 9.10, 0, 0, Math.PI / 4, 0)],
-  ]);
+  // Tall stepped stone memorial obelisk on a classical plinth with corner bollards, bronze plaques, cornice & gilded pyramidion
+  {
+    const ob = [
+      // 3-stepped granite stylobate base + classical molded dado plinth + cornice cap
+      [box(4.0, 0.35, 4.0), [0.68, 0.67, 0.64], mat(0, 0.175, 0)],
+      [box(3.2, 0.38, 3.2), [0.74, 0.73, 0.70], mat(0, 0.54, 0)],
+      [box(2.4, 0.38, 2.4), [0.78, 0.77, 0.73], mat(0, 0.92, 0)],
+      [box(1.80, 1.55, 1.80), [0.84, 0.82, 0.78], mat(0, 1.85, 0)],
+      [box(2.08, 0.18, 2.08), [0.76, 0.74, 0.70], mat(0, 2.68, 0)],
+      // Bronze dedication plaques & relief wreaths on all 4 pedestal faces
+      [box(1.88, 0.72, 0.76), [0.44, 0.34, 0.20], mat(0, 1.85, 0)],
+      [box(0.76, 0.72, 1.88), [0.44, 0.34, 0.20], mat(0, 1.85, 0)],
+      [torus(0.24, 0.035, 8, 14), [0.86, 0.68, 0.22], mat(0, 1.85, 0.96, 0, 0, 0)],
+      [torus(0.24, 0.035, 8, 14), [0.86, 0.68, 0.22], mat(0, 1.85, -0.96, 0, 0, 0)],
+      // Tapered monolith shaft + gilded pyramidion apex + finial orb
+      [cyl(0.42, 0.74, 6.2, 4), [0.88, 0.86, 0.82], mat(0, 5.82, 0, 0, Math.PI / 4, 0)],
+      [cone(0.42, 0.95, 4), [0.95, 0.78, 0.20], mat(0, 9.38, 0, 0, Math.PI / 4, 0)],
+      [sphere(0.08, 10, 8), [0.98, 0.84, 0.24], mat(0, 9.90, 0)],
+    ];
+    for (const [bx, bz] of [[-1.75, -1.75], [1.75, -1.75], [-1.75, 1.75], [1.75, 1.75]]) {
+      ob.push(
+        [cyl(0.11, 0.13, 0.65, 10), [0.32, 0.34, 0.36], mat(bx, 0.65, bz)],
+        [sphere(0.12, 10, 8), [0.86, 0.68, 0.22], mat(bx, 1.02, bz)],
+      );
+    }
+    G.monumentObelisk = mergeParts(ob);
+  }
 
   // Crenellated medieval stone keep tower with battlements & corner turrets
   {
@@ -780,55 +1201,128 @@ function buildUnitGeometries() {
     G.castleKeep = mergeParts(ck);
   }
 
-  // Timber observation deck platform with safety railing and chrome coin-operated binocular telescope
-  G.viewpointDeck = mergeParts([
-    [box(3.6, 0.28, 2.8), [0.58, 0.40, 0.24], mat(0, 0.24, 0)],
-    [box(3.6, 0.08, 0.08), [0.76, 0.79, 0.82], mat(0, 1.12, 1.34)],
-    [box(0.08, 0.08, 2.8), [0.76, 0.79, 0.82], mat(-1.72, 1.12, 0)],
-    [box(0.08, 0.08, 2.8), [0.76, 0.79, 0.82], mat(1.72, 1.12, 0)],
-    [box(0.08, 0.85, 0.08), [0.76, 0.79, 0.82], mat(-1.72, 0.70, 1.34)],
-    [box(0.08, 0.85, 0.08), [0.76, 0.79, 0.82], mat(0, 0.70, 1.34)],
-    [box(0.08, 0.85, 0.08), [0.76, 0.79, 0.82], mat(1.72, 0.70, 1.34)],
-    // Coin-operated binocular telescope on pedestal with twin optical barrels
-    [cyl(0.22, 0.26, 0.10, 16), [0.52, 0.55, 0.58], mat(0, 0.42, 0.75)],
-    [cyl(0.07, 0.11, 1.12, 16), [0.76, 0.79, 0.82], mat(0, 0.92, 0.75)],
-    [box(0.24, 0.16, 0.28), [0.85, 0.88, 0.92], mat(0, 1.50, 0.75)],
-    [cyl(0.07, 0.055, 0.48, 14), [0.90, 0.92, 0.96], mat(-0.08, 1.54, 0.85, Math.PI / 2 - 0.12, 0, 0)],
-    [cyl(0.07, 0.055, 0.48, 14), [0.90, 0.92, 0.96], mat(0.08, 1.54, 0.85, Math.PI / 2 - 0.12, 0, 0)],
-  ]);
+  // Timber observation deck platform with concrete piers, plank decking, cable-rail balustrade, panorama map lectern & twin-barrel coin telescope
+  {
+    const vd = [
+      // 4 Concrete foundation piers + timber bearer joists + perimeter fascia frame
+      [cyl(0.18, 0.22, 0.26, 8), [0.52, 0.54, 0.56], mat(-1.55, 0.13, -1.15)],
+      [cyl(0.18, 0.22, 0.26, 8), [0.52, 0.54, 0.56], mat(1.55, 0.13, -1.15)],
+      [cyl(0.18, 0.22, 0.26, 8), [0.52, 0.54, 0.56], mat(-1.55, 0.13, 1.15)],
+      [cyl(0.18, 0.22, 0.26, 8), [0.52, 0.54, 0.56], mat(1.55, 0.13, 1.15)],
+      [box(3.64, 0.22, 2.84), [0.46, 0.31, 0.18], mat(0, 0.24, 0)],
+      // Entry step at rear (-Z)
+      [box(1.4, 0.14, 0.38), [0.52, 0.36, 0.22], mat(0, 0.12, -1.58)],
+    ];
+    // Individual timber deck planks
+    for (let pz = -1.2; pz <= 1.21; pz += 0.30) {
+      vd.push([box(3.52, 0.05, 0.25), [0.60, 0.42, 0.25], mat(0, 0.36, pz)]);
+    }
+    // Stainless posts + top timber handrail + mid horizontal safety bars
+    for (const [px, pz] of [[-1.72, -1.34], [-1.72, 0], [-1.72, 1.34], [-0.58, 1.34], [0.58, 1.34], [1.72, 1.34], [1.72, 0], [1.72, -1.34]]) {
+      vd.push([box(0.08, 0.86, 0.08), [0.74, 0.77, 0.80], mat(px, 0.78, pz)]);
+    }
+    vd.push(
+      [box(3.62, 0.07, 0.12), [0.52, 0.35, 0.20], mat(0, 1.22, 1.34)],
+      [box(0.12, 0.07, 2.82), [0.52, 0.35, 0.20], mat(-1.72, 1.22, 0)],
+      [box(0.12, 0.07, 2.82), [0.52, 0.35, 0.20], mat(1.72, 1.22, 0)],
+      [box(3.50, 0.035, 0.035), [0.78, 0.80, 0.84], mat(0, 0.92, 1.34)],
+      [box(3.50, 0.035, 0.035), [0.78, 0.80, 0.84], mat(0, 0.64, 1.34)],
+      [box(0.035, 0.035, 2.70), [0.78, 0.80, 0.84], mat(-1.72, 0.92, 0)],
+      [box(0.035, 0.035, 2.70), [0.78, 0.80, 0.84], mat(1.72, 0.92, 0)],
+      // Angled panoramic peak-finder lectern on front rail
+      [box(0.92, 0.06, 0.42), [0.28, 0.30, 0.34], mat(-0.95, 1.24, 1.26, 0.38, 0, 0)],
+      [box(0.84, 0.07, 0.34), [0.90, 0.88, 0.80], mat(-0.95, 1.25, 1.26, 0.38, 0, 0)],
+      // Coin-operated binocular telescope on stepped footstep pedestal with yoke & twin optical barrels
+      [cyl(0.34, 0.38, 0.10, 14), [0.46, 0.48, 0.52], mat(0.35, 0.42, 0.72)],
+      [cyl(0.22, 0.26, 0.12, 14), [0.52, 0.55, 0.58], mat(0.35, 0.52, 0.72)],
+      [cyl(0.075, 0.11, 1.02, 14), [0.76, 0.79, 0.82], mat(0.35, 1.02, 0.72)],
+      [box(0.18, 0.22, 0.16), [0.32, 0.35, 0.38], mat(0.35, 1.26, 0.72)],
+      [box(0.26, 0.16, 0.28), [0.85, 0.88, 0.92], mat(0.35, 1.54, 0.72)],
+      [cyl(0.072, 0.055, 0.52, 12), [0.90, 0.92, 0.96], mat(0.27, 1.58, 0.84, Math.PI / 2 - 0.12, 0, 0)],
+      [cyl(0.072, 0.055, 0.52, 12), [0.90, 0.92, 0.96], mat(0.43, 1.58, 0.84, Math.PI / 2 - 0.12, 0, 0)],
+      [cyl(0.076, 0.076, 0.06, 12), [0.16, 0.22, 0.30], mat(0.27, 1.61, 1.10, Math.PI / 2 - 0.12, 0, 0)],
+      [cyl(0.076, 0.076, 0.06, 12), [0.16, 0.22, 0.30], mat(0.43, 1.61, 1.10, Math.PI / 2 - 0.12, 0, 0)],
+    );
+    G.viewpointDeck = mergeParts(vd);
+  }
 
-  // Stacked stone summit cairn + white trigonometric survey pillar + summit cross
+  // Stacked stone summit cairn + white trigonometric survey pillar + summit register box + timber cross with bronze ring
   G.summitCairn = mergeParts([
-    [cyl(1.35, 1.65, 0.55, 12), [0.54, 0.52, 0.48], mat(0, 0.275, 0)],
-    [cyl(0.95, 1.28, 0.55, 12), [0.60, 0.58, 0.54], mat(0, 0.80, 0)],
-    [cyl(0.58, 0.88, 0.50, 10), [0.66, 0.64, 0.60], mat(0, 1.30, 0)],
+    [cyl(1.40, 1.70, 0.55, 14), [0.54, 0.52, 0.48], mat(0, 0.275, 0)],
+    [cyl(0.98, 1.32, 0.55, 14), [0.60, 0.58, 0.54], mat(0, 0.80, 0)],
+    [cyl(0.60, 0.90, 0.50, 12), [0.66, 0.64, 0.60], mat(0, 1.30, 0)],
+    [sphere(0.32, 10, 8), [0.58, 0.56, 0.52], mat(-0.85, 0.45, 0.55, 0, 0, 0, 1.2, 0.8, 1.0)],
+    [sphere(0.28, 10, 8), [0.52, 0.50, 0.46], mat(0.45, 0.55, -0.75, 0, 0, 0, 1.1, 0.85, 1.2)],
     [box(0.38, 1.15, 0.38), [0.95, 0.96, 0.98], mat(0.68, 0.82, 0)],
     [cyl(0.12, 0.12, 0.16, 12), [0.22, 0.24, 0.28], mat(0.68, 1.46, 0)],
-    [box(0.14, 2.35, 0.14), [0.46, 0.32, 0.18], mat(0, 2.55, 0)],
-    [box(0.98, 0.14, 0.14), [0.46, 0.32, 0.18], mat(0, 3.18, 0)],
+    [box(0.15, 2.40, 0.15), [0.46, 0.32, 0.18], mat(0, 2.58, 0)],
+    [box(1.02, 0.15, 0.15), [0.46, 0.32, 0.18], mat(0, 3.22, 0)],
+    [torus(0.26, 0.028, 8, 16), [0.82, 0.66, 0.22], mat(0, 3.22, 0, 0, 0, 0)],
+    [box(0.26, 0.30, 0.16), [0.76, 0.22, 0.18], mat(0, 2.25, 0.12)],
   ]);
 
-  // Jagged stratified grey/ochre 3D rock escarpment outcrop along cliff lines
-  G.cliffRock = mergeParts([
-    [box(9.5, 4.2, 3.6), [0.52, 0.50, 0.46], mat(0, 2.0, 0, 0.08, 0, -0.05)],
-    [box(7.8, 3.4, 2.8), [0.60, 0.57, 0.51], mat(-0.6, 4.4, -0.3, -0.06, 0.12, 0.06)],
-    [box(5.4, 2.6, 2.2), [0.46, 0.44, 0.41], mat(1.2, 6.0, 0.2, 0.05, -0.15, -0.08)],
-    [cone(3.2, 3.8, 6), [0.56, 0.53, 0.48], mat(-1.8, 5.8, 0.4, 0, 0.4, 0)],
-  ]);
+  // Jagged stratified grey/ochre 3D rock escarpment outcrop along cliff lines with talus boulders & alpine scrub
+  {
+    const cr = [
+      // Stratified sedimentary cliff ledges & tilted rock crags
+      [box(9.6, 2.4, 3.8), [0.50, 0.48, 0.44], mat(0, 1.2, 0, 0.08, 0, -0.05)],
+      [box(9.2, 2.2, 3.4), [0.56, 0.53, 0.48], mat(0.2, 3.1, -0.1, -0.05, 0.06, 0.04)],
+      [box(7.8, 2.4, 2.9), [0.62, 0.58, 0.52], mat(-0.6, 4.8, -0.25, -0.06, 0.12, 0.06)],
+      [box(5.6, 2.4, 2.3), [0.46, 0.44, 0.41], mat(1.2, 6.2, 0.15, 0.05, -0.15, -0.08)],
+      // Angular rock spires & fractured prism crags
+      [cone(3.4, 4.2, 7), [0.56, 0.53, 0.48], mat(-2.0, 5.6, 0.35, 0.08, 0.4, 0.05)],
+      [cone(2.8, 3.6, 6), [0.48, 0.46, 0.42], mat(2.6, 4.8, -0.25, -0.06, -0.3, -0.08)],
+      [cyl(2.2, 2.8, 4.6, 7), [0.54, 0.51, 0.46], mat(-3.2, 2.6, 0.4, 0.10, 0.25, -0.12)],
+      [cyl(1.9, 2.5, 4.2, 6), [0.58, 0.55, 0.49], mat(3.4, 2.4, -0.3, -0.08, -0.35, 0.10)],
+      // Talus boulders at cliff base + moss/scrub patches on ledges
+      [sphere(1.4, 8, 6), [0.44, 0.42, 0.39], mat(-3.6, 0.8, 1.6, 0, 0, 0, 1.3, 0.75, 1.0)],
+      [sphere(1.2, 8, 6), [0.52, 0.49, 0.44], mat(1.8, 0.7, 1.7, 0, 0, 0, 1.2, 0.70, 0.95)],
+      [sphere(1.1, 8, 6), [0.24, 0.40, 0.22], mat(-0.8, 6.0, -0.2, 0, 0, 0, 1.8, 0.35, 1.1)],
+      [sphere(0.95, 8, 6), [0.26, 0.42, 0.24], mat(1.4, 7.3, 0.15, 0, 0, 0, 1.6, 0.35, 1.0)],
+    ];
+    G.cliffRock = mergeParts(cr);
+  }
 
   // ---------------- Batch 6: Aviation Gates/Towers, Maritime Terminals, Industrial ----------------
-  // Articulated corrugated passenger boarding bridge (aeroway=gate) on wheeled hydraulic lift columns
-  G.jetbridge = mergeParts([
-    [cyl(2.1, 2.1, 5.2, 20), [0.82, 0.84, 0.86], mat(0, 2.6, -6.5)],
-    [box(2.5, 2.6, 13.5), [0.86, 0.88, 0.90], mat(0, 4.4, 0.5)],
-    [box(2.56, 1.05, 11.8), [0.24, 0.38, 0.52], mat(0, 4.55, 0.5)],
-    [cyl(0.22, 0.22, 4.2, 16), [0.52, 0.55, 0.58], mat(-1.05, 2.1, 4.8)],
-    [cyl(0.22, 0.22, 4.2, 16), [0.52, 0.55, 0.58], mat(1.05, 2.1, 4.8)],
-    [box(2.65, 0.38, 0.95), [0.20, 0.22, 0.24], mat(0, 0.25, 4.8)],
-    [cyl(0.45, 0.45, 0.28, 16), [0.14, 0.15, 0.16], mat(-1.25, 0.45, 4.8, 0, 0, Math.PI / 2)],
-    [cyl(0.45, 0.45, 0.28, 16), [0.14, 0.15, 0.16], mat(1.25, 0.45, 4.8, 0, 0, Math.PI / 2)],
-    [box(2.75, 2.85, 1.35), [0.18, 0.20, 0.22], mat(0, 4.4, 7.4)],
-  ]);
+  // Articulated corrugated passenger boarding bridge (aeroway=gate) with rotunda, telescoping ribs, HVAC pod, service stair & accordion canopy
+  {
+    const jb = [
+      // Terminal gate rotunda column + domed roof cap
+      [cyl(1.35, 1.45, 3.2, 16), [0.68, 0.70, 0.73], mat(0, 1.6, -6.5)],
+      [cyl(2.15, 2.15, 2.8, 20), [0.82, 0.84, 0.86], mat(0, 4.4, -6.5)],
+      [cyl(2.25, 2.25, 0.22, 20), [0.58, 0.60, 0.64], mat(0, 5.85, -6.5)],
+      // Telescoping outer & inner tunnel sections + tinted observation windows
+      [box(2.58, 2.72, 7.2), [0.86, 0.88, 0.90], mat(0, 4.4, -2.4)],
+      [box(2.42, 2.54, 6.8), [0.82, 0.84, 0.87], mat(0, 4.38, 4.0)],
+      [box(2.64, 1.02, 6.2), [0.22, 0.36, 0.50], mat(0, 4.55, -2.4)],
+      [box(2.48, 0.96, 5.8), [0.22, 0.36, 0.50], mat(0, 4.52, 4.0)],
+      // Under-slung pre-conditioned air (PCA) unit & hose reel
+      [box(1.35, 0.68, 1.85), [0.76, 0.78, 0.81], mat(0, 2.72, 1.2)],
+      [torus(0.32, 0.08, 8, 14), [0.92, 0.76, 0.14], mat(0.75, 2.72, 1.2, 0, Math.PI / 2, 0)],
+      // Twin hydraulic elevation columns + bogie beam + dual steerable rubber tires
+      [cyl(0.24, 0.26, 4.2, 14), [0.52, 0.55, 0.58], mat(-1.12, 2.1, 4.8)],
+      [cyl(0.24, 0.26, 4.2, 14), [0.52, 0.55, 0.58], mat(1.12, 2.1, 4.8)],
+      [cyl(0.16, 0.16, 2.2, 12), [0.78, 0.80, 0.84], mat(-1.12, 3.2, 4.8)],
+      [cyl(0.16, 0.16, 2.2, 12), [0.78, 0.80, 0.84], mat(1.12, 3.2, 4.8)],
+      [box(2.85, 0.38, 1.05), [0.20, 0.22, 0.24], mat(0, 0.32, 4.8)],
+      [cyl(0.48, 0.48, 0.26, 16), [0.14, 0.15, 0.16], mat(-1.35, 0.48, 4.8, 0, 0, Math.PI / 2)],
+      [cyl(0.48, 0.48, 0.26, 16), [0.14, 0.15, 0.16], mat(-0.92, 0.48, 4.8, 0, 0, Math.PI / 2)],
+      [cyl(0.48, 0.48, 0.26, 16), [0.14, 0.15, 0.16], mat(0.92, 0.48, 4.8, 0, 0, Math.PI / 2)],
+      [cyl(0.48, 0.48, 0.26, 16), [0.14, 0.15, 0.16], mat(1.35, 0.48, 4.8, 0, 0, Math.PI / 2)],
+      // Side apron crew access stair & yellow safety handrail
+      [box(0.65, 0.18, 4.2), [0.46, 0.48, 0.52], mat(1.58, 2.2, 3.2, 0.68, 0, 0)],
+      [box(0.06, 0.06, 4.3), [0.92, 0.76, 0.14], mat(1.88, 2.95, 3.2, 0.68, 0, 0)],
+      // Swivel cab & ribbed accordion aircraft fuselage bumper hood
+      [box(2.68, 2.75, 0.75), [0.80, 0.82, 0.85], mat(0, 4.4, 7.1)],
+      [box(2.80, 2.88, 0.42), [0.18, 0.20, 0.22], mat(0, 4.4, 7.62)],
+      [box(2.90, 2.96, 0.38), [0.12, 0.13, 0.15], mat(0, 4.4, 8.00)],
+      [box(2.55, 0.26, 0.42), [0.92, 0.76, 0.14], mat(0, 3.00, 8.02)],
+    ];
+    for (let rz = -5.4; rz <= 6.2; rz += 1.45) {
+      jb.push([box(2.66, 2.78, 0.12), [0.72, 0.74, 0.78], mat(0, 4.4, rz)]);
+    }
+    G.jetbridge = mergeParts(jb);
+  }
 
   // Tall 38m white flared Airport Control Tower (ATC) with 360-deg angled blue-glass cab & rooftop radar bar
   G.atcTower = mergeParts([
@@ -842,56 +1336,164 @@ function buildUnitGeometries() {
     [box(3.8, 0.42, 0.55), [0.92, 0.22, 0.16], mat(0, 37.9, 0)],
   ]);
 
-  // Blue-and-white maritime passenger waiting pavilion + covered boarding gangway arch
-  G.ferryCanopy = mergeParts([
-    [box(9.6, 0.35, 5.8), [0.72, 0.74, 0.76], mat(0, 0.18, 0)],
-    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(-3.8, 1.9, -2.0)],
-    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(3.8, 1.9, -2.0)],
-    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(-3.8, 1.9, 2.0)],
-    [cyl(0.22, 0.24, 3.8, 8), [0.88, 0.90, 0.92], mat(3.8, 1.9, 2.0)],
-    [box(10.4, 0.45, 6.6), [0.95, 0.97, 0.99], mat(0, 3.95, 0)],
-    [box(10.6, 0.32, 6.8), [0.12, 0.44, 0.82], mat(0, 4.30, 0)],
-    [box(3.2, 2.6, 4.2), [0.16, 0.52, 0.88], mat(0, 1.5, 4.4)],
-  ]);
+  // Blue-and-white maritime passenger waiting pavilion + vaulted roof trusses, benches, lifebuoys, bollards & boarding gangway arch
+  {
+    const fc = [
+      // Concrete pier deck + yellow safety edge + cast-iron mooring bollards
+      [box(9.8, 0.36, 6.0), [0.72, 0.74, 0.76], mat(0, 0.18, 0)],
+      [box(9.8, 0.06, 0.25), [0.94, 0.78, 0.14], mat(0, 0.37, 2.85)],
+      [cyl(0.18, 0.22, 0.55, 10), [0.18, 0.20, 0.22], mat(-4.2, 0.62, 2.65)],
+      [cyl(0.18, 0.22, 0.55, 10), [0.18, 0.20, 0.22], mat(4.2, 0.62, 2.65)],
+      // 6 Support columns + glazed windbreak screens + twin passenger waiting benches
+      [cyl(0.20, 0.22, 3.8, 12), [0.88, 0.90, 0.92], mat(-3.8, 1.9, -2.0)],
+      [cyl(0.20, 0.22, 3.8, 12), [0.88, 0.90, 0.92], mat(0, 1.9, -2.0)],
+      [cyl(0.20, 0.22, 3.8, 12), [0.88, 0.90, 0.92], mat(3.8, 1.9, -2.0)],
+      [cyl(0.20, 0.22, 3.8, 12), [0.88, 0.90, 0.92], mat(-3.8, 1.9, 2.0)],
+      [cyl(0.20, 0.22, 3.8, 12), [0.88, 0.90, 0.92], mat(3.8, 1.9, 2.0)],
+      [box(7.2, 2.1, 0.08), [0.56, 0.76, 0.88], mat(0, 1.45, -2.0)],
+      [box(2.8, 0.12, 0.55), [0.66, 0.44, 0.24], mat(-1.9, 0.62, -1.1)],
+      [box(2.8, 0.12, 0.55), [0.66, 0.44, 0.24], mat(1.9, 0.62, -1.1)],
+      // Tiered pavilion roof + vaulted barrel crest + orange rescue lifebuoy rings
+      [box(10.4, 0.42, 6.6), [0.95, 0.97, 0.99], mat(0, 3.95, 0)],
+      [box(10.6, 0.30, 6.8), [0.12, 0.44, 0.82], mat(0, 4.28, 0)],
+      [cyl(1.8, 1.8, 10.2, 14), [0.96, 0.98, 1.0], mat(0, 4.35, 0, 0, 0, Math.PI / 2, 1, 0.45, 1)],
+      [torus(0.32, 0.08, 8, 14), [0.96, 0.36, 0.12], mat(-3.8, 1.65, 2.24)],
+      [torus(0.32, 0.08, 8, 14), [0.96, 0.36, 0.12], mat(3.8, 1.65, 2.24)],
+      // Covered boarding gangway arch + side handrails
+      [box(3.2, 0.22, 4.4), [0.46, 0.48, 0.52], mat(0, 0.35, 4.4)],
+      [box(3.2, 2.4, 4.2), [0.16, 0.52, 0.88], mat(0, 1.55, 4.4)],
+      [cyl(1.6, 1.6, 4.2, 12), [0.95, 0.97, 0.99], mat(0, 2.75, 4.4, Math.PI / 2, 0, 0, 1, 1, 0.45)],
+    ];
+    G.ferryCanopy = mergeParts(fc);
+  }
 
-  // Timber floating finger-dock T-pontoon with white mooring cleats & twin sailboat masts
-  G.marinaPontoon = mergeParts([
-    [box(2.4, 0.36, 14.0), [0.62, 0.45, 0.28], mat(0, 0.22, 0)],
-    [box(9.2, 0.36, 2.2), [0.62, 0.45, 0.28], mat(0, 0.22, 5.8)],
-    // 2 moored white yacht hulls + aluminum masts
-    [box(2.4, 0.95, 7.2), [0.95, 0.96, 0.98], mat(-2.9, 0.45, -0.5)],
-    [box(1.8, 0.55, 2.8), [0.22, 0.46, 0.78], mat(-2.9, 1.05, -0.8)],
-    [cyl(0.06, 0.08, 9.2, 6), [0.90, 0.92, 0.95], mat(-2.9, 5.1, 0.2)],
-    [box(2.4, 0.95, 7.2), [0.95, 0.96, 0.98], mat(2.9, 0.45, -0.5)],
-    [box(1.8, 0.55, 2.8), [0.82, 0.22, 0.18], mat(2.9, 1.05, -0.8)],
-    [cyl(0.06, 0.08, 9.2, 6), [0.90, 0.92, 0.95], mat(2.9, 5.1, 0.2)],
-  ]);
+  // Timber floating finger-dock T-pontoon with guide pilings, mooring cleats, utility pedestals & twin moored sailing yachts
+  {
+    const mp = [
+      // Main timber walkway + cross T-head + dark flotation pontoons + steel guide pilings + blue power pedestals
+      [box(2.4, 0.28, 14.0), [0.62, 0.45, 0.28], mat(0, 0.28, 0)],
+      [box(2.2, 0.22, 13.8), [0.18, 0.20, 0.22], mat(0, 0.08, 0)],
+      [box(9.2, 0.28, 2.2), [0.62, 0.45, 0.28], mat(0, 0.28, 5.8)],
+      [box(9.0, 0.22, 2.0), [0.18, 0.20, 0.22], mat(0, 0.08, 5.8)],
+      [cyl(0.16, 0.16, 2.2, 10), [0.28, 0.30, 0.34], mat(-1.35, 0.95, -5.5)],
+      [cyl(0.16, 0.16, 2.2, 10), [0.28, 0.30, 0.34], mat(1.35, 0.95, -5.5)],
+      [cyl(0.16, 0.16, 2.2, 10), [0.28, 0.30, 0.34], mat(-4.2, 0.95, 6.8)],
+      [cyl(0.16, 0.16, 2.2, 10), [0.28, 0.30, 0.34], mat(4.2, 0.95, 6.8)],
+      [box(0.28, 0.78, 0.28), [0.94, 0.96, 0.98], mat(-0.95, 0.72, 1.5)],
+      [box(0.28, 0.78, 0.28), [0.94, 0.96, 0.98], mat(0.95, 0.72, 1.5)],
+      [dome(0.15, 10, 6), [0.14, 0.48, 0.88], mat(-0.95, 1.11, 1.5)],
+      [dome(0.15, 10, 6), [0.14, 0.48, 0.88], mat(0.95, 1.11, 1.5)],
+    ];
+    // 2 Moored white sailing yachts with tapered bows, cabins, cockpits, masts, booms & furled sails
+    for (const [yx, trimCol] of [[-2.9, [0.18, 0.44, 0.82]], [2.9, [0.84, 0.20, 0.16]]]) {
+      mp.push(
+        [box(2.3, 0.92, 5.4), [0.95, 0.96, 0.98], mat(yx, 0.45, -1.2)],
+        [cone(1.62, 2.4, 4), [0.95, 0.96, 0.98], mat(yx, 0.45, 2.6, Math.PI / 2, Math.PI / 4, 0, 1.0, 1.0, 0.58)],
+        [box(2.34, 0.14, 5.5), trimCol, mat(yx, 0.68, -1.2)],
+        [box(1.75, 0.52, 2.8), [0.92, 0.94, 0.96], mat(yx, 1.06, -0.6)],
+        [box(1.65, 0.32, 2.2), [0.20, 0.32, 0.46], mat(yx, 1.08, -0.5)],
+        [box(1.55, 0.25, 1.8), [0.58, 0.40, 0.24], mat(yx, 0.85, -2.8)],
+        [cyl(0.06, 0.08, 9.4, 10), [0.88, 0.90, 0.94], mat(yx, 5.2, 0.2)],
+        [cyl(0.045, 0.05, 3.6, 8), [0.88, 0.90, 0.94], mat(yx, 2.1, -1.6, Math.PI / 2, 0, 0)],
+        [box(1.4, 0.04, 0.04), [0.85, 0.87, 0.90], mat(yx, 6.2, 0.2)],
+      );
+    }
+    G.marinaPontoon = mergeParts(mp);
+  }
 
-  // Twin cylindrical white/silver petrochemical storage tanks / grain silos with catwalk bridge
-  G.industrialSilo = mergeParts([
-    [box(12.5, 0.35, 6.8), [0.58, 0.60, 0.62], mat(0, 0.18, 0)],
-    [cyl(2.6, 2.6, 9.2, 24), [0.88, 0.90, 0.92], mat(-3.1, 4.7, 0)],
-    [cone(2.65, 1.2, 24), [0.76, 0.79, 0.82], mat(-3.1, 9.9, 0)],
-    [cyl(2.6, 2.6, 9.2, 24), [0.88, 0.90, 0.92], mat(3.1, 4.7, 0)],
-    [cone(2.65, 1.2, 24), [0.76, 0.79, 0.82], mat(3.1, 9.9, 0)],
-    [box(0.32, 9.2, 0.22), [0.48, 0.50, 0.54], mat(-3.1, 4.7, 2.65)],
-    [box(6.6, 0.45, 0.85), [0.42, 0.45, 0.48], mat(0, 9.4, 0)],
-    [box(6.6, 0.08, 0.08), [0.75, 0.62, 0.16], mat(0, 10.0, 0.38)],
-    [box(6.6, 0.08, 0.08), [0.75, 0.62, 0.16], mat(0, 10.0, -0.38)],
-  ]);
+  // Twin cylindrical petrochemical storage tanks / grain silos with bund wall, stiffening rings, safety cage ladder, manifold & truss catwalk
+  {
+    const si = [
+      // Concrete pad + perimeter spill containment bund wall
+      [box(12.6, 0.35, 6.8), [0.56, 0.58, 0.60], mat(0, 0.175, 0)],
+      [box(12.6, 0.55, 0.26), [0.62, 0.64, 0.66], mat(0, 0.45, 3.27)],
+      [box(12.6, 0.55, 0.26), [0.62, 0.64, 0.66], mat(0, 0.45, -3.27)],
+      [box(0.26, 0.55, 6.3), [0.62, 0.64, 0.66], mat(-6.17, 0.45, 0)],
+      [box(0.26, 0.55, 6.3), [0.62, 0.64, 0.66], mat(6.17, 0.45, 0)],
+    ];
+    for (const sx of [-3.1, 3.1]) {
+      si.push(
+        // Concrete ring plinth + cylindrical tank shell + conical roof + pressure breather vent
+        [cyl(2.72, 2.78, 0.45, 24), [0.50, 0.52, 0.54], mat(sx, 0.42, 0)],
+        [cyl(2.6, 2.6, 9.0, 24), [0.88, 0.90, 0.92], mat(sx, 5.0, 0)],
+        [cone(2.68, 1.25, 24), [0.76, 0.79, 0.82], mat(sx, 10.1, 0)],
+        [cyl(0.24, 0.24, 0.55, 12), [0.46, 0.48, 0.52], mat(sx, 10.85, 0)],
+        [cyl(0.36, 0.24, 0.18, 12), [0.82, 0.22, 0.18], mat(sx, 11.18, 0)],
+      );
+      // Horizontal wind-girder stiffening rings
+      for (const ry of [2.4, 4.8, 7.2, 9.35]) {
+        si.push([torus(2.62, 0.055, 8, 24), [0.72, 0.75, 0.78], mat(sx, ry, 0, Math.PI / 2, 0, 0)]);
+      }
+    }
+    // Vertical caged safety ladder + pneumatic conveyor standpipe + lower valve manifold
+    si.push(
+      [box(0.34, 9.0, 0.18), [0.44, 0.46, 0.50], mat(-3.1, 5.0, 2.68)],
+      [cyl(0.14, 0.14, 9.4, 10), [0.64, 0.67, 0.70], mat(3.1, 5.1, 2.74)],
+      [cyl(0.18, 0.18, 6.2, 12), [0.78, 0.20, 0.18], mat(0, 1.35, 2.75, 0, 0, Math.PI / 2)],
+      [torus(0.28, 0.05, 8, 14), [0.88, 0.72, 0.14], mat(0, 1.35, 2.95)],
+      // Overhead interconnecting catwalk bridge + yellow OSHA handrails
+      [box(6.6, 0.28, 0.92), [0.40, 0.43, 0.46], mat(0, 9.55, 0)],
+      [box(6.6, 0.08, 0.08), [0.86, 0.70, 0.16], mat(0, 10.22, 0.42)],
+      [box(6.6, 0.08, 0.08), [0.86, 0.70, 0.16], mat(0, 10.22, -0.42)],
+      [box(6.6, 0.06, 0.06), [0.86, 0.70, 0.16], mat(0, 9.88, 0.42)],
+      [box(6.6, 0.06, 0.06), [0.86, 0.70, 0.16], mat(0, 9.88, -0.42)],
+    );
+    for (const cy of [3.2, 4.8, 6.4, 8.0]) {
+      si.push([torus(0.36, 0.035, 8, 14), [0.78, 0.64, 0.14], mat(-3.1, cy, 2.86, Math.PI / 2, 0, 0)]);
+    }
+    G.industrialSilo = mergeParts(si);
+  }
 
-  // Tall 36m yellow lattice Tower Crane with 28m horizontal jib, counterweight & hanging hook cable
-  G.towerCrane = mergeParts([
-    [box(4.2, 0.85, 4.2), [0.52, 0.54, 0.56], mat(0, 0.42, 0)],
-    [box(1.55, 32.0, 1.55), [0.94, 0.74, 0.10], mat(0, 16.4, 0)],
-    [box(2.2, 2.1, 2.2), [0.20, 0.24, 0.28], mat(0, 31.2, 0.6)],
-    [box(1.35, 1.35, 28.0), [0.94, 0.74, 0.10], mat(0, 32.8, 5.5)],
-    [box(2.1, 1.6, 3.2), [0.62, 0.64, 0.66], mat(0, 32.6, -7.2)],
-    [cone(0.95, 4.2, 4), [0.94, 0.74, 0.10], mat(0, 35.5, 0, 0, Math.PI / 4, 0)],
-    [box(1.4, 0.55, 1.6), [0.24, 0.26, 0.28], mat(0, 31.9, 13.5)],
-    [cyl(0.05, 0.05, 12.0, 6), [0.22, 0.24, 0.26], mat(0, 25.8, 13.5)],
-    [box(0.65, 0.85, 0.45), [0.92, 0.32, 0.12], mat(0, 19.6, 13.5)],
-  ]);
+  // Tall 36m yellow lattice Tower Crane with 4-chord mast, diagonal lacing, slewing cab, counter-jib ballast blocks, trolley & hook block
+  {
+    const tc = [
+      // Concrete foundation pad + cruciform steel base ballast
+      [box(4.4, 0.85, 4.4), [0.52, 0.54, 0.56], mat(0, 0.425, 0)],
+      [box(3.4, 0.45, 1.2), [0.36, 0.38, 0.40], mat(0, 0.95, 0)],
+      [box(1.2, 0.45, 3.4), [0.36, 0.38, 0.40], mat(0, 0.95, 0)],
+      // 4 Vertical corner mast chords + central climbing ladder
+      [box(0.22, 31.5, 0.22), [0.94, 0.74, 0.10], mat(-0.72, 16.4, -0.72)],
+      [box(0.22, 31.5, 0.22), [0.94, 0.74, 0.10], mat(0.72, 16.4, -0.72)],
+      [box(0.22, 31.5, 0.22), [0.94, 0.74, 0.10], mat(-0.72, 16.4, 0.72)],
+      [box(0.22, 31.5, 0.22), [0.94, 0.74, 0.10], mat(0.72, 16.4, 0.72)],
+      [box(0.45, 31.0, 0.08), [0.32, 0.34, 0.36], mat(0, 16.4, 0)],
+      // Slewing ring turntable + operator cabin with blue tinted glass
+      [cyl(1.15, 1.15, 0.65, 16), [0.28, 0.30, 0.34], mat(0, 30.8, 0)],
+      [box(1.9, 2.2, 2.4), [0.94, 0.74, 0.10], mat(0.95, 31.6, 0.8)],
+      [box(1.96, 1.2, 1.8), [0.16, 0.24, 0.32], mat(0.95, 31.8, 1.0)],
+      // Main horizontal jib chords + counter-jib + 4 concrete counterweight slabs + apex A-frame + forestay/backstay pendants
+      [box(1.45, 0.22, 20.5), [0.94, 0.74, 0.10], mat(0, 32.3, 9.8)],
+      [box(0.24, 0.24, 20.5), [0.94, 0.74, 0.10], mat(0, 33.6, 9.8)],
+      [box(1.45, 0.35, 9.2), [0.94, 0.74, 0.10], mat(0, 32.3, -4.8)],
+      [box(0.52, 2.1, 0.75), [0.60, 0.62, 0.64], mat(-0.42, 32.8, -6.2)],
+      [box(0.52, 2.1, 0.75), [0.60, 0.62, 0.64], mat(0.42, 32.8, -6.2)],
+      [box(0.52, 2.1, 0.75), [0.60, 0.62, 0.64], mat(-0.42, 32.8, -7.2)],
+      [box(0.52, 2.1, 0.75), [0.60, 0.62, 0.64], mat(0.42, 32.8, -7.2)],
+      [box(0.52, 2.1, 0.75), [0.60, 0.62, 0.64], mat(-0.42, 32.8, -8.2)],
+      [box(0.52, 2.1, 0.75), [0.60, 0.62, 0.64], mat(0.42, 32.8, -8.2)],
+      [cone(0.95, 4.4, 4), [0.94, 0.74, 0.10], mat(0, 35.6, 0, 0, Math.PI / 4, 0)],
+      [cyl(0.05, 0.05, 14.5, 8), [0.28, 0.30, 0.34], mat(0, 35.4, 6.8, 1.32, 0, 0)],
+      [cyl(0.05, 0.05, 9.2, 8), [0.28, 0.30, 0.34], mat(0, 35.2, -4.2, -1.18, 0, 0)],
+      // Travelling trolley carriage + twin hoist wire ropes + yellow/black sheave pulley block & hook
+      [box(1.55, 0.55, 1.75), [0.22, 0.24, 0.28], mat(0, 31.9, 13.5)],
+      [cyl(0.04, 0.04, 12.0, 8), [0.20, 0.22, 0.24], mat(-0.18, 25.8, 13.5)],
+      [cyl(0.04, 0.04, 12.0, 8), [0.20, 0.22, 0.24], mat(0.18, 25.8, 13.5)],
+      [box(0.72, 0.92, 0.48), [0.94, 0.68, 0.10], mat(0, 19.6, 13.5)],
+      [cyl(0.32, 0.32, 0.52, 12), [0.18, 0.20, 0.22], mat(0, 19.8, 13.5, 0, 0, Math.PI / 2)],
+      [torus(0.26, 0.06, 8, 12, Math.PI * 1.35), [0.22, 0.24, 0.26], mat(0, 18.9, 13.5, 0, 0, -Math.PI * 0.65)],
+    ];
+    for (let my = 3.0; my <= 29.0; my += 2.6) {
+      tc.push(
+        [box(1.62, 0.16, 1.62), [0.94, 0.74, 0.10], mat(0, my, 0)],
+        [box(1.95, 0.12, 0.12), [0.88, 0.68, 0.08], mat(0, my + 1.3, 0.72, 0, 0, 0.72)],
+        [box(0.12, 0.12, 1.95), [0.88, 0.68, 0.08], mat(0.72, my + 1.3, 0, -0.72, 0, 0)],
+      );
+    }
+    for (let jz = 1.5; jz <= 18.5; jz += 2.4) {
+      tc.push([box(1.35, 1.25, 0.14), [0.90, 0.70, 0.08], mat(0, 32.95, jz)]);
+    }
+    G.towerCrane = mergeParts(tc);
+  }
 
   // White geodesic radome sphere on concrete pedestal inside military zones
   G.radarDome = mergeParts([

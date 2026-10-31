@@ -265,7 +265,7 @@ export function build(k) {
       k.color(BRICK_DK).strut([ax, 29, az], [bx, 5, bz], 1.6);
     }
   }
-  // buttresses at both broken ends of the outer ring
+  // buttresses at both broken ends of the outer ring (Valadier 1820 West & Stern 1807 East)
   buttress(k, INTACT0 - (0.4 / NB) * TAU * 0, -(2.6 / NB) * TAU);
   buttress(k, INTACT1, (2.6 / NB) * TAU);
   // ---- arena: hypogeum + reconstructed east floor
@@ -274,6 +274,9 @@ export function build(k) {
   for (let i = 0; i < 40; i++) { const t = (i / 40) * TAU; ell.push([a * Math.cos(t), b * Math.sin(t)]); }
   k.color(HYPO).extrude(ell, 0, 0.15);
   if (hi) {
+    // Elliptical brick arena podium wall (3.8 m high) encircling the hypogeum pit
+    k.color(BRICK_DK).extrude(ell, 0, 3.8);
+    k.color(HYPO).extrude(ell.map(([x, z]) => [x * 0.975, z * 0.975]), 0.16, 3.66);
     k.color(BRICK);
     for (let z = -b + 3; z < b - 2; z += 3.2) {
       const xe = a * Math.sqrt(Math.max(0, 1 - (z / b) ** 2)) - 1.5;
@@ -281,6 +284,30 @@ export function build(k) {
       if (xe > 2) k.box((-xe + xw) / 2, 0, z, xe + xw, 3.6, 0.7);
     }
     k.color(BRICK_DK).box(0, 0, 0, a * 1.7, 3.6, 1.2);
+    // Reconstructed timber winch capstans & bronze lift cages inside the hypogeum + Pulvinar Imperial boxes (z = ±b)
+    k.color(WOOD);
+    for (const cx of [-28, -16, -4]) {
+      for (const cz of [-10, 10]) {
+        k.cyl(cx, 0.2, cz, 0.45, 0.45, 2.6, 6);
+        k.box(cx, 2.2, cz, 1.8, 0.14, 0.14).box(cx, 2.2, cz, 0.14, 0.14, 1.8);
+      }
+    }
+    // Imperial Pulvinar tribunes on the minor axis (North & South podiums) with white marble columns
+    for (const sz of [-1, 1]) {
+      k.color(TRAV).box(0, 3.8, sz * (b + 2.5), 11, 1.4, 4.5);
+      for (const px of [-4, -1.4, 1.4, 4]) k.cyl(px, 5.2, sz * (b + 1.2), 0.35, 0.32, 4.2, 8);
+      k.box(0, 9.4, sz * (b + 1.8), 10.5, 0.65, 3.2);
+    }
+    // Iconic Iron Cross of the Colosseum (Croce del Colosseo) on the north-east arena podium
+    k.color(TRAV).box(19.5, 3.8, -14, 1.4, 1.2, 1.4);
+    k.color(0x282624).box(19.5, 5.0, -14, 0.24, 5.8, 0.24).box(19.5, 9.2, -14, 0.22, 0.24, 2.8);
+    // Ancient Roman travertine boundary bollards (cippi) with mooring rings along the intact north plaza
+    k.color(TRAV);
+    for (let i = 45; i < 72; i += 2) {
+      const ta = (i / NB) * TAU;
+      const [bx, bz] = E(ta, -5.5);
+      k.box(bx, 0, bz, 0.65, 1.55, 0.65);
+    }
   }
   const fl = [];
   for (let i = 0; i <= 16; i++) {

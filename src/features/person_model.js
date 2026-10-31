@@ -111,6 +111,7 @@ function finish(pos, idx, centreOf) {
 
 function prim(g, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
   g.deleteAttribute('uv');
+  if (!g.attributes.normal) g.computeVertexNormals();
   if (rx || ry || rz) g.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)));
   g.translate(x, y, z);
   return g;
@@ -250,43 +251,68 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
   // ---- head ----
   add(headSurface(far ? 12 : 16, far ? 9 : 13, null), PART.STATIC, J.HEAD, MAT.SKIN);
   const [hx, hy, hz] = HEAD_C;
+  // Sculpted 3D nose bridge, tip & nostrils
+  if (!far) {
+    const nz0 = headZ(0, -0.004);
+    add(tube([
+      [hy + 0.018, 0.007, 0.006, 0.004, 0, nz0 - 0.004],
+      [hy - 0.004, 0.009, 0.012, 0.006, 0, nz0 + 0.002],
+      [hy - 0.018, 0.011, 0.011, 0.006, 0, nz0 + 0.004],
+      [hy - 0.025, 0.006, 0.005, 0.004, 0, nz0 - 0.001],
+    ], { m: 7, sub: 1, x: hx, off: hz }), PART.STATIC, J.HEAD, MAT.SKIN);
+    for (const s of [-1, 1]) {
+      add(prim(ellip(0.006, 0.005, 0.006, 5, 4), hx + s * 0.008, hy - 0.020, hz + nz0 - 0.001), PART.STATIC, J.HEAD, MAT.SKIN);
+    }
+  }
   for (const s of [-1, 1]) {
-    if (!far) add(prim(ellip(0.012, 0.027, 0.019, 6, 5), hx + s * 0.083, hy - 0.004, hz - 0.012, 0, s * 0.35, 0), PART.STATIC, J.HEAD, MAT.SKIN);
     if (!far) {
+      // Sculpted outer ear helix + inner ear lobe
+      add(prim(ellip(0.012, 0.027, 0.019, 7, 5), hx + s * 0.083, hy - 0.004, hz - 0.012, 0, s * 0.35, 0), PART.STATIC, J.HEAD, MAT.SKIN);
+      add(prim(ellip(0.007, 0.016, 0.011, 5, 4), hx + s * 0.087, hy - 0.006, hz - 0.010, 0, s * 0.35, 0), PART.STATIC, J.HEAD, MAT.SKIN);
+      // 3D curved sclera, iris/pupil dome, upper eyelid & arched eyebrow
       const ex = s * 0.031, ey = 0.014, ez = headZ(ex, ey) + 0.001;
-      add(quad(0.026, 0.014, hx + ex, hy + ey, hz + ez), PART.STATIC, J.HEAD, MAT.FIXED, 0, WHITE);
-      add(quad(0.012, 0.013, hx + ex, hy + ey, hz + ez + 0.0012), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.12, 0.08, 0.06]);
+      add(prim(ellip(0.013, 0.0075, 0.004, 7, 5), hx + ex, hy + ey, hz + ez), PART.STATIC, J.HEAD, MAT.FIXED, 0, WHITE);
+      add(prim(ellip(0.0065, 0.0065, 0.0038, 6, 5), hx + ex, hy + ey, hz + ez + 0.0018), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.12, 0.08, 0.06]);
       const bz = headZ(s * 0.031, 0.034) + 0.001;
-      add(prim(rbox(0.03, 0.007, 0.006, 0.0025, 1), hx + s * 0.031, hy + 0.034, hz + bz - 0.002, 0, 0, -s * 0.1), PART.STATIC, J.HEAD, MAT.HAIR);
+      add(prim(rbox(0.032, 0.0075, 0.007, 0.0028, 1), hx + s * 0.031, hy + 0.034, hz + bz - 0.001, 0, s * 0.14, -s * 0.1), PART.STATIC, J.HEAD, MAT.HAIR);
       for (const o of [OPT.GLASSES]) {
-        add(prim(new THREE.TorusGeometry(0.017, 0.0025, 3, 8), hx + ex, hy + ey, hz + ez + 0.012), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.06, 0.06, 0.07]);
+        add(prim(new THREE.TorusGeometry(0.017, 0.0025, 4, 10), hx + ex, hy + ey, hz + ez + 0.012), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.06, 0.06, 0.07]);
         add(quad(0.032, 0.03, hx + ex, hy + ey, hz + ez + 0.011), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.12, 0.14, 0.16]);
         add(prim(rbox(0.004, 0.004, 0.11, 0.0015, 1), hx + s * 0.075, hy + ey + 0.004, hz - 0.03), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.06, 0.06, 0.07]);
       }
     }
   }
   if (!far) {
-    add(quad(0.03, 0.006, hx, hy - 0.052, hz + headZ(0, -0.052) + 0.001), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.55, 0.28, 0.26]);
+    // 3D sculpted upper and lower lips
+    const mz = headZ(0, -0.052) + 0.001;
+    add(prim(ellip(0.016, 0.0042, 0.0045, 7, 4), hx, hy - 0.049, hz + mz), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.62, 0.31, 0.29]);
+    add(prim(ellip(0.015, 0.0045, 0.0045, 7, 4), hx, hy - 0.055, hz + mz - 0.0005), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.54, 0.26, 0.25]);
     add(prim(rbox(0.016, 0.004, 0.004, 0.0015, 1), hx, hy + 0.016, hz + headZ(0, 0.016) + 0.002), PART.STATIC, J.HEAD, MAT.FIXED, OPT.GLASSES, [0.06, 0.06, 0.07]);
   }
-  // ---- hair (grown from the scalp, thicker on the crown) ----
+  // ---- hair (grown from the scalp, textured crown & side-part wave) ----
   const hw = far ? 12 : 18, hh = far ? 9 : 13;
-  add(headSurface(hw, hh, null, shellOff(scalpW, (ux, uy) => 0.005 + 0.012 * smooth(-0.2, 0.9, uy))), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
+  add(headSurface(hw, hh, null, shellOff(scalpW, (ux, uy, uz) => 0.006 + 0.014 * smooth(-0.2, 0.9, uy) + 0.0035 * Math.sin(ux * 9.0 + uz * 4.0) * smooth(0.1, 0.8, uy))), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
+  // Side-parted forelock wave on crown front
+  if (!far) {
+    add(prim(ellip(0.048, 0.016, 0.028, 8, 5), hx + 0.012, hy + 0.088, hz + 0.068, 0.22, 0.15, -0.18), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
+  }
   add(headSurface(far ? 8 : 14, far ? 6 : 11, (ux, uy) => uy < 0.2, shellOff(beardW, () => 0.006)), PART.STATIC, J.HEAD, MAT.HAIR, OPT.BEARD);
   // Long hair: a rounded drape from the crown down the back to the shoulders.
   add(tube([
     [hy + 0.08, 0.05, 0.03, 0.02], [hy + 0.03, 0.098, 0.03, 0.07], [hy - 0.06, 0.1, 0.03, 0.06],
     [hy - 0.16, 0.098, 0.02, 0.045], [hy - 0.25, 0.085, 0.012, 0.03], [hy - 0.29, 0.06, 0.008, 0.012],
   ], { m: far ? 5 : 10, sub: SUB, off: hz - 0.05 }), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_LONG);
-  // Ponytail: tie at the back of the crown, tapering down.
+  // Ponytail: elastic hair-tie band at the back of the crown + tapering ponytail drape.
+  if (!far) add(prim(new THREE.TorusGeometry(0.022, 0.006, 5, 10), hx, hy + 0.032, hz - 0.106, 0.35, 0, 0), PART.STATIC, J.HEAD, MAT.ACC, OPT.PONYTAIL);
   add(tube([
     [hy + 0.04, 0.02, 0.02, 0.02, 0, -0.105], [hy + 0.02, 0.028, 0.028, 0.028, 0, -0.118], [hy - 0.06, 0.032, 0.03, 0.03, 0, -0.13],
     [hy - 0.15, 0.024, 0.022, 0.022, 0, -0.125], [hy - 0.2, 0.008, 0.008, 0.008, 0, -0.118],
   ], { m: far ? 5 : 8, sub: SUB, off: hz }), PART.STATIC, J.HEAD, MAT.HAIR, OPT.PONYTAIL);
   add(prim(ellip(0.042, 0.038, 0.04, far ? 5 : 8, far ? 4 : 6), hx, hy + 0.075, hz - 0.085), PART.STATIC, J.HEAD, MAT.HAIR, OPT.BUN);
-  // Cap: crown dome + curved brim.
+  // Cap: crown dome + top button + sculpted curved visor brim.
   add(headSurface(far ? 10 : 16, far ? 7 : 11, (ux, uy) => uy > -0.1, shellOff((ux, uy) => smooth(0.2, 0.3, uy), (ux, uy) => 0.016 + 0.006 * uy)), PART.STATIC, J.HEAD, MAT.ACC, OPT.CAP);
-  add(tube([[hz + 0.06, 0.07, 0.004, 0.004, 0, 0.0], [hz + 0.12, 0.075, 0.004, 0.004, 0, -0.008], [hz + 0.17, 0.05, 0.004, 0.004, 0, -0.022]],
+  if (!far) add(prim(ellip(0.010, 0.006, 0.010, 6, 4), hx, hy + 0.126, hz - 0.005), PART.STATIC, J.HEAD, MAT.ACC, OPT.CAP);
+  add(tube([[hz + 0.06, 0.074, 0.006, 0.005, 0, 0.0], [hz + 0.12, 0.078, 0.006, 0.005, 0, -0.008], [hz + 0.175, 0.054, 0.005, 0.004, 0, -0.022]],
     { axis: 'z', m: far ? 6 : 10, sub: SUB, off: hy + 0.05 }), PART.STATIC, J.HEAD, MAT.ACC, OPT.CAP);
 
   // ---- neck + torso ----
@@ -300,11 +326,24 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
     [0.965, 0.166, 0.104, 0.108], [0.985, 0.17, 0.106, 0.11], [1.06, 0.152, 0.097, 0.094], [1.18, 0.158, 0.105, 0.095], [1.28, 0.175, 0.115, 0.1],
     [1.37, 0.19, 0.11, 0.1], [1.44, 0.18, 0.09, 0.088], [1.49, 0.125, 0.07, 0.072], [1.515, 0.06, 0.055, 0.058],
   ], { m: far ? 12 : 18, sub: SUB }), PART.STATIC, J.TORSO, MAT.TOP);
+  // Sculpted folded shirt collar ring + angled front collar lapels
+  if (!far) {
+    add(tube([[1.465, 0.078, 0.068, 0.072, 0, -0.002], [1.495, 0.068, 0.060, 0.064, 0, -0.003], [1.512, 0.062, 0.055, 0.058, 0, -0.003]], { m: M, sub: 1 }), PART.STATIC, J.CHEST, MAT.TOP);
+    for (const s of [-1, 1]) {
+      add(prim(rbox(0.036, 0.065, 0.014, 0.004, 1), s * 0.042, 1.445, 0.086, -0.24, s * 0.22, s * 0.36), PART.STATIC, J.CHEST, MAT.TOP);
+      // Chest pocket flaps & hip pocket welts
+      add(prim(rbox(0.056, 0.018, 0.012, 0.003, 1), s * 0.082, 1.30, 0.110, -0.06, s * 0.18, 0), PART.STATIC, J.CHEST, MAT.TOP);
+      add(prim(rbox(0.014, 0.065, 0.048, 0.004, 1), s * 0.168, 0.91, 0.025, 0, 0, -s * 0.08), PART.STATIC, J.TORSO, MAT.PANTS);
+    }
+    // Waist belt ring & metallic belt buckle
+    add(tube([[0.955, 0.171, 0.106, 0.110], [0.978, 0.171, 0.106, 0.110]], { m: 14, sub: 1 }), PART.STATIC, J.TORSO, MAT.FIXED, 0, [0.11, 0.09, 0.08]);
+    add(prim(rbox(0.038, 0.030, 0.014, 0.003, 1), 0, 0.966, 0.109), PART.STATIC, J.TORSO, MAT.FIXED, 0, [0.78, 0.80, 0.84]);
+  }
   // Sculpted shoulder deltoid caps and rounded elbow/knee anatomical joint spheres
   for (const s of [-1, 1]) {
     add(prim(ellip(0.062, 0.068, 0.058, far ? 7 : 10, far ? 5 : 8), s * 0.185, 1.415, 0.0, 0, 0, -s * 0.18), PART.STATIC, J.CHEST, MAT.TOP);
   }
-  // Shirt front cues: V-neck skin wedge, jacket zipper + collar.
+  // Shirt front cues: V-neck skin wedge, jacket zipper + buttons + collar.
   {
     const vz = 0.112;
     const v = new THREE.BufferGeometry();
@@ -314,7 +353,15 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
     if (v.attributes.normal.getZ(0) < 0) v.setIndex([0, 2, 1]), v.computeVertexNormals();
     add(v, PART.STATIC, J.CHEST, MAT.SKIN, OPT.VNECK);
   }
-  if (!far) add(prim(rbox(0.012, 0.42, 0.01, 0.004, 1), 0, 1.22, 0.112, 0.06, 0, 0), PART.STATIC, J.TORSO, MAT.FIXED, OPT.ZIPPER, [0.16, 0.16, 0.18]);
+  if (!far) {
+    add(prim(rbox(0.014, 0.42, 0.01, 0.004, 1), 0, 1.22, 0.112, 0.06, 0, 0), PART.STATIC, J.TORSO, MAT.FIXED, OPT.ZIPPER, [0.16, 0.16, 0.18]);
+    for (const by of [1.36, 1.26, 1.16, 1.06]) {
+      add(prim(ellip(0.0055, 0.0055, 0.0035, 5, 4), 0.014, by, 0.114), PART.STATIC, J.TORSO, MAT.FIXED, OPT.ZIPPER, [0.80, 0.82, 0.86]);
+    }
+    for (const s of [-1, 1]) {
+      add(prim(rbox(0.064, 0.022, 0.014, 0.004, 1), s * 0.105, 1.08, 0.102, 0, s * 0.25, -s * 0.15), PART.STATIC, J.TORSO, MAT.TOP, OPT.ZIPPER);
+    }
+  }
   add(tube([[1.46, 0.1, 0.08, 0.085], [1.5, 0.085, 0.07, 0.075], [1.53, 0.075, 0.065, 0.07]], { m: M, sub: 1 }), PART.STATIC, J.CHEST, MAT.TOP, OPT.ZIPPER);
   // Coat: longer, flared skirt of the jacket over the hips.
   add(tube([
@@ -359,12 +406,21 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
     ], { m: M, sub: SUB, x }), part, jS, MAT.PANTS);
     // Sculpted patella / knee joint sphere so knee flexion is smooth and anatomical
     add(prim(ellip(0.054, 0.058, 0.056, far ? 6 : 9, far ? 5 : 7), x, 0.485, 0.004), part, jT, MAT.PANTS);
-    // Shoe upper (heel counter to rounded toe box), then the sole.
+    // Cuffed trouser hem roll above ankle
+    if (!far) {
+      add(tube([[0.095, 0.041, 0.041, 0.043], [0.118, 0.042, 0.042, 0.044], [0.132, 0.039, 0.039, 0.041]], { m: M, sub: 1, x }), part, jS, MAT.PANTS);
+    }
+    // Two-tone sneaker upper (heel counter to rounded toe box), white midsole & toe cap, and dark outsole tread.
     add(tube([
       [-0.08, 0.02, 0.03, 0.01, 0, 0.065], [-0.065, 0.042, 0.055, 0.04, 0, 0.065], [-0.02, 0.048, 0.07, 0.045, 0, 0.06],
       [0.05, 0.05, 0.045, 0.035, 0, 0.045], [0.12, 0.05, 0.03, 0.026, 0, 0.034], [0.18, 0.04, 0.022, 0.018, 0, 0.03], [0.2, 0.015, 0.01, 0.01, 0, 0.028],
     ], { axis: 'z', m: M, sub: SUB, x }), part, jF, MAT.FIXED, 0, SHOE);
-    add(prim(rbox(0.1, 0.022, 0.29, 0.009, 1), x, 0.011, 0.058), part, jF, MAT.FIXED, 0, SOLE);
+    add(prim(rbox(0.104, 0.020, 0.292, 0.008, 1), x, 0.015, 0.058), part, jF, MAT.FIXED, 0, [0.90, 0.90, 0.88]);
+    add(prim(rbox(0.102, 0.008, 0.288, 0.003, 1), x, 0.004, 0.058), part, jF, MAT.FIXED, 0, SOLE);
+    if (!far) {
+      add(prim(ellip(0.044, 0.018, 0.038, 8, 5), x, 0.026, 0.172), part, jF, MAT.FIXED, 0, [0.92, 0.92, 0.90]);
+      add(prim(rbox(0.034, 0.010, 0.065, 0.003, 1), x, 0.062, 0.065, 0.38, 0, 0), part, jF, MAT.FIXED, 0, [0.88, 0.88, 0.86]);
+    }
   }
 
   // ---- arms + hands (palm faces the thigh, thumb forward) ----

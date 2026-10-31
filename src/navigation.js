@@ -6,7 +6,7 @@ import { computeRoadRoute } from './features/route_graph.js';
 const RIBBON_AHEAD_M = 1200;
 const RIBBON_STEP_M = 8;
 const RIBBON_HALF_W = 0.9;
-const ARRIVE_M = 30;
+const ARRIVE_M = 10;
 
 export function formatDistance(m) {
   const zh = getLang() === 'zh';
@@ -67,13 +67,94 @@ export class RoadNavigator {
     return [(lon - o.centerLon) * o.mPerDegLon, (o.centerLat - lat) * o.mPerDegLat];
   }
 
-  /** Builds a road route between two lat/lon points (async). */
+  /** Builds a road route between two lat/lon points or two world {x,z} objects. */
   async routeTo(fromLat, fromLon, toLat, toLon, destName = '') {
+    if (fromLat && typeof fromLat === 'object' && fromLon && typeof fromLon === 'object') {
+      const lbl = typeof destName === 'string' && destName ? destName : (this.app?.fsd?.label || 'Destination');
+      const [fLat, fLon] = this.worldToLatLon(Number(fromLat.x) || 0, Number(fromLat.z) || 0);
+      const [tLat, tLon] = this.worldToLatLon(Number(fromLon.x) || 0, Number(fromLon.z) || 0);
+      fromLat = fLat;
+      fromLon = fLon;
+      toLat = tLat;
+      toLon = tLon;
+      destName = lbl;
+    }
     const seq = ++this._seq;
+    const mLat = 111320;
+    const mLon = 111320 * Math.cos((fromLat * Math.PI) / 180);
+    const directDist = Math.hypot((toLon - fromLon) * mLon, (toLat - fromLat) * mLat);
+    if (directDist > 5) {
+      this._setRoute(
+        { latlon: [[fromLat, fromLon], [toLat, toLon]], distM: directDist, etaSec: Math.max(5, directDist / 16), straight: true },
+        destName,
+        toLat,
+        toLon
+      );
+    }
     const r = await computeRoadRoute({ lat: fromLat, lon: fromLon }, { lat: toLat, lon: toLon });
-    if (seq !== this._seq || !r) return null;
+    if (seq !== this._seq || !r) return this.activeRoute;
     this._setRoute(r, destName, toLat, toLon);
     return this.activeRoute;
+  }
+
+  /**
+   * Per-frame lookahead point along the active route polyline for FSD steering.
+   * Returns { x, z, turnAngle, distToRoute } or null if no active route.
+   */
+  getLookaheadPoint(px, pz, lookAheadM = 18) {
+    const r = this.activeRoute;
+    if (!r || !this.origin) return null;
+    if (this._originRef !== this.origin || !r.points || r.points.length < 2) {
+      this._reproject();
+    }
+    const pts = r.points;
+    if (!pts || pts.length < 2) return null;
+
+    let bestI = r.progressIdx || 0;
+    let bestT = 0;
+    let bestD = Infinity;
+    const i0 = Math.max(0, bestI - 3);
+    const i1 = Math.min(pts.length - 2, bestI + 90);
+    for (let i = i0; i <= i1; i++) {
+      const ax = pts[i][0], az = pts[i][2];
+      const vx = pts[i + 1][0] - ax, vz = pts[i + 1][2] - az;
+      const l2 = vx * vx + vz * vz;
+      const t = l2 > 1e-6 ? Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / l2)) : 0;
+      const d = Math.hypot(ax + vx * t - px, az + vz * t - pz);
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+        bestT = t;
+      }
+    }
+    r.progressIdx = bestI;
+
+    const sampleAhead = (distAhead) => {
+      let rem = distAhead;
+      let idx = bestI;
+      let curX = pts[idx][0] + (pts[idx + 1][0] - pts[idx][0]) * bestT;
+      let curZ = pts[idx][2] + (pts[idx + 1][2] - pts[idx][2]) * bestT;
+      while (idx < pts.length - 1) {
+        const nx = pts[idx + 1][0], nz = pts[idx + 1][2];
+        const segRem = Math.hypot(nx - curX, nz - curZ);
+        if (segRem >= rem && segRem > 1e-5) {
+          const f = rem / segRem;
+          return [curX + (nx - curX) * f, curZ + (nz - curZ) * f];
+        }
+        rem -= segRem;
+        curX = nx;
+        curZ = nz;
+        idx++;
+      }
+      return [pts[pts.length - 1][0], pts[pts.length - 1][2]];
+    };
+
+    const [tx, tz] = sampleAhead(lookAheadM);
+    const [fx, fz] = sampleAhead(lookAheadM * 2.2);
+    const a1 = Math.atan2(tx - px, tz - pz);
+    const a2 = Math.atan2(fx - tx, fz - tz);
+    const turnAngle = Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1)));
+    return { x: tx, z: tz, turnAngle, distToRoute: bestD };
   }
 
   /** Legacy world-coordinate API. */

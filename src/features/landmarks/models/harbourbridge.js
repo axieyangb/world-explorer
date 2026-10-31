@@ -1,11 +1,11 @@
 // feature/famous-landmarks: Sydney Harbour Bridge — 1:1 (arch top 134 m above the water).
 // Two-hinged steel through-arch, 503 m between bearings, two arch trusses 30 m apart (top chord 134 m,
-// bottom chord 116 m at the crown, springing from granite skewbacks), 49 m wide deck at ~49 m with
-// hangers / posts, and four 89 m granite-faced pylons (two per shore). Bridge axis = local Z
-// (front -Z = north / Milsons Point).
+// bottom chord 116 m at the crown, springing from granite skewbacks), K-braced lateral wind trusses,
+// BridgeClimb catwalk & Australian/NSW flags at the 134m crown, 49 m wide deck at ~49 m with railway
+// catenary gantries & Olympic Rings, and four 89 m granite-faced pylons with Pylon Lookout windows.
 const STEEL = 0x7f868c, STEEL_DK = 0x60676d, STEEL_LT = 0x969da3;
 const GRANITE = 0xbcae96, GRANITE_DK = 0xa39580, GRANITE_SH = 0x6e6556;
-const ROAD = 0x4b4d50, LAMP = 0xffe7b0;
+const ROAD = 0x4b4d50, LAMP = 0xffe7b0, BRONZE = 0x6e5a44;
 const L = 251.5;            // half span between bearings
 const DECK = 49;            // deck surface
 const XT = 15;              // truss planes
@@ -39,18 +39,24 @@ function pylon(k, x, zc) {
       k.push().translate(fx, 0, fz).rotateY(Math.atan2(nx, nz));
       k.box(0, 46, 0.02, span, 14, 0.4);
       k.taper(0, 60, 0.02, span, 0.4, span * 0.35, 0.4, 3.5);
+      // Commonwealth bronze coat-of-arms crest above the pylon arch
+      k.color(BRONZE).box(0, 64.5, 0.15, 3.2, 2.8, 0.35).color(GRANITE_SH);
       k.pop();
     };
     archFace(x, zc - d / 2 + 1.1, 0, -1, 9);
     archFace(x, zc + d / 2 - 1.1, 0, 1, 9);
     archFace(x - w / 2 + 0.8, zc, -1, 0, 12);
     archFace(x + w / 2 - 0.8, zc, 1, 0, 12);
-    // rusticated courses
+    // rusticated courses + vertical Art Deco stepped pilasters on pylon corners
     k.color(GRANITE_DK);
     for (let y = 16; y < 66; y += 8) {
       const f = (y - 10) / 58;
       k.box(x, y, zc, w - 2 * f + 0.3, 0.5, d - 3 * f + 0.3);
     }
+    // Pylon Lookout observation windows around the upper stage (y = 73..79m) & rooftop aircraft beacon
+    k.glow(true).color(LAMP);
+    k.box(x, 73.5, zc, w - 2.8, 3.2, d - 3.8);
+    k.glow(false).color(GRANITE_DK).box(x, 89.0, zc, w - 8.2, 0.8, d - 12.0);
   }
 }
 
@@ -78,21 +84,50 @@ export function build(k) {
       k.color(STEEL_LT);
       for (let i = 0; i < NP; i++) {
         const mid = NP / 2;
-        // Pratt-style: diagonals slope down toward the crown
-        if (i < mid) k.strut(T[i], B[i + 1], 1.3); else k.strut(B[i], T[i + 1], 1.3);
+        // Pratt-style: diagonals slope down toward the crown + secondary sub-chord gusset struts
+        if (i < mid) {
+          k.strut(T[i], B[i + 1], 1.3);
+          const mx = x, my = (T[i][1] + B[i + 1][1]) * 0.5, mz = (T[i][2] + B[i + 1][2]) * 0.5;
+          k.color(STEEL_DK).strut([mx, my, mz], B[i], 0.55).color(STEEL_LT);
+        } else {
+          k.strut(B[i], T[i + 1], 1.3);
+          const mx = x, my = (B[i][1] + T[i + 1][1]) * 0.5, mz = (B[i][2] + T[i + 1][2]) * 0.5;
+          k.color(STEEL_DK).strut([mx, my, mz], B[i + 1], 0.55).color(STEEL_LT);
+        }
+      }
+      // BridgeClimb catwalk safety handrail along the outer top chord
+      for (let i = 2; i < NP - 2; i++) {
+        k.color(STEEL_LT).strut([x + sx * 1.2, T[i][1] + 2.1, T[i][2]], [x + sx * 1.2, T[i + 1][1] + 2.1, T[i + 1][2]], 0.16);
       }
     }
     // hangers (arch above deck) and posts (arch below deck)
     k.color(STEEL_DK);
     for (let i = 1; i < NP; i++) {
       const z = pz[i], yb = botY(z);
-      if (yb > DECK + 3) k.strut([x, yb, z], [x, DECK - 0.5, z], hi ? 0.9 : 1.4);
-      else if (yb < DECK - 4) k.strut([x, yb, z], [x, DECK - 2.2, z], 1.8);
+      if (yb > DECK + 3) {
+        k.strut([x, yb, z], [x, DECK - 0.5, z], hi ? 0.9 : 1.4);
+        // Built-up latticed box hanger web plates in close-up
+        if (hi && yb - DECK > 16) {
+          for (let hy = DECK + 6; hy < yb - 4; hy += 8) {
+            k.color(STEEL_LT).box(x, hy, z, 1.2, 0.45, 1.5).color(STEEL_DK);
+          }
+        }
+      } else if (yb < DECK - 4) {
+        k.strut([x, yb, z], [x, DECK - 2.2, z], 1.8);
+      }
     }
-    // skewback bearings
+    // skewback bearings & massive forged steel hinge pins at the 4 springings
     k.color(GRANITE_DK).box(x, 0, -L - 2, 10, 9, 12).box(x, 0, L + 2, 10, 9, 12);
+    if (hi) {
+      for (const sz of [-1, 1]) {
+        k.color(STEEL_DK).taper(x, 7.5, sz * L, 6.5, 8.5, 4.5, 5.5, 4.5);
+        k.push().translate(x, 10.0, sz * (L - 1)).rotateZ(Math.PI / 2);
+        k.color(STEEL_LT).cyl(0, -3.6, 0, 1.65, 1.65, 7.2, 12);
+        k.pop();
+      }
+    }
   }
-  // ---- lateral bracing between the trusses
+  // ---- lateral K-bracing between the trusses
   k.color(STEEL_DK);
   for (let i = 0; i <= NP; i++) {
     const z = pz[i];
@@ -102,9 +137,32 @@ export function build(k) {
       if (botY(z) > DECK + 6) k.strut([-XT, botY(z), z], [XT, botY(z), z], hi ? 1.6 : 2);
     }
     if (hi && i < NP) {
-      const z1 = pz[i + 1];
-      k.strut([-XT, topY(z), z], [XT, topY(z1), z1], 0.9);
-      k.strut([XT, topY(z), z], [-XT, topY(z1), z1], 0.9);
+      const z1 = pz[i + 1], zm = (z + z1) * 0.5, ym = (topY(z) + topY(z1)) * 0.5;
+      // Authentic K-bracing lateral wind lattice across the top chords & bottom chords
+      k.strut([-XT, topY(z), z], [0, ym, zm], 0.85);
+      k.strut([XT, topY(z), z], [0, ym, zm], 0.85);
+      k.strut([0, ym, zm], [-XT, topY(z1), z1], 0.85);
+      k.strut([0, ym, zm], [XT, topY(z1), z1], 0.85);
+      if (botY(z) > DECK + 8 && botY(z1) > DECK + 8) {
+        const ybm = (botY(z) + botY(z1)) * 0.5;
+        k.strut([-XT, botY(z), z], [0, ybm, zm], 0.75);
+        k.strut([XT, botY(z), z], [0, ybm, zm], 0.75);
+      }
+      // Sway portal X-bracing between top and bottom chords at every 2nd panel
+      if (i % 2 === 0 && botY(z) > DECK + 12) {
+        k.strut([-XT, topY(z), z], [XT, botY(z), z], 0.7);
+        k.strut([XT, topY(z), z], [-XT, botY(z), z], 0.7);
+      }
+    }
+  }
+  // Crown Summit Flagpoles (Australian & NSW Flags at y = 134m)
+  if (hi) {
+    for (const sx of [-1, 1]) {
+      const fx = sx * XT;
+      k.color(STEEL_LT).cyl(fx, 134, 0, 0.22, 0.12, 14.5, 6);
+      k.color(sx < 0 ? 0x012169 : 0x002b7f).box(fx, 144.2, 2.4, 0.16, 2.8, 4.6);
+      k.color(0xd82828).box(fx, 145.6, 1.3, 0.20, 1.2, 2.2);
+      k.glow(true).color(0xff3828).sphere(fx, 148.6, 0, 0.45, 6, 4).glow(false);
     }
   }
   // ---- deck
@@ -114,10 +172,24 @@ export function build(k) {
   k.color(STEEL).box(-20.5, DECK - 0.6, 0, 8, 0.5, DL * 2).box(20.5, DECK - 0.6, 0, 8, 0.5, DL * 2); // rail / footway
   k.color(STEEL).box(-24.3, DECK - 4.6, 0, 0.6, 5.6, DL * 2).box(24.3, DECK - 4.6, 0, 0.6, 5.6, DL * 2); // fascia girders
   if (hi) {
-    // parapet rails + lane lines + lamps
+    // Under-deck transverse cross-girders every panel
+    k.color(STEEL_DK);
+    for (const z of pz) {
+      k.box(0, DECK - 4.2, z, 48.5, 1.6, 1.1);
+    }
+    // Western deck Sydney Trains double railway tracks & overhead catenary gantries
+    k.color(0x52463a).box(-20.5, DECK - 0.08, 0, 5.8, 0.14, DL * 2);
+    for (const rx of [-22.2, -21.0, -19.8, -18.6]) {
+      k.color(STEEL_LT).box(rx, DECK + 0.05, 0, 0.14, 0.14, DL * 2);
+    }
+    // parapet rails + lane lines + overhead highway/railway gantry portals + lamps
     k.color(STEEL_LT).box(-24.5, DECK, 0, 0.3, 1.2, DL * 2).box(24.5, DECK, 0, 0.3, 1.2, DL * 2);
     k.color(0xd8d8d0);
-    for (const lx of [-8.5, 0, 8.5]) k.box(lx, DECK + 0.01, 0, 0.25, 0.02, DL * 2);
+    for (const lx of [-11.5, -5.8, 0, 5.8, 11.5]) k.box(lx, DECK + 0.01, 0, 0.22, 0.02, DL * 2);
+    for (let z = -DL + 18; z <= DL - 18; z += 48) {
+      k.color(STEEL_DK).box(-16.8, DECK, z, 0.4, 6.2, 0.4).box(16.8, DECK, z, 0.4, 6.2, 0.4);
+      k.box(0, DECK + 5.8, z, 34.0, 0.65, 0.55);
+    }
     k.glow(true).color(LAMP);
     for (let z = -DL + 10; z <= DL - 10; z += 24) {
       k.box(-17.4, DECK, z, 0.3, 7, 0.3).box(17.4, DECK, z, 0.3, 7, 0.3);
@@ -138,6 +210,11 @@ export function build(k) {
     k.color(GRANITE_DK).box(0, 0, sz * PY.zc, 50, DECK - 3.2, 30);
     // approach pier at the end of the modelled deck
     k.color(GRANITE).box(0, 0, sz * (DL - 6), 44, DECK - 3.2, 10);
-    if (hi) k.color(GRANITE_SH).box(0, 8, sz * (DL - 6), 18, DECK - 20, 10.2);
+    if (hi) {
+      k.color(GRANITE_SH);
+      for (const ax of [-13, 0, 13]) {
+        k.box(ax, 8, sz * (DL - 6), 8.5, DECK - 18, 10.3);
+      }
+    }
   }
 }

@@ -72,6 +72,20 @@ function westFront(k) {
       frame: [fl, fr, 18.6], back: "door", statues: true,
       col: { face: STONE, side: STONE_DK, back: DOOR, tymp: STONE_DK, fig: STONE_SH },
     });
+    if (hi) {
+      // Central trumeau pier & statue (Le Beau Dieu in central Last Judgment portal, Virgin & St Anne on flanks)
+      k.color(STONE_DK).box(px, 0, zp + 1.4, 0.65, 7.2, 0.65);
+      k.color(STONE_SH).cyl(px, 2.2, zp + 1.0, 0.34, 0.28, 2.4, 6);
+      k.sphere(px, 4.85, zp + 1.0, 0.22, 6, 4);
+      // Wrought-iron medieval scrollwork hinges (pentures de Biscornet) on the oak portal doors
+      k.color(0x23201e);
+      for (const sx of [-1, 1]) {
+        for (let hy = 1.6; hy <= 6.2; hy += 1.5) {
+          k.box(px + sx * (W * 0.18), hy, zp + PD - 0.28, W * 0.28, 0.12, 0.06);
+        }
+      }
+      k.color(STONE);
+    }
   }
   k.color(STONE_DK).quadN([-20.5, 18.6, zp], [20.5, 18.6, zp], [20.5, 18.6, z], [-20.5, 18.6, z], [0, 1, 0]);
   for (const sx of [-1, 1]) k.quadN([sx * 20.5, 0, zp], [sx * 20.5, 18.6, zp], [sx * 20.5, 18.6, z], [sx * 20.5, 0, z], [sx, 0, 0]);
@@ -91,6 +105,15 @@ function westFront(k) {
   k.glow(true).color(STONE_DK).box(0, 24.2, z - 0.35, 41, 0.7, 0.9);
   // west rose in its square frame (projecting panel), Grand Gallery (open arcade) above
   k.roseWindow(0, 30.5, z - 1.25, 4.8, 1.0, 24, { frame: STONE_DK, glass: ROSE, tracery: STONE_DK, square: 5.9 });
+  if (hi) {
+    // Statue of the Virgin and Child before the West Rose Window + St Denis & St Stephen on the side piers
+    k.color(STONE_SH).cyl(0, 25.0, z - 1.55, 0.42, 0.32, 2.8, 6);
+    k.sphere(0, 28.05, z - 1.55, 0.25, 6, 4);
+    for (const sx of [-6.8, 6.8]) {
+      k.cyl(sx, 25.2, z - 1.35, 0.36, 0.28, 2.5, 6);
+      k.sphere(sx, 27.9, z - 1.35, 0.22, 6, 4);
+    }
+  }
   if (hi) for (const sx of [-1, 1]) lancet(k, sx * 12.75, 26.5, zf, 3.6, 8.5);
   k.color(STONE_SH).box(0, 36.3, z - 0.4, 41, 0.7, 0.8);
   k.glow(false).color(HOLE);
@@ -98,6 +121,15 @@ function westFront(k) {
   if (hi) {
     k.glow(true).color(STONE_DK);
     for (let i = 0; i <= 14; i++) k.cyl(-19.5 + 0.7 + i * (36 / 13) - 0.04, 37.0, zf - 0.35, 0.16, 0.16, 5.4, 6);
+    // Galerie des Chimères: Viollet-le-Duc's famous chimeras & Le Stryge perched along the 43.8 m balustrade
+    k.color(STONE_SH);
+    for (let cx = -19.5; cx <= 19.5; cx += 3.25) {
+      k.box(cx, 43.8, z - 0.7, 0.42, 1.15, 0.55);
+      k.sphere(cx, 45.05, z - 1.0, 0.26, 5, 4);
+    }
+    // Point Zéro des Routes de France octagonal stone & bronze compass medallion on the Parvis forecourt
+    k.glow(false).color(STONE_DK).cyl(0, 0, z - 11.5, 1.8, 1.8, 0.08, 8);
+    k.color(0x8c6d3b).cyl(0, 0.05, z - 11.5, 0.85, 0.85, 0.06, 8);
   }
   k.glow(true).color(STONE_DK).box(0, 43, z - 0.3, 41.6, 0.8, 1.0);
 }
@@ -108,6 +140,10 @@ function flyer(k, px, pz, wx, wz) {
   k.glow(true).color(STONE).box(px, 0, pz, 2.4, 22, 2.8);
   if (hi) {
     k.color(STONE_DK).pinnacle(px, 22, pz, 1.7, 8.5);
+    // Projecting stone gargoyle waterspout jutting outward from the buttress pier top
+    const dx = px - wx, dz = pz - wz, dLen = Math.hypot(dx, dz) || 1;
+    const ux = dx / dLen, uz = dz / dLen;
+    k.color(STONE_SH).strut([px, 21.4, pz], [px + ux * 2.1, 21.1, pz + uz * 2.1], 0.28);
     k.color(STONE);
     // the flyer: a quarter arch under a straight sloping coping
     const n = 6, y0 = 15.5, y1 = 28.5;

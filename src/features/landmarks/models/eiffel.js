@@ -95,6 +95,19 @@ export function build(k) {
       legLattice(k, sx, sz, 0, 57.6, 7, 2.6, 0.9);
       legLattice(k, sx, sz, 57.6, 115.7, 8, 2.1, 0.75);
       legLattice(k, sx, sz, 115.7, 180, 9, 1.7, 0.6);
+      // Inclined masonry foundation shoes at the 4 leg corners + inclined hydraulic lift tracks & glowing cabins
+      const o0 = hw(0), w0 = lw(0), m0 = o0 - w0 / 2;
+      const o1 = hw(57.6), w1 = lw(57.6), m1 = o1 - w1 / 2;
+      const o2 = hw(115.7), w2 = lw(115.7), m2 = o2 - w2 / 2;
+      k.glow(false).color(0xb8b0a0).taper(sx * m0, -2, sz * m0, w0 * 0.95, w0 * 0.95, w0 * 0.82, w0 * 0.82, 4.5);
+      k.glow(true).color(BRONZE_DK);
+      k.strut([sx * m0, 2, sz * m0], [sx * m1, 57.6, sz * m1], 0.45);
+      k.strut([sx * m1, 57.6, sz * m1], [sx * m2, 115.7, sz * m2], 0.38);
+      // Glowing double-deck Funicular Elevator cabin ascending each leg
+      const tCab = 0.45 + (sx > 0 ? 0.15 : 0) + (sz > 0 ? 0.1 : 0);
+      const cy = 57.6 * tCab, cm = m0 + (m1 - m0) * tCab;
+      k.color(0xffe096).box(sx * cm, cy, sz * cm, 2.6, 3.8, 2.6);
+      k.color(BRONZE);
     }
     shaftLattice(k, 180, 276, 16);
     // decorative arches on each face under the first platform
@@ -110,6 +123,13 @@ export function build(k) {
         pin.push([x, y + 2.2, -hw(y + 2.2) + 1.0]);
       }
       k.tube(pts, 0.55, 6);
+      // 72 Golden Engraved Names of French Scientists (18 gilded relief plaques along each of the 4 first-floor friezes)
+      k.color(0xe2b857);
+      for (let s = 0; s < 18; s++) {
+        const sx = -33.5 + s * (67 / 17);
+        k.box(sx, 53.3, -hw(53.5) + 0.35, 2.6, 0.65, 0.18);
+      }
+      k.color(BRONZE);
       if (!k.fine) { for (let i = 1; i < N; i += 2) k.strut(pts[i], [pts[i][0], 55, -hw(55) + 1.0], 0.35); k.pop(); continue; }
       k.tube(pin, 0.45, 6);
       for (let i = 0; i < N; i++) k.strut(i % 2 ? pts[i] : pin[i], i % 2 ? pin[i + 1] : pts[i + 1], 0.22);
@@ -143,10 +163,26 @@ export function build(k) {
 
   // platforms
   platformFrame(k, 52.5, 5.1, 36.5, 22.5, DECK);
-  if (hi) platformFrame(k, 57.6, 1.8, 36.8, 35.6, BRONZE_DK); // railing band
+  if (hi) {
+    platformFrame(k, 57.6, 1.8, 36.8, 35.6, BRONZE_DK); // railing band
+    // 1st Floor Madame Brasserie / Pavillon Ferrié glazed pavilions & central glass floor rim
+    for (const f of [0, 1, 2, 3]) {
+      k.push().rotateY((f * Math.PI) / 2);
+      k.color(CABIN).box(0, 57.6, -29.5, 36, 4.6, 9.5);
+      k.glow(true).color(0xffe5ad).box(0, 58.4, -34.3, 34, 2.8, 0.25);
+      k.glow(false).color(BRONZE_DK).taper(0, 62.2, -29.5, 37, 10.2, 34, 7.5, 1.4);
+      k.pop();
+    }
+    // Historic gilded Bust of Gustave Eiffel by Bourdelle at the foot of the North Pillar
+    k.color(0xb8b0a0).box(-38, 0, -54, 1.6, 2.6, 1.6);
+    k.glow(true).color(0xe2b857).sphere(-38, 3.0, -54, 0.45, 6, 4);
+    k.glow(false);
+  }
   platformFrame(k, 112.5, 3.2, 21.6, 11.5, DECK);
   if (hi) {
-    k.color(CABIN).box(0, 115.7, 0, 13, 4.5, 13);      // 2nd floor lift landing
+    k.color(CABIN).box(0, 115.7, 0, 13, 4.5, 13);      // 2nd floor lift landing & Le Jules Verne restaurant
+    k.glow(true).color(0xffe5ad).box(0, 116.5, 0, 13.4, 2.4, 13.4);
+    k.glow(false).color(DECK).box(0, 120.2, 0, 19.5, 1.4, 19.5); // upper 2nd-floor observation deck
     k.color(BRONZE_DK).box(0, 57.6, 0, 10, 2.5, 10);
   }
   // top: observation deck, cabins, roof and antennas

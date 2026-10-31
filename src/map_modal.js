@@ -266,8 +266,8 @@ export class MapSystem {
 
   _applyLabels() {
     this.searchInput.placeholder = L('Search', '搜索地点');
-    this.goBtn.textContent = L('Go', '前往');
-    this.routeBtn.textContent = L('Route', '导航');
+    this.goBtn.textContent = L('Teleport', '瞬移');
+    this.routeBtn.textContent = L('FSD Go', '自动驾驶');
     this.endBtn.textContent = L('End', '结束');
     this.closeBtn.title = L('Close', '关闭');
     this.locateBtn.title = L('My location', '我的位置');
@@ -284,7 +284,8 @@ export class MapSystem {
     this.goBtn.addEventListener('click', () => this._go());
     this.routeBtn.addEventListener('click', () => this._route());
     this.endBtn.addEventListener('click', () => {
-      this.navigator.clearRoute();
+      if (this.app && typeof this.app.stopFsd === 'function') this.app.stopFsd();
+      else this.navigator.clearRoute();
       this._updateNavLine(performance.now(), true);
       this._requestRender();
     });
@@ -1136,21 +1137,14 @@ export class MapSystem {
     const p = this.pin;
     const ll = this._playerLatLon();
     if (!p || !ll) return;
-    this.goBtn.disabled = true;
-    this.routeBtn.disabled = true;
-    this.cardSub.textContent = L('Finding route…', '正在规划路线…');
-    const r = await this.navigator.routeTo(ll[0], ll[1], p.lat, p.lon, p.title);
-    if (this.pin !== p) return;
-    if (!r) {
-      this.cardSub.textContent = L('Already here', '已在附近');
-      this.goBtn.disabled = false;
-      this.routeBtn.disabled = false;
-      return;
-    }
     this._closeCard();
-    this._fitRoute(r);
+    this.toggleModal(false);
+    if (this.app && typeof this.app.setFsdDestinationLatLon === 'function') {
+      await this.app.setFsdDestinationLatLon(p.lat, p.lon, p.title);
+    } else {
+      await this.navigator.routeTo(ll[0], ll[1], p.lat, p.lon, p.title);
+    }
     this._updateNavLine(performance.now(), true);
-    this._requestRender();
   }
 
   _fitRoute(r) {

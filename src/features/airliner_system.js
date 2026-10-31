@@ -538,22 +538,23 @@ export class AirlinerSystem {
         this.pitch = 0;
         this.roll = 0;
         this.throttle = 0;
-      } else if (!this.hasSpawnedHero || this.dead) {
-        // Spawn on the ground right at the player's position so they can taxi & take off
+      } else if (!this.hasSpawnedHero || this.dead || Math.hypot(this.mesh.position.x - px, this.mesh.position.z - pz) > 65) {
+        // Spawn at the player's position (airborne if switching from mid-air, otherwise on the ground ready for takeoff)
         this.hp = MAX_HP;
         this.dead = false;
         this.cycleLivery(this.liveryIdx);
         const gh = this.app.world.getHeightAt(px, pz);
-        this.mesh.position.set(px, gh, pz);
-        this.grounded = true;
-        this.gearDown = true;
-        this.gearAnim = 1.0;
-        this.speed = 0;
-        this.ias = 0;
+        const startAirborne = (this.app.pos.y - gh) > 25;
+        this.mesh.position.set(px, startAirborne ? Math.max(this.app.pos.y, gh + 160) : gh, pz);
+        this.grounded = !startAirborne;
+        this.gearDown = !startAirborne;
+        this.gearAnim = startAirborne ? 0.0 : 1.0;
+        this.speed = startAirborne ? 115 : 0;
+        this.ias = startAirborne ? 110 : 0;
         this.vertSpeed = 0;
-        this.pitch = 0;
+        this.pitch = startAirborne ? 0.02 : 0;
         this.roll = 0;
-        this.throttle = 0;
+        this.throttle = startAirborne ? 0.72 : 0;
       }
     }
     this.hasSpawnedHero = true;
@@ -574,14 +575,27 @@ export class AirlinerSystem {
     const rightZ = Math.sin(this.app.yaw);
     const fwdX = Math.sin(this.app.yaw);
     const fwdZ = Math.cos(this.app.yaw);
-    // Disembark beside the forward left passenger door (14 m forward, 9 m left of fuselage centerline)
+    // Disembark beside the forward left passenger door (14 m forward, 9.5 m left of fuselage centerline)
     const exitX = pos.x + fwdX * 14 - rightX * 9.5;
     const exitZ = pos.z + fwdZ * 14 - rightZ * 9.5;
-    const exitY = this.app.world.getHeightAt(exitX, exitZ);
+    const groundY = this.app.world.getHeightAt(exitX, exitZ);
+    const isMidAir = !this.grounded && (pos.y - groundY > 10.0);
+    const exitY = isMidAir ? pos.y : groundY;
+
+    if (isMidAir) {
+      this.app._bailingOutMidAir = true;
+      this.app._fallPeakY = exitY;
+      this.app.isGrounded = false;
+      this.app.walkVelY = Math.min(-2.5, this.vertSpeed || 0);
+      this.unmannedGlide = true;
+    } else {
+      this.app._bailingOutMidAir = false;
+      this.app.walkVelY = 0;
+      this.unmannedGlide = false;
+    }
 
     this.app.pos.set(exitX, exitY, exitZ);
-    this.app.walkVelY = 0;
-    // Keep the airliner visibly parked on the apron!
+    // Keep the airliner visibly parked or gliding forward!
     this.mesh.visible = true;
     this.app.setMode("walk");
   }
@@ -618,7 +632,11 @@ export class AirlinerSystem {
       this.heroYaw = this.app.yaw;
     }
     const yaw = this.app.mode === "airliner" ? this.app.yaw : (this.heroYaw ?? this.app.yaw);
-    const euler = new THREE.Euler(-this.pitch, yaw, -this.roll, "YXZ");
+    // In Three.js (+Z nose forward, +X port/left wing, -X starboard/right wing, +Y up):
+    //   rx = -this.pitch -> positive pitch raises the +Z nose (+Y).
+    //   rz = +this.roll  -> negative roll (left turn) dips the +X left wing (-Y) and raises the -X right wing (+Y);
+    //                       positive roll (right turn) dips the -X right wing (-Y) and raises the +X left wing (+Y).
+    const euler = new THREE.Euler(-this.pitch, yaw, this.roll, "YXZ");
     this.mesh.quaternion.setFromEuler(euler);
   }
 
@@ -654,15 +672,48 @@ export class AirlinerSystem {
     const hpRatio = this.hp / this.maxHp;
     const engineFactor = hpRatio < 0.35 ? 0 : (hpRatio < 0.70 ? 0.65 : 1.0);
 
-    // Input controls
-    const throttleUp = k.has("KeyW") || k.has("ArrowUp");
-    const throttleDown = k.has("KeyS") || k.has("ArrowDown");
-    const steerLeft = k.has("KeyA") || k.has("ArrowLeft");
-    const steerRight = k.has("KeyD") || k.has("ArrowRight");
-    const pullUp = k.has("Space") || k.has("KeyQ");
-    const pushNoseDown = k.has("ShiftLeft") || k.has("ShiftRight") || k.has("KeyC");
+    // Input controls (intuitive arcade + flight sim mapping:
+    //   W / ArrowUp / Space / Q = Thrust & Climb UP
+    //   S / ArrowDown / Shift / C = Brake/Reverse on ground, Descend/Pitch DOWN in flight
+    //   A / ArrowLeft = Turn Left & Bank Left
+    //   D / ArrowRight = Turn Right & Bank Right)
+    const rawW = k.has("KeyW") || k.has("ArrowUp");
+    const rawS = k.has("KeyS") || k.has("ArrowDown");
+    let steerLeft = k.has("KeyA") || k.has("ArrowLeft");
+    let steerRight = k.has("KeyD") || k.has("ArrowRight");
+    let throttleUp = rawW;
+    let throttleDown = rawS;
+    let pullUp = k.has("Space") || k.has("KeyQ") || (!this.grounded && rawW) || (this.grounded && this.ias >= 46 && rawW);
+    let pushNoseDown = k.has("ShiftLeft") || k.has("ShiftRight") || k.has("KeyC") || (!this.grounded && rawS);
     const yawLeft = k.has("KeyZ");
     const yawRight = k.has("KeyX");
+
+    // Universal FSD Autopilot for Airliner
+    const fsd = this.app.fsd;
+    const fsdActive = Boolean(fsd && fsd.active && !steerLeft && !steerRight && !rawW && !rawS);
+    let fsdYawErr = 0;
+    let fsdTargetAlt = 320;
+    let fsdDist = Infinity;
+    if (fsdActive) {
+      const dx = fsd.destX - pos.x;
+      const dz = fsd.destZ - pos.z;
+      fsdDist = Math.hypot(dx, dz);
+      const desiredYaw = Math.atan2(dx, dz);
+      fsdYawErr = Math.atan2(Math.sin(desiredYaw - this.app.yaw), Math.cos(desiredYaw - this.app.yaw));
+      const destTerrY = this.app.world.getHeightAt(fsd.destX, fsd.destZ);
+      fsdTargetAlt = Math.max(this.groundY + 180, destTerrY + 180, Math.min(680, 220 + fsdDist * 0.12));
+      if (this.grounded) {
+        throttleUp = true;
+        throttleDown = false;
+        if (this.ias >= 46) pullUp = true;
+      } else {
+        throttleUp = this.speed < 135;
+        throttleDown = false;
+      }
+      if (fsdDist < 110) {
+        this.app._onFsdArrived?.();
+      }
+    }
 
     // 1. ISA Atmosphere at altitude h = max(0, pos.y)
     const alt = Math.max(0, pos.y);
@@ -749,12 +800,13 @@ export class AirlinerSystem {
       this.vertSpeed = 0;
       this.stalling = false;
 
-      // Nosewheel steering on tarmac (effective at taxi speeds, gentler at high takeoff roll speeds)
-      const steerInput = (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
-      const speedSign = this.speed >= -0.05 ? 1 : -1;
-      const steerAuthority = THREE.MathUtils.clamp(Math.abs(this.speed) / 4.5, 0, 1) *
-        THREE.MathUtils.lerp(0.95, 0.28, THREE.MathUtils.clamp(Math.abs(this.speed) / 65, 0, 1));
-      this.app.yaw += (steerInput * steerAuthority + asymYaw * 0.4) * speedSign * dt;
+      // Nosewheel steering on tarmac (A = turn nose left on screen, D = turn nose right on screen)
+      const steerInput = fsdActive
+        ? THREE.MathUtils.clamp(fsdYawErr * 1.8, -1, 1)
+        : (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
+      const steerAuthority = THREE.MathUtils.clamp(Math.abs(this.speed) / 3.5, 0.15, 1) *
+        THREE.MathUtils.lerp(1.05, 0.35, THREE.MathUtils.clamp(Math.abs(this.speed) / 65, 0, 1));
+      this.app.yaw += (steerInput * steerAuthority + asymYaw * 0.4) * dt;
 
       // Animate nose gear steering angle
       if (this.mesh.userData.noseGearPivot) {
@@ -763,9 +815,9 @@ export class AirlinerSystem {
 
       // Rotation on takeoff roll:
       // Below 44 m/s IAS, aerodynamic elevator authority cannot lift the nosewheel.
-      if (this.ias >= 44 && (pullUp || this.ias >= 64)) {
-        const targetPitch = pullUp ? 0.21 : 0.14; // ~8-12 deg rotation attitude
-        this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, Math.min(1, dt * 3.5));
+      if (this.ias >= 44 && (pullUp || this.ias >= 58)) {
+        const targetPitch = pullUp ? 0.21 : 0.16; // ~9-12 deg rotation attitude
+        this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, Math.min(1, dt * 4.0));
       } else {
         this.pitch = THREE.MathUtils.lerp(this.pitch, 0, Math.min(1, dt * 6.0));
       }
@@ -774,8 +826,8 @@ export class AirlinerSystem {
       // Liftoff condition: IAS >= VR_IAS and positive pitch
       if (this.ias >= VR_IAS && this.pitch > 0.065) {
         this.grounded = false;
-        this.vertSpeed = Math.max(4.5, this.speed * Math.sin(this.pitch) * 0.75);
-        pos.y += this.vertSpeed * dt + 0.15;
+        this.vertSpeed = Math.max(5.5, this.speed * Math.sin(this.pitch) * 0.85);
+        pos.y += this.vertSpeed * dt + 0.18;
         this.app._showToast?.("Positive Rate — Liftoff! (G to toggle Gear)", 2200);
       }
     } else {
@@ -791,37 +843,48 @@ export class AirlinerSystem {
         this.gearDown = true;
       }
 
-      // Roll (A/D) and coordinated turn heading rate
-      const rollInput = (steerRight ? 1 : 0) - (steerLeft ? 1 : 0);
+      // Roll (A/D): A = bank left (this.roll < 0), D = bank right (this.roll > 0)
+      const rollInput = fsdActive
+        ? THREE.MathUtils.clamp(-fsdYawErr * 1.4, -0.85, 0.85)
+        : (steerRight ? 1 : 0) - (steerLeft ? 1 : 0);
       const maxBank = 0.62; // ~35 deg bank angle limit (normal law protection)
-      if (rollInput !== 0) {
-        this.roll = THREE.MathUtils.clamp(this.roll + rollInput * 1.15 * dt, -maxBank, maxBank);
+      if (Math.abs(rollInput) > 0.01) {
+        this.roll = THREE.MathUtils.lerp(this.roll, rollInput * maxBank, Math.min(1, dt * 3.8));
       } else {
-        this.roll = THREE.MathUtils.lerp(this.roll, 0, Math.min(1, dt * 2.4));
+        this.roll = THREE.MathUtils.lerp(this.roll, 0, Math.min(1, dt * 3.0));
       }
 
+      const directTurn = fsdActive
+        ? THREE.MathUtils.clamp(fsdYawErr * 1.2, -1, 1)
+        : (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
       const rudderInput = (yawLeft ? 1 : 0) - (yawRight ? 1 : 0);
-      // Coordinated turn rate omega = (g * tan(roll)) / V + rudder
-      const turnRate = -Math.tan(this.roll) * 0.58 + rudderInput * 0.35 + asymYaw;
+      // Coordinated turn rate + direct aileron-yaw coupling so pressing A immediately turns left & D turns right
+      const turnRate = -Math.tan(this.roll) * 0.62 + directTurn * 0.42 + rudderInput * 0.35 + asymYaw;
       this.app.yaw += turnRate * dt;
 
-      // Pitch control & Stall / Service Ceiling protection
+      // Pitch control & Stall / Service Ceiling / Auto-Flare protection
       const pitchInput = (pullUp ? 1 : 0) - (pushNoseDown ? 1 : 0);
       this.stalling = this.ias < VSTALL_IAS;
 
       if (this.stalling) {
         // Stall recovery: aerodynamic lift < weight, nose drops automatically to regain airspeed
-        this.pitch = THREE.MathUtils.lerp(this.pitch, -0.22, Math.min(1, dt * 2.8));
+        this.pitch = THREE.MathUtils.lerp(this.pitch, -0.18, Math.min(1, dt * 2.8));
+      } else if (fsdActive) {
+        const altErr = fsdTargetAlt - pos.y;
+        const fsdPitch = THREE.MathUtils.clamp(altErr * 0.004, -0.18, 0.24 * ceilingFactor);
+        this.pitch = THREE.MathUtils.lerp(this.pitch, fsdPitch, Math.min(1, dt * 2.8));
       } else if (alt >= SERVICE_CEILING - 150 && pitchInput > 0) {
         // Service ceiling (12,500 m FL410): level off smoothly
         this.pitch = THREE.MathUtils.lerp(this.pitch, 0.0, Math.min(1, dt * 2.5));
       } else if (pitchInput !== 0) {
         const maxPitchUp = 0.34 * ceilingFactor; // ~19.5 deg max climb pitch
-        const maxPitchDown = -0.36;
-        this.pitch = THREE.MathUtils.clamp(this.pitch + pitchInput * 0.68 * dt, maxPitchDown, maxPitchUp);
+        // Auto-flare near the ground so descending with S/Down lands smoothly instead of nosediving
+        const maxPitchDown = agl < 40 ? -0.09 : -0.32;
+        const targetPitch = pitchInput > 0 ? maxPitchUp : maxPitchDown;
+        this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, Math.min(1, dt * 2.6));
       } else {
         // Fly-by-wire attitude trim: gently return toward level flight at cruise
-        this.pitch = THREE.MathUtils.lerp(this.pitch, 0.015, Math.min(1, dt * 1.6));
+        this.pitch = THREE.MathUtils.lerp(this.pitch, 0.018, Math.min(1, dt * 2.2));
       }
 
       // Lift vs. Weight vertical velocity equation:
@@ -933,6 +996,20 @@ export class AirlinerSystem {
 
     // 3. Animate Hero Airliner (turbofan blades, jet plumes, gear retraction, strobes, damage smoke, contrails)
     if (this.mesh.visible) {
+      if (this.app.mode !== "airliner" && !this.grounded && this.unmannedGlide && !this.dead) {
+        const yaw = this.heroYaw ?? this.app.yaw;
+        const glideSpeed = Math.max(45.0, this.speed || 75.0);
+        this.mesh.position.x += Math.sin(yaw) * glideSpeed * dt;
+        this.mesh.position.z += Math.cos(yaw) * glideSpeed * dt;
+        const gY = this.app.world.getHeightAt(this.mesh.position.x, this.mesh.position.z);
+        this.mesh.position.y = Math.max(gY, this.mesh.position.y - 3.5 * dt);
+        if (this.mesh.position.y <= gY + 0.2) {
+          this.mesh.position.y = gY;
+          this.grounded = true;
+          this.unmannedGlide = false;
+        }
+        this._syncOrientation();
+      }
       const ud = this.mesh.userData;
       // Landing gear retraction / extension
       const targetGear = (this.grounded || this.gearDown) ? 1.0 : 0.0;

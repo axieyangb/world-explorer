@@ -181,6 +181,31 @@ function hallOfPrayer(k) {
   y = bracketRing(k, 7.5, y + 5.8, 1.0);
   // top roof
   cone(k, y, 10.9, 0.9, 6.6, 7.5, seg, 0.9);
+  if (hi) {
+    // Imperial blue-and-gold vertical plaque (祈年殿) on the upper south eave
+    k.glow(true).color(C.GOLD).box(0, y - 2.2, -7.65, 1.8, 3.1, 0.18);
+    k.color(BLUE_DK).box(0, y - 2.1, -7.72, 1.5, 2.8, 0.14);
+    k.color(C.GOLD);
+    for (const py of [-0.6, 0.2, 1.0]) k.box(0, y - 1.9 + py, -7.8, 0.6, 0.35, 0.08);
+    k.glow(false);
+    // Ceremonial Bronze Incense Burner (铜鼎炉) & twin carved marble鹤灯/燎炉 on the top altar south overlook
+    k.color(C.MARBLE_DK).box(0, Y0, -24.5, 2.6, 0.6, 2.6);
+    k.color(0x8c7038).cyl(0, Y0 + 0.6, -24.5, 0.95, 0.75, 1.4, 10);
+    k.sphere(0, Y0 + 2.2, -24.5, 0.85, 8, 5);
+    for (const sx of [-8.5, 8.5]) {
+      k.color(C.MARBLE).box(sx, Y0, -25.5, 1.8, 1.2, 1.8);
+      k.color(0x8c7038).cyl(sx, Y0 + 1.2, -25.5, 0.45, 0.38, 1.6, 8);
+    }
+    // 8 radial Chiwei /仙人走兽 ridge spines along all 3 blue-tile roof cones
+    for (let r = 0; r < 8; r++) {
+      const ra = (r / 8) * TAU;
+      const c = Math.cos(ra), s = Math.sin(ra);
+      k.color(BLUE_RIB);
+      k.strut([c * 16.0, yb + 8.3, s * 16.0], [c * 10.2, yb + 11.2, s * 10.2], 0.28);
+      k.strut([c * 13.4, yb + 15.6, s * 13.4], [c * 7.9, yb + 18.3, s * 7.9], 0.26);
+      k.strut([c * 10.9, y, s * 10.9], [c * 1.0, y + 6.6, s * 1.0], 0.25);
+    }
+  }
   const ty = y + 6.6;
   k.color(BLUE_DK).cyl(0, ty - 0.2, 0, 1.0, 0.6, 0.5, hi ? 16 : 6);
   // gilded finial (鎏金宝顶)
@@ -199,6 +224,14 @@ function qinianGate(k) {
   });
   // courtyard south wall flanking the gate (OSM wall blocks are suppressed)
   for (const sx of [-1, 1]) wallRun(k, [[sx * 18.8, z], [sx * 59, z]], 4.6, 1.3, { tile: C.GREEN_TILE, tileDk: C.GREEN_TILE_DK, cheap: !k.hi });
+  if (k.hi) {
+    // Imperial Sacred Way (神道 / 丹陛桥) triple-lane white marble pavement connecting Qinian Gate to the South Altar stairway
+    k.color(C.MARBLE).box(0, 0, (z + 9.5 - 49) / 2, 9.6, 0.25, (-49) - (z + 9.5));
+    k.color(C.MARBLE_DK).box(0, 0.05, (z + 9.5 - 49) / 2, 3.2, 0.26, (-49) - (z + 9.5));
+    // Green-glazed Ritual Incinerator Furnace (燔柴炉) in the SE courtyard
+    k.color(C.GREEN_TILE).box(-28, 0, z + 22, 4.6, 2.8, 4.6);
+    k.color(C.GREEN_TILE_DK).box(-28, 2.8, z + 22, 3.6, 0.9, 3.6);
+  }
 }
 
 export function build(k) {

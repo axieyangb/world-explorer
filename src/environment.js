@@ -345,20 +345,38 @@ export function buildGlobalHorizonTerrain(terrainMat) {
   const col = [];
   const uv = [];
 
+  const defaultUrbanSampler = (wx, wz) => {
+    const d = Math.hypot(wx, wz);
+    const radial = 1.0 - THREE.MathUtils.smoothstep(d, 3500.0, 16500.0);
+    const built = Math.max(0, Math.min(0.85, radial * 0.82));
+    const flav = 0.22;
+    const uCol = [0.46, 0.45, 0.42];
+    return [
+      GROUND_MEADOW[0] + (uCol[0] - GROUND_MEADOW[0]) * built,
+      GROUND_MEADOW[1] + (uCol[1] - GROUND_MEADOW[1]) * built,
+      GROUND_MEADOW[2] + (uCol[2] - GROUND_MEADOW[2]) * built,
+      built,
+      flav,
+    ];
+  };
+
   for (let iz = 0; iz <= segs; iz++) {
     const wz = -half + iz * step;
     for (let ix = 0; ix <= segs; ix++) {
       const wx = -half + ix * step;
-      const h = getBeijingTerrainElevation(wx, wz) - 0.45;
+      const edgeDist = Math.max(Math.abs(wx), Math.abs(wz));
+      const edgeT = THREE.MathUtils.smoothstep(edgeDist, half - 3500.0, half);
+      const rawH = getBeijingTerrainElevation(wx, wz) - 0.38;
+      const h = THREE.MathUtils.lerp(rawH, -0.6, edgeT);
       const hL = getBeijingTerrainElevation(Math.max(-half, wx - 40.0), wz);
       const hR = getBeijingTerrainElevation(Math.min(half, wx + 40.0), wz);
       const hD = getBeijingTerrainElevation(wx, Math.max(-half, wz - 40.0));
       const hU = getBeijingTerrainElevation(wx, Math.min(half, wz + 40.0));
       const slope = Math.hypot(hR - hL, hU - hD) / 80.0;
       pos.push(wx, h, wz);
-      const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.35, slope);
+      const rgb = sampleTerrainBiomeColor(wx, wz, rawH + 0.35, slope, defaultUrbanSampler);
       col.push(rgb[0], rgb[1], rgb[2]);
-      uv.push(0, 0); // [ground] (built, flavour) filled in by applyHorizonGround once the overview is in
+      uv.push(rgb[3] || 0, rgb[4] || 0);
     }
   }
 
@@ -482,8 +500,85 @@ export async function applyHorizonGroundAsync(mesh, overview, worldOrigin, horiz
 /**
  * Procedural atmospheric scattering sky dome with solar disk & horizon haze.
  */
+export function createHorizonSkirtMesh(skyUniforms) {
+  const skirtGeo = new THREE.RingGeometry(14000, 120000, 96, 12);
+  skirtGeo.rotateX(-Math.PI * 0.5);
+  const uniforms = {
+    uHorizonColor: skyUniforms?.uHorizonColor || { value: new THREE.Color(0xbfd8ec) },
+    uZenithColor: skyUniforms?.uZenithColor || { value: new THREE.Color(0x2b6cb0) },
+    uSunIntensity: skyUniforms?.uSunIntensity || { value: 1.0 },
+    uCamPos: { value: new THREE.Vector3() },
+  };
+  const skirtMat = new THREE.ShaderMaterial({
+    uniforms,
+    depthWrite: true,
+    vertexShader: `
+      varying vec3 vWorldPos;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uHorizonColor;
+      uniform vec3 uZenithColor;
+      uniform float uSunIntensity;
+      uniform vec3 uCamPos;
+      varying vec3 vWorldPos;
+
+      float hHash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      float hNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(hHash(i), hHash(i + vec2(1.0, 0.0)), f.x),
+          mix(hHash(i + vec2(0.0, 1.0)), hHash(i + vec2(1.0, 1.0)), f.x),
+          f.y
+        );
+      }
+
+      void main() {
+        vec2 xz = vWorldPos.xz;
+        float distFromOrigin = max(abs(xz.x), abs(xz.y));
+        float radialDist = length(xz - uCamPos.xz);
+        float n1 = hNoise(xz * 0.00018);
+        float n2 = hNoise(xz * 0.00075 + 4.2);
+        float n3 = hNoise(xz * 0.0032 + 9.7);
+        float macro = n1 * 0.55 + n2 * 0.30 + n3 * 0.15;
+
+        float lightLvl = clamp(0.18 + uSunIntensity * 0.82, 0.12, 1.05);
+        vec3 meadow = vec3(0.33, 0.40, 0.25) * lightLvl;
+        vec3 earth = vec3(0.43, 0.42, 0.38) * lightLvl;
+        vec3 forest = vec3(0.24, 0.32, 0.19) * lightLvl;
+        vec3 baseLand = mix(meadow, earth, smoothstep(0.38, 0.68, macro));
+        baseLand = mix(baseLand, forest, smoothstep(0.62, 0.88, n2));
+
+        // Subtle arterial/field grid texture at mid-range
+        vec2 gridUv = abs(fract(xz / 1200.0) - 0.5);
+        float gridLine = 1.0 - smoothstep(0.0, 0.035, min(gridUv.x, gridUv.y));
+        baseLand = mix(baseLand, earth * 0.92, gridLine * 0.18 * (1.0 - smoothstep(18000.0, 55000.0, radialDist)));
+
+        // Aerial perspective atmospheric scatter toward horizon
+        float hazeT = smoothstep(8000.0, 78000.0, radialDist);
+        float outerRimT = smoothstep(85000.0, 118000.0, radialDist);
+        vec3 col = mix(baseLand, uHorizonColor, clamp(hazeT * 0.88 + outerRimT * 0.12, 0.0, 1.0));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+  const mesh = new THREE.Mesh(skirtGeo, skirtMat);
+  mesh.position.y = -0.65;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -5;
+  return mesh;
+}
+
 export function createAtmosphericSkyDome() {
-  const skyGeo = new THREE.SphereGeometry(16800, 36, 20);
+  const skyGeo = new THREE.SphereGeometry(128000, 40, 24);
   const uniforms = {
     uSunDir: { value: new THREE.Vector3(0.45, 0.78, 0.42).normalize() },
     uZenithColor: { value: new THREE.Color(0x2b6cb0) },

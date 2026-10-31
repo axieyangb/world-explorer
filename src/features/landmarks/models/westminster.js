@@ -156,11 +156,17 @@ function elizabeth(k, x, z) {
   // iron spire: steep pyramid, Ayrton lantern, upper spire, finial
   k.glow(false).color(SPIRE).taper(x, 72, z, 12.4, 12.4, 6.2, 6.2, 10);
   if (hi) {
-    k.glow(true).color(GOLD);
+    // 13.5-tonne Great Bell "Big Ben" suspended inside the belfry arch void + glowing Ayrton Light lantern at y = 82.5 m
+    k.color(0x7c683c).lathe(x, 64.5, z, [[1.35, 0], [1.05, 0.6], [0.85, 1.6], [0.45, 2.2]], 10);
+    k.glow(true).color(0xffe8a8).cyl(x, 82.4, z, 2.2, 2.2, 3.4, 8);
+    k.color(GOLD);
     for (const a of FACES4) {
       k.push().translate(x, 0, z).rotateY(a);
       k.box(0, 74, -5.4, 1.4, 3, 1.2);
       k.pyramid(0, 77, -5.4, 1.4, 1.2, 2.2);
+      // Gilded spandrel shields & Latin inscription band ("DOMINE SALVAM FAC REGINAM NOSTRAM VICTORIAM PRIMAM") below dial
+      k.box(0, 52.8, -6.82, 8.8, 0.55, 0.14);
+      for (const sx of [-3.6, 3.6]) for (const sy of [54.2, 60.8]) k.cyl(sx, sy, -6.82, 0.55, 0.55, 0.15, 6);
       k.pop();
     }
   }
@@ -251,7 +257,15 @@ function hall(k) {
   k.glow(true).color(STONE_DK);
   for (let i = 0; i <= 12; i++) {
     const zz = cz - d / 2 + 4 + i * ((d - 8) / 12);
-    for (const sx of [-1, 1]) k.box(cx + sx * (w / 2 + 0.6), 0, zz, 1.2, hw + 1, 1.4);
+    for (const sx of [-1, 1]) {
+      k.box(cx + sx * (w / 2 + 0.6), 0, zz, 1.2, hw + 1, 1.4);
+      // External flying buttresses braced against Westminster Hall's medieval walls (every other bay on west side)
+      if (sx < 0 && i % 2 === 1 && i < 12) {
+        k.box(cx - w / 2 - 3.8, 0, zz, 1.3, 11.5, 1.5);
+        k.pinnacle(cx - w / 2 - 3.8, 11.5, zz, 1.1, 3.2);
+        k.strut([cx - w / 2 - 3.4, 9.2, zz], [cx - w / 2 - 0.2, 13.8, zz], 0.55);
+      }
+    }
   }
 }
 
@@ -277,4 +291,33 @@ export function build(k) {
   hall(k);
   elizabeth(k, 0, -128);
   victoria(k, 0, 128);
+  if (k.hi) {
+    // Thames Embankment Terrace (House of Commons & House of Lords river terrace, x = 42..50, z = -100..104)
+    k.glow(false).color(0x8e887c).box(46, -2, 2, 8.5, 3.2, 204);
+    k.color(STONE).box(50.1, 1.2, 2, 0.45, 1.1, 204);
+    // Ornate Victorian cast-iron dolphin lamp standards with glowing globes along the River Terrace wall
+    for (let lz = -96; lz <= 100; lz += 14) {
+      k.color(0x283230).cyl(50.1, 2.3, lz, 0.14, 0.1, 2.4, 6);
+      k.glow(true).color(0xffe8b0).sphere(50.1, 4.85, lz, 0.28, 6, 4);
+      k.glow(false);
+    }
+    // White-and-green canvas House of Commons / Lords terrace marquees on the riverfront
+    for (const mz of [-68, 72]) {
+      k.color(0xf2efe6).box(45.5, 1.2, mz, 5.2, 2.8, 18);
+      k.color(0x24583c).taper(45.5, 4.0, mz, 5.6, 18.4, 0.4, 16, 1.6);
+    }
+    // St Stephen's Entrance twin polygonal Gothic turrets & porch (west facade at x = -15, z = -2)
+    for (const sz of [-5.5, 1.5]) {
+      k.glow(true).color(STONE).cyl(-15.2, 0, sz, 1.35, 1.35, 26, 8);
+      k.color(GOLD).pinnacle(-15.2, 26, sz, 1.2, 5.5);
+    }
+    // Famous Westminster bronze statues on stone plinths:
+    // 1. Oliver Cromwell statue outside Westminster Hall (x = -39, z = -18)
+    k.glow(false).color(STONE_DK).box(-39, 0, -18, 2.2, 3.0, 2.2);
+    k.color(0x3b4a42).cyl(-39, 3.0, -18, 0.38, 0.3, 2.4, 6).sphere(-39, 5.6, -18, 0.22, 6, 4);
+    // 2. Richard Coeur de Lion (Lionheart) equestrian statue in Old Palace Yard (x = -19, z = 44)
+    k.color(STONE_DK).box(-19, 0, 44, 2.0, 2.8, 3.8);
+    k.color(0x3b4a42).box(-19, 2.8, 44, 0.85, 1.6, 2.4).cyl(-19, 4.2, 43.8, 0.35, 0.28, 1.5, 6);
+    k.strut([-19, 5.2, 43.6], [-19, 6.6, 43.4], 0.08); // raised sword
+  }
 }

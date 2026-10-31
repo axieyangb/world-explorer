@@ -1,22 +1,24 @@
 // feature/beijing-landmarks: National Aquatics Center "Water Cube" (国家游泳中心), Beijing — 1:1.
 // 177 x 177 x 31 m box clad in blue ETFE cushions. The Weaire–Phelan foam structure shows on every
 // face as irregular polygon bubbles: a Voronoi pattern of jittered sites, each cell an inflated
-// pillow inside a pale steel frame. The cushions glow blue at night.
+// pillow inside a pale steel frame, with recessed glazed entrance portals on all 4 sides, surrounding
+// moat reflection pools, and the glowing Olympic Rings monument on the west plaza.
 import { Kit } from "../kit.js";
 
 export const lodDist = 1800;
 export const glowStrength = 3.0;
 
 const W = 177, H = 31, HW = W / 2;
-const FRAME = 0xdde7ee, EDGE = 0xc9d6e0;
+const FRAME = 0xdde7ee, EDGE = 0xc9d6e0, GLASS_PORTAL = 0x1b344d, MOAT = 0x266894;
 const BLUES = [0x4d9fdc, 0x5aa9e2, 0x6bb6e8, 0x4592d2, 0x79c0ec];
 
 export const colliders = [{ x: 0, z: 0, hw: HW, hd: HW, h: H }];
 
+// deterministic PRNG (mulberry32)
 function rng(seed) {
-  let a = seed >>> 0;
+  let a = seed | 0;
   return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -130,6 +132,24 @@ export function build(k) {
   for (const [x, z] of [[-HW, -HW], [HW, -HW], [HW, HW], [-HW, HW]]) k.box(x, 0, z, e, top, e);
   k.box(0, H - 0.4, -HW, W + e, 1.2, e).box(0, H - 0.4, HW, W + e, 1.2, e);
   k.box(-HW, H - 0.4, 0, e, 1.2, W + e).box(HW, H - 0.4, 0, e, 1.2, W + e);
-  // low entrance plinth band
-  k.color(0x8d99a3).box(0, 0, 0, W + 1.2, 0.6, W + 1.2);
+  // low entrance plinth band & perimeter moat reflection pools
+  k.color(0x8d99a3).box(0, 0, 0, W + 3.2, 0.7, W + 3.2);
+  // 4 Recessed Glazed Entrance Portals with Steel Canopies & Entry Bridges at the mid-sides
+  for (let f = 0; f < 4; f++) {
+    k.push().rotateY((f * Math.PI) / 2);
+    k.color(FRAME).box(0, 0.7, -HW - 1.2, 32, 8.8, 1.8);
+    k.color(GLASS_PORTAL).box(0, 0.7, -HW - 1.5, 29.5, 7.6, 1.4);
+    // Warm interior lobby glow & glass door mullions
+    k.glow(true).color(0x9ce2ff).box(0, 0.9, -HW - 1.65, 28.0, 4.2, 0.3).glow(false);
+    k.color(FRAME);
+    for (let x = -12; x <= 12; x += 4) k.box(x, 0.7, -HW - 1.8, 0.25, 7.6, 0.35);
+    // Entrance causeway bridge across the perimeter moat
+    k.color(0xc8ced4).box(0, 0, -HW - 5.5, 26, 0.85, 8.5);
+    // Perimeter reflecting moat basins flanking the entrance causeway
+    for (const sx of [-52, 52]) {
+      k.color(0x8d99a3).box(sx, 0, -HW - 5.5, 68, 0.65, 7.5);
+      k.color(MOAT).box(sx, 0.1, -HW - 5.5, 66.5, 0.62, 6.4);
+    }
+    k.pop();
+  }
 }

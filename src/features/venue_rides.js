@@ -203,18 +203,23 @@ function wheelGeom() {
     for (const sz of [-0.052, 0.052]) {
       g.rod([px, py, sz * 1.3], [gx, gy + 0.038, sz], 0.0045, STEEL, 5);
     }
-    // Rounded gondola roof dome (white/gold)
+    // Rounded gondola roof dome (white/gold) + rooftop HVAC/beacon pod & gold crown trim
     g.cyl(0.032, 0.048, 0.018, 12, gx, gy + 0.034, 0, WHITE, 0, 0, 0, 1, 1, 1.25);
-    // Panoramic dark-glass observation cabin + 6 window mullions
+    g.cyl(0.016, 0.020, 0.008, 8, gx, gy + 0.046, 0, GOLD, 0, 0, 0, 1, 1, 1.15);
+    g.torus(0.047, 0.0035, 5, 12, gx, gy + 0.025, 0, GOLD, Math.PI / 2, 0, 0);
+    // Panoramic dark-glass observation cabin + 8 fine window mullions & entry door frame
     g.cyl(0.046, 0.046, 0.038, 12, gx, gy + 0.006, 0, GLASS, 0, 0, 0, 1, 1, 1.25);
-    for (let m = 0; m < 6; m++) {
-      const ma = (m / 6) * Math.PI * 2;
-      const mx = gx + Math.cos(ma) * 0.046, mz = Math.sin(ma) * 0.057;
-      g.rod([mx, gy - 0.013, mz], [mx, gy + 0.025, mz], 0.003, WHITE, 4);
+    for (let m = 0; m < 8; m++) {
+      const ma = (m / 8) * Math.PI * 2;
+      const mx = gx + Math.cos(ma) * 0.0465, mz = Math.sin(ma) * 0.058;
+      g.rod([mx, gy - 0.013, mz], [mx, gy + 0.025, mz], 0.0028, m % 4 === 0 ? GOLD : WHITE, 4);
     }
-    // Coloured lower fiberglass tub & rounded base
+    // Interior twin passenger bench seats visible silhouette & waist rail
+    g.box(gx, gy - 0.006, 0, 0.028, 0.006, 0.040, CREAM);
+    // Coloured lower fiberglass tub, gold waist bumper & undercarriage damper skid
     g.cyl(0.047, 0.036, 0.030, 12, gx, gy - 0.028, 0, col, 0, 0, 0, 1, 1, 1.25);
-    g.cyl(0.048, 0.048, 0.007, 12, gx, gy - 0.013, 0, GOLD, 0, 0, 0, 1, 1, 1.25);
+    g.cyl(0.0485, 0.0485, 0.007, 12, gx, gy - 0.013, 0, GOLD, 0, 0, 0, 1, 1, 1.25);
+    g.box(gx, gy - 0.045, 0, 0.022, 0.004, 0.036, DARK);
   }
   return g.build();
 }
@@ -476,6 +481,112 @@ function carGeom() {
   return g.build();
 }
 
+/**
+ * Stationary Ferris Wheel boarding platform, safety queue railings, boarding stairs, and ticket booth.
+ * Built in unit wheel coordinates (scaled by a.r, where axle is at y=0 and ground is around y=-1.14).
+ */
+function wheelStationGeom() {
+  const g = new G();
+  const yBase = -1.14;
+  // Raised boarding deck platform under the lowest gondola position
+  g.box(0, yBase + 0.035, 0, 0.34, 0.035, 0.20, [0.76, 0.62, 0.44]);
+  g.box(0, yBase + 0.072, 0, 0.32, 0.006, 0.18, [0.85, 0.73, 0.54]);
+  // Entry and exit stair steps on left (-x) and right (+x) ends of platform
+  for (const sx of [-1, 1]) {
+    for (let s = 0; s < 3; s++) {
+      const stepX = sx * (0.355 + s * 0.032);
+      const stepH = (3 - s) * 0.011;
+      g.box(stepX, yBase + stepH, 0, 0.018, stepH, 0.12, [0.72, 0.58, 0.40]);
+    }
+  }
+  // Perimeter safety queue railings along front and back edges of boarding deck
+  for (const sz of [-0.175, 0.175]) {
+    for (let i = -4; i <= 4; i++) {
+      const px = i * 0.076;
+      g.cyl(0.005, 0.005, 0.065, 6, px, yBase + 0.105, sz, STEEL);
+      g.sphere(0.008, 6, 4, px, yBase + 0.140, sz, GOLD);
+    }
+    g.rod([-0.304, yBase + 0.132, sz], [0.304, yBase + 0.132, sz], 0.0045, GOLD, 5);
+    g.rod([-0.304, yBase + 0.102, sz], [0.304, yBase + 0.102, sz], 0.0035, WHITE, 5);
+  }
+  // Ornate vintage ticket booth kiosk beside the boarding queue
+  const bx = 0.48, bz = 0.22;
+  g.box(bx, yBase + 0.012, bz, 0.065, 0.012, 0.065, DARK);
+  g.box(bx, yBase + 0.055, bz, 0.052, 0.038, 0.052, CREAM);
+  // Ticket window glazing & brass counter shelf
+  g.box(bx, yBase + 0.062, bz, 0.055, 0.018, 0.036, GLASS);
+  g.box(bx - 0.056, yBase + 0.044, bz, 0.008, 0.004, 0.042, GOLD);
+  // Scalloped red/gold pitched kiosk roof & finial
+  g.cyl(0.006, 0.082, 0.042, 8, bx, yBase + 0.114, bz, COLS[0]);
+  g.torus(0.076, 0.005, 5, 12, bx, yBase + 0.094, bz, GOLD, Math.PI / 2, 0, 0);
+  g.sphere(0.012, 6, 5, bx, yBase + 0.140, bz, GOLD);
+  return g.build();
+}
+
+/**
+ * Stationary perimeter queue fence, entry gate arch, and ticket kiosk for circular flat rides
+ * (carousel, swing, spinner — unit radius 1, scaled by a.r).
+ */
+function flatStationGeom() {
+  const g = new G();
+  const rFence = 1.14;
+  const N = 24;
+  // Circular safety queue fence with entry opening at angle 0..1
+  for (let i = 1; i < N; i++) {
+    const a0 = (i / N) * Math.PI * 2;
+    const a1 = ((i + 1) / N) * Math.PI * 2;
+    const x0 = Math.cos(a0) * rFence, z0 = Math.sin(a0) * rFence;
+    const x1 = Math.cos(a1) * rFence, z1 = Math.sin(a1) * rFence;
+    g.cyl(0.010, 0.012, 0.11, 6, x0, 0.055, z0, STEEL);
+    g.sphere(0.015, 6, 4, x0, 0.115, z0, GOLD);
+    if (i < N - 1) {
+      g.rod([x0, 0.10, z0], [x1, 0.10, z1], 0.007, GOLD, 5);
+      g.rod([x0, 0.055, z0], [x1, 0.055, z1], 0.005, WHITE, 5);
+    }
+  }
+  // Ticket booth kiosk outside the entry gate
+  const bx = 1.32, bz = 0.22;
+  g.box(bx, 0.018, bz, 0.10, 0.018, 0.10, DARK);
+  g.box(bx, 0.095, bz, 0.082, 0.065, 0.082, CREAM);
+  g.box(bx, 0.108, bz, 0.086, 0.028, 0.055, GLASS);
+  g.box(bx - 0.088, 0.078, bz, 0.012, 0.006, 0.062, GOLD);
+  g.cyl(0.010, 0.125, 0.065, 8, bx, 0.192, bz, COLS[1]);
+  g.torus(0.115, 0.008, 5, 12, bx, 0.160, bz, GOLD, Math.PI / 2, 0, 0);
+  g.sphere(0.018, 6, 5, bx, 0.232, bz, GOLD);
+  return g.build();
+}
+
+/**
+ * Stationary boarding deck, safety queue railings, and ticket booth at the base of a Drop Tower (in meters).
+ */
+function towerStationGeom() {
+  const g = new G();
+  // Octagonal loading platform at ground level (y0 is 4m above ground, so ground is at y = -4.0)
+  const yG = -4.0;
+  g.cyl(4.8, 5.1, 0.45, 8, 0, yG + 0.225, 0, [0.74, 0.76, 0.80]);
+  g.cyl(4.5, 4.5, 0.08, 8, 0, yG + 0.47, 0, [0.24, 0.26, 0.30]);
+  const rRail = 4.55;
+  for (let i = 1; i < 16; i++) {
+    const a0 = (i / 16) * Math.PI * 2;
+    const a1 = ((i + 1) / 16) * Math.PI * 2;
+    const x0 = Math.cos(a0) * rRail, z0 = Math.sin(a0) * rRail;
+    const x1 = Math.cos(a1) * rRail, z1 = Math.sin(a1) * rRail;
+    g.cyl(0.045, 0.045, 0.95, 6, x0, yG + 0.92, z0, STEEL);
+    if (i < 15) {
+      g.rod([x0, yG + 1.35, z0], [x1, yG + 1.35, z1], 0.035, GOLD, 5);
+      g.rod([x0, yG + 0.95, z0], [x1, yG + 0.95, z1], 0.028, WHITE, 5);
+    }
+  }
+  // Ticket & control booth at platform entrance
+  const bx = 5.8, bz = 1.6;
+  g.box(bx, yG + 0.15, bz, 0.95, 0.15, 0.95, DARK);
+  g.box(bx, yG + 1.15, bz, 0.82, 0.85, 0.82, CREAM);
+  g.box(bx, yG + 1.30, bz, 0.86, 0.36, 0.56, GLASS);
+  g.cyl(0.08, 1.25, 0.65, 8, bx, yG + 2.32, bz, COLS[0]);
+  g.sphere(0.16, 6, 5, bx, yG + 2.72, bz, GOLD);
+  return g.build();
+}
+
 export class VenueRides {
   constructor(scene) {
     this.root = new THREE.Group();
@@ -495,10 +606,13 @@ export class VenueRides {
     if (!this.geo) {
       this.geo = {
         wheel: wheelGeom(),
+        wheelStation: wheelStationGeom(),
         carousel: carouselGeom(),
         swing: swingGeom(),
         spinner: spinnerGeom(),
+        flatStation: flatStationGeom(),
         tower: towerRingGeom(),
+        towerStation: towerStationGeom(),
         car: carGeom(),
       };
     }
@@ -519,6 +633,9 @@ export class VenueRides {
         m.scale.setScalar(a.r);
         m.castShadow = true;
         pivot.add(m);
+        const st = new THREE.Mesh(G0.wheelStation, this.mat);
+        st.scale.setScalar(a.r);
+        pivot.add(st);
         group.add(pivot);
         items.push({ t: "wheel", m, w: 0.06 + (a.r < 15 ? 0.04 : 0) });
         sx += a.x; sz += a.z;
@@ -528,12 +645,19 @@ export class VenueRides {
         m.scale.setScalar(a.r);
         if (a.t === "swing") m.scale.set(a.r, 16, a.r);
         group.add(m);
+        const st = new THREE.Mesh(G0.flatStation, this.mat);
+        st.position.set(a.x, a.y, a.z);
+        st.scale.setScalar(a.r);
+        group.add(st);
         items.push({ t: a.t, m, w: a.t === "carousel" ? 0.45 : a.t === "swing" ? 1.1 : 1.6, ph: (a.x * 13.1 + a.z) % 6 });
         sx += a.x; sz += a.z;
       } else if (a.t === "tower") {
         const m = new THREE.Mesh(G0.tower, this.mat);
         m.position.set(a.x, a.y0, a.z);
         group.add(m);
+        const st = new THREE.Mesh(G0.towerStation, this.mat);
+        st.position.set(a.x, a.y0, a.z);
+        group.add(st);
         items.push({ t: "tower", m, y0: a.y0, y1: a.y1, ph: (a.x * 7.3 + a.z * 3.1) % 14 });
         sx += a.x; sz += a.z;
       } else if (a.t === "coaster") {

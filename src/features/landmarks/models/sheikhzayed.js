@@ -63,8 +63,14 @@ function arcade(k, ax, az, bx, bz, nx, nz, domes) {
     const t = i / bays;
     const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
     if (hi) {
-      k.color(MARBLE).cyl(px, 0, pz, 0.6, 0.6, AH - 4.2, 6);
+      k.color(MARBLE_DK).cyl(px, 0, pz, 0.78, 0.72, 0.55, 8); // octagonal marble pedestal base
+      k.color(MARBLE).cyl(px, 0.55, pz, 0.6, 0.6, AH - 4.75, 6);
+      // 24-karat gold date-palm frond capital (iconic gilded crown at column top)
       k.color(GOLD).cyl(px, AH - 4.2, pz, 0.62, 0.95, 0.9, 6);
+      for (let f = 0; f < 6; f++) {
+        const fa = (f / 6) * Math.PI * 2;
+        k.strut([px + Math.cos(fa) * 0.45, AH - 4.0, pz + Math.sin(fa) * 0.45], [px + Math.cos(fa) * 1.15, AH - 3.2, pz + Math.sin(fa) * 1.15], 0.14);
+      }
     } else if (i % 3 === 0) k.color(MARBLE).box(px, 0, pz, 1.4, AH - 1.6, 1.4);
     if (domes && i < bays && (hi || i % 2 === 0)) {
       const dx = px + (bx - ax) / bays / 2 - nx * W / 2, dz = pz + (bz - az) / bays / 2 - nz * W / 2;
@@ -113,6 +119,19 @@ export function build(k) {
   const hi = k.hi;
   // podium + courtyard floor with floral inlay
   k.color(MARBLE_DK).box(0, 0, 0, HW * 2 + 4, 1.0, ZB - ZF + 4);
+  if (hi) {
+    // 10 dark-blue mosaic Reflective Pools flanking the North, South, and East outer arcades
+    for (const sx of [-1, 1]) {
+      // Long lateral reflecting pools along North (+X) and South (-X) flanks
+      k.color(MARBLE).box(sx * (HW + 10), 0, -4, 15, 0.85, 216);
+      k.glow(true).color(0x1f5b82).box(sx * (HW + 10), 0.35, -4, 13, 0.45, 212);
+      k.glow(false);
+      // East entrance flanking reflecting pools
+      k.color(MARBLE).box(sx * 52, 0, ZF - 11, 56, 0.85, 16);
+      k.glow(true).color(0x1f5b82).box(sx * 52, 0.35, ZF - 11, 53, 0.45, 13.5);
+      k.glow(false);
+    }
+  }
   k.color(FLOOR).box(0, 1.0, (CZF + CZB) / 2, CXW * 2, 0.12, CZB - CZF);
   if (hi) {
     for (let i = -3; i <= 3; i++) {
@@ -147,6 +166,28 @@ export function build(k) {
   dome(k, 0, 77, 23, 18.6, 12, hi ? 36 : 14);
   dome(k, -46, 73, 23, 12.6, 6, hi ? 24 : 10);
   dome(k, 46, 73, 23, 12.6, 6, hi ? 24 : 10);
+  if (hi) {
+    // Arched stained-glass clerestory windows around the main dome and flanking dome drums
+    k.glow(true).color(0x88b0d8);
+    for (let w = 0; w < 24; w++) {
+      const a = (w / 24) * Math.PI * 2;
+      k.push().translate(Math.cos(a) * 19.3, 25.5, 77 + Math.sin(a) * 19.3).rotateY(-a);
+      k.box(0, 0, 0, 0.2, 6.5, 1.8);
+      k.pop();
+    }
+    for (const sx of [-46, 46]) {
+      for (let w = 0; w < 16; w++) {
+        const a = (w / 16) * Math.PI * 2;
+        k.push().translate(sx + Math.cos(a) * 13.1, 24.2, 73 + Math.sin(a) * 13.1).rotateY(-a);
+        k.box(0, 0, 0, 0.18, 3.6, 1.4);
+        k.pop();
+      }
+    }
+    k.glow(false);
+    // Qibla Mihrab golden apse niche protruding from the west exterior wall (+Z = 117)
+    k.color(MARBLE).cyl(0, 0, ZB - 3.5, 6.5, 6.5, 18, 12);
+    dome(k, 0, ZB - 3.5, 18, 4.8, 1.8, 12);
+  }
   // rows of medium domes over the hall wings and the back
   for (const sx of [-1, 1]) {
     for (const [x, z] of [[24, 48], [66, 48], [24, 104], [66, 104], [66, 76]]) dome(k, sx * x, z, 23, 6.2, 2.5, hi ? 14 : 7);

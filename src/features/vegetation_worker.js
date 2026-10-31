@@ -305,6 +305,72 @@ function pushObbBox3D(buf, obb, u0, v0, u1, v1, y0, y1, rgb, pat, kind) {
   pushWall(x01, z01, x00, z00);
 }
 
+function pushSmoothTri(buf, ax, ay, az, bx, by, bz, cx, cy, cz, nax, nay, naz, nbx, nby, nbz, ncx, ncy, ncz, rgb, pat, kind) {
+  buf.pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+  buf.nrm.push(nax, nay, naz, nbx, nby, nbz, ncx, ncy, ncz);
+  buf.col.push(rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2]);
+  buf.uv.push(pat, kind, pat, kind, pat, kind);
+}
+
+/** Pushes a smooth-normal 3D cylinder / frustum / cone in OBB `(u, v)` coordinates from `y0` to `y1`. */
+function pushObbCyl3D(buf, obb, uc, vc, rTop, rBot, y0, y1, segs, rgb, pat, kind) {
+  const { cx, cz, ux, uz, vx, vz } = obb;
+  const xc = cx + uc * ux + vc * vx;
+  const zc = cz + uc * uz + vc * vz;
+  const h = Math.max(0.01, y1 - y0);
+  const slopeY = (rBot - rTop) / h;
+  const invLen = 1 / Math.hypot(1, slopeY);
+  const ny = slopeY * invLen;
+  const nRad = invLen;
+  const sideCol = [rgb[0] * 0.94, rgb[1] * 0.94, rgb[2] * 0.94];
+
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2;
+    const a1 = ((i + 1) / segs) * Math.PI * 2;
+    const c0 = Math.cos(a0), s0 = Math.sin(a0);
+    const c1 = Math.cos(a1), s1 = Math.sin(a1);
+    const dx0 = c0 * ux + s0 * vx, dz0 = c0 * uz + s0 * vz;
+    const dx1 = c1 * ux + s1 * vx, dz1 = c1 * uz + s1 * vz;
+    const nx0 = dx0 * nRad, nz0 = dz0 * nRad;
+    const nx1 = dx1 * nRad, nz1 = dz1 * nRad;
+
+    const x0b = xc + dx0 * rBot, z0b = zc + dz0 * rBot;
+    const x1b = xc + dx1 * rBot, z1b = zc + dz1 * rBot;
+    const x0t = xc + dx0 * rTop, z0t = zc + dz0 * rTop;
+    const x1t = xc + dx1 * rTop, z1t = zc + dz1 * rTop;
+
+    pushSmoothTri(buf, x0b, y0, z0b, x1b, y0, z1b, x1t, y1, z1t, nx0, ny, nz0, nx1, ny, nz1, nx1, ny, nz1, sideCol, pat, kind);
+    pushSmoothTri(buf, x0b, y0, z0b, x1t, y1, z1t, x0t, y1, z0t, nx0, ny, nz0, nx1, ny, nz1, nx0, ny, nz0, sideCol, pat, kind);
+    if (rTop > 0.005) {
+      pushTri(buf, xc, y1, zc, x1t, y1, z1t, x0t, y1, z0t, 0, 1, 0, rgb, pat, kind);
+    }
+  }
+}
+
+/** Pushes a stepped multi-tier spectator bleacher stand with support stringers & rear safety railing. */
+function pushObbBleachers3D(buf, obb, u0, v0, u1, v1, topY, tiers, pat, kind) {
+  const alumSeat = [0.80, 0.83, 0.86];
+  const frameSteel = [0.30, 0.33, 0.36];
+  const stepD = (v1 - v0) / tiers;
+  const stepH = 0.36;
+  // Support stringer frames
+  for (const su of [u0 + 0.18, (u0 + u1) * 0.5, u1 - 0.18]) {
+    pushObbBox3D(buf, obb, su - 0.06, v0, su + 0.06, v1, topY, topY + tiers * stepH * 0.85, frameSteel, pat, kind);
+  }
+  for (let t = 0; t < tiers; t++) {
+    const tv0 = v0 + t * stepD;
+    const tv1 = tv0 + stepD * 0.85;
+    const ty = topY + (t + 1) * stepH;
+    pushObbBox3D(buf, obb, u0, tv0, u1, tv1, ty - 0.07, ty, alumSeat, pat, kind);
+  }
+  // Rear safety guardrail posts & top rail
+  const railY = topY + tiers * stepH + 0.72;
+  for (const su of [u0 + 0.1, (u0 + u1) * 0.5, u1 - 0.1]) {
+    pushObbCyl3D(buf, obb, su, v1 - 0.06, 0.04, 0.04, topY, railY, 8, frameSteel, pat, kind);
+  }
+  pushObbBox3D(buf, obb, u0, v1 - 0.10, u1, v1 - 0.02, railY - 0.06, railY, frameSteel, pat, kind);
+}
+
 /** Computes the Oriented Bounding Box (OBB) of a flat `[x0, z0, ...]` polygon ring. */
 function computePolyOBB(outer) {
   let bestLen2 = -1;
@@ -410,19 +476,27 @@ function buildBasketballCourt(surfBuf, propsBuf, obb, topY, botY) {
     const uPost = sgn * (hl + 0.55);
     const uBoard = sgn * (hl - 0.35);
     const uRim = sgn * (hl - 0.72);
-    // Vertical steel post
-    pushObbBox3D(propsBuf, obb, uPost - 0.14, -0.14, uPost + 0.14, 0.14, topY, topY + 3.25, postCol, pat, kind);
-    // Horizontal cantilever arm
+    // Stepped concrete pedestal + blue protective pole pad + smooth cylindrical steel post
+    pushObbBox3D(propsBuf, obb, uPost - 0.26, -0.26, uPost + 0.26, 0.26, topY, topY + 0.18, [0.68, 0.67, 0.64], pat, kind);
+    pushObbCyl3D(propsBuf, obb, uPost, 0, 0.16, 0.16, topY + 0.18, topY + 1.85, 10, keyRgb, pat, kind);
+    pushObbCyl3D(propsBuf, obb, uPost, 0, 0.11, 0.12, topY + 1.85, topY + 3.32, 12, postCol, pat, kind);
+    // Horizontal cantilever arm + diagonal support strut
     const uArm0 = Math.min(uPost, uBoard), uArm1 = Math.max(uPost, uBoard);
-    pushObbBox3D(propsBuf, obb, uArm0, -0.10, uArm1, 0.10, topY + 3.05, topY + 3.25, postCol, pat, kind);
-    // Tempered glass backboard (1.8m wide x 1.08m tall)
-    pushObbBox3D(propsBuf, obb, uBoard - 0.05, -0.92, uBoard + 0.05, 0.92, topY + 2.85, topY + 3.93, boardCol, pat, kind);
-    // Red shooter's square on front of backboard
-    const uSq = uBoard - sgn * 0.06;
-    pushObbBox3D(propsBuf, obb, uSq - 0.01, -0.30, uSq + 0.01, 0.30, topY + 3.02, topY + 3.48, rimCol, pat, kind);
-    // Orange steel rim & white net box
-    pushObbBox3D(propsBuf, obb, uRim - 0.24, -0.24, uRim + 0.24, 0.24, topY + 2.98, topY + 3.06, rimCol, pat, kind);
-    pushObbBox3D(propsBuf, obb, uRim - 0.18, -0.18, uRim + 0.18, 0.18, topY + 2.58, topY + 2.98, white, pat, kind);
+    pushObbBox3D(propsBuf, obb, uArm0, -0.10, uArm1, 0.10, topY + 3.08, topY + 3.26, postCol, pat, kind);
+    pushObbRamp3D(propsBuf, obb, uArm0, -0.06, uArm1, 0.06, topY + 2.55, topY + 3.08, sgn > 0 ? '-u' : '+u', postCol, pat, kind);
+    // Tempered glass backboard (1.8m wide x 1.08m tall) + aluminum frame + hollow shooter's square
+    pushObbBox3D(propsBuf, obb, uBoard - 0.06, -0.96, uBoard + 0.06, 0.96, topY + 2.82, topY + 3.96, postCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, uBoard - 0.04, -0.90, uBoard + 0.04, 0.90, topY + 2.87, topY + 3.91, boardCol, pat, kind);
+    const uSq = uBoard - sgn * 0.055;
+    pushObbBox3D(propsBuf, obb, uSq - 0.015, -0.30, uSq + 0.015, 0.30, topY + 3.02, topY + 3.48, rimCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, uSq - 0.02, -0.24, uSq + 0.02, 0.24, topY + 3.08, topY + 3.42, boardCol, pat, kind);
+    // Breakaway orange steel rim cylinder & tapered white mesh net frustum
+    pushObbCyl3D(propsBuf, obb, uRim, 0, 0.24, 0.24, topY + 2.98, topY + 3.05, 14, rimCol, pat, kind);
+    pushObbCyl3D(propsBuf, obb, uRim, 0, 0.21, 0.14, topY + 2.55, topY + 2.98, 12, white, pat, kind);
+  }
+  // Sideline 3-tier spectator bleachers when court margin allows
+  if (obb.hw - hw > 1.2) {
+    pushObbBleachers3D(propsBuf, obb, -hl * 0.42, hw + 0.35, hl * 0.42, Math.min(obb.hw - 0.15, hw + 1.55), topY, 3, pat, kind);
   }
 }
 
@@ -462,16 +536,24 @@ function buildNetCourt(surfBuf, propsBuf, obb, topY, sport) {
     pushObbLine(surfBuf, obb, uAtk, -hw, uAtk, hw, lw, lineY, white, pat, kind);
   }
 
-  // 3D Center Net & Net Posts
+  // 3D Center Net, Smooth Cylindrical Net Posts, Center Strap & Elevated Umpire Chair
   const netH = isVolley ? 2.25 : 1.07;
   const postCol = [0.18, 0.22, 0.20];
   const meshCol = [0.22, 0.25, 0.24];
   const vPost = hw + 0.35;
-  pushObbBox3D(propsBuf, obb, -0.09, -vPost - 0.09, 0.09, -vPost + 0.09, topY, topY + netH + 0.08, postCol, pat, kind);
-  pushObbBox3D(propsBuf, obb, -0.09, vPost - 0.09, 0.09, vPost + 0.09, topY, topY + netH + 0.08, postCol, pat, kind);
-  // Net body & white top canvas tape
-  pushObbBox3D(propsBuf, obb, -0.04, -vPost, 0.04, vPost, topY + (isVolley ? 1.15 : 0.06), topY + netH - 0.08, meshCol, pat, kind);
-  pushObbBox3D(propsBuf, obb, -0.05, -vPost, 0.05, vPost, topY + netH - 0.08, topY + netH + 0.02, white, pat, kind);
+  for (const sv of [-vPost, vPost]) {
+    pushObbCyl3D(propsBuf, obb, 0, sv, 0.14, 0.16, topY, topY + 0.12, 10, [0.65, 0.66, 0.64], pat, kind);
+    pushObbCyl3D(propsBuf, obb, 0, sv, 0.075, 0.085, topY + 0.12, topY + netH + 0.10, 12, postCol, pat, kind);
+  }
+  // Net body, center white strap & top canvas headband tape
+  pushObbBox3D(propsBuf, obb, -0.035, -vPost, 0.035, vPost, topY + (isVolley ? 1.15 : 0.06), topY + netH - 0.07, meshCol, pat, kind);
+  pushObbBox3D(propsBuf, obb, -0.05, -vPost, 0.05, vPost, topY + netH - 0.07, topY + netH + 0.02, white, pat, kind);
+  pushObbBox3D(propsBuf, obb, -0.055, -0.05, 0.055, 0.05, topY, topY + netH + 0.02, white, pat, kind);
+  // Elevated umpire chair stand at -vPost side
+  const uChair = 0, vChair = -vPost - 0.65;
+  pushObbBox3D(propsBuf, obb, uChair - 0.32, vChair - 0.32, uChair + 0.32, vChair + 0.32, topY, topY + 1.65, postCol, pat, kind);
+  pushObbBox3D(propsBuf, obb, uChair - 0.36, vChair - 0.34, uChair + 0.36, vChair + 0.34, topY + 1.65, topY + 1.76, [0.56, 0.36, 0.20], pat, kind);
+  pushObbBox3D(propsBuf, obb, uChair - 0.36, vChair - 0.36, uChair + 0.36, vChair - 0.26, topY + 1.76, topY + 2.25, [0.56, 0.36, 0.20], pat, kind);
 }
 
 /** Emits a striped green soccer field with white penalty boxes, center circle, and 3D goalposts. */
@@ -524,16 +606,30 @@ function buildSoccerPitch(surfBuf, propsBuf, obb, topY) {
   for (const sgn of [-1, 1]) {
     const uGoal = sgn * hl;
     const uBack = sgn * (hl + gDepth);
-    // Left & right goalposts
-    pushObbBox3D(propsBuf, obb, uGoal - 0.11, -gHW - 0.11, uGoal + 0.11, -gHW + 0.11, topY, topY + gH, white, pat, kind);
-    pushObbBox3D(propsBuf, obb, uGoal - 0.11, gHW - 0.11, uGoal + 0.11, gHW + 0.11, topY, topY + gH, white, pat, kind);
-    // Crossbar
-    pushObbBox3D(propsBuf, obb, uGoal - 0.11, -gHW - 0.11, uGoal + 0.11, gHW + 0.11, topY + gH - 0.14, topY + gH + 0.04, white, pat, kind);
-    // Rear ground bar & top net support bars
+    // Smooth cylindrical goalposts & crossbar
+    pushObbCyl3D(propsBuf, obb, uGoal, -gHW, 0.09, 0.10, topY, topY + gH, 12, white, pat, kind);
+    pushObbCyl3D(propsBuf, obb, uGoal, gHW, 0.09, 0.10, topY, topY + gH, 12, white, pat, kind);
+    pushObbBox3D(propsBuf, obb, uGoal - 0.09, -gHW - 0.09, uGoal + 0.09, gHW + 0.09, topY + gH - 0.12, topY + gH + 0.04, white, pat, kind);
+    // Rear ground bar, top net elbows & sloped rear goal net mesh
     const uMin = Math.min(uGoal, uBack), uMax = Math.max(uGoal, uBack);
-    pushObbBox3D(propsBuf, obb, uBack - 0.07, -gHW, uBack + 0.07, gHW, topY, topY + 0.14, netFrameCol, pat, kind);
-    pushObbBox3D(propsBuf, obb, uMin, -gHW - 0.06, uMax, -gHW + 0.06, topY + gH - 0.12, topY + gH, netFrameCol, pat, kind);
-    pushObbBox3D(propsBuf, obb, uMin, gHW - 0.06, uMax, gHW + 0.06, topY + gH - 0.12, topY + gH, netFrameCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, uBack - 0.06, -gHW, uBack + 0.06, gHW, topY, topY + 0.12, netFrameCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, uMin, -gHW - 0.05, uMax, -gHW + 0.05, topY + gH - 0.10, topY + gH, netFrameCol, pat, kind);
+    pushObbBox3D(propsBuf, obb, uMin, gHW - 0.05, uMax, gHW + 0.05, topY + gH - 0.10, topY + gH, netFrameCol, pat, kind);
+    pushObbRamp3D(propsBuf, obb, uMin, -gHW, uMax, gHW, topY, topY + gH - 0.12, sgn > 0 ? '-u' : '+u', [0.88, 0.90, 0.92], pat, kind);
+  }
+  // 4 Corner flags + sideline team dugout shelters & bleachers
+  for (const su of [-hl, hl]) {
+    for (const sv of [-hw, hw]) {
+      pushObbCyl3D(propsBuf, obb, su, sv, 0.03, 0.035, topY, topY + 1.5, 8, white, pat, kind);
+      pushObbBox3D(propsBuf, obb, su, sv, su + 0.35, sv + 0.04, topY + 1.22, topY + 1.48, [0.95, 0.22, 0.16], pat, kind);
+    }
+  }
+  if (obb.hw - hw > 1.4) {
+    for (const du of [-hl * 0.25, hl * 0.25]) {
+      pushObbBox3D(propsBuf, obb, du - 2.2, -hw - 1.45, du + 2.2, -hw - 0.35, topY, topY + 2.1, [0.24, 0.32, 0.42], pat, kind);
+      pushObbBox3D(propsBuf, obb, du - 2.35, -hw - 1.55, du + 2.35, -hw - 0.25, topY + 2.1, topY + 2.24, white, pat, kind);
+    }
+    pushObbBleachers3D(propsBuf, obb, -hl * 0.48, hw + 0.4, hl * 0.48, Math.min(obb.hw - 0.15, hw + 2.0), topY, 4, pat, kind);
   }
 }
 
@@ -587,8 +683,29 @@ function buildPlaygroundDetails(surfBuf, propsBuf, obb, topY) {
       pushObbBox3D(propsBuf, obb, su - 0.1, sv - 0.1, su + 0.1, sv + 0.1, topY + 1.6, topY + 2.5, [0.88, 0.24, 0.20], pat, kind);
     }
   }
-  // Slide ramp
-  pushObbBox3D(propsBuf, obb, 1.2, -0.45, 3.1, 0.45, topY, topY + 0.95, [0.90, 0.22, 0.20], pat, kind);
+  // Upper safety balustrade rails around the play deck + climbing ladder on -u side
+  for (const sv of [-1.12, 1.12]) {
+    pushObbBox3D(propsBuf, obb, -1.12, sv - 0.05, 1.12, sv + 0.05, topY + 2.08, topY + 2.18, [0.96, 0.78, 0.16], pat, kind);
+  }
+  for (let step = 0; step < 5; step++) {
+    const sy = topY + 0.28 + step * 0.28;
+    pushObbBox3D(propsBuf, obb, -1.36, -0.36, -1.20, 0.36, sy, sy + 0.06, [0.85, 0.87, 0.90], pat, kind);
+  }
+  // Sloped slide chute + raised left/right slide safety sidewalls
+  pushObbRamp3D(propsBuf, obb, 1.2, -0.42, 3.25, 0.42, topY + 0.12, topY + 1.58, '-u', [0.92, 0.22, 0.20], pat, kind);
+  for (const sv of [-0.46, 0.46]) {
+    pushObbRamp3D(propsBuf, obb, 1.2, sv - 0.05, 3.25, sv + 0.05, topY + 0.24, topY + 1.72, '-u', [0.96, 0.78, 0.16], pat, kind);
+  }
+  // Companion A-frame 2-bay swing set beside the play pavilion
+  const swV = -Math.min(3.4, r * 0.48);
+  pushObbBox3D(propsBuf, obb, -1.65, swV - 0.08, 1.65, swV + 0.08, topY + 2.15, topY + 2.28, [0.20, 0.48, 0.82], pat, kind);
+  for (const su of [-1.55, 1.55]) {
+    pushObbCyl3D(propsBuf, obb, su, swV - 0.55, 0.06, 0.07, topY, topY + 2.22, 8, [0.20, 0.48, 0.82], pat, kind);
+    pushObbCyl3D(propsBuf, obb, su, swV + 0.55, 0.06, 0.07, topY, topY + 2.22, 8, [0.20, 0.48, 0.82], pat, kind);
+  }
+  for (const su of [-0.55, 0.55]) {
+    pushObbBox3D(propsBuf, obb, su - 0.24, swV - 0.14, su + 0.24, swV + 0.14, topY + 0.48, topY + 0.55, [0.92, 0.22, 0.20], pat, kind);
+  }
 }
 
 /** Pushes an arbitrary 3D quad in `(u, y, v)` OBB coordinates with computed face normal. */
@@ -1188,17 +1305,34 @@ export function buildShelterGazeboDetails(surfBuf, propsBuf, obb, topY) {
   const timberCol = [0.56, 0.35, 0.19];
   const roofCedar = [0.46, 0.25, 0.14];
 
-  pushObbBox3D(propsBuf, obb, -hl, -hw, hl, hw, topY - 0.22, topY + 0.12, stonePad, pat, kind);
+  // 2-tier stepped stone plinth
+  pushObbBox3D(propsBuf, obb, -hl * 1.08, -hw * 1.08, hl * 1.08, hw * 1.08, topY - 0.24, topY + 0.04, [0.68, 0.65, 0.60], pat, kind);
+  pushObbBox3D(propsBuf, obb, -hl, -hw, hl, hw, topY + 0.04, topY + 0.18, stonePad, pat, kind);
   const colU = hl * 0.82, colV = hw * 0.82;
-  const eaveY = topY + 2.45;
+  const eaveY = topY + 2.52;
   for (const su of [-colU, colU]) {
     for (const sv of [-colV, colV]) {
-      pushObbBox3D(propsBuf, obb, su - 0.14, sv - 0.14, su + 0.14, sv + 0.14, topY + 0.12, eaveY, timberCol, 5, kind);
+      // Stepped column plinth + smooth cylindrical timber post + eave knee-brace trusses
+      pushObbBox3D(propsBuf, obb, su - 0.20, sv - 0.20, su + 0.20, sv + 0.20, topY + 0.18, topY + 0.42, stonePad, pat, kind);
+      pushObbCyl3D(propsBuf, obb, su, sv, 0.13, 0.15, topY + 0.42, eaveY, 12, timberCol, 5, kind);
+      pushObbBox3D(propsBuf, obb, su - 0.28, sv - 0.06, su + 0.28, sv + 0.06, eaveY - 0.36, eaveY, timberCol, 5, kind);
+      pushObbBox3D(propsBuf, obb, su - 0.06, sv - 0.28, su + 0.06, sv + 0.28, eaveY - 0.36, eaveY, timberCol, 5, kind);
     }
   }
-  // Hipped cedar shingle roof + picnic table inside
-  pushObbHippedRoof3D(propsBuf, obb, -hl * 1.08, -hw * 1.08, hl * 1.08, hw * 1.08, eaveY, eaveY + 1.15, 0.25, roofCedar, 5, kind);
-  pushPicnicTable3D(propsBuf, obb, 0, 0, topY + 0.12, 5, kind);
+  // Perimeter wooden balustrade railings along back (-v) and sides (±u), open entrance at +v
+  const railY = topY + 0.92;
+  pushObbBox3D(propsBuf, obb, -colU, -colV - 0.05, colU, -colV + 0.05, railY - 0.07, railY, timberCol, 5, kind);
+  for (const su of [-colU, colU]) {
+    pushObbBox3D(propsBuf, obb, su - 0.05, -colV, su + 0.05, colV, railY - 0.07, railY, timberCol, 5, kind);
+  }
+  // Eave fascia ring beam + hipped cedar shingle roof + vented roof cupola & finial spire
+  pushObbBox3D(propsBuf, obb, -hl * 0.92, -hw * 0.92, hl * 0.92, hw * 0.92, eaveY - 0.14, eaveY + 0.04, timberCol, 5, kind);
+  pushObbHippedRoof3D(propsBuf, obb, -hl * 1.12, -hw * 1.12, hl * 1.12, hw * 1.12, eaveY, eaveY + 1.15, 0.22, roofCedar, 5, kind);
+  const cupY = eaveY + 1.05;
+  pushObbBox3D(propsBuf, obb, -0.45, -0.45, 0.45, 0.45, cupY, cupY + 0.42, timberCol, 5, kind);
+  pushObbHippedRoof3D(propsBuf, obb, -0.58, -0.58, 0.58, 0.58, cupY + 0.42, cupY + 0.82, 0, roofCedar, 5, kind);
+  pushObbCyl3D(propsBuf, obb, 0, 0, 0.02, 0.06, cupY + 0.80, cupY + 1.25, 8, [0.85, 0.72, 0.25], 5, kind);
+  pushPicnicTable3D(propsBuf, obb, 0, 0, topY + 0.18, 5, kind);
 }
 
 /** Emits 3D wooden A-frame picnic tables (`picnic_site`). */
@@ -1387,10 +1521,20 @@ export function buildWaterParkDetails(surfBuf, propsBuf, obb, topY) {
   pushObbBox3D(propsBuf, obb, tU - 1.15, -1.15, tU + 1.15, 1.15, topY, topY + tH, towerCol, pat, kind);
   pushObbHippedRoof3D(propsBuf, obb, tU - 1.55, -1.55, tU + 1.55, 1.55, topY + tH, topY + tH + 1.15, 0, flumeYellow, pat, kind);
 
-  // Spiraling / banked 3-stage flume slides descending from tower into the splash pool
+  // Smooth cylindrical structural support columns & spiral flume troughs with raised sidewalls
+  for (const [cu, cv, ch] of [[tU + 1.2, 1.8, 4.8], [tU + 2.6, 0, 3.2], [tU + 2.2, -1.4, 1.8]]) {
+    pushObbCyl3D(propsBuf, obb, cu, cv, 0.14, 0.18, topY, topY + ch, 10, towerCol, pat, kind);
+  }
   pushObbRamp3D(propsBuf, obb, tU - 0.5, 1.15, tU + 2.4, 2.35, topY + 4.4, topY + 6.2, '-u', flumeMagenta, pat, kind);
+  pushObbRamp3D(propsBuf, obb, tU - 0.5, 1.05, tU + 2.4, 1.20, topY + 4.65, topY + 6.45, '-u', flumeYellow, pat, kind);
+  pushObbRamp3D(propsBuf, obb, tU - 0.5, 2.30, tU + 2.4, 2.45, topY + 4.65, topY + 6.45, '-u', flumeYellow, pat, kind);
   pushObbRamp3D(propsBuf, obb, tU + 1.2, -2.35, tU + 3.8, 2.35, topY + 2.3, topY + 4.4, '+v', flumeCyan, pat, kind);
   pushObbRamp3D(propsBuf, obb, tU + 1.8, -1.85, hl * 0.12, -0.65, topY + 0.25, topY + 2.3, '-u', flumeYellow, pat, kind);
+  // Central tipping splash bucket & water column in the lagoon pool
+  const pU = hl * 0.22;
+  pushObbCyl3D(propsBuf, obb, pU, 0, 0.16, 0.20, topY, topY + 3.4, 10, flumeMagenta, pat, kind);
+  pushObbCyl3D(propsBuf, obb, pU, 0, 0.58, 0.42, topY + 3.2, topY + 4.1, 12, flumeYellow, pat, kind);
+  pushObbCyl3D(propsBuf, obb, pU, 0, 0.95, 0.25, topY + 0.05, topY + 3.2, 12, [0.85, 0.96, 1.0], 6, kind);
 }
 
 /** Emits a sloped concrete gravity dam wall with white spillway water foam band (`LC_DAM`). */
@@ -1416,6 +1560,12 @@ export function buildDamDetails(surfBuf, propsBuf, outer, obb, ox, oz, yOff) {
   const spillHL = Math.min(14.0, hl * 0.42);
   pushObbRamp3D(propsBuf, obb, -spillHL, hw * 0.40, spillHL, hw * 1.02, damBaseY + 0.08, damTopY - 0.05, '-v', spillwayCyan, 6, kind);
   pushObbRamp3D(propsBuf, obb, -spillHL * 0.72, hw * 0.40, spillHL * 0.72, hw * 1.04, damBaseY + 0.14, damTopY - 0.02, '-v', spillwayFoam, 6, kind);
+  // Spillway tainter gate piers, overhead hoist gantry truss & downstream buttress ribs
+  for (const sgn of [-1, 0, 1]) {
+    const pu = sgn * spillHL * 0.68;
+    pushObbBox3D(propsBuf, obb, pu - 0.45, -hw * 0.25, pu + 0.45, hw * 0.58, damBaseY, damTopY + 1.65, concreteCrest, pat, kind);
+  }
+  pushObbBox3D(propsBuf, obb, -spillHL * 0.82, -0.25, spillHL * 0.82, 0.35, damTopY + 1.35, damTopY + 1.85, [0.42, 0.45, 0.48], pat, kind);
 }
 
 /** Dispatches any `LC_PITCH` sport to its specialized 3D court/field builder. */

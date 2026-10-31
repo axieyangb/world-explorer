@@ -597,14 +597,20 @@ export function buildPoiVenues(ctx) {
     A_ceiling(F, W, D, GH);
     // shelving
     if (o.shelves !== false) shelving(F, -W / 2 + 0.3, W / 2 - 0.3, D, rnd, o.tall ? 1.9 : 1.55, o.doorW || 1.9, o.doorX || 0);
-    // side pilasters
-    for (const s of [-1, 1]) box(bld, F, s * (W / 2 - 0.11), (GH + fB) / 2, D / 2 + 0.04, 0.22, GH + fB, D + 0.08, o.frame || C.aluDk, false, 'b');
-    // glass + mullions + transom
+    // side pilasters with stepped granite plinth base & cornice capital
+    for (const s of [-1, 1]) {
+      const px = s * (W / 2 - 0.11);
+      box(bld, F, px, (GH + fB) / 2, D / 2 + 0.04, 0.22, GH + fB, D + 0.08, o.frame || C.aluDk, false, 'b');
+      box(bld, F, px, 0.20, D / 2 + 0.06, 0.26, 0.40, D + 0.12, C.granite, false, 'b');
+      box(bld, F, px, GH - 0.05, D / 2 + 0.06, 0.26, 0.10, D + 0.12, o.frame || C.aluDk);
+    }
+    // glass + mullions + stepped sill + transom + mullion brackets
     const gz = D - 0.06;
     face(glass, F, -W / 2 + 0.22, W / 2 - 0.22, 0.32, GH, gz, [0.6, 0.72, 0.78]);
     const mullW = 0.07;
     box(bld, F, 0, GH - 0.035, gz, W - 0.3, 0.07, 0.1, o.frame || C.aluDk);
     box(bld, F, 0, 0.36, gz, W - 0.3, 0.08, 0.1, o.frame || C.aluDk);
+    box(bld, F, 0, 0.31, gz + 0.03, W - 0.22, 0.05, 0.14, C.granite);
     const tr = GH - 0.55;
     box(bld, F, 0, tr, gz, W - 0.3, 0.06, 0.08, o.frame || C.aluDk);
     const doorW = o.doorW || 1.9, doorX = o.doorX || 0;
@@ -613,6 +619,8 @@ export function buildPoiVenues(ctx) {
       const x = -W / 2 + ((W) * i) / nBays;
       if (Math.abs(x - doorX) < doorW / 2 + 0.1) continue;
       box(bld, F, x, (GH + 0.36) / 2, gz, mullW, GH - 0.36, 0.09, o.frame || C.aluDk);
+      box(bld, F, x, 0.42, gz + 0.01, mullW + 0.04, 0.12, 0.11, C.alu);
+      box(bld, F, x, tr, gz + 0.01, mullW + 0.05, 0.10, 0.10, C.alu);
     }
     // sliding door: frame, leaves (meeting stiles), header sensor, mat
     for (const s of [-1, 1]) box(bld, F, doorX + (s * doorW) / 2, (tr + 0.32) / 2, gz + 0.02, 0.09, tr - 0.32, 0.12, o.frame || C.aluDk);
@@ -621,9 +629,11 @@ export function buildPoiVenues(ctx) {
     box(bld, F, doorX, tr - 0.1, gz + 0.1, 0.42, 0.1, 0.12, C.black);
     box(bld, F, doorX, tr - 0.12, gz + 0.17, 0.1, 0.03, 0.02, [0.9, 0.1, 0.05], true);
     flat(bld, F, doorX - doorW / 2, doorX + doorW / 2, D + 0.02, D + 1.25, 0.03, C.black);
-    // fascia sign band (lit box), accent stripes, sign text
+    // fascia sign band (lit box), upper/lower cornice trim moldings, accent stripes, sign text
     const fz0 = -0.02, fz1 = D + 0.18;
     box(bld, F, 0, GH + fB / 2, (fz0 + fz1) / 2, W + 0.08, fB, fz1 - fz0, scheme[0], 'f', 'k');
+    box(bld, F, 0, GH + fB + 0.03, (fz0 + fz1) / 2 + 0.02, W + 0.16, 0.06, fz1 - fz0 + 0.06, o.frame || C.aluDk);
+    box(bld, F, 0, GH - 0.015, fz1 - 0.04, W + 0.12, 0.04, 0.10, o.frame || C.aluDk);
     if (scheme[1]) box(bld, F, 0, GH + 0.07, fz1 + 0.005, W + 0.1, 0.1, 0.03, scheme[1], 'f');
     if (scheme[2]) box(bld, F, 0, GH + fB - 0.05, fz1 + 0.005, W + 0.1, 0.07, 0.03, scheme[2], 'f');
     if (o.signText !== false) {
@@ -641,6 +651,8 @@ export function buildPoiVenues(ctx) {
         bld.quad(F.p(x0, ay1, az1), F.p(x1, ay1, az1), F.p(x1, ay0, az0), F.p(x0, ay0, az0), c);
         bld.quad(F.p(x0, ay1 - 0.28, az1), F.p(x1, ay1 - 0.28, az1), F.p(x1, ay1, az1), F.p(x0, ay1, az1), c);
       }
+      // Front awning valance bar + side cheek triangles
+      box(bld, F, 0, ay1 - 0.02, az1 - 0.02, W - 0.04, 0.045, 0.045, o.frame || C.aluDk);
       for (const s of [-1, 1]) {
         const x = (s * W) / 2;
         const a = F.p(x, ay0, az0), b = F.p(x, ay1, az1), c = F.p(x, ay1 - 0.28, az1), d = F.p(x, ay0 - 0.05, az0);
@@ -1013,7 +1025,9 @@ export function buildPoiVenues(ctx) {
     box(bld, K, 0, H + 0.25, 0, W + 0.3, 0.5, D + 0.3, wall, false, '');
     flat(bld, K, -W / 2, W / 2, -D / 2, D / 2, 0.02, C.tile);
     box(bld, K, W * 0.2, H + 0.95, -D * 0.15, 1.6, 0.9, 1.2, [0.7, 0.71, 0.72]); // rooftop HVAC
+    cyl(bld, K, W * 0.2, H + 1.40, -D * 0.15, 0.42, 0.10, 10, C.aluDk, true, false);
     box(bld, K, 0, H + 0.2, 0, W + 0.34, 0.22, D + 0.34, scheme[0], false, 'tb'); // brand band round the parapet
+    box(bld, K, 0, H + 0.53, 0, W + 0.38, 0.06, D + 0.38, C.aluDk); // rooftop parapet coping cap
     for (const s of [-1, 1]) {
       box(bld, K, s * (W / 2 + 0.01), 1.05, -D * 0.2, 0.04, 2.1, 1.0, C.aluDk); // service door
       box(bld, K, s * (W / 2 + 0.02), 2.3, -D * 0.2, 0.06, 0.16, 0.3, C.lightWarm, true);
@@ -1476,11 +1490,20 @@ export function buildPoiVenues(ctx) {
     box(bld, F, dx2, (GH - 0.55 + 0.32) / 2, res.D - 0.03, 0.06, GH - 0.9, 0.06, C.alu);
     flat(bld, F, dx2 - 1.3, dx2 + 1.3, res.D + 0.02, res.D + 1.25, 0.03, C.black);
     for (const s of [-1, 1]) box(bld, F, dx2 + s * 1.3, (GH - 0.55 + 0.32) / 2, res.D - 0.04, 0.09, GH - 0.87, 0.12, C.aluDk);
-    // entrance canopy on two columns
+    // entrance canopy on two columns with soffit coffer beams, coping trim & column plinths
     const cd = 4.5, cw = Math.min(fr.W + 2, 22), cy = GH + 0.7;
     box(bld, F, 0, cy + 0.3, res.D + cd / 2, cw, 0.6, cd, scheme[0], false, '');
+    box(bld, F, 0, cy + 0.63, res.D + cd / 2, cw + 0.14, 0.06, cd + 0.14, C.aluDk);
     box(bld, F, 0, cy - 0.01, res.D + cd / 2, cw - 0.1, 0.02, cd - 0.1, C.soffit, false, 't');
-    for (const s of [-1, 1]) box(bld, F, s * (cw / 2 - 0.5), cy / 2, res.D + cd - 0.5, 0.4, cy, 0.4, C.aluDk, false, 'b');
+    for (let i = 0; i <= 4; i++) {
+      box(bld, F, -cw / 2 + 0.25 + ((cw - 0.5) * i) / 4, cy - 0.04, res.D + cd / 2, 0.12, 0.06, cd - 0.2, C.aluDk);
+    }
+    for (const s of [-1, 1]) {
+      const cx = s * (cw / 2 - 0.5), cz = res.D + cd - 0.5;
+      box(bld, F, cx, cy / 2, cz, 0.4, cy, 0.4, C.aluDk, false, 'b');
+      box(bld, F, cx, 0.28, cz, 0.52, 0.56, 0.52, C.granite, false, 'b');
+      box(bld, F, cx, cy - 0.10, cz, 0.50, 0.18, 0.50, C.alu);
+    }
     for (let i = 0; i < 4; i++) box(bld, F, -cw / 2 + cw * (i + 0.5) / 4, cy - 0.04, res.D + cd / 2, 1.2, 0.02, 0.4, C.light, true);
     // big sign on a raised parapet panel above the entrance
     const sw = Math.min(fr.W + 1, Math.max(8, (nameEn || name || 'SUPERMARKET').length * 0.9 + 2));

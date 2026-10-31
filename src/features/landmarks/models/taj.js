@@ -60,9 +60,24 @@ function mainFace(k) {
     let q = k.fine ? 0 : 1e9;
     if (k.fine) for (let x = -10.3; x < 10.3; x += 0.32) { const hh = 0.25 + ((q++ * 7919) % 11) / 30; k.box(x, PL + 26.85 + ((q % 3) - 1) * 0.08, ZP - 0.08, 0.08, hh, 0.06); }
     if (k.fine) for (const sx of [-10.5, 10.5]) for (let y = PL + 0.6; y < PL + 26.4; y += 0.32) { const ww = 0.25 + ((q++ * 7919) % 11) / 30; k.box(sx, y, ZP - 0.08, ww, 0.08, 0.06); }
-    // parapet crenellation on the pishtaq top
+    // Pietra dura floral arabesque medallions in the pishtaq spandrels + carved marble Jali screen lattice inside iwan
+    k.color(0x9e4b3e);
+    for (const sx of [-6.8, 6.8]) {
+      k.cyl(sx, PL + 23.2, ZP - 0.05, 0.95, 0.95, 0.08, 8);
+      k.color(0x4b7a5e).cyl(sx, PL + 23.2, ZP - 0.07, 0.55, 0.55, 0.08, 6);
+      k.color(0x9e4b3e);
+    }
+    // Carved white marble Jali lattice mullions over the recessed inner portal window
     k.color(MARBLE_DK);
-    for (let i = -6; i <= 6; i++) k.box(i * 2, PL + 31, ZP + 0.4, 1.0, 0.9, 0.6);
+    for (let jx = -3.6; jx <= 3.6; jx += 1.2) k.box(jx, PL + 1.0, ZP + 3.75, 0.16, 13.5, 0.12);
+    for (let jy = PL + 3.0; jy <= PL + 13.5; jy += 2.1) k.box(0, jy, ZP + 3.75, 7.6, 0.16, 0.12);
+    // parapet crenellation on the pishtaq top + ornamental blind arcade band (merlons)
+    k.color(MARBLE_DK);
+    for (let i = -6; i <= 6; i++) {
+      k.box(i * 2, PL + 31, ZP + 0.4, 1.0, 0.9, 0.6);
+      k.color(INLAY).box(i * 1.8, PL + 29.2, ZP - 0.03, 1.1, 1.3, 0.08);
+      k.color(MARBLE_DK);
+    }
     // slender guldasta pinnacles at the pishtaq corners
     for (const sx of [-13.2, 13.2]) {
       k.color(MARBLE).cyl(sx, PL, ZP + 0.3, 0.75, 0.6, 33.6, 8);
@@ -147,6 +162,33 @@ export function build(k) {
   // red sandstone terrace + steps out to the garden
   k.color(SAND).box(0, -1.5, 0, 112, 2.3, 112);
   k.color(SAND_DK).box(0, -1.5, -64, 40, 1.6, 16);
+  if (hi) {
+    // Charbagh marble reflecting water channel & lotus fountain basin extending south (-Z)
+    k.color(MARBLE).box(0, -0.4, -90, 12.0, 0.7, 38);
+    k.color(0x2a7b8c).box(0, -0.1, -90, 9.6, 0.45, 36);
+    // Raised central marble Al-Kawthar tank platform & 5 lotus fountain spouts
+    k.color(MARBLE).box(0, -0.2, -90, 16.0, 0.85, 16.0);
+    k.color(0x2a7b8c).box(0, 0.3, -90, 13.0, 0.4, 13.0);
+    k.color(MARBLE_DK);
+    for (let fz = -104; fz <= -76; fz += 7) {
+      k.cyl(0, 0.35, fz, 0.55, 0.35, 0.65, 8);
+      k.color(0xaee8ff).cyl(0, 1.0, fz, 0.12, 0.35, 0.8, 6);
+      k.color(MARBLE_DK);
+    }
+    // Symmetrical rows of columnar Mughal cypress trees flanking the reflecting pool
+    for (const sx of [-9.5, 9.5]) {
+      for (let cz = -104; cz <= -76; cz += 7) {
+        k.color(0x523a28).cyl(sx, 0, cz, 0.22, 0.18, 1.2, 5);
+        k.color(0x284d2c).cyl(sx, 1.0, cz, 1.05, 0.2, 5.8, 7);
+      }
+    }
+    // Twin concealed staircases cut into the south side of the white marble plinth
+    for (const sx of [-8.5, 8.5]) {
+      for (let st = 0; st < 8; st++) {
+        k.color(MARBLE_DK).box(sx, 0.8 + st * 0.72, -47.6 - st * 0.45, 3.2, 0.72, 0.6);
+      }
+    }
+  }
   // marble plinth with blind arcade
   k.color(MARBLE).box(0, 0.8, 0, 95, PL - 0.8, 95);
   k.color(MARBLE_DK).box(0, PL - 0.6, 0, 95.6, 0.6, 95.6);
@@ -166,6 +208,11 @@ export function build(k) {
     k.color(MARBLE_DK);
     for (let i = 0; i < 8; i++) {
       const a = oct[i], b = oct[(i + 1) % 8];
+      // Slender guldasta pinnacles at all 8 chamfered corners of the main mausoleum
+      k.color(MARBLE).cyl(a[0] * 1.01, PL, a[1] * 1.01, 0.55, 0.45, ROOF - PL + 2.4, 8);
+      k.color(MARBLE_DK).sphere(a[0] * 1.01, ROOF + 2.8, a[1] * 1.01, 0.68, 8, 4, 1.3);
+      k.color(GOLD).cyl(a[0] * 1.01, ROOF + 3.5, a[1] * 1.01, 0.1, 0.03, 1.1, 4);
+      k.color(MARBLE_DK);
       const n = Math.max(2, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / 2.2));
       for (let j = 0; j <= n; j++) {
         const t = j / n;

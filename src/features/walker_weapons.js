@@ -1180,6 +1180,15 @@ export class WalkerWeaponsSystem {
     this.aiRagdolls = [];
     this.aiHeli = null;
 
+    this.playerHp = 100;
+    this.playerMaxHp = 100;
+    this.playerDead = false;
+    this.deathReason = '';
+    this.deathTimer = 0;
+    this.deathCount = 0;
+    this.deathInWater = false;
+    this.deathBannerEl = null;
+
     this._initReticleUi();
     this._initPlayerWeaponGroup();
     this._initAiDefenseSquad();
@@ -2536,7 +2545,121 @@ export class WalkerWeaponsSystem {
     }, 4500);
   }
 
+  damagePlayer(amount = 100, reason = 'WASTED') {
+    if (this.playerDead) return;
+    this.playerHp = Math.max(0, (this.playerHp ?? 100) - amount);
+    if (this.playerHp <= 0) {
+      this.killPlayer(reason);
+    }
+  }
+
+  killPlayer(reason = 'FELL TO DEATH') {
+    if (this.playerDead) return;
+    this.playerHp = 0;
+    this.playerDead = true;
+    this.deathReason = String(reason || 'WASTED');
+    this.deathInWater = /DROWN|SEA|WATER/i.test(this.deathReason);
+    this.deathTimer = 2.2;
+    this.deathCount = (this.deathCount || 0) + 1;
+
+    if (this.app) {
+      this.app.speed = 0;
+      this.app.walkVelY = 0;
+      this.app._bailingOutMidAir = false;
+      if (this.app.stopFsd) this.app.stopFsd();
+      if (this.deathInWater && this.app.water && typeof this.app.water.splashAt === 'function') {
+        this.app.water.splashAt(this.app.pos.x, this.app.pos.z, 2.5, 8.0);
+      }
+      const avatar = this.app.avatarMesh || this.app.walker;
+      if (avatar && avatar.userData) {
+        const { hips, leftArm, rightArm, leftLeg, rightLeg } = avatar.userData;
+        if (hips) {
+          hips.rotation.x = this.deathInWater ? 0.55 : -1.48;
+          hips.rotation.z = this.deathInWater ? 0.25 : 0.18;
+          hips.position.y = this.deathInWater ? 0.35 : 0.18;
+        }
+        if (leftArm) { leftArm.rotation.x = -1.2; leftArm.rotation.z = 0.65; }
+        if (rightArm) { rightArm.rotation.x = -1.2; rightArm.rotation.z = -0.65; }
+        if (leftLeg) { leftLeg.rotation.x = 0.25; leftLeg.rotation.z = 0.22; }
+        if (rightLeg) { rightLeg.rotation.x = -0.20; rightLeg.rotation.z = -0.22; }
+      }
+    }
+
+    if (typeof document !== 'undefined') {
+      if (!this.deathBannerEl) {
+        const el = document.createElement('div');
+        el.id = 'player-death-banner';
+        el.style.cssText = [
+          'position:fixed',
+          'left:50%',
+          'top:34%',
+          'transform:translate(-50%,-50%)',
+          'padding:10px 24px',
+          'border-radius:999px',
+          'background:rgba(15,23,42,0.88)',
+          'border:1px solid rgba(248,113,113,0.65)',
+          'color:#fecaca',
+          'font:700 14px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif',
+          'letter-spacing:1.4px',
+          'box-shadow:0 12px 32px rgba(0,0,0,0.55)',
+          'pointer-events:none',
+          'z-index:120',
+          'display:none',
+        ].join(';');
+        document.body.appendChild(el);
+        this.deathBannerEl = el;
+      }
+      this.deathBannerEl.textContent = this.deathReason;
+      this.deathBannerEl.style.display = 'block';
+    }
+  }
+
+  respawnPlayer() {
+    this.playerDead = false;
+    this.playerHp = this.playerMaxHp || 100;
+    this.deathTimer = 0;
+    if (this.deathBannerEl) {
+      this.deathBannerEl.style.display = 'none';
+    }
+    const app = this.app;
+    if (!app) return;
+    const avatar = app.avatarMesh || app.walker;
+    if (avatar && avatar.userData) {
+      const { hips, leftArm, rightArm, leftLeg, rightLeg } = avatar.userData;
+      if (hips) {
+        hips.rotation.set(0, 0, 0);
+        hips.position.y = 0.90;
+      }
+      if (leftArm) leftArm.rotation.set(0, 0, 0);
+      if (rightArm) rightArm.rotation.set(0, 0, 0);
+      if (leftLeg) leftLeg.rotation.set(0, 0, 0);
+      if (rightLeg) rightLeg.rotation.set(0, 0, 0);
+    }
+    if (app.water && typeof app.water._respawn === 'function') {
+      app.water._respawn();
+      if (app.avatarMesh) {
+        app.avatarMesh.position.copy(app.pos);
+        app.avatarMesh.rotation.set(0, app.yaw, 0);
+      }
+    }
+    app.walkVelY = 0;
+    app.isGrounded = true;
+    app._fallPeakY = app.pos.y;
+    app._bailingOutMidAir = false;
+  }
+
   update(dt) {
+    if (this.playerDead) {
+      this.deathTimer -= dt;
+      if (this.deathInWater && this.app && this.app.water) {
+        const wY = this.app.water.getWaterSurfaceY(this.app.pos.x, this.app.pos.z);
+        this.app.pos.y = THREE.MathUtils.lerp(this.app.pos.y, wY - 0.55, Math.min(1, dt * 3.5));
+        if (this.app.avatarMesh) this.app.avatarMesh.position.copy(this.app.pos);
+      }
+      if (this.deathTimer <= 0) {
+        this.respawnPlayer();
+      }
+    }
     if (this.fireTimer > 0) this.fireTimer -= dt;
     if (this.rpgQuickTimer > 0) this.rpgQuickTimer -= dt;
     if (this.tankCannonTimer > 0) this.tankCannonTimer -= dt;

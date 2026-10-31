@@ -32,9 +32,16 @@ function campusWing(k, cx, cz, signX) {
     const isTerrace = fl >= 4;
     const w = isTerrace ? 48 - (fl - 3) * 6 : 50.4;
     const d = isTerrace ? 64 - (fl - 3) * 8 : 66.4;
-    k.glow(false).color(LIMESTONE).box(-signX * (fl >= 4 ? (fl - 3) * 2.5 : 0), y, 0, w, 0.95, d);
+    const ox = -signX * (fl >= 4 ? (fl - 3) * 2.5 : 0);
+    k.glow(false).color(LIMESTONE).box(ox, y, 0, w, 0.95, d);
     if (fl < 5) {
-      k.glow(true).color(LIT).box(-signX * (fl >= 4 ? (fl - 3) * 2.5 : 0), y + 1.1, 0, w - 1.6, 2.5, d - 1.6);
+      k.glow(true).color(LIT).box(ox, y + 1.1, 0, w - 1.6, 2.5, d - 1.6);
+    }
+    if (hi && isTerrace) {
+      // Glass safety balustrades around upper stepped terraces
+      k.glow(false).color(GLASS_LT);
+      k.box(ox, y + 0.95, -d * 0.5 + 0.15, w, 1.1, 0.18);
+      k.box(ox, y + 0.95, d * 0.5 - 0.15, w, 1.1, 0.18);
     }
   }
 
@@ -42,16 +49,26 @@ function campusWing(k, cx, cz, signX) {
   k.glow(false).color(LAWN).box(-signX * 3, 25.0, 0, 36, 0.45, 46);
   k.color(WOOD).box(signX * 14, 21.0, 0, 10, 0.4, 52);
   if (hi) {
-    // Rooftop olive/bay trees & glass skylight pavilion
+    // Rooftop olive/bay trees, glass skylight pavilion & teak lounge pergolas
+    k.color(GLASS_LT).box(-signX * 4, 25.45, 0, 14, 2.8, 18);
+    k.color(DARK_METAL).box(-signX * 4, 28.25, 0, 15.2, 0.35, 19.2);
     for (const tz of [-16, 0, 16]) {
-      k.color(TREE).sphere(signX * 14, 23.2, tz, 2.6, 8, 5, 0.85);
-      k.color(TREE).sphere(-signX * 4, 27.2, tz, 2.8, 8, 5, 0.85);
+      k.color(0x5c4430).cyl(signX * 14, 21.4, tz, 0.25, 0.18, 1.6, 6);
+      k.color(TREE).sphere(signX * 14, 23.4, tz, 2.6, 10, 6, 0.85);
+      if (tz !== 0) {
+        k.color(0x5c4430).cyl(-signX * 4, 25.45, tz, 0.28, 0.2, 1.8, 6);
+        k.color(TREE).sphere(-signX * 4, 27.6, tz, 2.8, 10, 6, 0.85);
+      }
     }
-    // Vertical dark-bronze mullion fins
+    // Vertical dark-bronze mullion fins on all 4 facades
     k.color(DARK_METAL);
-    for (let z = -28; z <= 28; z += 8) {
-      k.strut([-24.3, 0.4, z], [-24.3, 20.9, z], 0.32);
-      k.strut([24.3, 0.4, z], [24.3, 20.9, z], 0.32);
+    for (let z = -28; z <= 28; z += 5.6) {
+      k.strut([-24.3, 0.4, z], [-24.3, 20.9, z], 0.3);
+      k.strut([24.3, 0.4, z], [24.3, 20.9, z], 0.3);
+    }
+    for (let x = -20; x <= 20; x += 5.0) {
+      k.strut([x, 0.4, -32.3], [x, 20.9, -32.3], 0.3);
+      k.strut([x, 0.4, 32.3], [x, 20.9, 32.3], 0.3);
     }
   }
 
@@ -64,15 +81,17 @@ function openaiBlossomMonument(k, cx, cz) {
   k.push().translate(cx, 0, cz);
 
   // Circular travertine reflection pool & dark granite plinth
-  k.glow(false).color(LIMESTONE).cyl(0, 0.3, 0, 9.5, 10.2, 0.8, hi ? 24 : 12);
-  k.color(0x225a6e).cyl(0, 0.9, 0, 8.4, 8.4, 0.35, hi ? 24 : 12);
-  k.color(DARK_METAL).cyl(0, 1.1, 0, 3.6, 4.2, 1.4, 12);
+  k.glow(false).color(LIMESTONE).cyl(0, 0.3, 0, 9.5, 10.2, 0.8, hi ? 32 : 12);
+  k.color(0x225a6e).cyl(0, 0.9, 0, 8.4, 8.4, 0.35, hi ? 32 : 12);
+  k.color(DARK_METAL).cyl(0, 1.1, 0, 3.6, 4.2, 1.4, hi ? 24 : 12);
 
-  // Vertical 3D sculptural OpenAI 6-petal interwoven knot standing at y = 6.5m
+  // Vertical 3D sculptural OpenAI 6-petal interwoven knot standing at y = 6.6m
   const cy = 6.6;
   k.push().translate(0, cy, 0);
-  // Central dark background disc + glowing emerald accent ring
-  k.glow(false).color(DARK_METAL). rotateX(Math.PI / 2).cyl(0, -0.45, 0, 4.3, 4.3, 0.9, hi ? 24 : 12);
+  k.glow(false).color(DARK_METAL).rotateX(Math.PI / 2).cyl(0, -0.45, 0, 4.3, 4.3, 0.9, hi ? 32 : 12);
+  if (hi) {
+    k.glow(true).color(EMERALD).rotateX(Math.PI / 2).torus(0, 0, 0, 4.35, 0.16, 32, 10);
+  }
   k.pop();
 
   // 6 interwoven white & emerald petals around the hexagonal core
@@ -88,18 +107,23 @@ function openaiBlossomMonument(k, cx, cz) {
     k.strut(p0, p1, 0.72);
     k.strut(p1, p2, 0.72);
     k.strut(p2, p3, 0.62);
-    // Back face duplicate so monument is visible from both street and courtyard
-    const b0 = [p0[0], p0[1], -0.65], b1 = [p1[0], p1[1], -0.65], b2 = [p2[0], p2[1], -0.65];
+    const b0 = [p0[0], p0[1], -0.65], b1 = [p1[0], p1[1], -0.65], b2 = [p2[0], p2[1], -0.65], b3 = [p3[0], p3[1], -0.65];
     k.strut(b0, b1, 0.72);
     k.strut(b1, b2, 0.72);
+    k.strut(b2, b3, 0.62);
+    if (hi) {
+      // Emerald inner accent rib on each interlocking loop
+      k.color(EMERALD).pipe(p0, p1, 0.18, 8).pipe(b0, b1, 0.18, 8);
+    }
   }
   // Glowing OpenAI Emerald base halo ring
-  k.glow(true).color(EMERALD).cyl(0, 2.35, 0, 3.7, 3.7, 0.35, 12);
+  k.glow(true).color(EMERALD).cyl(0, 2.35, 0, 3.7, 3.7, 0.35, hi ? 24 : 12);
   k.glow(false);
   k.pop();
 }
 
 export function build(k) {
+  const hi = k.hi;
   // 1. Mission Bay plaza, wooden lounge decks & landscaped courtyard
   k.glow(false).color(LIMESTONE).box(0, -2.5, 0, 145, 2.9, 115);
   k.color(LAWN).box(0, 0.4, 8, 36, 0.25, 48);
@@ -118,6 +142,26 @@ export function build(k) {
   k.glow(false).color(LIMESTONE).box(0, 12.5, 12, 30, 1.0, 9.5).box(0, 17.2, 12, 30, 0.9, 9.5);
   k.glow(true).color(GLASS_LT).box(0, 13.5, 12, 29, 3.7, 8.8);
   k.glow(false);
+
+  if (hi) {
+    // Central Atrium sculptural spiral wooden feature stair & arched skylight vault
+    k.color(WOOD);
+    for (let s = 0; s < 16; s++) {
+      const a = (s / 16) * Math.PI * 2.5, sy = 1.0 + s * 1.1;
+      k.box(Math.cos(a) * 5.2, sy, -22 + Math.sin(a) * 5.2, 2.4, 0.35, 1.2);
+    }
+    // Skylight barrel ribs atop Central Atrium
+    k.color(DARK_METAL);
+    for (let z = -32; z <= -12; z += 4) {
+      k.arch(0, 23.0, z, 24, 3.2, 0.24, 16, 8);
+    }
+    // Courtyard California live oak trees & timber outdoor seating pods
+    for (const [tx, tz] of [[-12, 6], [12, 6], [-12, 20], [12, 20]]) {
+      k.color(WOOD).torus(tx, 0.75, tz, 2.4, 0.35, 12, 6);
+      k.color(0x5c4430).cyl(tx, 0.4, tz, 0.28, 0.2, 2.6, 6);
+      k.color(TREE).sphere(tx, 4.2, tz, 2.9, 10, 6, 0.85);
+    }
+  }
 
   // 4. Sculptural OpenAI Blossom Monument in the front plaza
   openaiBlossomMonument(k, 0, 34);

@@ -1,12 +1,13 @@
 // feature/beijing-landmarks: CCTV Headquarters (中央广播电视总台总部大楼) — 1:1.
-// 234 m continuous three-dimensional loop: an L-shaped 9-storey base, two towers leaning 6° toward the
-// same corner, and an L-shaped 13-storey overhang that joins the tower tops at 162-234 m and cantilevers
-// 75 m out over the open corner of the base. Grey glass skin wrapped in the irregular diagrid (denser
-// where the loads gather near the tower roots and the cantilever). Flat roof, no mast.
+// 234 m continuous three-dimensional loop by OMA: an L-shaped 9-storey base, two towers leaning 6° toward
+// the same corner, and an L-shaped 13-storey overhang that joins the tower tops at 162-234 m and cantilevers
+// 75 m out over the open corner of the base. Grey glass skin wrapped in the irregular steel diagrid (including
+// the underside soffit of the cantilever, 3 circular glass viewing portals, podium roof helipad & media plaza).
 export const lodDist = 2000;
 export const glowStrength = 1.3;
 
 const GLASS = 0x46525e, GLASS_DK = 0x37414c, GRID = 0xa3acb5, PLAZA = 0x5a6068, LIT = 0x9cc4ec;
+const WATER = 0x3878a8, HELI = 0xd6dde5;
 const HW = 24;                 // tower / wing half-width
 const BASE_H = 50, OV0 = 162, TOP = 234;
 const A0 = [-46, -46], A1 = [-40, -30];   // tower A (NW) centres at the ground and at the overhang: leans S + E
@@ -52,7 +53,6 @@ function diagrid(k, p, rows, cols, t, dense = -1) {
 function towerGrid(k, P0, P1, y0, y1, rows) {
   const at = (y) => towerC(P0, P1, y);
   const o = HW + 0.35;
-  // four faces: (dx, dz) offsets of the face corners from the centre
   const faces = [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]];
   for (const [[ax, az], [bx, bz]] of faces) {
     diagrid(k, (u, v) => {
@@ -78,7 +78,6 @@ export function build(k) {
   // plaza
   k.color(PLAZA).box(0, 0, 0, 190, 0.8, 190);
   // L-shaped base: north wing + east wing through the NE corner
-  // (near: dark glass, the diagrid carries the night lighting; far impostor: the glass itself glows)
   k.glow(!hi).color(GLASS_DK);
   k.box(0, 0.8, -46, 140, BASE_H - 0.8, 2 * HW);
   k.box(46, 0.8, 0, 2 * HW, BASE_H - 0.8, 140);
@@ -99,15 +98,47 @@ export function build(k) {
   if (!hi) return;
   // the irregular diagrid: denser low on the towers, over the base and around the overhang
   k.glow(true).color(GRID);
-  towerGrid(k, A0, A1, BASE_H, OV0, 9);
-  towerGrid(k, B0, B1, BASE_H, OV0, 9);
-  gridBox(k, 0, 0.8, -46, 140, BASE_H - 0.8, 2 * HW, 4, 10);
-  gridBox(k, 46, 0.8, 0, 2 * HW, BASE_H - 0.8, 140, 4, 3);
-  gridBox(k, C[0], OV0, (A1[1] + C[1]) / 2, 2 * HW, TOP - OV0, C[1] - A1[1] + 2 * HW, 6, 3);
-  gridBox(k, (C[0] + B1[0]) / 2, OV0, C[1], B1[0] - C[0] + 2 * HW, TOP - OV0, 2 * HW, 6, 7);
-  // lit soffit of the cantilever (viewing platform glass floors) and the lobby glazing
+  towerGrid(k, A0, A1, BASE_H, OV0, 11);
+  towerGrid(k, B0, B1, BASE_H, OV0, 11);
+  gridBox(k, 0, 0.8, -46, 140, BASE_H - 0.8, 2 * HW, 5, 10);
+  gridBox(k, 46, 0.8, 0, 2 * HW, BASE_H - 0.8, 140, 5, 3);
+  gridBox(k, C[0], OV0, (A1[1] + C[1]) / 2, 2 * HW, TOP - OV0, C[1] - A1[1] + 2 * HW, 7, 3);
+  gridBox(k, (C[0] + B1[0]) / 2, OV0, C[1], B1[0] - C[0] + 2 * HW, TOP - OV0, 2 * HW, 7, 7);
+
+  // Underside soffit diagrid on the 75m cantilevered overhang (y = OV0 - 0.25)
+  diagrid(k, (u, v) => [
+    C[0] - HW + u * (2 * HW),
+    OV0 - 0.25,
+    A1[1] - HW + v * (C[1] - A1[1] + 2 * HW),
+  ], 6, 4, 0.85);
+  diagrid(k, (u, v) => [
+    C[0] - HW + u * (B1[0] - C[0] + 2 * HW),
+    OV0 - 0.25,
+    C[1] - HW + v * (2 * HW),
+  ], 4, 6, 0.85);
+
+  // 3 Famous Circular Glass Viewing Portals (悬空玻璃观景台) on the underside of the cantilever nose + lobby glazing
   k.color(LIT);
-  k.box(C[0], OV0 - 0.4, C[1], 2 * HW - 4, 0.4, 2 * HW - 4);
+  for (const [px, pz, pr] of [[C[0] - 8, C[1] + 8, 4.2], [C[0] + 6, C[1] + 8, 3.8], [C[0] - 8, C[1] - 6, 3.8]]) {
+    k.cyl(px, OV0 - 0.45, pz, pr, pr, 0.45, 16);
+  }
   k.box(0, 0.8, -46 - HW - 0.4, 120, 5, 0.3);
   k.glow(false);
+
+  // Rooftop Helipad on theNE corner of the L-base (y = BASE_H) & Satellite Broadcast Dish Farm
+  const hx = 46, hz = -46;
+  k.color(HELI).cyl(hx, BASE_H + 0.2, hz, 13.5, 13.5, 0.35, 24);
+  k.color(GLASS_DK).cyl(hx, BASE_H + 0.56, hz, 11.5, 11.5, 0.12, 24);
+  k.glow(true).color(0xffffff);
+  k.box(hx - 2.8, BASE_H + 0.7, hz, 1.1, 0.1, 7.2).box(hx + 2.8, BASE_H + 0.7, hz, 1.1, 0.1, 7.2);
+  k.box(hx, BASE_H + 0.7, hz, 5.6, 0.1, 1.1);
+  k.glow(false);
+  // Satellite uplink parabolic dishes along the North base roof
+  for (const sx of [-18, -6, 6, 18]) {
+    k.color(GRID).cyl(sx, BASE_H + 0.2, -46, 0.45, 0.45, 1.8, 6);
+    k.cone(sx, BASE_H + 2.6, -46, 2.2, -1.1, 12);
+  }
+  // Central Media Plaza circular sunken fountain pool under the cantilevered overhang
+  k.color(GRID).cyl(-18, 0.8, 18, 22.0, 22.0, 0.65, 24);
+  k.glow(true).color(WATER).cyl(-18, 1.46, 18, 20.2, 20.2, 0.15, 24).glow(false);
 }

@@ -1,12 +1,14 @@
 // feature/famous-landmarks: Salesforce Tower, SF — 1:1 (ground to crown rim 326 m).
 // Rounded-square glass tower (~50 m at the base) that tapers and softens toward the top,
-// pearl-white horizontal sunshades at every floor and vertical fins, ending in the open
-// lattice crown (above ~275 m) whose LED screen glows at night. Faces align with the SoMa grid.
+// pearl-white horizontal sunshades at every floor and vertical fins, 5-story glazed lobby with
+// Mission St entrance canopy & 4th-floor pedestrian skybridge to Salesforce Park, ending in the
+// open lattice crown (above ~275 m) whose Jim Campbell "Day for Night" LED screen glows at night.
 
 export const lodDist = 2600;
 export const glowStrength = 1.9;
 
 const GLASS = 0xa7bccb, GLASS_DK = 0x8ea4b4, FIN = 0xf1efe9, BAND = 0xe9e7e1, LOBBY = 0x5a6670, CORE = 0x6b7177, LED = 0xe8eef6;
+const LED_BLUE = 0x8cb8f2, LED_PINK = 0xe8b8d8;
 const EXP = 3.3;          // superellipse exponent (rounded square)
 const TOP = 275;          // top of the enclosed tower
 // half-width profile [y, hw]
@@ -68,13 +70,17 @@ export function build(k) {
   k.color(CORE).extrude(ring(hwAt(TOP) * 0.62, 0, N).map(([x, , z]) => [x, z]), TOP, 12);      // mechanical core
 
   if (hi) {
-    // horizontal sunshade bands, one per floor
+    // horizontal sunshade bands, one per floor (61 floors up to Ohana Floor)
     k.color(BAND);
     const floors = 60, fh = (TOP - 14) / floors;
     for (let i = 0; i <= floors; i++) {
       const y = 14 + i * fh, h = hwAt(y);
       loft(k, [ring(h, y, N), ring(h + 0.45, y + 0.18, N), ring(h, y + 0.4, N)]);
     }
+    // Warm-lit double-height 61st Floor "Ohana Floor" observation lounge band just below the crown (y = 266..274 m)
+    k.glow(true).color(0xffeed4);
+    loft(k, [ring(hwAt(266) + 0.05, 266, N), ring(hwAt(273) + 0.05, 273, N)]);
+    k.glow(false);
     // vertical fins following the taper
     k.color(FIN);
     const ys = levels.map(([y]) => y).filter((y) => y >= 14);
@@ -85,20 +91,43 @@ export function build(k) {
         k.strut(a, b, 0.32);
       }
     }
-    // lobby fins
+    // lobby fins & horizontal glass transoms
     for (let i = 0; i < N; i += 2) {
       const a = ring(hwAt(0) + 0.1, 0, N)[i], b = ring(hwAt(14) + 0.1, 14, N)[i];
       k.strut(a, b, 0.6);
+    }
+    for (const ly of [4.6, 9.2, 13.8]) {
+      loft(k, [ring(hwAt(ly) - 0.9, ly, N), ring(hwAt(ly) - 0.9, ly + 0.25, N)]);
+    }
+    // Mission Street Cantilevered Glass Entrance Canopy (-Z front) & Plaza Planter Benches
+    k.color(FIN).box(0, 6.2, -27.5, 22, 0.45, 6.2);
+    k.color(GLASS).box(0, 6.65, -27.5, 21.2, 0.2, 5.6);
+    // Elevated Pedestrian Skybridge at Floor 5 (y = 21 m, +Z south face) linking to Salesforce Park
+    k.color(FIN).box(0, 20.5, 31.0, 6.4, 0.65, 14.0).box(0, 24.8, 31.0, 6.4, 0.5, 14.0);
+    k.glow(true).color(GLASS_DK).box(0, 21.15, 31.0, 5.8, 3.65, 13.6).glow(false);
+    for (let bz = 25; bz <= 37; bz += 3) {
+      k.color(FIN).strut([-3.1, 20.8, bz], [-3.1, 24.8, bz + 1.5], 0.18);
+      k.strut([3.1, 20.8, bz], [3.1, 24.8, bz + 1.5], 0.18);
     }
   } else {
     k.color(BAND);
     for (let y = 40; y < TOP; y += 40) loft(k, [ring(hwAt(y), y, N), ring(hwAt(y) + 0.5, y + 1, N), ring(hwAt(y), y + 2, N)]);
   }
 
-  // crown: LED screen inside an open lattice (fins + rings continue the silhouette)
-  k.glow(true).color(LED);
+  // crown: Jim Campbell "Day for Night" multi-band LED screen inside an open lattice (fins + rings + internal trusses)
+  k.glow(true);
   const crownY = PROF.filter(([y]) => y >= TOP);
-  loft(k, crownY.filter(([y]) => y <= 315).map(([y, h]) => ring(h * 0.86, y, N)));
+  if (hi) {
+    k.color(LED_BLUE);
+    loft(k, [ring(hwAt(275) * 0.86, 275, N), ring(hwAt(292) * 0.86, 292, N)]);
+    k.color(LED);
+    loft(k, [ring(hwAt(292) * 0.86, 292, N), ring(hwAt(305) * 0.86, 305, N)]);
+    k.color(LED_PINK);
+    loft(k, [ring(hwAt(305) * 0.86, 305, N), ring(hwAt(316) * 0.86, 316, N)]);
+  } else {
+    k.color(LED);
+    loft(k, crownY.filter(([y]) => y <= 315).map(([y, h]) => ring(h * 0.86, y, N)));
+  }
   if (hi) {
     k.color(FIN);
     for (let y = TOP + 3; y <= 326.01; y += 3.4) {
@@ -110,6 +139,12 @@ export function build(k) {
         const a = ring(crownY[s][1] + 0.15, crownY[s][0], N)[i], b = ring(crownY[s + 1][1] + 0.15, crownY[s + 1][0], N)[i];
         k.strut(a, b, 0.42);
       }
+    }
+    // Internal horizontal structural wind-bracing catwalk rings inside the open crown
+    k.glow(false).color(CORE);
+    for (const cy of [290, 305, 318]) {
+      const rIn = ring(hwAt(cy) * 0.92, cy, 16);
+      for (let i = 0; i < 16; i++) k.strut(rIn[i], rIn[(i + 1) % 16], 0.45);
     }
   } else {
     k.color(FIN);

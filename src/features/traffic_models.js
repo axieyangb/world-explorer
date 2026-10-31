@@ -139,6 +139,23 @@ function addFineVehicleDetails(built, typeId, options = {}) {
       0,
       Math.PI / 2
     );
+    // Deep wheel-well cutout liner & rear splash mudflap
+    addPart(
+      root,
+      new THREE.BoxGeometry(tw * 0.65, R * 1.15, R * 1.65),
+      M.grille,
+      wp.x - sx * (tw * 0.18),
+      R + 0.04,
+      wp.z
+    );
+    addPart(
+      root,
+      new THREE.BoxGeometry(tw * 0.85, R * 0.62, 0.03),
+      M.rubber,
+      wp.x,
+      R * 0.68,
+      wp.z - R * 0.96
+    );
 
     // Smooth 16-segment dark rubber tire tread & sidewall shoulder
     addPart(
@@ -513,6 +530,130 @@ function addFineVehicleDetails(built, typeId, options = {}) {
       addPart(root, new THREE.BoxGeometry(0.08, 0.32, 0.08), M.darkTrim, ux, 0.52, -3.26);
     }
     addPart(root, new THREE.BoxGeometry(0.5, 0.16, 0.05), M.plate, 0, 0.64, -3.26);
+  }
+
+  // 7. Recursive Body-Shell & Cabin Sculpting across all 11 Vehicle Archetypes
+  // (Sloped windshields & backlights, contoured hood/trunk decks, front/rear aero valances,
+  //  roof drip rails, bus panoramic window frames & rear destination boards, truck cab aero
+  //  roof fairings & trailer kingpin/landing gear legs, pickup inner bed liners & tailgates)
+  if (!isHeavy) {
+    const isSports = typeId === 'supercar' || arch === 'sports';
+    const isSuv = typeId === 'tesla' || arch === 'suv';
+    const hoodY = isSports ? 0.72 : isSuv ? 0.92 : 0.86;
+    const roofY = bbox.max.y - 0.02;
+
+    // Contoured hood power-dome & twin aerodynamic crease ridges (+Z nose)
+    addPart(root, new THREE.BoxGeometry(halfW * 1.18, 0.045, 1.08), M.paint, 0, hoodY, zFront - 0.74, 0.08, 0, 0);
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.04, 0.032, 1.02), M.paint, sx * (halfW * 0.52), hoodY + 0.015, zFront - 0.72, 0.08, 0, 0);
+    }
+
+    // Sloped front windshield glass overlay, cowl vent grille & sloped rear backlight glass
+    const wsZ = isSports ? 0.78 : 1.05;
+    const blZ = isSports ? -1.05 : isSuv ? -1.55 : -1.22;
+    addPart(root, new THREE.BoxGeometry(halfW * 1.48, 0.028, 0.16), M.grille, 0, hoodY + 0.03, wsZ + 0.08);
+    addPart(root, new THREE.BoxGeometry(halfW * 1.46, 0.52, 0.035), M.glass, 0, hoodY + 0.26, wsZ - 0.16, -0.56, 0, 0);
+    addPart(root, new THREE.BoxGeometry(halfW * 1.42, 0.48, 0.035), M.glass, 0, hoodY + 0.25, blZ + 0.14, 0.54, 0, 0);
+    addPart(root, new THREE.BoxGeometry(0.46, 0.026, 0.04), M.tail, 0, roofY - 0.04, blZ + 0.32);
+
+    // Contoured rear trunk decklid bevel & integrated aerodynamic lip spoiler (-Z tail)
+    addPart(root, new THREE.BoxGeometry(halfW * 1.38, 0.045, 0.58), M.paint, 0, hoodY + 0.04, zRear + 0.42, -0.06, 0, 0);
+    addPart(root, new THREE.BoxGeometry(halfW * 1.52, 0.038, 0.11), isSports ? M.darkTrim : M.paint, 0, hoodY + 0.08, zRear + 0.12, -0.18, 0, 0);
+    if (isSports) {
+      // Raised rear GT wing spoiler on twin pylons + side air intake scoops
+      addPart(root, new THREE.BoxGeometry(halfW * 1.66, 0.035, 0.24), M.darkTrim, 0, hoodY + 0.22, zRear + 0.18, 0.12, 0, 0);
+      for (const sx of [-1, 1]) {
+        addPart(root, new THREE.BoxGeometry(0.035, 0.16, 0.16), M.darkTrim, sx * 0.48, hoodY + 0.14, zRear + 0.18);
+        addPart(root, new THREE.BoxGeometry(0.06, 0.24, 0.42), M.grille, sx * (halfW - 0.02), 0.58, -0.42);
+      }
+    }
+
+    // Front & rear aerodynamic lower valances, chin splitter, rear diffuser & vertical fins
+    addPart(root, new THREE.BoxGeometry(halfW * 1.82, 0.045, 0.22), M.darkTrim, 0, 0.24, zFront - 0.08);
+    addPart(root, new THREE.BoxGeometry(halfW * 1.76, 0.065, 0.18), isSuv ? M.alloy : M.darkTrim, 0, 0.25, zRear + 0.08);
+    for (let fx = -0.45; fx <= 0.45; fx += 0.3) {
+      addPart(root, new THREE.BoxGeometry(0.024, 0.08, 0.16), M.darkTrim, fx, 0.25, zRear + 0.06);
+    }
+
+    // Sculpted side rocker sill skirts & roof drip rails along both sides
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.065, 0.085, 1.82), M.paint, sx * (halfW - 0.02), 0.31, -0.02);
+      addPart(root, new THREE.BoxGeometry(0.075, 0.032, 1.86), M.darkTrim, sx * (halfW - 0.015), 0.26, -0.02);
+      addPart(root, new THREE.BoxGeometry(0.028, 0.024, 1.62), M.chrome, sx * (halfW * 0.72), roofY + 0.008, -0.12);
+    }
+  }
+
+  // Bus panoramic window frames, contoured front roof brow, roof drip rails & rear destination board
+  if (typeId === 'bus' || arch === 'bus') {
+    // Contoured front roof brow cap & front/rear lower aerodynamic valances
+    addPart(root, new THREE.BoxGeometry(2.38, 0.18, 0.42), M.paint, 0, 3.06, 5.12, 0.24, 0, 0);
+    addPart(root, new THREE.BoxGeometry(2.46, 0.12, 0.22), M.darkTrim, 0, 0.32, 5.26);
+    addPart(root, new THREE.BoxGeometry(2.46, 0.12, 0.22), M.darkTrim, 0, 0.34, -5.26);
+    // Rear LED route / destination board in upper rear window
+    addPart(root, new THREE.BoxGeometry(1.42, 0.26, 0.06), M.darkTrim, 0, 2.78, -5.29);
+    addPart(root, new THREE.BoxGeometry(1.3, 0.18, 0.07), M.glowAmber, 0, 2.78, -5.3);
+    // Full-length roof drip rails & panoramic window surround frames
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.038, 0.032, 10.2), M.chrome, sx * 1.25, 3.1, 0);
+      addPart(root, new THREE.BoxGeometry(0.048, 0.045, 9.2), M.darkTrim, sx * 1.272, 2.48, -0.2);
+      addPart(root, new THREE.BoxGeometry(0.048, 0.045, 9.2), M.darkTrim, sx * 1.272, 1.32, -0.2);
+    }
+  }
+
+  // Pickup truck inner bed liner, wheel-well tubs, sculpted tailgate & roof drip rails
+  if (typeId === 'cybertruck' || arch === 'pickup') {
+    // Inner bed liner floor, front bulkhead wall, side bed walls & interior wheel-well tubs
+    addPart(root, new THREE.BoxGeometry(1.74, 0.04, 2.18), M.darkTrim, 0, 0.86, -1.68);
+    addPart(root, new THREE.BoxGeometry(1.76, 0.44, 0.06), M.darkTrim, 0, 1.08, -0.58);
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.06, 0.44, 2.18), M.darkTrim, sx * 0.88, 1.08, -1.68);
+      addPart(root, new THREE.BoxGeometry(0.28, 0.28, 0.78), M.darkTrim, sx * 0.72, 0.98, -1.78);
+      addPart(root, new THREE.BoxGeometry(0.028, 0.024, 1.55), M.chrome, sx * 0.82, 1.78, 0.35);
+    }
+    // Detailed rear tailgate cap, handle bezel, latch & lower step bumper valance
+    addPart(root, new THREE.BoxGeometry(1.88, 0.055, 0.09), M.darkTrim, 0, 1.28, -2.84);
+    addPart(root, new THREE.BoxGeometry(0.32, 0.09, 0.05), M.darkTrim, 0, 1.12, -2.86);
+    addPart(root, new THREE.BoxGeometry(0.2, 0.035, 0.06), M.chrome, 0, 1.12, -2.87);
+    addPart(root, new THREE.BoxGeometry(1.96, 0.09, 0.22), M.alloy, 0, 0.32, 2.78);
+    addPart(root, new THREE.BoxGeometry(1.96, 0.09, 0.24), M.alloy, 0, 0.34, -2.84);
+  }
+
+  // Van & Ambulance contoured hood slope, windshield cowl, roof drip rails & sliding door track
+  if (typeId === 'ambulance' || arch === 'ambulance' || arch === 'van') {
+    addPart(root, new THREE.BoxGeometry(1.78, 0.05, 0.78), M.paint, 0, 1.24, 2.58, 0.16, 0, 0);
+    addPart(root, new THREE.BoxGeometry(1.72, 0.03, 0.16), M.grille, 0, 1.32, 2.18);
+    addPart(root, new THREE.BoxGeometry(2.04, 0.09, 0.2), M.darkTrim, 0, 0.34, 3.02);
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.035, 0.03, 4.1), M.chrome, sx * 1.12, 2.74, -0.95);
+    }
+    // Curb-side sliding cargo door guide track
+    addPart(root, new THREE.BoxGeometry(0.04, 0.035, 1.45), M.darkTrim, -1.135, 1.38, -0.25);
+  }
+
+  // Truck & Firetruck cab aero roof fairing, contoured hood louvers & trailer kingpin / landing gear legs
+  if (typeId === 'tow_truck' || arch === 'truck' || arch === 'firetruck') {
+    // Contoured hood center ridge, side engine louvers & cab roof drip rails
+    addPart(root, new THREE.BoxGeometry(1.38, 0.055, 1.12), M.paint, 0, 1.54, 2.55, 0.08, 0, 0);
+    addPart(root, new THREE.BoxGeometry(2.26, 0.11, 0.22), M.darkTrim, 0, 0.36, 3.24);
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.04, 0.22, 0.52), M.grille, sx * 0.96, 1.28, 2.45);
+      addPart(root, new THREE.BoxGeometry(0.035, 0.03, 1.32), M.chrome, sx * 0.98, 2.52, 0.95);
+    }
+    // Aerodynamic cab roof wind fairing / deflector on commercial trucks
+    if (arch === 'truck') {
+      addPart(root, new THREE.BoxGeometry(1.82, 0.06, 0.98), M.paint, 0, 2.86, 1.02, 0.42, 0, 0);
+      for (const sx of [-1, 1]) {
+        addPart(root, new THREE.BoxGeometry(0.05, 0.42, 0.78), M.paint, sx * 0.9, 2.74, 0.88);
+      }
+    }
+    // Fifth-wheel coupling bolster, kingpin & telescopic trailer landing gear legs with sand shoes
+    addPart(root, new THREE.CylinderGeometry(0.38, 0.42, 0.08, 14), M.darkTrim, 0, 0.88, -0.45);
+    addPart(root, new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), M.chrome, 0, 0.96, -0.45);
+    addPart(root, new THREE.CylinderGeometry(0.025, 0.025, 1.36, 8), M.darkTrim, 0, 0.48, -0.35, 0, 0, Math.PI / 2);
+    for (const sx of [-1, 1]) {
+      addPart(root, new THREE.BoxGeometry(0.09, 0.62, 0.09), M.darkTrim, sx * 0.68, 0.52, -0.35);
+      addPart(root, new THREE.BoxGeometry(0.22, 0.035, 0.26), M.alloy, sx * 0.68, 0.21, -0.35);
+    }
   }
 }
 

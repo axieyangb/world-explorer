@@ -1,6 +1,7 @@
 // feature/famous-landmarks: Palace of Fine Arts, Marina SF — 1:1 (ground to dome top 49 m).
 // Bernard Maybeck's 1915 Beaux-Arts ruin: open octagonal rotunda (8 arched bays on paired-column
-// piers, sculpted attic, drum and ochre dome), flanked by two curved peristyle colonnades crowned
+// piers, sculpted attic with "Priestesses of Culture" angels & relief panels, coffered ochre dome,
+// central altar podium, and lagoon balustrade), flanked by two curved peristyle colonnades crowned
 // with the "weeping women" flower boxes, wrapping around the lagoon. Origin = rotunda centre,
 // front (-Z) faces the lagoon (east); the colonnade arcs are concave towards the lagoon.
 import { Kit } from "../kit.js";
@@ -72,6 +73,18 @@ function rotunda(k) {
   // stepped octagonal platform
   k.color(PAVE).extrude(Kit.ngon(SEG, 26, Math.PI / SEG), -1.5, 2.1);
   k.color(BUFF_DK).extrude(Kit.ngon(SEG, 23.5, Math.PI / SEG), 0.6, 0.6);
+  if (hi) {
+    // Central octagonal podium & classical urn altar beneath the rotunda dome
+    k.color(BUFF).extrude(Kit.ngon(SEG, 4.2, Math.PI / SEG), 1.25, 0.6);
+    k.color(SALMON).cyl(0, 1.85, 0, 1.4, 1.1, 1.6, 8);
+    // Lagoon-front curved stone balustrade & classical urns (-Z side, facing lagoon)
+    for (let i = -3; i <= 3; i++) {
+      const a = (i / 3) * 0.55;
+      const bx = Math.sin(a) * 25.2, bz = -Math.cos(a) * 25.2;
+      k.color(BUFF).box(bx, 0.6, bz, 1.2, 1.1, 1.2);
+      k.color(OCHRE).cyl(bx, 1.7, bz, 0.45, 0.28, 0.85, 6);
+    }
+  }
   for (let i = 0; i < SEG; i++) {
     const a = (i / SEG) * Math.PI * 2;           // pier angle
     k.push().rotateY(-a + Math.PI / 2).translate(0, 0, -RP);
@@ -79,16 +92,25 @@ function rotunda(k) {
     k.color(SALMON).box(0, 1.2, 0, 4.6, ENT - 1.2, 4.6);
     k.color(BUFF).box(0, 1.2, 0, 5.4, 1.2, 5.4);
     if (hi) {
-      // paired corinthian columns on the outer face + capitals
+      // paired Corinthian columns on both outer (-Z) and inner (+Z) pier faces + capitals
       for (const x of [-1.5, 1.5]) {
-        k.color(SALMON_DK).cyl(x, 2.4, -3.0, 0.8, 0.68, 17.6, 10);
-        k.color(BUFF).box(x, 20.0, -3.0, 2.0, 1.4, 2.0);
+        k.color(SALMON_DK).cyl(x, 2.4, -3.0, 0.8, 0.68, 17.6, 12, { smooth: false });
+        k.color(BUFF).cyl(x, 19.6, -3.0, 0.72, 1.05, 0.9, 8);
+        k.box(x, 20.5, -3.0, 2.0, 0.9, 2.0);
         k.color(BUFF_DK).box(x, 1.2, -3.0, 2.0, 1.2, 2.0);
       }
       k.color(BUFF).box(0, 21.4, -2.6, 5.6, 2.1, 3.4);   // column entablature block
-      // flower box / urn on top of the column pair
+      // flower box / urn on top of the column pair + sculpted "Weeping Women" at corners
       k.color(OCHRE).box(0, ENT, -2.8, 4.2, 2.6, 3.2);
       k.color(GREEN).box(0, ENT + 2.6, -2.8, 3.6, 0.7, 2.6);
+      k.color(SALMON_DK);
+      for (const sx of [-1.95, 1.95]) for (const sz of [-4.2, -1.4]) {
+        k.cyl(sx, ENT, sz, 0.34, 0.26, 2.2, 6);
+        k.sphere(sx * 0.92, ENT + 2.35, sz, 0.24, 6, 4); // bowed head facing into flower box
+      }
+      // Winged "Priestess of Culture" angel figure perched under the drum cornice looking into rotunda
+      k.color(BUFF).cyl(0, DRUM - 3.6, 2.5, 0.42, 0.32, 2.6, 6);
+      k.sphere(0, DRUM - 0.8, 2.5, 0.28, 6, 4);
     }
     k.pop();
     // arched bay between pier i and i+1
@@ -97,17 +119,29 @@ function rotunda(k) {
     const w = 2 * RP * Math.sin(Math.PI / SEG) - 4.6;  // clear span between piers
     k.color(SALMON);
     spandrel(k, w + 0.4, SPRING, ENT, SPRING, w / 2 - 0.2, -APO - 1.6, 3.2, hi ? 12 : 6);
-    if (hi) { k.color(BUFF).box(0, SPRING + w / 2 - 0.9, -APO - 1.8, 1.4, 1.9, 0.6); } // keystone
+    if (hi) {
+      k.color(BUFF).box(0, SPRING + w / 2 - 0.9, -APO - 1.8, 1.4, 1.9, 0.6); // keystone
+      // Winged spandrel relief medallions flanking the arch crown
+      for (const sx of [-w * 0.34, w * 0.34]) {
+        k.color(BUFF_DK).cyl(sx, ENT - 2.2, -APO - 1.72, 0.85, 0.85, 0.25, 8);
+      }
+    }
     k.pop();
   }
   // entablature, sculpted attic, drum, dome
   k.color(BUFF).extrude(Kit.ngon(SEG, 23.2, Math.PI / SEG), ENT, ATTIC - ENT);
   k.color(SALMON).extrude(Kit.ngon(SEG, 21.6, Math.PI / SEG), ATTIC, DRUM - ATTIC);
   if (hi) {
-    // relief panels on the attic faces
+    // relief panels with sculpted figures on the attic faces
     for (let i = 0; i < SEG; i++) {
-      k.push().rotateY(-(i + 0.5) * (Math.PI * 2 / SEG) - Math.PI / SEG + Math.PI / 2);
-      k.color(BUFF_DK).box(0, ATTIC + 1.2, -21.6 * Math.cos(Math.PI / SEG) - 0.1, 11, 3.8, 0.4);
+      k.push().rotateY(-(i + 0.5) * ((Math.PI * 2) / SEG) - Math.PI / SEG + Math.PI / 2);
+      const az = -21.6 * Math.cos(Math.PI / SEG) - 0.1;
+      k.color(BUFF_DK).box(0, ATTIC + 1.2, az, 11, 3.8, 0.4);
+      k.color(BUFF);
+      for (let f = -4; f <= 4; f += 1.6) {
+        k.cyl(f, ATTIC + 1.5, az - 0.22, 0.32, 0.25, 2.6, 5);
+        k.sphere(f, ATTIC + 4.3, az - 0.22, 0.22, 5, 3);
+      }
       k.pop();
     }
   }
@@ -115,7 +149,7 @@ function rotunda(k) {
   k.color(DOME_DK).cyl(0, DRUM, 0, 17.4, 17.0, DOME0 - DRUM, hi ? 32 : 12);
   k.color(DOME).sphere(0, DOME0, 0, DR, hi ? 32 : 12, hi ? 10 : 5, (TOP - 0.9 - DOME0) / DR, 0.5);
   if (hi) {
-    // ribs
+    // Exterior dome ribs + interior coffered rotunda ceiling rings
     k.color(DOME_DK);
     for (let i = 0; i < 16; i++) {
       const a = (i / 16) * Math.PI * 2, pts = [];
@@ -126,6 +160,14 @@ function rotunda(k) {
       }
       k.tube(pts, 0.28, 4);
     }
+    // Interior coffered ceiling horizontal bands visible from underneath
+    k.glow(true).color(OCHRE);
+    for (const f of [0.22, 0.45, 0.68]) {
+      const rIn = Math.cos(f * (Math.PI / 2)) * (DR - 0.35);
+      const yIn = DOME0 + Math.sin(f * (Math.PI / 2)) * (TOP - 1.2 - DOME0);
+      k.cyl(0, yIn, 0, rIn, rIn * 0.95, 0.35, 16, { caps: false });
+    }
+    k.glow(false);
   }
   k.color(DOME_DK).cyl(0, TOP - 1.4, 0, 2.6, 1.6, 1.4, hi ? 16 : 8);   // oculus ring cap
   // floor under the rotunda
@@ -150,8 +192,9 @@ function colonnades(k) {
         const x = s * Math.sin(p) * r, z = CZ + Math.cos(p) * r;
         if (hi) {
           k.color(BUFF_DK).box(x, 1.0, z, 1.9, 0.8, 1.9);
-          k.color(SALMON).cyl(x, 1.8, z, 0.72, 0.6, COLH - 1.8, 10);
-          k.color(BUFF).box(x, COLH - 0.2, z, 1.8, 1.2, 1.8);
+          k.color(SALMON).cyl(x, 1.8, z, 0.72, 0.6, COLH - 1.8, 10, { smooth: false });
+          k.color(BUFF).cyl(x, COLH - 0.8, z, 0.62, 0.92, 0.6, 8);
+          k.box(x, COLH - 0.2, z, 1.8, 1.2, 1.8);
         } else if (i % 2 === 0) {
           k.color(SALMON).box(x, 1.0, z, 1.3, COLH, 1.3);
         }
@@ -164,10 +207,18 @@ function colonnades(k) {
         if (hi) {
           k.color(BUFF).box(0, 3.4, 0, 5.8, 0.5, 8.2);
           k.color(GREEN).box(0, 3.9, 0, 4.4, 0.9, 6.6);
+          // Sculpted "Weeping Women" bowing into all 4 corners of the flower box
           k.color(SALMON_DK);
-          for (const cx of [-2.4, 2.4]) for (const cz of [-3.6, 3.6]) k.box(cx, 0, cz, 0.7, 3.1, 0.7);
+          for (const cx of [-2.45, 2.45]) for (const cz of [-3.65, 3.65]) {
+            k.box(cx, 0, cz, 0.72, 2.8, 0.72);
+            k.sphere(cx * 0.9, 3.05, cz * 0.92, 0.32, 6, 4);
+          }
         }
         k.pop();
+      } else if (hi) {
+        // Classical terracotta urns on the colonnade balustrade between flower boxes
+        const r = RC, x = s * Math.sin(p) * r, z = CZ + Math.cos(p) * r;
+        k.color(OCHRE).cyl(x, COLH + 3.6, z, 0.55, 0.32, 1.3, 6);
       }
     }
   }
@@ -184,12 +235,12 @@ function hall(k) {
     one(HR0 + 6, HR1 - 6, 18, 22, 0xa39686);   // raised roof
   }
   if (hi) {
-    // dark entrance bays on the colonnade-facing (inner) wall
-    k.color(0x5f554b);
-    for (let i = -6; i <= 6; i++) {
-      const p = i * 0.15, r = HR0 - 0.15;
+    // dark arched entrance bays & pilasters on the colonnade-facing (inner) wall
+    for (let i = -8; i <= 8; i++) {
+      const p = i * 0.12, r = HR0 - 0.15;
       k.push().translate(Math.sin(p) * r, 0, CZ + Math.cos(p) * r).rotateY(p);
-      k.box(0, 0, 0, 5, 7, 0.4);
+      k.color(0x5f554b).box(0, 0, 0, 4.6, 8.5, 0.4);
+      k.color(BUFF).box(-2.8, 0, -0.1, 0.85, 17, 0.55).box(2.8, 0, -0.1, 0.85, 17, 0.55);
       k.pop();
     }
   }

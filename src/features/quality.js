@@ -263,11 +263,16 @@ export class QualityManager {
       const distSq = ex * ex + ez * ez;
       const d = Math.sqrt(distSq) - slack;
       const show = (k, lim) => { if (sg[k]) sg[k].visible = (lv[k] !== false) && d <= lim; };
-      show('markings', detailCut);
+      const terrY = app.world && app.world.getHeightAt ? app.world.getHeightAt(cam.x, cam.z) : 0;
+      const camAltAgl = Math.max(0, cam.y - terrY);
+      const [pcx, pcz] = app.worldToChunk ? app.worldToChunk(app.pos.x, app.pos.z) : [20, 20];
+      const chunkCheb = Math.max(Math.abs((ud.cx ?? pcx) - pcx), Math.abs((ud.cz ?? pcz) - pcz));
+      show('markings', camAltAgl > 320 ? -1 : detailCut);
       show('roads', roadCut);
-      show('buildings', bldgCut);
+      show('buildings', camAltAgl > 600 ? -1 : (camAltAgl > 340 && chunkCheb >= 2 ? -1 : bldgCut));
       show('bridges', roadCut);
-      show('facilities', facCut);
+      show('facilities', camAltAgl > 320 ? -1 : facCut);
+      if (sg.vegetation) sg.vegetation.visible = camAltAgl <= 350;
       if (sg.terrain) {
         const lc = d <= lcCut;
         for (const m of sg.terrain.children) if (m.material && m.material.name === 'landcoverMat') m.visible = lc;

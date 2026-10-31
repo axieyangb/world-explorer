@@ -60,6 +60,13 @@ function tower(k, zt, pierTop) {
     // saddle housing on the leg top
     k.color(ORANGE).box(x, TOP - 2.6, zt, 5.4, 2.2, 8.2);
     k.color(ORANGE_DK).taper(x, TOP - 0.4, zt, 5.4, 8.2, 3.6, 6.4, 0.4);
+    if (hi) {
+      // Art Deco tower-top observation gallery & railing around the saddle housing
+      k.color(ORANGE_LT).box(x, TOP - 3.2, zt, 6.8, 0.6, 10.0);
+      // Curved pedestrian sidewalk alcove wrapping around the outer face of each tower leg at road level
+      k.color(ROADBED).box(x + sx * 4.2, rd - 0.4, zt, 3.6, 0.5, 19.0);
+      k.color(ORANGE_LT).box(x + sx * 5.9, rd + 0.1, zt, 0.25, 1.2, 19.2);
+    }
   }
   // portal struts above the road (Art Deco panels) and the crown strut
   for (const [y0, y1] of [[120, 126], [160, 166], [191, 197], [219, TOP - 2.6]]) {
@@ -139,6 +146,13 @@ function truss(k) {
         else k.strut([x, ya - 7.6, za], [x, yb - 0.3, zb], 0.5);
         k.color(ORANGE_LT).strut([x + sx * 0.4, ya + 1.15, za], [x + sx * 0.4, yb + 1.15, zb], 0.18); // outer railing
         k.strut([x + sx * 0.4, ya, za], [x + sx * 0.4, ya + 1.2, za], 0.14);
+        // Art Deco roadway light poles every 3 panels
+        if (i % 3 === 0) {
+          k.color(ORANGE).box(x - sx * 1.2, ya - 0.3, za, 0.22, 6.2, 0.22);
+          k.box(x - sx * 2.0, ya + 5.7, za, 1.8, 0.2, 0.22);
+          k.glow(true).color(0xffdca0).box(x - sx * 2.7, ya + 5.4, za, 0.45, 0.3, 0.45);
+          k.glow(false);
+        }
       } else if (i % 4 === 0) {
         const zc = Math.min(Z1, za + dz * 4), yc = road(zc);
         k.color(ORANGE).quad2([x, ya - 7.6, za], [x, yc - 7.6, zc], [x, yc + 1.0, zc], [x, ya + 1.0, za]);
@@ -166,9 +180,30 @@ function fortPointArch(k) {
       if (k.hi && i > 0) k.strut([x, archY(z0), z0], [x, road(z0) - 7.6, z0], 0.7); // spandrel posts
     }
   }
-  if (k.hi) for (let i = 1; i < n; i += 2) {
-    const z = za + (i / n) * (zb - za);
-    k.color(ORANGE_DK).strut([-11, archY(z), z], [11, archY(z), z], 0.8);
+  if (k.hi) {
+    for (let i = 1; i < n; i += 2) {
+      const z = za + (i / n) * (zb - za);
+      k.color(ORANGE_DK).strut([-11, archY(z), z], [11, archY(z), z], 0.8);
+    }
+    // Historic 1861 Civil War Fort Point red-brick 3-tier masonry bastion nestled directly under the steel arch
+    const BRICK = 0x8c3b2b, BRICK_DK = 0x6b2b1e, GRANITE = 0x9c968c;
+    k.color(GRANITE).box(0, -4, zm - 4, 48, 5.5, 66); // seawall & granite foundation
+    // Outer 3-tier brick casemate walls surrounding central parade courtyard
+    k.color(BRICK);
+    k.box(0, 1.5, zm - 34, 44, 13.5, 6);  // North water-facing bastion wall
+    k.box(0, 1.5, zm + 24, 44, 13.5, 6);  // South gorge wall
+    k.box(-19, 1.5, zm - 5, 6, 13.5, 52); // West casemate wing
+    k.box(19, 1.5, zm - 5, 6, 13.5, 52);  // East casemate wing
+    // Corner stair turrets & 3 tiers of arched brick cannon embrasures / gallery arcades
+    k.color(BRICK_DK);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      k.cyl(sx * 21.5, 1.5, zm - 5 + sz * 28, 3.6, 3.6, 14.5, 8);
+    }
+    for (const tierY of [5.5, 9.8, 14.2]) {
+      k.color(GRANITE).box(0, tierY, zm - 34, 44.6, 0.45, 6.5);
+      k.box(-19, tierY, zm - 5, 6.5, 0.45, 52.6);
+      k.box(19, tierY, zm - 5, 6.5, 0.45, 52.6);
+    }
   }
 }
 
@@ -187,7 +222,7 @@ function cables(k) {
     for (const z of [-TS, TS]) k.box(x, SAD - 1.6, z, 2.4, 3.2, 9.0);
   }
   if (!hi) return;
-  // suspenders: main span and the side spans out to pylons S1 / N1
+  // suspenders: twin vertical wire ropes at each panel point with cast-steel cable band clamps
   k.color(ORANGE_DK);
   const zList = [];
   for (let z = -TS + PANEL; z < TS - 4; z += PANEL) zList.push(z);
@@ -195,7 +230,15 @@ function cables(k) {
   for (const z of zList) {
     const yt = cableY(z), yb = road(z) - 0.3;
     if (yt - yb < 1.0) continue;
-    for (const sx of [-1, 1]) k.box(sx * CX, yb, z, 0.32, yt - yb, 0.32);
+    for (const sx of [-1, 1]) {
+      const x = sx * CX;
+      // Cast-steel cable band clamp on the main cable
+      k.color(ORANGE).box(x, yt - 0.65, z, 1.35, 1.3, 1.45);
+      // Twin vertical suspender ropes (spaced 0.7 m apart along Z)
+      k.color(ORANGE_DK);
+      k.box(x, yb, z - 0.35, 0.16, yt - yb, 0.16);
+      k.box(x, yb, z + 0.35, 0.16, yt - yb, 0.16);
+    }
   }
 }
 

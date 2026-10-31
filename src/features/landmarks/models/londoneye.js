@@ -42,6 +42,8 @@ function wheel(k) {
         const o2 = [Math.cos(a + TAU / N) * R, HUB + Math.sin(a + TAU / N) * R, 0];
         k.strut(q, o2, 0.22);
       }
+      // Transverse triangular cross-ties between the two inner chords
+      k.strut([Math.cos(b) * (R - 3.2), HUB + Math.sin(b) * (R - 3.2), -2.4], [Math.cos(b) * (R - 3.2), HUB + Math.sin(b) * (R - 3.2), 2.4], 0.18);
     }
   }
   // cable spokes: from both hub ends to the rim (bicycle-wheel style)
@@ -58,6 +60,13 @@ function wheel(k) {
   k.push().translate(0, HUB, 0).rotateX(Math.PI / 2);
   k.cyl(0, -11, 0, 2.6, 2.6, 22, hi ? 16 : 8);
   k.cyl(0, -12.5, 0, 1.6, 1.6, 25, hi ? 12 : 6);
+  if (hi) {
+    // Cast-steel spoke anchor rings & radial gusset flanges at both ends of the spindle hub
+    for (const hz of [-10.2, 9.4]) {
+      k.color(WHITE).cyl(0, hz, 0, 3.35, 3.35, 0.8, 16);
+      k.color(GREY).cyl(0, hz - 0.3, 0, 2.95, 2.95, 1.4, 16);
+    }
+  }
   k.pop();
   // LED ring (night colour wash)
   k.glow(true).color(LED);
@@ -69,10 +78,23 @@ function wheel(k) {
     const cx = Math.cos(a) * CAPR, cy = HUB + Math.sin(a) * CAPR;
     k.glow(false).color(CAPRING);
     k.strut([Math.cos(a) * (R + 0.4), HUB + Math.sin(a) * (R + 0.4), 0], [cx, cy, 0], 0.5);
+    if (hi) {
+      // Twin stability yokes connecting rim to the two capsule mounting rings
+      for (const sz of [-0.72, 0.72]) {
+        k.strut([Math.cos(a) * (R + 0.2), HUB + Math.sin(a) * (R + 0.2), sz * 0.6], [cx, cy, sz], 0.26);
+      }
+    }
     k.push().translate(cx, cy, 0).rotateX(Math.PI / 2);
     if (hi) {
       k.cyl(0, -0.9, 0, 2.55, 2.55, 0.35, 12);       // mounting rings
       k.cyl(0, 0.55, 0, 2.55, 2.55, 0.35, 12);
+      // Circumferential glass-cage steel ribs & end-cap mechanical domes
+      k.color(STEEL);
+      for (const ry of [-2.7, 0.0, 2.7]) k.cyl(0, ry - 0.08, 0, 2.15, 2.15, 0.16, 12);
+      k.cyl(0, -3.95, 0, 1.35, 1.35, 0.3, 10);
+      k.cyl(0, 3.65, 0, 1.35, 1.35, 0.3, 10);
+      // Interior central passenger bench & dark floor deck (axisymmetric so orientation stays clean)
+      k.color(0x454c54).box(0, 0, 0, 1.2, 4.6, 0.55);
     }
     k.glow(true).color(GLASS);
     const seg = hi ? 12 : 6;
@@ -93,6 +115,11 @@ function support(k) {
     k.pipe(foot, apex, hi ? 1.6 : 1.9, hi ? 10 : 6);
     k.pop();
     k.color(DECK).box(foot[0], 0, foot[2], 7, 2, 7).color(WHITE);
+    if (hi) {
+      // Pin-joint steel base hinge clevis & concrete pier collar at the foot of each A-frame leg
+      k.color(STEEL).cyl(foot[0], 2, foot[2], 2.4, 2.0, 2.2, 10);
+      k.color(WHITE);
+    }
   }
   // cross ties between the legs
   for (const t of [0.3, 0.55, 0.78]) {
@@ -103,8 +130,13 @@ function support(k) {
   // backstay cables to the land-side anchor
   k.color(GREY);
   for (const sx of [-1, 1]) {
-    if (hi) k.pipe([0, HUB + 1, 13], [sx * 6, 0.5, 120], 0.2, 4);
-    else k.strut([0, HUB + 1, 13], [sx * 6, 0.5, 120], 0.6);
+    if (hi) {
+      k.pipe([0, HUB + 1, 13], [sx * 6, 0.5, 120], 0.2, 4);
+      // Secondary lower forestay/backstay tension cables from spindle to anchor block
+      k.pipe([sx * 2.2, HUB - 1, 13], [sx * 8.5, 0.8, 120], 0.16, 4);
+    } else {
+      k.strut([0, HUB + 1, 13], [sx * 6, 0.5, 120], 0.6);
+    }
   }
   k.color(DECK).box(0, 0, 120, 20, 1.5, 6);
   // boarding platform / pier along the bottom of the wheel
@@ -115,6 +147,24 @@ function support(k) {
     k.color(0xbfc4c9);
     for (let x = -24; x <= 24; x += 6) k.box(x, 3.8, 7.6, 0.2, 1.1, 0.2);
     k.box(0, 4.8, 7.6, 52, 0.15, 0.15);
+    // Raised curved boarding / disembarking step deck directly under the lowest capsule at y = 3.8..5.6
+    k.color(0x889098).box(0, 3.8, 0, 22, 1.6, 9.5);
+    k.color(WHITE).box(0, 5.4, -4.6, 22, 1.0, 0.18);
+    k.box(0, 5.4, 4.6, 22, 1.0, 0.18);
+    // Twin articulated steel pedestrian gangway bridges spanning from Jubilee Gardens embankment (z = 26)
+    for (const gx of [-14, 14]) {
+      k.color(STEEL).box(gx, 2.8, 17, 4.2, 0.6, 18);
+      for (const sx of [-1.9, 1.9]) {
+        k.color(WHITE).strut([gx + sx, 3.4, 8], [gx + sx, 4.8, 17], 0.18);
+        k.strut([gx + sx, 4.8, 17], [gx + sx, 3.4, 26], 0.18);
+        k.box(gx + sx, 3.4, 17, 0.15, 1.1, 18);
+      }
+    }
+    // 4 cylindrical river crash-protection dolphin piles in the Thames in front of the boarding pier (-Z)
+    for (const dx of [-28, -10, 10, 28]) {
+      k.color(0x525860).cyl(dx, -2, -12.5, 1.8, 1.8, 7.2, 10);
+      k.color(WHITE).cyl(dx, 5.2, -12.5, 1.95, 1.95, 0.5, 10);
+    }
   }
 }
 

@@ -413,6 +413,7 @@ const C = {
   railTop: [0.74, 0.73, 0.71], railSide: [0.34, 0.29, 0.25],
   streetRail: [0.58, 0.58, 0.59], groove: [0.07, 0.07, 0.07], slot: [0.04, 0.04, 0.04], slotBand: [0.50, 0.48, 0.45],
   deck: [0.66, 0.65, 0.62], deckSide: [0.56, 0.55, 0.53], deckUnder: [0.36, 0.36, 0.35], pier: [0.60, 0.59, 0.56],
+  parapetCap: [0.75, 0.74, 0.71], duct: [0.48, 0.47, 0.45],
   pole: [0.22, 0.24, 0.24], wire: [0.10, 0.10, 0.10],
   portal: [0.52, 0.51, 0.48], portalDark: [0.03, 0.03, 0.04],
   tower: [0.45, 0.47, 0.50], station: [0.62, 0.60, 0.56], cable: [0.08, 0.08, 0.08],
@@ -579,19 +580,37 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
       } else {
         const bedY = 0.30;
         if (elevated) {
+          // Box-girder deck slab + side webs + underside soffit
           strip(i, -2.7, bedY, 2.7, bedY, C.deck);
           strip(i, -2.7, -1.1, -2.7, bedY, C.deckSide);
           strip(i, 2.7, bedY, 2.7, -1.1, C.deckSide);
           strip(i, 2.7, -1.1, -2.7, -1.1, C.deckUnder);
-          strip(i, -2.7, bedY, -2.7, bedY + 0.9, C.deckSide); // parapets
+          // 3D Parapet walls (outer face, inner face, and overhanging top coping edge)
+          strip(i, -2.7, bedY, -2.7, bedY + 0.9, C.deckSide);
+          strip(i, -2.44, bedY + 0.9, -2.44, bedY, C.deckSide);
+          strip(i, -2.76, bedY + 0.92, -2.40, bedY + 0.92, C.parapetCap);
           strip(i, 2.7, bedY + 0.9, 2.7, bedY, C.deckSide);
-          strip(i, -1.6, bedY + 0.02, 1.6, bedY + 0.02, C.ballast);
+          strip(i, 2.44, bedY, 2.44, bedY + 0.9, C.deckSide);
+          strip(i, 2.40, bedY + 0.92, 2.76, bedY + 0.92, C.parapetCap);
+          // Raised profiled ballast bed crown & shoulders + side cable trough ducts on viaduct deck
+          strip(i, -1.85, bedY, -1.52, bedY + 0.08, C.ballastSide);
+          strip(i, -1.52, bedY + 0.08, 1.52, bedY + 0.08, C.ballast);
+          strip(i, 1.52, bedY + 0.08, 1.85, bedY, C.ballastSide);
+          strip(i, -2.36, bedY + 0.06, -1.98, bedY + 0.06, C.duct);
+          strip(i, 1.98, bedY + 0.06, 2.36, bedY + 0.06, C.duct);
           while (nextPier <= d.ss[i + 1]) {
             const u = (nextPier - d.ss[i]) / segL;
             const px = d.xs[i] + (d.xs[i + 1] - d.xs[i]) * u, pz = d.zs[i] + (d.zs[i + 1] - d.zs[i]) * u;
             const py = ys[i] + (ys[i + 1] - ys[i]) * u;
             const gy = railGroundY(px, pz) - 0.6;
-            if (py - 1.1 - gy > 1.5) sink.box(px - ox, pz - oz, gy, py - 1.1, txs[i], tzs[i], 0.7, 0.9, C.pier);
+            if (py - 1.1 - gy > 1.5) {
+              const lx = px - ox, lz = pz - oz;
+              // Base footing plinth + main column shaft + corbel neck + wide hammerhead pier cap
+              sink.box(lx, lz, gy, Math.min(py - 1.55, gy + 1.15), txs[i], tzs[i], 0.95, 1.25, C.deckSide);
+              sink.box(lx, lz, gy, py - 1.48, txs[i], tzs[i], 0.68, 0.94, C.pier);
+              sink.box(lx, lz, py - 1.82, py - 1.44, txs[i], tzs[i], 0.80, 1.68, C.pier);
+              sink.box(lx, lz, py - 1.44, py - 1.10, txs[i], tzs[i], 0.92, 2.42, C.parapetCap, C.deck);
+            }
             nextPier += 30;
           }
         } else {
@@ -623,8 +642,9 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
         for (const sgn of [-1, 1]) {
           const o = sgn * half;
           strip(i, o - 0.04, RAIL_TOP, o + 0.04, RAIL_TOP, C.railTop);
-          if (l.svc || l.k === 'rail') continue; // web side only where it is seen close up (triangle budget)
+          if (l.svc) continue;
           strip(i, o - sgn * 0.04, bedY + 0.12, o - sgn * 0.04, RAIL_TOP, C.railSide);
+          strip(i, o + sgn * 0.04, RAIL_TOP, o + sgn * 0.04, bedY + 0.12, C.railSide);
         }
       }
 
@@ -634,21 +654,12 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
         strip(i, 0, top + 5.57, 0, top + 5.63, C.wire);
         if (!st) strip(i, 0, top + 6.5, 0, top + 6.56, C.wire);
         while (nextPole <= d.ss[i + 1]) {
-          if (nextPole >= d.ss[i]) {
+          if (!st && nextPole >= d.ss[i]) {
             const u = (nextPole - d.ss[i]) / segL;
             const bx = d.xs[i] + (d.xs[i + 1] - d.xs[i]) * u;
             const bz = d.zs[i] + (d.zs[i + 1] - d.zs[i]) * u;
             const py = ys[i] + (ys[i + 1] - ys[i]) * u;
-            let chosenSide = st ? 0 : 3.0;
-            if (st) {
-              for (const cand of [5.8, -5.8, 7.2, -7.2, 8.8, -8.8]) {
-                const tx = bx + nxs[i] * cand, tz = bz + nzs[i] * cand;
-                if (roadAt(tx, tz, py + 0.6) === null) {
-                  chosenSide = cand;
-                  break;
-                }
-              }
-            }
+            const chosenSide = 3.0;
             if (chosenSide !== 0) {
               const px = bx + nxs[i] * chosenSide;
               const pz = bz + nzs[i] * chosenSide;

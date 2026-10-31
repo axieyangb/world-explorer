@@ -7,6 +7,7 @@
 // mast spire above. At night the sail is washed in slowly changing colours.
 const FABRIC = 0xf6f5f0, FABRIC_RIB = 0xdedcd4, WING = 0x7f9cb2, WING_DK = 0x5f7d93, GRID = 0xe9ecee;
 const STEEL = 0xf2f2ef, MAST = 0xd9d8d1, MAST_DK = 0xb9b8b1, BASE = 0xcfcac0, PAD = 0x5b6168, PAD_MK = 0xf0f0f0;
+const POOL = 0x1b8fb8, SAND = 0xe8d9b8, GOLD = 0xdfb438;
 
 export const lodDist = 2000;
 export const glowStrength = 1.0;
@@ -52,13 +53,27 @@ export function setup({ mats }) {
 
 export function build(k) {
   const hi = k.hi;
-  const n = hi ? 12 : 4;
+  const n = hi ? 16 : 4;
   const ys = [];
-  const step = hi ? 7.5 : 26;
+  const step = hi ? 5.5 : 26;
   for (let y = 0; y < HT - 0.01; y += step) ys.push(y);
   ys.push(HT);
-  // island podium under the building
-  k.color(BASE).extrude(plan(0, n).map(([x, z]) => [x * 1.12, ZM + (z - ZM) * 1.08]), 0, 6);
+  // Man-made triangular island podium + rock-armour tetrapod breakwater + Burj Al Arab Terrace infinity pool deck (+Z seaward)
+  k.color(BASE).extrude(plan(0, n).map(([x, z]) => [x * 1.18, ZM + (z - ZM) * 1.12]), -2, 8);
+  if (hi) {
+    // Seaward Burj Al Arab Terrace fan-shaped luxury deck (+Z = 56 .. 118) with twin turquoise infinity pools & beach cabanas
+    const terrPts = [[-28, ZM], [28, ZM], [42, ZM + 42], [18, ZM + 64], [-18, ZM + 64], [-42, ZM + 42]];
+    k.color(SAND).extrude(terrPts, 0, 3.8);
+    k.color(POOL).cyl(0, 3.85, ZM + 26, 16, 16, 0.3, 20).cyl(0, 3.85, ZM + 48, 12, 12, 0.3, 20);
+    // Shoreward curved vehicular causeway bridge (-Z = -60 .. -96) with water fountain jets at hotel drop-off
+    k.color(BASE).box(0, 2.0, -76, 14, 2.2, 36);
+    k.glow(true).color(0xffe8a8).torus(0, 6.2, -52, 8.5, 0.45, 20, 6).glow(false);
+    // Perimeter wave-dissipating concrete armour blocks around island rim
+    k.color(0x9a948a);
+    for (let i = -6; i <= 6; i++) {
+      k.box(i * 7.2, 0.5, -58 + Math.abs(i) * 2.2, 3.2, 2.2, 3.2);
+    }
+  }
   const rings = ys.map((y) => plan(y, n));
   for (let i = 0; i < ys.length - 1; i++) {
     const A = rings[i], B = rings[i + 1], y0 = ys[i], y1 = ys[i + 1];
@@ -77,8 +92,16 @@ export function build(k) {
         k.quad(a0, b0, b1, a1);
       }
     }
+    // Prominent horizontal arched fiberglass sail ribs bow across the teflon atrium screen
+    if (hi && i > 0 && i < ys.length - 1) {
+      k.color(STEEL);
+      for (let j = 1; j < m - 1; j++) {
+        const p0 = [A[j][0], y0, A[j][1] - 0.35], p1 = [A[j + 1][0], y0, A[j + 1][1] - 0.35];
+        k.strut(p0, p1, 0.42);
+      }
+    }
   }
-  // wing room-floor lines (white grid) on both outer faces
+  // wing room-floor lines (white grid) & vertical duplex bay mullions on both outer faces
   if (hi) {
     k.color(GRID);
     for (let y = 9; y < HT - 6; y += 6.2) {
@@ -86,6 +109,15 @@ export function build(k) {
       for (const sx of [-1, 1]) {
         const ox = sx * 0.25;
         k.strut([ox, y, ZM - 0.4], [sx * hs + ox, y, zt], 0.5);
+      }
+    }
+    // Vertical curtain-wall mullions along both guest-room wings
+    for (let u = 0.15; u <= 0.85; u += 0.14) {
+      for (const sx of [-1, 1]) {
+        const pBot = [sx * SPAN * u, 6, ZM - TIP * D0 * u];
+        const yTop = HT * (1 - u * 0.45), dTop = depth(yTop);
+        const pTop = [sx * (SPAN * dTop / D0) * u, yTop, ZM - TIP * dTop * u];
+        k.strut(pBot, pTop, 0.35);
       }
     }
   }
@@ -98,54 +130,70 @@ export function build(k) {
   };
   const Mst = (sx, y) => [sx * 2.5, y, ZM + 1.5];
   k.color(STEEL);
-  const ar = hi ? 1.4 : 2.2, aseg = hi ? 6 : 4;
+  const ar = hi ? 1.45 : 2.2, aseg = hi ? 10 : 4;
   const tipYs = [];
-  for (let y = 0; y <= HT; y += hi ? 10 : 41) tipYs.push(Math.min(y, HT));
+  for (let y = 0; y <= HT; y += hi ? 8 : 41) tipYs.push(Math.min(y, HT));
   for (const sx of [-1, 1]) {
     for (let i = 0; i < tipYs.length - 1; i++) k.pipe(T(sx, tipYs[i]), T(sx, tipYs[i + 1]), ar, aseg);
-    // X braces: three tiers
+    // X braces: three tiers + circular pinned gusset nodes at intersections
     const lv = [0, 62, 124, 186];
     for (let i = 0; i < 3; i++) {
       const ya = lv[i], yb = lv[i + 1];
       const ta = T(sx, ya), tb = T(sx, yb), ma = Mst(sx, ya), mb = Mst(sx, yb);
-      // brace endpoints pulled just outside the wing face
       const off = (p) => [p[0] + sx * 1.2, p[1], p[2]];
       k.pipe(off(ta), off(mb), ar * 0.8, aseg);
       k.pipe(off(ma), off(tb), ar * 0.8, aseg);
       k.pipe(off(tb), off(mb), ar * 0.6, aseg);
+      if (hi) {
+        // Center X-node pin hub
+        const xm = (ta[0] + tb[0] + ma[0] + mb[0]) * 0.25 + sx * 1.2;
+        const ym = (ya + yb) * 0.5;
+        const zm = (ta[2] + tb[2] + ma[2] + mb[2]) * 0.25;
+        k.sphere(xm, ym, zm, 1.7, 10, 6);
+      }
     }
   }
   // mast: tapered concrete core with banding, lattice spire to 321 m
   k.color(MAST).taper(0, 0, ZM + 3, 12, 9, 7, 6, HT + 24);
   if (hi) {
+    // Seaward (+Z) panoramic express glass elevator shaft & gold-accented lobby crown
+    k.glow(true).color(0xffeab0).box(0, 6, ZM + 7.6, 3.2, HT - 18, 0.8).glow(false);
     k.color(MAST_DK);
-    for (let y = 20; y < HT + 20; y += 20) {
+    for (let y = 20; y < HT + 20; y += 16) {
       const f = y / (HT + 24);
       k.box(0, y, ZM + 3, 12 - 5 * f + 0.5, 0.9, 9 - 3 * f + 0.5);
     }
   }
-  k.color(MAST).lathe(0, HT + 24, ZM + 3, [[3.2, 0], [2.6, 30], [1.6, 60], [0.9, 80], [0.25, 92]], hi ? 8 : 5);
+  k.color(MAST).lathe(0, HT + 24, ZM + 3, [[3.2, 0], [2.6, 30], [1.6, 60], [0.9, 80], [0.25, 92]], hi ? 14 : 5);
   if (hi) {
     k.color(STEEL);
-    for (let y = HT + 30; y < HT + 84; y += 9) {
+    for (let y = HT + 30; y < HT + 84; y += 7) {
       const r = 3.0 - ((y - HT - 24) / 92) * 2.6;
-      k.cyl(0, y, ZM + 3, r + 0.4, r + 0.4, 0.6, 8, { caps: false });
+      k.cyl(0, y, ZM + 3, r + 0.45, r + 0.45, 0.6, 12, { caps: false });
     }
   }
-  k.glow(true).color(0xff4030).sphere(0, HT + 116.5, ZM + 3, 0.6, 6, 3).glow(false);
-  // Al Muntaha: long tapered pod across the mast top (27 m either side)
+  k.glow(true).color(0xff4030).sphere(0, HT + 116.5, ZM + 3, 0.6, 8, 5).glow(false);
+  // Al Muntaha: long tapered sky-restaurant pod across the mast top (27 m either side at 200 m)
   k.color(STEEL).taper(0, HT - 10, ZM + 2, 58, 11, 52, 9, 7.5);
-  k.color(WING_DK).box(0, HT - 7.8, ZM + 2, 56, 3.0, 11.3);
+  k.glow(true).color(0xd8ecff).box(0, HT - 7.8, ZM + 2, 56.4, 3.0, 11.4).glow(false);
   if (hi) {
-    // diagonal support struts under the pod
-    for (const sx of [-1, 1]) k.strut([sx * 3, HT - 32, ZM + 2], [sx * 25, HT - 10, ZM + 2], 1.4);
+    // Window mullions & diagonal support struts under the Al Muntaha pod
+    k.color(STEEL);
+    for (let x = -24; x <= 24; x += 6) k.box(x, HT - 7.8, ZM + 2, 0.35, 3.0, 11.6);
+    for (const sx of [-1, 1]) {
+      k.strut([sx * 3, HT - 32, ZM + 2], [sx * 25, HT - 10, ZM + 2], 1.4);
+      k.strut([sx * 3, HT - 24, ZM + 2], [sx * 16, HT - 10, ZM + 2], 1.1);
+    }
   }
-  // helipad cantilevered out from the -X wing near the top
+  // helipad cantilevered out from the -Z sail crown at 212 m
   const hy = HT - 4, hx = -26, hz = ZM - 12;
-  k.color(STEEL).cyl(hx, hy, hz, 12, 12, 1.6, hi ? 24 : 10);
-  k.color(PAD).cyl(hx, hy + 1.6, hz, 11, 11, 0.12, hi ? 24 : 10);
+  k.color(STEEL).cyl(hx, hy, hz, 12, 12, 1.6, hi ? 28 : 10);
+  k.color(PAD).cyl(hx, hy + 1.6, hz, 11, 11, 0.12, hi ? 28 : 10);
   if (hi) {
-    k.color(PAD_MK).box(hx, hy + 1.75, hz, 1.0, 0.05, 6).box(hx - 2.5, hy + 1.75, hz, 1.0, 0.05, 6).box(hx + 2.5, hy + 1.75, hz, 1.0, 0.05, 6).box(hx, hy + 1.75, hz, 5, 0.05, 1.0);
-    k.color(STEEL).strut([hx + 6, hy, hz], [-3, hy - 30, ZM - 2], 1.2).strut([hx, hy, hz + 6], [-2, hy - 26, ZM + 1], 1.0);
+    // White aiming circle, H marking & perimeter safety net ring around helipad
+    k.color(PAD_MK).torus(hx, hy + 1.74, hz, 8.2, 0.22, 24, 6);
+    k.box(hx - 2.4, hy + 1.75, hz, 0.9, 0.05, 6.2).box(hx + 2.4, hy + 1.75, hz, 0.9, 0.05, 6.2).box(hx, hy + 1.75, hz, 4.8, 0.05, 0.9);
+    k.color(STEEL).torus(hx, hy + 1.5, hz, 13.0, 0.16, 24, 6);
+    k.strut([hx + 6, hy, hz], [-3, hy - 30, ZM - 2], 1.2).strut([hx, hy, hz + 6], [-2, hy - 26, ZM + 1], 1.0);
   }
 }

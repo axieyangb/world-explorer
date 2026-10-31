@@ -601,6 +601,49 @@ function buildBarrelNacelleGeometry(rIntake, rMax, rExhaust, length, radSegs = 3
 }
 
 /**
+ * Builds a hollow open-ended cylinder (intake throat / exhaust nozzle) with smooth analytical normals.
+ */
+function cylOpen(rt, rb, h, seg = 32) {
+  return new THREE.CylinderGeometry(rt, rb, h, seg, 1, true);
+}
+
+/**
+ * Builds a 14-tooth Boeing 787 / GEnx serrated chevron ring at the rear of the nacelle.
+ */
+function buildChevronNozzleRingGeometry(rFront, rRear, length, teeth = 14) {
+  const segs = teeth * 4;
+  const pos = [];
+  const nrm = [];
+  for (let i = 0; i <= segs; i++) {
+    const u = i / segs;
+    const phi = u * Math.PI * 2;
+    const sp = Math.sin(phi);
+    const cp = Math.cos(phi);
+    const wave = 0.5 * (1 - Math.cos(u * teeth * Math.PI * 2));
+    const zBack = -length * (0.45 + 0.55 * wave);
+    const rB = rRear + (rFront - rRear) * (0.25 * (1 - wave));
+    pos.push(rFront * sp, rFront * cp, 0);
+    nrm.push(sp, cp, 0.08);
+    pos.push(rB * sp, rB * cp, zBack);
+    nrm.push(sp, cp, -0.12);
+  }
+  const indices = [];
+  for (let i = 0; i < segs; i++) {
+    const a = i * 2;
+    const b = a + 1;
+    const c = a + 2;
+    const d = a + 3;
+    indices.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(indices);
+  g.computeBoundingSphere();
+  return g;
+}
+
+/**
  * Instanced geometries `{ plane, planeTail }` for PlacesSystem and LiveSky.
  * Represents a sleek Boeing 787 / Airbus A350 wide-body airliner (nose +Z, wheels at y=0).
  */
@@ -609,43 +652,80 @@ export function buildAirlinerInstancedGeometries() {
   const pearl = [0.88, 0.90, 0.94];
   const wingGrey = [0.84, 0.87, 0.91];
   const chrome = [0.78, 0.82, 0.88];
-  const darkGlass = [0.08, 0.11, 0.16];
-  const tireDark = [0.11, 0.12, 0.13];
-  const strutSteel = [0.60, 0.64, 0.70];
+  const darkGlass = [0.06, 0.10, 0.16];
+  const tireDark = [0.11, 0.12, 0.14];
+  const strutSteel = [0.62, 0.66, 0.72];
   const exhaustDark = [0.22, 0.25, 0.30];
+  const flapRed = [0.82, 0.18, 0.16];
 
   const bodyParts = [];
 
-  // 1. Continuous Smooth Lofted Widebody Fuselage + Conforming Visor & Cheatline
+  // 1. Continuous Smooth Lofted Widebody Fuselage + Multi-Pane Framed Cockpit Windscreen & Cheatline
   bodyParts.push([buildLoftedFuselageGeometry(40, 28), [1, 1, 1], null]);
-  bodyParts.push([buildFuselageConformingPatch(16.2, 20.1, 8, -0.95, 0.95, 14, 0.018, false), darkGlass, null]);
+  // 6 distinct cockpit window panes separated by crisp white structural mullions
+  for (let w = 0; w < 3; w++) {
+    const p0 = 0.04 + w * 0.31;
+    const p1 = p0 + 0.25;
+    const z0 = 20.05 - w * 1.15;
+    const z1 = z0 - 0.98;
+    bodyParts.push([buildFuselageConformingPatch(z1, z0, 3, p0, p1, 4, 0.020, true), darkGlass, null]);
+  }
   bodyParts.push([buildFuselageConformingPatch(-15.8, 15.4, 20, 1.48, 1.62, 3, 0.015, true), [0.0, 0.64, 0.88], null]);
 
-  // 2. Smooth Lofted Supercritical Airfoil Wings + Horizontal Stabilizers + Flap Fairings + Turbofan Nacelles
+  // 4 Passenger Doors per side with silver frames
+  for (const dz of [14.6, 6.5, -4.8, -15.2]) {
+    bodyParts.push([buildFuselageConformingPatch(dz - 0.52, dz + 0.52, 2, 1.18, 1.66, 3, 0.019, true), chrome, null]);
+    bodyParts.push([buildFuselageConformingPatch(dz - 0.44, dz + 0.44, 2, 1.21, 1.63, 3, 0.022, true), white, null]);
+  }
+
+  // Dorsal SATCOM blister & VHF blade antennas + hollow APU exhaust bore
+  bodyParts.push([buildBarrelNacelleGeometry(0.12, 0.34, 0.10, 2.2, 14, 6), white, mat(0, 5.74, 4.5, 0, 0, 0, 1.1, 0.42, 1.0)]);
+  for (const az of [9.5, -3.5, -11.0]) {
+    bodyParts.push([box(0.04, 0.38, 0.52), white, mat(0, 5.82, az, -0.28, 0, 0)]);
+  }
+  bodyParts.push([cylOpen(0.32, 0.24, 0.65, 20), chrome, mat(0, 4.12, -24.15, Math.PI / 2, 0, 0)]);
+  bodyParts.push([cyl(0.23, 0.23, 0.12, 18), tireDark, mat(0, 4.12, -23.95, Math.PI / 2, 0, 0)]);
+
+  // 2. Smooth Lofted Supercritical Airfoil Wings + Horizontal Stabilizers + 5 Flap Fairings + Hollow Turbofan Nacelles
   for (const s of [-1, 1]) {
     bodyParts.push([buildLoftedAirfoilWingGeometry(s, MAIN_WING_STATIONS, 20), wingGrey, null]);
     bodyParts.push([buildLoftedAirfoilWingGeometry(s, HSTAB_STATIONS, 16), wingGrey, null]);
 
-    // Streamlined teardrop flap-track fairings under trailing edge
+    // 5 Streamlined teardrop flap-track fairing canoes under trailing edge
     for (const [fx, fy, fz, fl] of [
-      [5.2, 2.40, -0.8, 2.6],
-      [9.4, 2.70, -2.2, 2.2],
-      [13.8, 3.08, -4.0, 1.7],
+      [4.2, 2.34, -0.3, 2.75],
+      [7.4, 2.52, -1.4, 2.45],
+      [10.8, 2.76, -2.7, 2.15],
+      [14.2, 3.08, -4.1, 1.80],
+      [17.6, 3.38, -5.2, 1.35],
     ]) {
       bodyParts.push([buildBarrelNacelleGeometry(0.06, 0.17, 0.04, fl, 14, 6), pearl, mat(s * fx, fy, fz)]);
+      bodyParts.push([cone(0.07, 0.28, 12), flapRed, mat(s * fx, fy, fz - fl * 0.52, -Math.PI / 2, 0, 0)]);
     }
 
-    // High-Bypass Turbofan Engine Pods (Trent XWB / GEnx barrel-curved cowlings)
+    // High-Bypass Turbofan Engine Pods with TRUE HOLLOW INTAKE LIP & 22-Blade Fan
     const ex = s * 6.9;
     const ey = 1.68;
     const ez = 3.45;
-    bodyParts.push([box(0.30, 0.96, 2.85), pearl, mat(ex, ey + 0.88, ez - 0.5, 0.12, 0, 0)]);
+    bodyParts.push([box(0.28, 0.96, 2.95), pearl, mat(ex, ey + 0.88, ez - 0.45, 0.12, 0, 0)]);
     bodyParts.push([buildBarrelNacelleGeometry(1.14, 1.28, 1.06, 3.65, 32, 12), white, mat(ex, ey, ez)]);
-    bodyParts.push([cyl(1.16, 1.12, 0.52, 32), chrome, mat(ex, ey, ez + 1.98, Math.PI / 2, 0, 0)]);
-    bodyParts.push([cyl(1.04, 1.04, 0.22, 24), darkGlass, mat(ex, ey, ez + 1.82, Math.PI / 2, 0, 0)]);
-    bodyParts.push([cone(0.36, 0.78, 20), tireDark, mat(ex, ey, ez + 2.02, Math.PI / 2, 0, 0)]);
-    bodyParts.push([cyl(1.04, 0.76, 1.05, 24), chrome, mat(ex, ey, ez - 2.15, Math.PI / 2, 0, 0)]);
-    bodyParts.push([cone(0.54, 1.25, 20), exhaustDark, mat(ex, ey, ez - 2.85, -Math.PI / 2, 0, 0)]);
+    // Hollow torus intake lip + open-ended recessed dark throat liner
+    bodyParts.push([new THREE.TorusGeometry(1.10, 0.09, 14, 32), chrome, mat(ex, ey, ez + 1.84)]);
+    bodyParts.push([cylOpen(1.06, 1.02, 0.58, 28), tireDark, mat(ex, ey, ez + 1.56, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cyl(1.02, 1.02, 0.10, 24), tireDark, mat(ex, ey, ez + 1.32, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cone(0.36, 0.78, 20), tireDark, mat(ex, ey, ez + 1.62, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cone(0.13, 0.28, 14), chrome, mat(ex, ey, ez + 1.90, Math.PI / 2, 0, 0)]);
+    for (let b = 0; b < 18; b++) {
+      const ang = (b / 18) * Math.PI * 2;
+      bodyParts.push([
+        box(0.13, 0.92, 0.03),
+        chrome,
+        mat(ex + Math.cos(ang) * 0.52, ey + Math.sin(ang) * 0.52, ez + 1.48, 0, 0.42, ang + 0.3),
+      ]);
+    }
+    bodyParts.push([buildChevronNozzleRingGeometry(1.06, 0.84, 0.65, 14), white, mat(ex, ey, ez - 1.80)]);
+    bodyParts.push([cylOpen(0.96, 0.74, 0.95, 24), chrome, mat(ex, ey, ez - 2.15, Math.PI / 2, 0, 0)]);
+    bodyParts.push([cone(0.52, 1.25, 20), exhaustDark, mat(ex, ey, ez - 2.82, -Math.PI / 2, 0, 0)]);
   }
 
   // 3. Complete Tricycle Landing Gear (resting at y = 0)
@@ -696,6 +776,8 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
       ? liveryOrIdx
       : AIRLINER_LIVERIES[Math.abs(liveryOrIdx | 0) % AIRLINER_LIVERIES.length];
 
+  const isA350 = livery.variant === "airbusA350";
+
   const group = new THREE.Group();
   group.name = `airliner_${livery.id}`;
   group.rotation.order = "YXZ";
@@ -708,58 +790,66 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     color: 0xffffff,
     vertexColors: true,
     roughness: 0.18,
-    metalness: 0.15,
+    metalness: 0.14,
   });
   fuseMat.userData = { envProbe: true };
 
   const whiteMat = new THREE.MeshStandardMaterial({
     color: 0xf8faff,
     roughness: 0.18,
-    metalness: 0.15,
+    metalness: 0.14,
   });
   whiteMat.userData = { envProbe: true };
 
   const bellyMat = new THREE.MeshStandardMaterial({
     color: livery.bellyHex || 0xdce3ec,
     roughness: 0.22,
-    metalness: 0.20,
+    metalness: 0.18,
   });
   bellyMat.userData = { envProbe: true };
 
   const wingMat = new THREE.MeshStandardMaterial({
     color: 0xe6ebf2,
     roughness: 0.22,
-    metalness: 0.24,
+    metalness: 0.22,
   });
   wingMat.userData = { envProbe: true };
 
   const liveryMat = new THREE.MeshStandardMaterial({
     color: livery.tailHex,
     roughness: 0.18,
-    metalness: 0.22,
+    metalness: 0.20,
   });
   liveryMat.userData = { envProbe: true };
 
   const stripeMat = new THREE.MeshStandardMaterial({
     color: livery.stripeHex,
     roughness: 0.18,
-    metalness: 0.28,
+    metalness: 0.24,
   });
   stripeMat.userData = { envProbe: true };
 
   const chromeMat = new THREE.MeshStandardMaterial({
     color: 0xe2e8f0,
-    roughness: 0.14,
-    metalness: 0.86,
+    roughness: 0.16,
+    metalness: 0.78,
   });
   chromeMat.userData = { envProbe: true };
 
   const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x09111e,
-    roughness: 0.08,
-    metalness: 0.72,
+    color: 0x0d1f33,
+    roughness: 0.06,
+    metalness: 0.38,
+    transparent: true,
+    opacity: 0.76,
   });
   glassMat.userData = { envProbe: true };
+
+  const maskMat = new THREE.MeshStandardMaterial({
+    color: 0x11161f,
+    roughness: 0.22,
+    metalness: 0.25,
+  });
 
   const cabinWinMat = new THREE.MeshStandardMaterial({
     color: 0x182638,
@@ -768,20 +858,22 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     roughness: 0.16,
   });
   const tireMat = new THREE.MeshStandardMaterial({
-    color: 0x15171a,
-    roughness: 0.85,
-    metalness: 0.06,
+    color: 0x16191e,
+    roughness: 0.82,
+    metalness: 0.08,
   });
   const strutMat = new THREE.MeshStandardMaterial({
-    color: 0xa4acb6,
-    roughness: 0.28,
-    metalness: 0.72,
+    color: 0xb0b8c4,
+    roughness: 0.26,
+    metalness: 0.65,
   });
   const exhaustMat = new THREE.MeshStandardMaterial({
-    color: 0x2c3038,
-    roughness: 0.38,
-    metalness: 0.68,
+    color: 0x383f4a,
+    roughness: 0.36,
+    metalness: 0.58,
   });
+  const yellowStrapMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+  const redCanoeMat = new THREE.MeshStandardMaterial({ color: 0xd92626, roughness: 0.28, metalness: 0.22 });
 
   // --- 1. Airframe Group (Lofted Fuselage, Supercritical Airfoil Wings, Tail, Nacelles) ---
   const airframe = new THREE.Group();
@@ -796,40 +888,176 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     glass: [0.05, 0.09, 0.15],
     win: [0.14, 0.22, 0.34],
     chrome: [0.80, 0.84, 0.90],
-    apu: [0.22, 0.25, 0.30],
+    apu: [0.28, 0.32, 0.38],
   });
   const fuseMesh = new THREE.Mesh(fuseGeo, fuseMat);
   fuseMesh.castShadow = true;
   fuseMesh.receiveShadow = true;
   airframe.add(fuseMesh);
 
-  // Conforming wrap-around A350 / 787 dark metallic cockpit windshield visor
-  const visorGeo = buildFuselageConformingPatch(16.2, 20.1, 10, -1.08, 1.08, 18, 0.018, false);
-  const vPos = visorGeo.attributes.position;
-  for (let i = 0; i < vPos.count; i++) {
-    const z = vPos.getZ(i);
-    const u = (z - 16.2) / (20.1 - 16.2);
-    const yCenter = 3.88 - 0.26 * u;
-    const halfH = 0.30 * (1.0 - 0.28 * u);
-    const curY = vPos.getY(i);
-    vPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
+  // --- Multi-Pane Framed Cockpit Windscreen + Interior Flight Deck & Pilots ---
+  // Signature A350 curved black mask bezel surround (or 787 silver window surround)
+  if (isA350) {
+    const maskGeo = buildFuselageConformingPatch(16.05, 20.25, 10, -1.04, 1.04, 18, 0.014, false);
+    const mPos = maskGeo.attributes.position;
+    for (let i = 0; i < mPos.count; i++) {
+      const z = mPos.getZ(i);
+      const u = (z - 16.05) / (20.25 - 16.05);
+      const yCenter = 3.88 - 0.26 * u;
+      const halfH = 0.33 * (1.0 - 0.25 * u);
+      const curY = mPos.getY(i);
+      mPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
+    }
+    airframe.add(new THREE.Mesh(maskGeo, maskMat));
   }
-  const visorMesh = new THREE.Mesh(visorGeo, glassMat);
-  airframe.add(visorMesh);
+
+  // 6 distinct angled cockpit glazing panes (3 per side) separated by crisp structural window posts
+  const paneSpecs = [
+    { z0: 19.05, z1: 20.08, p0: 0.045, p1: 0.33, yOff: 0.0 },
+    { z0: 17.80, z1: 18.92, p0: 0.37, p1: 0.66, yOff: 0.02 },
+    { z0: 16.48, z1: 17.68, p0: 0.70, p1: 0.98, yOff: 0.03 },
+  ];
+  const paneParts = [];
+  const postParts = [];
+  // Center windshield structural divider post
+  postParts.push([buildFuselageConformingPatch(18.95, 20.12, 4, -0.042, 0.042, 2, 0.028, false), [1, 1, 1], null]);
+
+  for (const ps of paneSpecs) {
+    const gPane = buildFuselageConformingPatch(ps.z0, ps.z1, 4, ps.p0, ps.p1, 5, 0.021, true);
+    const pPos = gPane.attributes.position;
+    for (let i = 0; i < pPos.count; i++) {
+      const z = pPos.getZ(i);
+      const u = (z - 16.2) / (20.1 - 16.2);
+      const yCenter = 3.88 - 0.26 * u + ps.yOff;
+      const halfH = 0.25 * (1.0 - 0.22 * u);
+      const curY = pPos.getY(i);
+      pPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
+    }
+    paneParts.push([gPane, [1, 1, 1], null]);
+
+    // Structural window post mullion aft of each pane
+    const gPost = buildFuselageConformingPatch(ps.z0 - 0.11, ps.z0 + 0.02, 2, ps.p0 - 0.03, ps.p1 + 0.03, 3, 0.028, true);
+    const mPos = gPost.attributes.position;
+    for (let i = 0; i < mPos.count; i++) {
+      const z = mPos.getZ(i);
+      const u = (z - 16.2) / (20.1 - 16.2);
+      const yCenter = 3.88 - 0.26 * u + ps.yOff;
+      const halfH = 0.27 * (1.0 - 0.22 * u);
+      const curY = mPos.getY(i);
+      mPos.setY(i, Math.max(yCenter - halfH, Math.min(yCenter + halfH, curY)));
+    }
+    postParts.push([gPost, [1, 1, 1], null]);
+  }
+  airframe.add(new THREE.Mesh(mergeParts(paneParts), glassMat));
+  airframe.add(new THREE.Mesh(mergeParts(postParts), isA350 ? chromeMat : whiteMat));
+
+  // Subtle interior flight-deck glareshield console & twin pilot silhouettes behind cockpit glass
+  const flightDeck = new THREE.Group();
+  flightDeck.position.set(0, 3.56, 18.55);
+  const glareshield = new THREE.Mesh(box(1.55, 0.18, 0.95), maskMat);
+  glareshield.position.set(0, 0.04, 0.45);
+  flightDeck.add(glareshield);
+  for (const sx of [-0.42, 0.42]) {
+    const pilotTorso = new THREE.Mesh(cyl(0.16, 0.19, 0.36, 10), maskMat);
+    pilotTorso.position.set(sx, 0.02, -0.10);
+    const pilotHead = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), strutMat);
+    pilotHead.position.set(sx, 0.26, -0.08);
+    flightDeck.add(pilotTorso, pilotHead);
+  }
+  airframe.add(flightDeck);
+
+  // Twin windshield wipers, chrome pitot probes & AOA vane sensors on forward fuselage
+  for (const sx of [-1, 1]) {
+    const wiperArm = new THREE.Mesh(box(0.34, 0.025, 0.03), maskMat);
+    wiperArm.position.set(sx * 0.28, 3.44, 19.95);
+    wiperArm.rotation.z = sx * -0.18;
+    wiperArm.rotation.y = sx * -0.25;
+    airframe.add(wiperArm);
+
+    const pitot = new THREE.Mesh(cyl(0.012, 0.018, 0.38, 8), chromeMat);
+    pitot.rotation.x = Math.PI / 2;
+    pitot.position.set(sx * 1.18, 3.12, 20.55);
+    airframe.add(pitot);
+
+    const aoaVane = new THREE.Mesh(box(0.08, 0.04, 0.14), chromeMat);
+    aoaVane.position.set(sx * 1.38, 3.24, 19.15);
+    airframe.add(aoaVane);
+  }
 
   // Razor-sharp conforming airline cheatline ribbon along both sides of the fuselage
   const cheatGeo = buildFuselageConformingPatch(-16.0, 15.6, 24, 1.48, 1.62, 4, 0.015, true);
   const cheatMesh = new THREE.Mesh(cheatGeo, stripeMat);
   airframe.add(cheatMesh);
 
-  // Individual conforming dark-glass passenger cabin windows along port & starboard sides
-  const winParts = [];
-  for (let wz = -13.6; wz <= 13.8; wz += 0.82) {
-    if (Math.abs(wz - 6.5) < 0.45 || Math.abs(wz + 4.8) < 0.45) continue;
-    winParts.push([buildFuselageConformingPatch(wz - 0.19, wz + 0.19, 2, 1.32, 1.41, 2, 0.016, true), [1, 1, 1], null]);
+  // --- 4 Passenger Entry Doors per Side + Starboard Cargo Bay Doors ---
+  const doorFrameParts = [];
+  const doorPanelParts = [];
+  const doorWindowParts = [];
+  const doorPositions = [14.6, 6.5, -4.8, -15.2];
+  for (const dz of doorPositions) {
+    doorFrameParts.push([buildFuselageConformingPatch(dz - 0.50, dz + 0.50, 2, 1.18, 1.66, 3, 0.020, true), [1, 1, 1], null]);
+    doorPanelParts.push([buildFuselageConformingPatch(dz - 0.43, dz + 0.43, 2, 1.21, 1.63, 3, 0.024, true), [1, 1, 1], null]);
+    doorWindowParts.push([buildFuselageConformingPatch(dz - 0.13, dz + 0.13, 2, 1.28, 1.37, 2, 0.028, true), [1, 1, 1], null]);
+    for (const sx of [-1, 1]) {
+      const st = sampleFuselageStation(dz);
+      // Yellow safety strap across door window + exterior door handle/hinge fairing
+      const strap = new THREE.Mesh(box(0.02, 0.035, 0.28), yellowStrapMat);
+      strap.position.set(sx * (st.rx * Math.sin(1.42) + 0.032), st.yc + st.ry * Math.cos(1.42), dz);
+      airframe.add(strap);
+
+      const hinge = new THREE.Mesh(box(0.045, 0.22, 0.12), chromeMat);
+      hinge.position.set(sx * (st.rx * Math.sin(1.48) + 0.034), st.yc + st.ry * Math.cos(1.48), dz + 0.44);
+      airframe.add(hinge);
+    }
   }
-  const winMesh = new THREE.Mesh(mergeParts(winParts), cabinWinMat);
-  airframe.add(winMesh);
+  // Forward & Aft Cargo Bay Doors on starboard lower belly (x < 0)
+  for (const cz of [10.2, -8.6]) {
+    doorFrameParts.push([buildFuselageConformingPatch(cz - 1.15, cz + 1.15, 3, -2.25, -1.78, 3, 0.020, false), [1, 1, 1], null]);
+    doorPanelParts.push([buildFuselageConformingPatch(cz - 1.05, cz + 1.05, 3, -2.21, -1.82, 3, 0.024, false), [1, 1, 1], null]);
+  }
+  airframe.add(new THREE.Mesh(mergeParts(doorFrameParts), chromeMat));
+  airframe.add(new THREE.Mesh(mergeParts(doorPanelParts), whiteMat));
+  airframe.add(new THREE.Mesh(mergeParts(doorWindowParts), cabinWinMat));
+
+  // Individual conforming dark-glass passenger cabin windows + silver oval window frames
+  const winParts = [];
+  const winFrameParts = [];
+  for (let wz = -13.6; wz <= 13.8; wz += 0.82) {
+    if (doorPositions.some((dz) => Math.abs(wz - dz) < 0.75)) continue;
+    winFrameParts.push([buildFuselageConformingPatch(wz - 0.23, wz + 0.23, 2, 1.30, 1.43, 2, 0.015, true), [1, 1, 1], null]);
+    winParts.push([buildFuselageConformingPatch(wz - 0.18, wz + 0.18, 2, 1.32, 1.41, 2, 0.019, true), [1, 1, 1], null]);
+  }
+  airframe.add(new THREE.Mesh(mergeParts(winFrameParts), chromeMat));
+  airframe.add(new THREE.Mesh(mergeParts(winParts), cabinWinMat));
+
+  // Sculpted Wing-to-Body Belly Fairing Contour + Dorsal SATCOM Blister & VHF Blade Antennas + APU Exhaust Bore
+  const bellyFairingGeo = buildBarrelNacelleGeometry(1.45, 2.38, 1.35, 13.8, 28, 12);
+  bellyFairingGeo.scale(1.02, 0.42, 1.0);
+  const bellyFairing = new THREE.Mesh(bellyFairingGeo, bellyMat);
+  bellyFairing.position.set(0, 1.72, 0.8);
+  airframe.add(bellyFairing);
+
+  const satcomGeo = buildBarrelNacelleGeometry(0.14, 0.36, 0.12, 2.35, 18, 8);
+  satcomGeo.scale(1.15, 0.42, 1.0);
+  const satcomMesh = new THREE.Mesh(satcomGeo, whiteMat);
+  satcomMesh.position.set(0, 5.74, 4.5);
+  airframe.add(satcomMesh);
+
+  for (const [az, ah] of [[9.5, 0.42], [-3.5, 0.38], [-11.0, 0.36]]) {
+    const vhf = new THREE.Mesh(box(0.035, ah, 0.54), whiteMat);
+    vhf.position.set(0, 5.82, az);
+    vhf.rotation.x = -0.32;
+    airframe.add(vhf);
+  }
+
+  // Hollow stainless APU tailcone exhaust bore at z = -24.2m
+  const apuTube = new THREE.Mesh(cylOpen(0.32, 0.24, 0.72, 22), chromeMat);
+  apuTube.rotation.x = Math.PI / 2;
+  apuTube.position.set(0, 4.12, -24.15);
+  const apuBore = new THREE.Mesh(cyl(0.23, 0.23, 0.14, 18), tireMat);
+  apuBore.rotation.x = Math.PI / 2;
+  apuBore.position.set(0, 4.12, -23.92);
+  airframe.add(apuTube, apuBore);
 
   // Swept Supercritical NACA Airfoil Wings + Blended Sharklets + Horizontal Stabilizers
   const wingGeoPos = buildLoftedAirfoilWingGeometry(1, MAIN_WING_STATIONS, 24);
@@ -856,16 +1084,21 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     hStabMesh.castShadow = true;
     airframe.add(hStabMesh);
 
-    // Smooth teardrop flap-track fairings under trailing edge
+    // 5 Aerodynamic Flap-Track Fairing Canoes under each wing trailing edge
     for (const [fx, fy, fz, fl] of [
-      [5.2, 2.40, -0.8, 2.7],
-      [9.6, 2.70, -2.3, 2.3],
-      [14.2, 3.08, -4.1, 1.8],
-      [17.8, 3.38, -5.2, 1.3],
+      [4.2, 2.34, -0.3, 2.85],
+      [7.4, 2.52, -1.4, 2.50],
+      [10.8, 2.76, -2.7, 2.20],
+      [14.2, 3.08, -4.1, 1.85],
+      [17.6, 3.38, -5.2, 1.38],
     ]) {
-      const pod = new THREE.Mesh(buildBarrelNacelleGeometry(0.06, 0.17, 0.04, fl, 16, 8), bellyMat);
+      const pod = new THREE.Mesh(buildBarrelNacelleGeometry(0.06, 0.17, 0.05, fl, 16, 8), bellyMat);
       pod.position.set(s * fx, fy, fz);
       airframe.add(pod);
+      const podTip = new THREE.Mesh(cone(0.075, 0.30, 12), redCanoeMat);
+      podTip.rotation.x = -Math.PI / 2;
+      podTip.position.set(s * fx, fy, fz - fl * 0.52);
+      airframe.add(podTip);
     }
   }
 
@@ -877,13 +1110,14 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
   const rudderStripe = new THREE.Mesh(buildLoftedVerticalTailFinGeometry(RUDDER_STRIPE_STATIONS, 18), stripeMat);
   airframe.add(rudderStripe);
 
-  // --- 2. Twin Under-Wing High-Bypass Turbofan Engines (Trent XWB / GEnx) ---
+  // --- 2. Twin Under-Wing High-Bypass Turbofan Engines (Trent XWB / GEnx with True Hollow Intake) ---
   const fans = [];
   const plumes = [];
   const engineFires = [];
 
   const cowlGeo = buildBarrelNacelleGeometry(1.16, 1.30, 1.08, 3.70, 36, 14);
   const cowlBandGeo = buildBarrelNacelleGeometry(1.26, 1.315, 1.24, 1.25, 36, 6);
+  const chevronGeo = buildChevronNozzleRingGeometry(1.08, 0.88, 0.72, 14);
 
   for (const s of [-1, 1]) {
     const ex = s * 7.0;
@@ -894,15 +1128,22 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     engGroup.position.set(ex, ey, ez);
     airframe.add(engGroup);
 
-    // Swept aerodynamic pylon strut
+    // Swept aerodynamic pylon strut + twin vortex-generating nacelle strakes (chine fairings)
     const pylon = new THREE.Mesh(
       buildLoftedVerticalTailFinGeometry([
-        { y: 0.45, zFront: 1.25, zRear: -1.95, thick: 0.22 },
-        { y: 1.35, zFront: 0.65, zRear: -2.25, thick: 0.18 },
+        { y: 0.45, zFront: 1.55, zRear: -2.05, thick: 0.24 },
+        { y: 1.38, zFront: 0.75, zRear: -2.35, thick: 0.18 },
       ], 14),
       bellyMat
     );
     engGroup.add(pylon);
+
+    for (const stSide of [-1, 1]) {
+      const strake = new THREE.Mesh(box(0.28, 0.035, 1.15), whiteMat);
+      strake.position.set(stSide * 1.12, 0.48, 0.65);
+      strake.rotation.z = stSide * -0.42;
+      engGroup.add(strake);
+    }
 
     // Barrel-curved outer nacelle cowling
     const cowl = new THREE.Mesh(cowlGeo, whiteMat);
@@ -914,45 +1155,65 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     cowlBand.position.z = 0.35;
     engGroup.add(cowlBand);
 
-    // Polished chrome intake lip ring
-    const lip = new THREE.Mesh(cyl(1.18, 1.12, 0.56, 36), chromeMat);
-    lip.rotation.x = Math.PI / 2;
-    lip.position.z = 2.02;
-    engGroup.add(lip);
+    // TRUE HOLLOW INTAKE LIP (`TorusGeometry` ring + open-ended recessed dark acoustic intake throat cylinder)
+    const lipRing = new THREE.Mesh(new THREE.TorusGeometry(1.11, 0.095, 18, 36), chromeMat);
+    lipRing.position.z = 1.86;
+    engGroup.add(lipRing);
 
-    // Spinning Turbofan Rotor Assembly (`fanGroup` with 22 twisted titanium fan blades + conical spinner)
+    const intakeThroat = new THREE.Mesh(cylOpen(1.08, 1.03, 0.68, 36), tireMat);
+    intakeThroat.rotation.x = Math.PI / 2;
+    intakeThroat.position.z = 1.54;
+    engGroup.add(intakeThroat);
+
+    // Recessed Spinning Turbofan Rotor Assembly (`fanGroup` with 22 twisted titanium fan blades + spiral spinner)
     const fanGroup = new THREE.Group();
-    fanGroup.position.z = 1.92;
+    fanGroup.position.z = 1.48;
     engGroup.add(fanGroup);
 
-    const throatDisc = new THREE.Mesh(cyl(1.10, 1.10, 0.16, 28), glassMat);
-    throatDisc.rotation.x = Math.PI / 2;
-    fanGroup.add(throatDisc);
+    const throatBackplate = new THREE.Mesh(cyl(1.03, 1.03, 0.10, 32), tireMat);
+    throatBackplate.rotation.x = Math.PI / 2;
+    throatBackplate.position.z = -0.14;
+    fanGroup.add(throatBackplate);
 
-    const spinner = new THREE.Mesh(cone(0.36, 0.85, 24), tireMat);
+    const spinner = new THREE.Mesh(cone(0.36, 0.78, 24), tireMat);
     spinner.rotation.x = Math.PI / 2;
-    spinner.position.z = 0.34;
+    spinner.position.z = 0.24;
     fanGroup.add(spinner);
 
-    const spinnerTip = new THREE.Mesh(cone(0.14, 0.32, 16), chromeMat);
+    const spinnerTip = new THREE.Mesh(cone(0.13, 0.28, 16), chromeMat);
     spinnerTip.rotation.x = Math.PI / 2;
-    spinnerTip.position.z = 0.62;
+    spinnerTip.position.z = 0.52;
     fanGroup.add(spinnerTip);
 
-    // 22 twisted metallic fan blades
-    const bladeGeo = box(0.13, 0.98, 0.035);
+    // White spiral swirl stripe on conical turbofan spinner
+    for (let sp = 0; sp < 8; sp++) {
+      const t = sp / 8;
+      const ang = t * Math.PI * 2.2;
+      const rSp = (1 - t * 0.78) * 0.29;
+      const swirlDot = new THREE.Mesh(box(0.048, 0.025, 0.09), whiteMat);
+      swirlDot.position.set(Math.cos(ang) * rSp, Math.sin(ang) * rSp, 0.02 + t * 0.42);
+      swirlDot.rotation.z = ang + 0.55;
+      fanGroup.add(swirlDot);
+    }
+
+    // 22 twisted titanium fan blades with chrome leading-edge sheen
+    const bladeGeo = box(0.14, 0.96, 0.032);
     for (let b = 0; b < 22; b++) {
       const ang = (b / 22) * Math.PI * 2;
       const blade = new THREE.Mesh(bladeGeo, chromeMat);
-      blade.position.set(Math.cos(ang) * 0.55, Math.sin(ang) * 0.55, 0.10);
-      blade.rotation.z = ang + 0.32;
-      blade.rotation.y = 0.46;
+      blade.position.set(Math.cos(ang) * 0.53, Math.sin(ang) * 0.53, 0.02);
+      blade.rotation.z = ang + 0.34;
+      blade.rotation.y = 0.48;
       fanGroup.add(blade);
     }
     fans.push(fanGroup);
 
-    // Stepped rear bypass duct & core exhaust nozzle cone
-    const nozzle = new THREE.Mesh(cyl(1.08, 0.78, 1.15, 28), chromeMat);
+    // 787 Serrated Chevron Rear Nacelle Lip + Stepped Bypass Duct & Core Exhaust Nozzle Cone
+    const chevronLip = new THREE.Mesh(chevronGeo, isA350 ? chromeMat : whiteMat);
+    chevronLip.position.z = -1.80;
+    engGroup.add(chevronLip);
+
+    const nozzle = new THREE.Mesh(cylOpen(0.98, 0.76, 1.05, 28), chromeMat);
     nozzle.rotation.x = Math.PI / 2;
     nozzle.position.z = -2.25;
     engGroup.add(nozzle);
@@ -1019,52 +1280,71 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     engineFires.push(fireGroup);
   }
 
-  // --- 3. Animated Retractable Tricycle Landing Gear (`gearGroup`) ---
+  // --- 3. Multi-Link Retractable Tricycle Landing Gear (`gearGroup`) ---
   const gearGroup = new THREE.Group();
   gearGroup.name = "landing_gear";
   group.add(gearGroup);
+
+  // Recessed dark Nose Gear-Bay Well Liner
+  const noseWell = new THREE.Mesh(box(0.92, 0.18, 1.55), tireMat);
+  noseWell.position.set(0, 2.02, 15.8);
+  gearGroup.add(noseWell);
 
   // Steerable Nose Gear Pivot at z = +15.8m
   const noseGearPivot = new THREE.Group();
   noseGearPivot.position.set(0, 2.15, 15.8);
   gearGroup.add(noseGearPivot);
 
-  const noseStrut = new THREE.Mesh(cyl(0.15, 0.13, 1.75, 16), strutMat);
-  noseStrut.position.set(0, -0.85, 0);
-  noseGearPivot.add(noseStrut);
+  const noseStrutUpper = new THREE.Mesh(cyl(0.16, 0.15, 1.15, 16), strutMat);
+  noseStrutUpper.position.set(0, -0.55, 0);
+  const noseStrutPiston = new THREE.Mesh(cyl(0.11, 0.11, 0.72, 14), chromeMat);
+  noseStrutPiston.position.set(0, -1.35, 0);
+  noseGearPivot.add(noseStrutUpper, noseStrutPiston);
 
-  const noseTorque = new THREE.Mesh(box(0.28, 0.48, 0.24), strutMat);
-  noseTorque.position.set(0, -0.95, 0.20);
-  noseTorque.rotation.x = 0.35;
-  noseGearPivot.add(noseTorque);
-
-  // Open nose gear bay doors
+  // Dual hydraulic steering actuator cylinders + scissor torque links + forward drag brace
   for (const s of [-1, 1]) {
-    const nDoor = new THREE.Mesh(box(0.08, 0.72, 1.35), bellyMat);
+    const steerCyl = new THREE.Mesh(cyl(0.045, 0.045, 0.36, 10), chromeMat);
+    steerCyl.position.set(s * 0.18, -0.52, 0.12);
+    steerCyl.rotation.z = s * 0.35;
+    noseGearPivot.add(steerCyl);
+  }
+  const noseTorqueUpper = new THREE.Mesh(box(0.18, 0.34, 0.08), strutMat);
+  noseTorqueUpper.position.set(0, -1.02, -0.18);
+  noseTorqueUpper.rotation.x = -0.52;
+  const noseTorqueLower = new THREE.Mesh(box(0.18, 0.34, 0.08), strutMat);
+  noseTorqueLower.position.set(0, -1.32, -0.18);
+  noseTorqueLower.rotation.x = 0.52;
+  const noseDragBrace = new THREE.Mesh(cyl(0.05, 0.05, 1.15, 10), strutMat);
+  noseDragBrace.position.set(0, -0.52, 0.38);
+  noseDragBrace.rotation.x = 0.62;
+  noseGearPivot.add(noseTorqueUpper, noseTorqueLower, noseDragBrace);
+
+  // Open nose gear bay doors with actuator struts
+  for (const s of [-1, 1]) {
+    const nDoor = new THREE.Mesh(box(0.08, 0.72, 1.45), bellyMat);
     nDoor.position.set(s * 0.48, -0.25, 0.05);
     noseGearPivot.add(nDoor);
   }
 
-  // Twin Nose Tires + Alloy Hubs
+  // Twin Nose Tires + Alloy Hubs + Brake Discs
   const allWheels = [];
   for (const s of [-1, 1]) {
     const nw = new THREE.Mesh(cyl(0.46, 0.46, 0.25, 22), tireMat);
     nw.rotation.z = Math.PI / 2;
     nw.position.set(s * 0.30, -1.69, 0);
     const nh = new THREE.Mesh(cyl(0.22, 0.22, 0.27, 16), chromeMat);
-    nh.rotation.z = Math.PI / 2;
     nw.add(nh);
     noseGearPivot.add(nw);
     allWheels.push(nw);
   }
 
   // Nose-gear dual taxi/landing spotlight bulbs
-  const taxiLamp = new THREE.Mesh(
-    new THREE.SphereGeometry(0.18, 12, 12),
-    new THREE.MeshBasicMaterial({ color: 0xfff8dc })
-  );
-  taxiLamp.position.set(0, -0.65, 0.22);
-  noseGearPivot.add(taxiLamp);
+  const taxiLampMat = new THREE.MeshBasicMaterial({ color: 0xfff8dc });
+  for (const s of [-0.11, 0.11]) {
+    const taxiLamp = new THREE.Mesh(new THREE.SphereGeometry(0.10, 10, 10), taxiLampMat);
+    taxiLamp.position.set(s, -0.68, 0.20);
+    noseGearPivot.add(taxiLamp);
+  }
 
   // Port & Starboard Main Landing Gear Bogies (x = ±3.7m, z = -0.4m)
   const mainGearLeft = new THREE.Group();
@@ -1073,35 +1353,58 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     [1, mainGearLeft],
     [-1, mainGearRight],
   ]) {
+    // Inner main gear-bay well liner
+    const mainWell = new THREE.Mesh(box(1.35, 0.22, 2.35), tireMat);
+    mainWell.position.set(s * 3.45, 2.25, -0.4);
+    gearGroup.add(mainWell);
+
     mg.position.set(s * 3.7, 2.45, -0.4);
     gearGroup.add(mg);
 
-    const mStrut = new THREE.Mesh(cyl(0.21, 0.19, 1.95, 16), strutMat);
-    mStrut.position.set(0, -0.95, 0);
-    mg.add(mStrut);
+    const mStrutUpper = new THREE.Mesh(cyl(0.22, 0.20, 1.32, 16), strutMat);
+    mStrutUpper.position.set(0, -0.66, 0);
+    const mStrutPiston = new THREE.Mesh(cyl(0.15, 0.15, 0.85, 14), chromeMat);
+    mStrutPiston.position.set(0, -1.48, 0);
+    mg.add(mStrutUpper, mStrutPiston);
 
-    const sideBrace = new THREE.Mesh(box(1.15, 0.14, 0.14), strutMat);
+    // Hydraulic brake lines along main strut + folding side brace + scissor torque links
+    const hydLine = new THREE.Mesh(cyl(0.025, 0.025, 1.75, 8), maskMat);
+    hydLine.position.set(s * 0.18, -0.95, 0.08);
+    mg.add(hydLine);
+
+    const sideBrace = new THREE.Mesh(box(1.18, 0.14, 0.14), strutMat);
     sideBrace.position.set(-s * 0.48, -0.55, 0);
     sideBrace.rotation.z = s * 0.55;
     mg.add(sideBrace);
 
-    const bogieBeam = new THREE.Mesh(box(0.28, 0.24, 1.95), strutMat);
+    const mTorqueUpper = new THREE.Mesh(box(0.22, 0.42, 0.10), strutMat);
+    mTorqueUpper.position.set(0, -1.15, 0.22);
+    mTorqueUpper.rotation.x = 0.52;
+    const mTorqueLower = new THREE.Mesh(box(0.22, 0.42, 0.10), strutMat);
+    mTorqueLower.position.set(0, -1.52, 0.22);
+    mTorqueLower.rotation.x = -0.52;
+    mg.add(mTorqueUpper, mTorqueLower);
+
+    const bogieBeam = new THREE.Mesh(box(0.30, 0.24, 2.15), strutMat);
     bogieBeam.position.set(0, -1.85, 0);
     mg.add(bogieBeam);
 
-    // Wheel-well door
-    const gearDoor = new THREE.Mesh(box(0.10, 1.35, 1.85), bellyMat);
-    gearDoor.position.set(s * 0.58, -0.65, 0);
+    // Wheel-well door with inner structural ribs
+    const gearDoor = new THREE.Mesh(box(0.10, 1.38, 1.95), bellyMat);
+    gearDoor.position.set(s * 0.60, -0.65, 0);
     mg.add(gearDoor);
 
-    for (const wx of [-0.44, 0.44]) {
-      for (const wz of [-0.64, 0.64]) {
-        const mw = new THREE.Mesh(cyl(0.60, 0.60, 0.36, 22), tireMat);
+    const wzList = isA350 ? [-0.78, 0.0, 0.78] : [-0.64, 0.64];
+    const wRad = isA350 ? 0.54 : 0.60;
+    for (const wx of [-0.46, 0.46]) {
+      for (const wz of wzList) {
+        const mw = new THREE.Mesh(cyl(wRad, wRad, 0.36, 22), tireMat);
         mw.rotation.z = Math.PI / 2;
         mw.position.set(wx, -1.85, wz);
-        const mh = new THREE.Mesh(cyl(0.28, 0.28, 0.38, 16), chromeMat);
-        mh.rotation.z = Math.PI / 2;
+        const mh = new THREE.Mesh(cyl(wRad * 0.48, wRad * 0.48, 0.38, 16), chromeMat);
         mw.add(mh);
+        const brakeDisc = new THREE.Mesh(cyl(wRad * 0.38, wRad * 0.38, 0.40, 14), exhaustMat);
+        mw.add(brakeDisc);
         mg.add(mw);
         allWheels.push(mw);
       }
