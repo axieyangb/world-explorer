@@ -1,8 +1,8 @@
-import * as THREE from '../vendor/three.module.js?v=20261031_r6';
-import { getBeijingTerrainElevation } from './environment.js?v=20261031_r6';
-import { getLang } from './i18n.js?v=20261031_r6';
-import { computeRoadRoute } from './features/route_graph.js?v=20261031_r6';
-import { sampleTunnelCorridorAt } from './features/road_grid.js?v=20261031_r6';
+import * as THREE from '../vendor/three.module.js';
+import { getBeijingTerrainElevation } from './environment.js';
+import { getLang } from './i18n.js';
+import { computeRoadRoute } from './features/route_graph.js';
+import { sampleTunnelCorridorAt } from './features/road_grid.js';
 
 const RIBBON_AHEAD_M = 1200;
 const RIBBON_STEP_M = 8;

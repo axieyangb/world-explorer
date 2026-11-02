@@ -101,11 +101,11 @@ import { Maritime } from "./features/maritime/maritime.js"; // [feature/ferries-
 import { LandmarkSystem } from "./features/landmarks/landmark_system.js"; // feature/famous-landmarks
 import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt, sampleTunnelCorridorAt } from "./features/road_grid.js"; // fix/water
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
-import { QUALITY, QualityManager } from "./features/quality.js?v=20261031_r6"; // [ui-mobile] graphics tiers + governor
+import { QUALITY, QualityManager } from "./features/quality.js"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
-import { SpaceLaunchSystem } from "./features/space_launch_system.js?v=20261031_r6"; // [feature/space-launch]
+import { SpaceLaunchSystem } from "./features/space_launch_system.js"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -426,7 +426,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261031_r6" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r1" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;
@@ -475,6 +475,7 @@ class WorldExplorerApp {
   }
 
   async _syncWorkerDem() {
+    this._workerDemAcked = false;
     if (!this.chunkWorker) return;
     const demState = getBeijingDemState();
     if (!demState || !demState.elevations) return;
@@ -1468,7 +1469,9 @@ class WorldExplorerApp {
             ox,
             oz,
             worldOrigin: this.worldOrigin,
+            demState: !this._workerDemAcked ? getBeijingDemState() : undefined,
           });
+          this._workerDemAcked = true;
         });
         if (!payload || (this.teleportGeneration || 0) !== genId) return;
         const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
@@ -1784,6 +1787,23 @@ class WorldExplorerApp {
     if (this.mode === "walk") {
       if (this.walkerWeapons && this.walkerWeapons.playerDead) {
         this.speed = 0;
+        if (this.fsd && this.fsd.active) this.stopFsd();
+        if (!this.isGrounded) {
+          this.walkVelY = Math.max(-62.0, (this.walkVelY || 0) - 25.0 * dt);
+          this.pos.y += this.walkVelY * dt;
+          const minTerrY = Math.max(
+            getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.16,
+            getChunkTerrainMeshElevation(this.pos.x, this.pos.z) + 0.08
+          );
+          const roofY = this.getRoofSupportAt(this.pos.x, this.pos.y, this.pos.z);
+          const floorY = Math.max(minTerrY, roofY + 0.12);
+          if (this.pos.y <= floorY) {
+            this.pos.y = floorY;
+            this.walkVelY = 0;
+            this.isGrounded = true;
+          }
+          this.avatarMesh.position.copy(this.pos);
+        }
         return;
       }
       const jacking = this.carjack && this.carjack.active; // [polish] no walking / jumping during a carjack
@@ -1843,18 +1863,20 @@ class WorldExplorerApp {
         this._fallPeakY = this.pos.y;
       }
 
+      const prevPosY = this.pos.y;
       const prevWalkVelY = this.walkVelY || 0;
       this.walkVelY = Math.max(-62.0, prevWalkVelY - 25.0 * dt);
       this.pos.y += this.walkVelY * dt;
+      const supportQueryY = Math.max(this.pos.y, prevPosY);
 
-      const surf = this.sampleRoadSurface(this.pos.x, this.pos.y, this.pos.z);
+      const surf = this.sampleRoadSurface(this.pos.x, supportQueryY, this.pos.z);
       const minTerrY = Math.max(
         getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.16,
         getChunkTerrainMeshElevation(this.pos.x, this.pos.z) + 0.08
       );
-      const roofY = this.getRoofSupportAt(this.pos.x, this.pos.y, this.pos.z);
-      const shipDeck = this.maritime?.getDeckHeightAt?.(this.pos.x, this.pos.z, this.pos.y + 1.2);
-      const airRoofY = this.airliner?.getSupportHeightAt?.(this.pos.x, this.pos.z, this.pos.y + 1.2) ?? -Infinity;
+      const roofY = this.getRoofSupportAt(this.pos.x, supportQueryY, this.pos.z);
+      const shipDeck = this.maritime?.getDeckHeightAt?.(this.pos.x, this.pos.z, supportQueryY + 1.2);
+      const airRoofY = this.airliner?.getSupportHeightAt?.(this.pos.x, this.pos.z, supportQueryY + 1.2) ?? -Infinity;
       const groundY = Math.max(
         surf ? Math.max(surf.y, minTerrY) : minTerrY,
         roofY + 0.12,
@@ -1890,19 +1912,26 @@ class WorldExplorerApp {
         return;
       }
 
-      if (this.pos.y <= groundY) {
+      if (this.pos.y <= groundY + 0.08 && this.walkVelY <= 0) {
         const fallDrop = (this._fallPeakY ?? groundY) - groundY;
         this.pos.y = groundY;
         this.walkVelY = 0;
         this.isGrounded = true;
         this._fallPeakY = groundY;
         this._bailingOutMidAir = false;
-        if (fallDrop > 15.0 || prevWalkVelY < -18.0) {
+        if (fallDrop > 14.0 || prevWalkVelY < -17.0) {
           this.avatarMesh.position.copy(this.pos);
           if (this.walkerWeapons) {
             this.walkerWeapons.killPlayer("FELL TO DEATH");
           }
           return;
+        }
+      } else if (this.pos.y > groundY + 0.25) {
+        if (this.isGrounded) {
+          this.isGrounded = false;
+          this._fallPeakY = Math.max(this._fallPeakY ?? this.pos.y, this.pos.y);
+        } else {
+          this._fallPeakY = Math.max(this._fallPeakY ?? this.pos.y, this.pos.y);
         }
       }
 
@@ -2922,9 +2951,14 @@ class WorldExplorerApp {
     const how = this._driveEnter || "";
     this._driveEnter = "";
     if (how === "keep") return; // car-jacking: the car is already where the traffic car was
-    if (how !== "fresh") {
+    const terrY = Math.max(
+      getBeijingTerrainElevation(this.pos.x, this.pos.z),
+      getChunkTerrainMeshElevation(this.pos.x, this.pos.z)
+    );
+    const highAboveGround = prevMode === "helicopter" || prevMode === "airliner" || this.pos.y > terrY + 10.0;
+    if (how !== "fresh" && !highAboveGround) {
       const near = this.parkedCars.nearestEnterable(this.pos.x, this.pos.z, 7.5);
-      if (near) { this._enterParked(near); return; }
+      if (near && Math.abs((near.y || terrY) - terrY) <= 10.0) { this._enterParked(near); return; }
     }
     if (this.parkedCars.isParked(this.vehicleMesh) || this.vehicleMesh.userData.charred) {
       if (!this.parkedCars.isParked(this.vehicleMesh)) this.parkedCars.disposeMesh(this.vehicleMesh);
@@ -2933,13 +2967,24 @@ class WorldExplorerApp {
     }
     if (this.vehicleDamage) this.vehicleDamage.resetPlayer(1);
     this.speed = 0;
-    const refY = prevMode === "helicopter" ? getBeijingTerrainElevation(this.pos.x, this.pos.z) : this.pos.y;
+    this.driveVelY = 0;
+    const refY = highAboveGround ? terrY : this.pos.y;
     const sp = findDriveSpawn(this, this.pos.x, refY, this.pos.z, this.camYaw + this.camYawOffset, this.vehicleIdx, Boolean(this.traffic && this.traffic.lht));
     if (sp) {
       this.pos.set(sp.x, sp.y, sp.z);
       this.yaw = sp.yaw;
       this.camYaw = sp.yaw;
       this.camYawOffset = 0;
+    } else {
+      const col = this.collision ? this.collision.resolveCar(this.pos.x, terrY + 0.5, this.pos.z, this.yaw, VEHICLE_SPECS[this.vehicleIdx]) : null;
+      if (col && col.hit) {
+        this.pos.x = col.x;
+        this.pos.z = col.z;
+      }
+      this.pos.y = Math.max(
+        getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.16,
+        getChunkTerrainMeshElevation(this.pos.x, this.pos.z) + 0.08
+      );
     }
     this.vehicleMesh.rotation.set(0, this.yaw, 0);
   }

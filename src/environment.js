@@ -4,7 +4,13 @@ import * as THREE from '../vendor/three.module.js';
  * Real-world Beijing Digital Elevation Model (DEM) state loaded from `/data/beijing_dem.json`
  * (compiled from AWS/Mapzen Open Data SRTM Terrarium Zoom-12 bare-earth filtered DTM + OSM `natural=peak` `ele=*` nodes).
  */
-let demState = null;
+let demState = globalThis.__weDemState || null;
+
+function _storeDemState(state) {
+  demState = state;
+  globalThis.__weDemState = state;
+  return state;
+}
 
 import { fetchGlobalDem, horizonGroundFor } from './global_tiles.js';
 import { GROUND_MEADOW, groundSlopeTint, overviewGroundSampler } from './features/ground_cover.js'; // [ground]
@@ -13,15 +19,14 @@ export async function initBeijingDem() {
   try {
     const resp = await fetch('data/beijing_dem.json');
     if (resp.ok) {
-      demState = await resp.json();
-      demState.isBeijing = true;
-      return demState;
+      const loaded = await resp.json();
+      loaded.isBeijing = true;
+      return _storeDemState(loaded);
     }
   } catch {
     // Fallback to global DEM
   }
-  demState = await fetchGlobalDem(39.9087, 116.3975);
-  return demState;
+  return _storeDemState(await fetchGlobalDem(39.9087, 116.3975));
 }
 
 export async function initGlobalDem(centerLat, centerLon) {
@@ -29,16 +34,15 @@ export async function initGlobalDem(centerLat, centerLon) {
   if (distBeijingKm < 25.0) {
     return initBeijingDem();
   }
-  demState = await fetchGlobalDem(centerLat, centerLon);
-  return demState;
+  return _storeDemState(await fetchGlobalDem(centerLat, centerLon));
 }
 
 export function setBeijingDemState(state) {
-  demState = state;
+  _storeDemState(state);
 }
 
 export function getBeijingDemState() {
-  return demState;
+  return demState || globalThis.__weDemState || null;
 }
 
 /**
@@ -98,9 +102,10 @@ export function getChunkTerrainMeshElevation(wx, wz) {
 }
 
 export function getBeijingTerrainElevation(wx, wz) {
-  if (!demState || !demState.elevations) return 0.0;
+  const activeDem = demState || globalThis.__weDemState;
+  if (!activeDem || !activeDem.elevations) return 0.0;
 
-  const { gridSize, stepM, minWorld, elevations, osmPeaks } = demState;
+  const { gridSize, stepM, minWorld, elevations, osmPeaks } = activeDem;
   const fx = THREE.MathUtils.clamp((wx - minWorld) / stepM, 0, gridSize - 1.0001);
   const fz = THREE.MathUtils.clamp((wz - minWorld) / stepM, 0, gridSize - 1.0001);
 

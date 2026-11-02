@@ -51,7 +51,18 @@ export function appendInfillBuilding(b, ox, oz, getY, region, out) {
   const gLow = Math.min(gC, g00, g10, g01, g11);
   const gHigh = Math.max(gC, g00, g10, g01, g11);
   const gTopBase = gHigh > gC + 0.35 ? gHigh : gC;
-  const y0 = (rawMinH || 0) > 0.5 ? gTopBase + rawMinH : gLow - 1.2;
+  let effMinH = 0;
+  if ((rawMinH || 0) > 0.5 && out && Array.isArray(out.colliders)) {
+    const wcx = ox + cx, wcz = oz + cz;
+    for (let ci = 0; ci < out.colliders.length; ci++) {
+      const bc = out.colliders[ci];
+      if (wcx >= bc.minX && wcx <= bc.maxX && wcz >= bc.minZ && wcz <= bc.maxZ && bc.h >= gTopBase + rawMinH - 2.0) {
+        effMinH = rawMinH;
+        break;
+      }
+    }
+  }
+  const y0 = effMinH > 0.5 ? gTopBase + effMinH : gLow - 1.2;
   let yTop = gTopBase + Math.max(3.2, rawH);
   const rc = out.roof || null; // [roofs]
 

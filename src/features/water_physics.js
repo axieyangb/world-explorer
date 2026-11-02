@@ -1,6 +1,6 @@
-import { sampleTunnelCorridorAt } from './road_grid.js?v=20261031_r6';
-import * as THREE from '../../vendor/three.module.js?v=20261031_r6';
-import { getBeijingTerrainElevation } from '../environment.js?v=20261031_r6';
+import { sampleTunnelCorridorAt } from './road_grid.js';
+import * as THREE from '../../vendor/three.module.js';
+import { getBeijingTerrainElevation } from '../environment.js';
 
 /**
  * Water physics: a per-chunk bit raster of "deep" water (lakes/sea/river polygons incl. island holes,
@@ -351,8 +351,11 @@ export class WaterPhysics {
           const d = Math.hypot(px - ref.x, pz - ref.z);
           if (d > 600) continue;
           const wet = this.isPointInWater(px, pz);
+          const inBldg = app.collision && app.collision.insideAny(px, pz, Infinity);
+          if (inBldg) continue;
           const shore = !wet && this._nearWater(px, pz, 8) ? 30 : 0;
-          const score = d + (sg === ref.seg ? -25 : 0) + (wet ? (sg.bridge ? 40 : 400) : shore);
+          const bridgePen = sg.bridge ? 180 : 0;
+          const score = d + (sg === ref.seg ? -25 : 0) + (wet ? (sg.bridge ? 220 : 600) : shore) + bridgePen;
           if (score < bestScore) { bestScore = score; best = { sg, t, px, pz, vx, vz }; }
         }
       }
@@ -367,8 +370,18 @@ export class WaterPhysics {
     const { sg, t, px, pz, vx, vz } = best;
     let yaw = Math.atan2(vx, vz);
     if (Math.cos(yaw - ref.yaw) < 0) yaw += Math.PI; // keep the direction the car was heading
-    const y = sg.y1 + (sg.y2 - sg.y1) * t + 0.07;
-    app.pos.set(px, Math.max(y, getBeijingTerrainElevation(px, pz) + 0.16), pz);
+    const segY = sg.y1 + (sg.y2 - sg.y1) * t + 0.07;
+    const terrY = getBeijingTerrainElevation(px, pz) + 0.16;
+    const baseY = sg.bridge ? Math.max(segY, terrY) : terrY;
+    let rx = px, rz = pz;
+    if (app.collision) {
+      const col = app.collision.resolve(rx, baseY + 0.6, rz, yaw, 0.85, [0]);
+      if (col) { rx = col.x; rz = col.z; }
+    }
+    const finalTerrY = getBeijingTerrainElevation(rx, rz) + 0.16;
+    const finalSurf = app.sampleRoadSurface(rx, finalTerrY + 0.5, rz);
+    const finalY = finalSurf && !finalSurf.seg?.bridge ? Math.max(finalSurf.y, finalTerrY) : finalTerrY;
+    app.pos.set(rx, finalY, rz);
     app.yaw = yaw;
     app.camYaw = yaw;
     app.camYawOffset = 0;
@@ -395,13 +408,17 @@ export class WaterPhysics {
   // ---------------------------------------------------------------- walk / heli
   /** Walk mode: allows entering/dropping into water (where unsupported water triggers drowning) while recording dry shore poses. */
   resolveWalk(px, pz, nx, nz, wy) {
-    const surfHere = this.app.sampleRoadSurface(px, wy, pz);
-    if (!this.isPointInWater(px, pz) || (surfHere && surfHere.seg && (surfHere.seg.bridge || surfHere.seg.tunnel)) || this.isInUnderwaterTunnel(px, pz)) {
-      this.safe = { x: px, z: pz, yaw: this.app.yaw, seg: surfHere ? surfHere.seg : null };
-      const last = this.safeHist[this.safeHist.length - 1];
-      if (!last || Math.hypot(last.x - px, last.z - pz) > 4.0) {
-        this.safeHist.push(this.safe);
-        if (this.safeHist.length > 24) this.safeHist.shift();
+    const terrY = getBeijingTerrainElevation(px, pz);
+    const onGroundStreet = this.app.isGrounded && !this.app._bailingOutMidAir && wy <= terrY + 6.0 && (!this.app.collision || !this.app.collision.insideAny(px, pz, Infinity));
+    if (onGroundStreet) {
+      const surfHere = this.app.sampleRoadSurface(px, wy, pz);
+      if (!this.isPointInWater(px, pz) || (surfHere && surfHere.seg && (surfHere.seg.bridge || surfHere.seg.tunnel)) || this.isInUnderwaterTunnel(px, pz)) {
+        this.safe = { x: px, z: pz, yaw: this.app.yaw, seg: surfHere ? surfHere.seg : null };
+        const last = this.safeHist[this.safeHist.length - 1];
+        if (!last || Math.hypot(last.x - px, last.z - pz) > 4.0) {
+          this.safeHist.push(this.safe);
+          if (this.safeHist.length > 24) this.safeHist.shift();
+        }
       }
     }
     return { x: nx, z: nz };

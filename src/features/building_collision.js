@@ -1,4 +1,4 @@
-import { sampleTunnelCorridorAt } from './road_grid.js?v=20261031_r6';
+import { sampleTunnelCorridorAt } from './road_grid.js';
 /**
  * Building collision against real footprint polygons (base tier), with a lazily built per-chunk
  * uniform grid and neighbour-chunk lookups. Bodies are circles (the car is three circles along its

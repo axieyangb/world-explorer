@@ -579,14 +579,14 @@ export class AirlinerSystem {
     const exitX = pos.x + fwdX * 14 - rightX * 9.5;
     const exitZ = pos.z + fwdZ * 14 - rightZ * 9.5;
     const groundY = this.app.world.getHeightAt(exitX, exitZ);
-    const isMidAir = !this.grounded && (pos.y - groundY > 10.0);
-    const exitY = isMidAir ? pos.y : groundY;
+    const isMidAir = !this.grounded && (pos.y - groundY > 8.0);
+    const exitY = isMidAir ? Math.max(groundY + 1.0, pos.y - 3.5) : groundY;
 
     if (isMidAir) {
       this.app._bailingOutMidAir = true;
-      this.app._fallPeakY = exitY;
+      this.app._fallPeakY = pos.y;
       this.app.isGrounded = false;
-      this.app.walkVelY = Math.min(-2.5, this.vertSpeed || 0);
+      this.app.walkVelY = Math.min(-8.0, (this.vertSpeed || 0) - 4.0);
       this.unmannedGlide = true;
     } else {
       this.app._bailingOutMidAir = false;
@@ -605,6 +605,8 @@ export class AirlinerSystem {
     const hx = this.mesh.position.x;
     const hy = this.mesh.position.y;
     const hz = this.mesh.position.z;
+    const terrY = this.app?.world?.getHeightAt ? this.app.world.getHeightAt(hx, hz) : 0;
+    if (!this.grounded || hy > terrY + 6.0) return;
     const key = `hero_${Math.round(hx)}_${Math.round(hz)}`;
     if (this.damagedParked.has(key)) return;
     const parkedMesh = createHeroAirlinerModel(this.liveryIdx);
@@ -1987,11 +1989,15 @@ export class AirlinerSystem {
    * Used by helicopters and walkers so they can land/stand on top of a parked airliner instead of falling through it.
    */
   getSupportHeightAt(x, z, refY = Infinity) {
-    const excludeHero = this.app.mode === "airliner";
+    if (this.app && this.app._bailingOutMidAir) return -Infinity;
+    const excludeHero = this.app.mode === "airliner" || !this.grounded || this.unmannedGlide;
     const list = this.getAllAirlinerColliders(excludeHero, x, z, 90);
     let bestY = -Infinity;
     for (let i = 0; i < list.length; i++) {
       const pl = list[i];
+      if (pl.type === "sky" || pl.type === "live") continue;
+      const terrY = this.app?.world?.getHeightAt ? this.app.world.getHeightAt(pl.x, pl.z) : 0;
+      if (pl.y > terrY + 6.0) continue;
       const S = pl.scale || 1.25;
       const dx = x - pl.x;
       const dz = z - pl.z;
@@ -2031,6 +2037,7 @@ export class AirlinerSystem {
    */
   resolveExternalCollision(pos, yaw = 0, radius = 2.5, wingSpan = 0, velocity = null, isAircraft = false) {
     if (!pos) return null;
+    if (!isAircraft && this.app && this.app._bailingOutMidAir) return null;
     const excludeHero = this.app.mode === "airliner";
     const list = this.getAllAirlinerColliders(excludeHero, pos.x, pos.z, 140);
     if (!list.length) return null;

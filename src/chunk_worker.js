@@ -1,5 +1,5 @@
 import { setBeijingDemState } from './environment.js';
-import { computeChunkWorkerPayload } from './chunk_builder.js?v=20261031_r6';
+import { computeChunkWorkerPayload } from './chunk_builder.js';
 import { fetchGlobalChunkData, setTileCacheLimit } from './global_tiles.js';
 import { setStreetWorldOrigin } from './features/street_worker.js'; // [feature/street]
 
@@ -13,7 +13,8 @@ self.onmessage = async (e) => {
     return;
   }
   if (msg.type === 'buildChunk') {
-    const { key, cx, cz, ox, oz, worldOrigin } = msg;
+    const { key, cx, cz, ox, oz, worldOrigin, demState } = msg;
+    if (demState) setBeijingDemState(demState);
     setStreetWorldOrigin(worldOrigin); // [feature/street]
     try {
       const data = msg.data || (await fetchGlobalChunkData(cx, cz, worldOrigin));
