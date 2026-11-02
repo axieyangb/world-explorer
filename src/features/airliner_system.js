@@ -587,10 +587,17 @@ export class AirlinerSystem {
       this.app._fallPeakY = pos.y;
       this.app.isGrounded = false;
       this.app.walkVelY = Math.min(-8.0, (this.vertSpeed || 0) - 4.0);
+      this.app._freefallTime = 0;
+      const carrySpd = Math.max(16.0, Math.min(30.0, (this.speed || 75.0) * 0.32));
+      this.app._freefallVelX = fwdX * carrySpd - rightX * 3.5;
+      this.app._freefallVelZ = fwdZ * carrySpd - rightZ * 3.5;
       this.unmannedGlide = true;
     } else {
       this.app._bailingOutMidAir = false;
       this.app.walkVelY = 0;
+      this.app._freefallTime = 0;
+      this.app._freefallVelX = 0;
+      this.app._freefallVelZ = 0;
       this.unmannedGlide = false;
     }
 
@@ -970,6 +977,7 @@ export class AirlinerSystem {
 
     this.app.pos.copy(pos);
     this.app.speed = this.speed;
+    this._updateTelemetry();
     const mouseIdleSec = (performance.now() - (this.app.lastMouseOrbitTime || 0)) * 0.001;
     if (mouseIdleSec > 1.8) {
       const diff = Math.atan2(Math.sin(this.app.yaw - this.app.camYaw), Math.cos(this.app.yaw - this.app.camYaw));
@@ -977,6 +985,54 @@ export class AirlinerSystem {
     }
 
     this._syncOrientation();
+  }
+
+  _updateTelemetry() {
+    const pos = this.mesh.position;
+    const wo = this.app?.worldOrigin;
+    if (wo && wo.mPerDegLat && wo.mPerDegLon) {
+      this.lat = wo.centerLat - pos.z / wo.mPerDegLat;
+      this.lon = wo.centerLon + pos.x / wo.mPerDegLon;
+    } else {
+      this.lat = this.app?.currentLat ?? 0;
+      this.lon = this.app?.currentLon ?? 0;
+    }
+    const baseAsl = this.app?.demState?.baseAslM || 0;
+    this.altM = Math.max(0, pos.y);
+    this.altAslM = Math.max(0, baseAsl + pos.y);
+    this.altFt = Math.round(this.altAslM * 3.28084);
+    this.aglM = Math.max(0, pos.y - (this.groundY || 0));
+    this.speedMs = this.speed;
+    this.speedKmh = Math.round(Math.abs(this.speed) * 3.6);
+    this.speedKts = Math.round(Math.abs(this.speed) * 1.94384);
+    this.iasKmh = Math.round(this.ias * 3.6);
+    this.iasKts = Math.round(this.ias * 1.94384);
+    // In World Explorer, +Z is South (180 deg) and +X is East (90 deg), -Z is North (0 deg):
+    const yaw = this.app?.yaw || 0;
+    const vx = Math.sin(yaw);
+    const vz = Math.cos(yaw);
+    this.headingDeg = (Math.round(Math.atan2(vx, -vz) * (180 / Math.PI)) + 360) % 360;
+  }
+
+  getTelemetry() {
+    this._updateTelemetry();
+    return {
+      lat: Number((this.lat || 0).toFixed(5)),
+      lon: Number((this.lon || 0).toFixed(5)),
+      altM: Math.round(this.altM || 0),
+      altAslM: Math.round(this.altAslM || 0),
+      altFt: this.altFt || 0,
+      aglM: Math.round(this.aglM || 0),
+      speedMs: Number((this.speed || 0).toFixed(1)),
+      speedKmh: this.speedKmh || 0,
+      speedKts: this.speedKts || 0,
+      iasKmh: this.iasKmh || 0,
+      iasKts: this.iasKts || 0,
+      mach: Number((this.mach || 0).toFixed(2)),
+      vertSpeedMs: Number((this.vertSpeed || 0).toFixed(1)),
+      headingDeg: this.headingDeg || 0,
+      grounded: Boolean(this.grounded),
+    };
   }
 
   /**

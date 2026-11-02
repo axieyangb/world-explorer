@@ -1351,6 +1351,53 @@ function makePoser(R) {
     st.px = p.x; st.pz = p.z;
     const mo = root.userData.motion;
     const fresh = mo && now - (mo.t || 0) < 250;
+    if (mo && mo.dead) {
+      body.position.set(0, 0.14, 0);
+      body.rotation.set(0, 0, 0);
+      pelvis.rotation.set(0, 0, 0);
+      chest.rotation.set(0.08, 0, 0.06, 'YXZ');
+      neck.rotation.set(0.22, 0.35, 0, 'YXZ');
+      for (let i = 0; i < 2; i++) {
+        const leg = legs[i];
+        leg.thigh.rotation.set(0, 0, 0);
+        leg.shin.rotation.set(i === 0 ? 0.35 : 0.22, 0, 0);
+        leg.foot.rotation.set(0.15, 0, 0);
+      }
+      chest.updateMatrix();
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -1 : 1, arm = i === 0 ? armL : armR;
+        sh[i].set(s * (armR.shX || SHOULDER_X), SHOULDER_H - WAIST_Y + (armR.shY || 0), 0).applyMatrix4(chest.matrix);
+        _qb.setFromEuler(chest.rotation).multiply(arm.pivot.quaternion);
+        setArmBody(arm, _qb, sh[i], i === 0 ? 0.45 : 0.35);
+      }
+      return;
+    }
+    if (mo && mo.freefall) {
+      st.wasGrounded = false;
+      st.air = 1;
+      // Offset body so root.rotation (pitch, yaw, roll) tumbles around the human's center of mass (0, HIP_H, 0)
+      _va.set(0, HIP_H, 0);
+      _qp.copy(root.quaternion).invert();
+      body.position.copy(_va).applyQuaternion(_qp).sub(_va);
+      body.rotation.set(0, 0, 0);
+      for (let i = 0; i < 2; i++) {
+        const leg = legs[i];
+        leg.thigh.rotation.set(0, 0, 0);
+        leg.foot.rotation.set(0.25 * Math.sin(tm * 12.0 + i * 1.4), 0, 0);
+      }
+      if (R.skirt) R.skirt(-leftLeg.rotation.x, -rightLeg.rotation.x);
+      chest.updateMatrix();
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -1 : 1, arm = i === 0 ? armL : armR;
+        sh[i].set(s * (armR.shX || SHOULDER_X), SHOULDER_H - WAIST_Y + (armR.shY || 0), 0).applyMatrix4(chest.matrix);
+        _qb.setFromEuler(chest.rotation).multiply(arm.pivot.quaternion);
+        _qp.copy(arm.pivot.quaternion).invert();
+        arm.upper.quaternion.copy(_qp).multiply(_qb);
+        arm.upper.position.copy(sh[i]).sub(arm.pivot.position).applyQuaternion(_qp);
+        arm.hand.rotation.set(0.25 * Math.sin(tm * 14.0 + i), 0, 0);
+      }
+      return;
+    }
     const spdIn = fresh ? Math.min(mo.speed || 0, dist / dt + 0.5) : dist / dt;
     st.spd += (spdIn - st.spd) * Math.min(1, dt * 10);
     const spd = st.spd;
@@ -1676,7 +1723,36 @@ export function buildHeroAvatar({ seed, seated = false } = {}) {
     const skirtMesh = !L.soldier && meshes.find((m) => m.material === M.skirt);
     if (skirtMesh) { M.skirt.side = THREE.DoubleSide; M.skirt.shadowSide = THREE.BackSide; R.skirt = makeSkirtPoser(skirtMesh); } else R.skirt = null;
     built = { meshes, groups, mats: M };
-    root.userData.look = L;
+    if (root.userData) {
+      root.userData.look = L;
+      Object.assign(root.userData, {
+        body,
+        pelvis,
+        hips: pelvis,
+        chest,
+        torso: chest,
+        neck,
+        head: neck,
+        leftThigh: legs[0].thigh,
+        rightThigh: legs[1].thigh,
+        leftCalf: legs[0].shin,
+        rightCalf: legs[1].shin,
+        leftShin: legs[0].shin,
+        rightShin: legs[1].shin,
+        leftLowerLeg: legs[0].shin,
+        rightLowerLeg: legs[1].shin,
+        leftFoot: legs[0].foot,
+        rightFoot: legs[1].foot,
+        leftUpperArm: armL.upper,
+        rightUpperArm: armR.upper,
+        leftForearm: armL.fore,
+        rightForearm: armR.fore,
+        leftLowerArm: armL.fore,
+        rightLowerArm: armR.fore,
+        leftHand: armL.hand,
+        rightHand: armR.hand,
+      });
+    }
     R.pose = seated ? makeSeatPoser(R) : makePoser(R); // [drivers]
   };
 

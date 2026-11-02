@@ -104162,6 +104162,53 @@ function makePoser(R) {
     st.px = p.x; st.pz = p.z;
     const mo = root.userData.motion;
     const fresh = mo && now - (mo.t || 0) < 250;
+    if (mo && mo.dead) {
+      body.position.set(0, 0.14, 0);
+      body.rotation.set(0, 0, 0);
+      pelvis.rotation.set(0, 0, 0);
+      chest.rotation.set(0.08, 0, 0.06, 'YXZ');
+      neck.rotation.set(0.22, 0.35, 0, 'YXZ');
+      for (let i = 0; i < 2; i++) {
+        const leg = legs[i];
+        leg.thigh.rotation.set(0, 0, 0);
+        leg.shin.rotation.set(i === 0 ? 0.35 : 0.22, 0, 0);
+        leg.foot.rotation.set(0.15, 0, 0);
+      }
+      chest.updateMatrix();
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -1 : 1, arm = i === 0 ? armL : armR;
+        sh[i].set(s * (armR.shX || SHOULDER_X), SHOULDER_H - WAIST_Y + (armR.shY || 0), 0).applyMatrix4(chest.matrix);
+        _qb.setFromEuler(chest.rotation).multiply(arm.pivot.quaternion);
+        setArmBody(arm, _qb, sh[i], i === 0 ? 0.45 : 0.35);
+      }
+      return;
+    }
+    if (mo && mo.freefall) {
+      st.wasGrounded = false;
+      st.air = 1;
+      // Offset body so root.rotation (pitch, yaw, roll) tumbles around the human's center of mass (0, HIP_H, 0)
+      _va.set(0, HIP_H, 0);
+      _qp.copy(root.quaternion).invert();
+      body.position.copy(_va).applyQuaternion(_qp).sub(_va);
+      body.rotation.set(0, 0, 0);
+      for (let i = 0; i < 2; i++) {
+        const leg = legs[i];
+        leg.thigh.rotation.set(0, 0, 0);
+        leg.foot.rotation.set(0.25 * Math.sin(tm * 12.0 + i * 1.4), 0, 0);
+      }
+      if (R.skirt) R.skirt(-leftLeg.rotation.x, -rightLeg.rotation.x);
+      chest.updateMatrix();
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -1 : 1, arm = i === 0 ? armL : armR;
+        sh[i].set(s * (armR.shX || SHOULDER_X), SHOULDER_H - WAIST_Y + (armR.shY || 0), 0).applyMatrix4(chest.matrix);
+        _qb.setFromEuler(chest.rotation).multiply(arm.pivot.quaternion);
+        _qp.copy(arm.pivot.quaternion).invert();
+        arm.upper.quaternion.copy(_qp).multiply(_qb);
+        arm.upper.position.copy(sh[i]).sub(arm.pivot.position).applyQuaternion(_qp);
+        arm.hand.rotation.set(0.25 * Math.sin(tm * 14.0 + i), 0, 0);
+      }
+      return;
+    }
     const spdIn = fresh ? Math.min(mo.speed || 0, dist / dt + 0.5) : dist / dt;
     st.spd += (spdIn - st.spd) * Math.min(1, dt * 10);
     const spd = st.spd;
@@ -104487,7 +104534,36 @@ function buildHeroAvatar({ seed, seated = false } = {}) {
     const skirtMesh = !L.soldier && meshes.find((m) => m.material === M.skirt);
     if (skirtMesh) { M.skirt.side = THREE.DoubleSide; M.skirt.shadowSide = THREE.BackSide; R.skirt = makeSkirtPoser(skirtMesh); } else R.skirt = null;
     built = { meshes, groups, mats: M };
-    root.userData.look = L;
+    if (root.userData) {
+      root.userData.look = L;
+      Object.assign(root.userData, {
+        body,
+        pelvis,
+        hips: pelvis,
+        chest,
+        torso: chest,
+        neck,
+        head: neck,
+        leftThigh: legs[0].thigh,
+        rightThigh: legs[1].thigh,
+        leftCalf: legs[0].shin,
+        rightCalf: legs[1].shin,
+        leftShin: legs[0].shin,
+        rightShin: legs[1].shin,
+        leftLowerLeg: legs[0].shin,
+        rightLowerLeg: legs[1].shin,
+        leftFoot: legs[0].foot,
+        rightFoot: legs[1].foot,
+        leftUpperArm: armL.upper,
+        rightUpperArm: armR.upper,
+        leftForearm: armL.fore,
+        rightForearm: armR.fore,
+        leftLowerArm: armL.fore,
+        rightLowerArm: armR.fore,
+        leftHand: armL.hand,
+        rightHand: armR.hand,
+      });
+    }
     R.pose = seated ? makeSeatPoser(R) : makePoser(R); // [drivers]
   };
 
@@ -133348,10 +133424,17 @@ class AirlinerSystem {
       this.app._fallPeakY = pos.y;
       this.app.isGrounded = false;
       this.app.walkVelY = Math.min(-8.0, (this.vertSpeed || 0) - 4.0);
+      this.app._freefallTime = 0;
+      const carrySpd = Math.max(16.0, Math.min(30.0, (this.speed || 75.0) * 0.32));
+      this.app._freefallVelX = fwdX * carrySpd - rightX * 3.5;
+      this.app._freefallVelZ = fwdZ * carrySpd - rightZ * 3.5;
       this.unmannedGlide = true;
     } else {
       this.app._bailingOutMidAir = false;
       this.app.walkVelY = 0;
+      this.app._freefallTime = 0;
+      this.app._freefallVelX = 0;
+      this.app._freefallVelZ = 0;
       this.unmannedGlide = false;
     }
 
@@ -133731,6 +133814,7 @@ class AirlinerSystem {
 
     this.app.pos.copy(pos);
     this.app.speed = this.speed;
+    this._updateTelemetry();
     const mouseIdleSec = (performance.now() - (this.app.lastMouseOrbitTime || 0)) * 0.001;
     if (mouseIdleSec > 1.8) {
       const diff = Math.atan2(Math.sin(this.app.yaw - this.app.camYaw), Math.cos(this.app.yaw - this.app.camYaw));
@@ -133738,6 +133822,54 @@ class AirlinerSystem {
     }
 
     this._syncOrientation();
+  }
+
+  _updateTelemetry() {
+    const pos = this.mesh.position;
+    const wo = this.app?.worldOrigin;
+    if (wo && wo.mPerDegLat && wo.mPerDegLon) {
+      this.lat = wo.centerLat - pos.z / wo.mPerDegLat;
+      this.lon = wo.centerLon + pos.x / wo.mPerDegLon;
+    } else {
+      this.lat = this.app?.currentLat ?? 0;
+      this.lon = this.app?.currentLon ?? 0;
+    }
+    const baseAsl = this.app?.demState?.baseAslM || 0;
+    this.altM = Math.max(0, pos.y);
+    this.altAslM = Math.max(0, baseAsl + pos.y);
+    this.altFt = Math.round(this.altAslM * 3.28084);
+    this.aglM = Math.max(0, pos.y - (this.groundY || 0));
+    this.speedMs = this.speed;
+    this.speedKmh = Math.round(Math.abs(this.speed) * 3.6);
+    this.speedKts = Math.round(Math.abs(this.speed) * 1.94384);
+    this.iasKmh = Math.round(this.ias * 3.6);
+    this.iasKts = Math.round(this.ias * 1.94384);
+    // In World Explorer, +Z is South (180 deg) and +X is East (90 deg), -Z is North (0 deg):
+    const yaw = this.app?.yaw || 0;
+    const vx = Math.sin(yaw);
+    const vz = Math.cos(yaw);
+    this.headingDeg = (Math.round(Math.atan2(vx, -vz) * (180 / Math.PI)) + 360) % 360;
+  }
+
+  getTelemetry() {
+    this._updateTelemetry();
+    return {
+      lat: Number((this.lat || 0).toFixed(5)),
+      lon: Number((this.lon || 0).toFixed(5)),
+      altM: Math.round(this.altM || 0),
+      altAslM: Math.round(this.altAslM || 0),
+      altFt: this.altFt || 0,
+      aglM: Math.round(this.aglM || 0),
+      speedMs: Number((this.speed || 0).toFixed(1)),
+      speedKmh: this.speedKmh || 0,
+      speedKts: this.speedKts || 0,
+      iasKmh: this.iasKmh || 0,
+      iasKts: this.iasKts || 0,
+      mach: Number((this.mach || 0).toFixed(2)),
+      vertSpeedMs: Number((this.vertSpeed || 0).toFixed(1)),
+      headingDeg: this.headingDeg || 0,
+      grounded: Boolean(this.grounded),
+    };
   }
 
   /**
@@ -151793,18 +151925,32 @@ class WalkerWeaponsSystem {
       if (this.deathInWater && this.app.water && typeof this.app.water.splashAt === 'function') {
         this.app.water.splashAt(this.app.pos.x, this.app.pos.z, 2.5, 8.0);
       }
+      this.app._freefallTime = 0;
+      this.app._freefallVelX = 0;
+      this.app._freefallVelZ = 0;
       const avatar = this.app.avatarMesh || this.app.walker;
+      if (avatar) {
+        avatar.rotation.set(
+          this.deathInWater ? 0.45 : -Math.PI / 2,
+          this.app.yaw || 0,
+          this.deathInWater ? 0.22 : 0.14
+        );
+      }
       if (avatar && avatar.userData) {
-        const { hips, leftArm, rightArm, leftLeg, rightLeg } = avatar.userData;
-        if (hips) {
-          hips.rotation.x = this.deathInWater ? 0.55 : -1.48;
-          hips.rotation.z = this.deathInWater ? 0.25 : 0.18;
-          hips.position.y = this.deathInWater ? 0.35 : 0.18;
+        const { hips, leftArm, rightArm, leftLeg, rightLeg, motion } = avatar.userData;
+        if (motion) {
+          motion.dead = true;
+          motion.freefall = false;
+          motion.t = performance.now();
         }
-        if (leftArm) { leftArm.rotation.x = -1.2; leftArm.rotation.z = 0.65; }
-        if (rightArm) { rightArm.rotation.x = -1.2; rightArm.rotation.z = -0.65; }
-        if (leftLeg) { leftLeg.rotation.x = 0.25; leftLeg.rotation.z = 0.22; }
-        if (rightLeg) { rightLeg.rotation.x = -0.20; rightLeg.rotation.z = -0.22; }
+        if (hips) {
+          hips.rotation.set(0, 0, 0);
+          hips.position.y = 0.95;
+        }
+        if (leftArm) { leftArm.rotation.set(-0.35, 0.15, -1.05); }
+        if (rightArm) { rightArm.rotation.set(-0.25, -0.15, 0.95); }
+        if (leftLeg) { leftLeg.rotation.set(0.18, 0, -0.28); }
+        if (rightLeg) { rightLeg.rotation.set(-0.14, 0, 0.26); }
       }
     }
 
@@ -151847,16 +151993,30 @@ class WalkerWeaponsSystem {
     const app = this.app;
     if (!app) return;
     const avatar = app.avatarMesh || app.walker;
+    if (avatar) {
+      avatar.rotation.set(0, app.yaw || 0, 0);
+    }
     if (avatar && avatar.userData) {
-      const { hips, leftArm, rightArm, leftLeg, rightLeg } = avatar.userData;
+      const { hips, leftArm, rightArm, leftLeg, rightLeg, leftForearm, rightForearm, leftCalf, rightCalf, head, torso, motion } = avatar.userData;
+      if (motion) {
+        motion.dead = false;
+        motion.freefall = false;
+        motion.t = performance.now();
+      }
       if (hips) {
         hips.rotation.set(0, 0, 0);
-        hips.position.y = 0.90;
+        hips.position.y = 0.95;
       }
       if (leftArm) leftArm.rotation.set(0, 0, 0);
       if (rightArm) rightArm.rotation.set(0, 0, 0);
+      if (leftForearm) leftForearm.rotation.set(0, 0, 0);
+      if (rightForearm) rightForearm.rotation.set(0, 0, 0);
       if (leftLeg) leftLeg.rotation.set(0, 0, 0);
       if (rightLeg) rightLeg.rotation.set(0, 0, 0);
+      if (leftCalf) leftCalf.rotation.set(0, 0, 0);
+      if (rightCalf) rightCalf.rotation.set(0, 0, 0);
+      if (head) head.rotation.set(0, 0, 0);
+      if (torso) torso.rotation.set(0, 0, 0);
     }
     if (app.water && typeof app.water._respawn === 'function') {
       app.water._respawn();
@@ -151869,6 +152029,9 @@ class WalkerWeaponsSystem {
     app.isGrounded = true;
     app._fallPeakY = app.pos.y;
     app._bailingOutMidAir = false;
+    app._freefallTime = 0;
+    app._freefallVelX = 0;
+    app._freefallVelZ = 0;
   }
 
   update(dt) {
@@ -151916,7 +152079,11 @@ class WalkerWeaponsSystem {
       this.fireCurrentWeapon();
     }
 
-    if (isWalk && this.isArmed()) {
+    const inFreefall = this._isInFreefall();
+    if (this.weaponRig) {
+      this.weaponRig.visible = Boolean(this.isArmed() && !inFreefall && !this.playerDead);
+    }
+    if (isWalk && this.isArmed() && !inFreefall && !this.playerDead) {
       this._updateWalkerAimPose();
     }
 
@@ -151935,7 +152102,18 @@ class WalkerWeaponsSystem {
     this._updateWalkerAimPose();
   }
 
+  _isInFreefall() {
+    const app = this.app;
+    if (!app || app.mode !== 'walk' || app.isGrounded) return false;
+    return Boolean(
+      app._bailingOutMidAir ||
+      (app.walkVelY || 0) < -6.5 ||
+      ((app._fallPeakY ?? app.pos.y) - app.pos.y) > 4.0
+    );
+  }
+
   _updateWalkerAimPose() {
+    if (this.playerDead || this._isInFreefall()) return;
     const avatar = this.app.avatarMesh || this.app.walker;
     if (!avatar || !avatar.userData) return;
     const { rightArm, leftArm } = avatar.userData;
@@ -154650,8 +154828,8 @@ const { isNight } = __MOD_daylight;
 const POLL_S = 12;
 const MAX = 64;
 const DRAW_M = 30000;
-const LABEL_M = 1500;
-const LABEL_MAX = 6;
+const LABEL_M = 18000;
+const LABEL_MAX = 10;
 const STALE_S = 45;
 const DEG = Math.PI / 180;
 
@@ -154910,6 +155088,9 @@ class LiveSky {
       }
       ac.fx = x; ac.fy = y; ac.fz = z; ac.fixT = fixT;
       ac.vx = vx; ac.vz = vz; ac.vy = ground ? 0 : (vrate || 0); ac.gs = sp;
+      ac.lat = lat; ac.lon = lon;
+      ac.altAslM = ground ? baseAsl : (altM ?? y + baseAsl);
+      ac.trackDeg = Math.round(((track || 0) % 360 + 360) % 360);
       ac.ground = ground;
       ac.tYaw = Math.PI - trk;
       ac.seen = now;
@@ -154961,6 +155142,13 @@ class LiveSky {
       const tPitch = ac.ground ? 0 : Math.max(-0.25, Math.min(0.3, Math.atan2(ac.vy, Math.max(30, ac.gs))));
       ac.pitch += (tPitch - ac.pitch) * Math.min(1, dt * 1.5);
       ac.rx = x; ac.ry = y; ac.rz = z;
+      const [curLat, curLon] = this._toLatLon(x, z);
+      ac.lat = curLat;
+      ac.lon = curLon;
+      const baseAsl = (getBeijingDemState() && getBeijingDemState().baseAslM) || 0;
+      ac.altAslM = ac.ground ? baseAsl + terr : Math.max(baseAsl + terr, baseAsl + y);
+      ac.speedKmh = Math.round((ac.gs || 0) * 3.6);
+      ac.speedKts = Math.round((ac.gs || 0) * 1.94384);
       const dCam = Math.hypot(x - cam.x, y - cam.y, z - cam.z);
       ac.dCam = dCam;
       const dPl = Math.hypot(x - px, z - pz);
@@ -155065,11 +155253,14 @@ class LiveSky {
       if (n >= LABEL_MAX || ac.dCam > LABEL_M) break;
       if (!ac.cs) continue;
       const sp = this.labels[n++];
-      const e = this._labelTexture(ac.cs);
-      if (sp.userData.key !== ac.cs) {
+      const altBucket = ac.ground ? 'GND' : `${Math.round((ac.altAslM ?? ac.ry) / 10) * 10}m`;
+      const spdBucket = `${Math.round(((ac.gs || 0) * 3.6) / 5) * 5}km/h`;
+      const labelText = `${ac.cs} · ${altBucket} · ${spdBucket}`;
+      const e = this._labelTexture(labelText);
+      if (sp.userData.key !== labelText) {
         sp.material.map = e.tex;
         sp.material.needsUpdate = true;
-        sp.userData.key = ac.cs;
+        sp.userData.key = labelText;
       }
       const h = Math.max(2.2, ac.dCam * 0.024);
       sp.scale.set(h * e.aspect, h, 1);
@@ -155162,7 +155353,24 @@ class LiveSky {
   list() {
     return [...this.aircraft.values()]
       .sort((a, b) => (a.dCam || 0) - (b.dCam || 0))
-      .map((a) => ({ cs: a.cs, kind: a.kind, ground: a.ground, x: Math.round(a.rx), y: Math.round(a.ry), z: Math.round(a.rz), agl: Math.round(a.agl || 0), gs: Math.round(a.gs), dCam: Math.round(a.dCam || 0) }));
+      .map((a) => ({
+        cs: a.cs,
+        kind: a.kind,
+        ground: a.ground,
+        lat: Number((a.lat ?? 0).toFixed(5)),
+        lon: Number((a.lon ?? 0).toFixed(5)),
+        altM: Math.round(a.altAslM ?? a.ry),
+        altFt: Math.round((a.altAslM ?? a.ry) * 3.28084),
+        agl: Math.round(a.agl || 0),
+        gs: Number((a.gs || 0).toFixed(1)),
+        speedKmh: Math.round((a.gs || 0) * 3.6),
+        speedKts: Math.round((a.gs || 0) * 1.94384),
+        trackDeg: a.trackDeg ?? 0,
+        x: Math.round(a.rx),
+        y: Math.round(a.ry),
+        z: Math.round(a.rz),
+        dCam: Math.round(a.dCam || 0),
+      }));
   }
 }
 
@@ -195421,7 +195629,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r2" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;
@@ -196858,6 +197066,17 @@ class WorldExplorerApp {
         this._fallPeakY = this.pos.y;
       }
 
+      if (!this.isGrounded && (Math.abs(this._freefallVelX || 0) > 0.05 || Math.abs(this._freefallVelZ || 0) > 0.05)) {
+        const drag = Math.exp(-0.55 * dt);
+        this._freefallVelX *= drag;
+        this._freefallVelZ *= drag;
+        const fx = this.pos.x + this._freefallVelX * dt;
+        const fz = this.pos.z + this._freefallVelZ * dt;
+        const col = this.collision.resolve(fx, this.pos.y + 0.6, fz, this.yaw, 0.45, [0], null, this.pos.x, this.pos.z);
+        this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.x));
+        this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
+      }
+
       const prevPosY = this.pos.y;
       const prevWalkVelY = this.walkVelY || 0;
       this.walkVelY = Math.max(-62.0, prevWalkVelY - 25.0 * dt);
@@ -196930,40 +197149,104 @@ class WorldExplorerApp {
         }
       }
 
-      this.avatarMesh.position.copy(this.pos);
-      this.avatarMesh.rotation.y = this.yaw;
-      const mo = this.avatarMesh.userData.motion; // [human-motion] locomotion state for the avatar's procedural pose
-      if (mo) { mo.speed = this.speed; mo.grounded = this.isGrounded; mo.vy = this.walkVelY; mo.sprint = isNitro; mo.punch = this._punchTimer > 0 ? 1 - this._punchTimer / (this._punchDuration || 0.32) : -1; mo.punchHand = this._punchHand; mo.t = performance.now(); }
-
-      const { leftLeg, rightLeg, leftArm, rightArm } = this.avatarMesh.userData;
-      if (!this.isGrounded && this.walkVelY < -10.0) {
-        // High-velocity freefall flailing pose
-        this.walkAnimTime += dt * 28.0;
-        const flail = Math.sin(this.walkAnimTime) * 0.95;
-        if (leftLeg) leftLeg.rotation.x = flail * 0.8;
-        if (rightLeg) rightLeg.rotation.x = -flail * 0.8;
-        if (leftArm) { leftArm.rotation.x = -2.3 + flail * 0.55; leftArm.rotation.z = 0.55; }
-        if (rightArm) { rightArm.rotation.x = -2.3 - flail * 0.55; rightArm.rotation.z = -0.55; }
-      } else if (this.speed > 0.3) {
-        this.walkAnimTime += dt * (isNitro ? 16 : 9);
-        const swing = Math.sin(this.walkAnimTime) * 0.65;
-        if (leftLeg) leftLeg.rotation.x = swing;
-        if (rightLeg) rightLeg.rotation.x = -swing;
-        if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) { // [weapon-pickups] unarmed arms swing
-          if (leftArm) leftArm.rotation.x = -swing * 0.8;
-          if (rightArm) rightArm.rotation.x = swing * 0.8;
-        }
+      const inFreefall = Boolean(
+        !this.isGrounded &&
+        (this._bailingOutMidAir || this.walkVelY < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
+      );
+      if (inFreefall) {
+        this._freefallTime = (this._freefallTime || 0) + dt;
       } else {
-        if (leftLeg) leftLeg.rotation.x = 0;
-        if (rightLeg) rightLeg.rotation.x = 0;
-        if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
-          if (leftArm) leftArm.rotation.x = 0;
-          if (rightArm) rightArm.rotation.x = 0;
+        this._freefallTime = 0;
+        this._freefallVelX = 0;
+        this._freefallVelZ = 0;
+      }
+
+      this.avatarMesh.position.copy(this.pos);
+      const {
+        leftLeg, rightLeg, leftArm, rightArm,
+        leftForearm, rightForearm, leftCalf, rightCalf,
+        head, torso, hips
+      } = this.avatarMesh.userData;
+
+      if (inFreefall) {
+        const t = this._freefallTime;
+        // 3D whole-body somersaulting, barrel-rolling, and yaw spin during freefall
+        const tumblePitch = t * 3.8 + Math.sin(t * 2.3) * 0.65;
+        const tumbleYaw = this.yaw + t * 2.4 + Math.cos(t * 1.9) * 0.5;
+        const tumbleRoll = Math.sin(t * 3.1) * 0.95 + t * 1.7;
+        this.avatarMesh.rotation.set(tumblePitch, tumbleYaw, tumbleRoll);
+
+        // Multi-joint articulated limb flailing: windmilling arms, flexing elbows, pedaling/scissoring legs & knees
+        if (leftArm) {
+          leftArm.rotation.set(
+            -1.4 + Math.sin(t * 11.5) * 1.15,
+            Math.cos(t * 8.7) * 0.55,
+            -1.45 - Math.sin(t * 7.3) * 0.55
+          );
+        }
+        if (rightArm) {
+          rightArm.rotation.set(
+            -1.4 + Math.cos(t * 10.3 + 0.8) * 1.15,
+            -Math.sin(t * 9.1) * 0.55,
+            1.45 + Math.cos(t * 6.9 + 0.5) * 0.55
+          );
+        }
+        if (leftForearm) leftForearm.rotation.set(-0.65 - 0.55 * Math.sin(t * 13.7), 0, 0);
+        if (rightForearm) rightForearm.rotation.set(-0.65 - 0.55 * Math.cos(t * 12.9 + 0.6), 0, 0);
+        if (leftLeg) {
+          leftLeg.rotation.set(
+            Math.sin(t * 9.8) * 0.95,
+            Math.sin(t * 5.7) * 0.25,
+            -0.28 - Math.abs(Math.sin(t * 6.4)) * 0.35
+          );
+        }
+        if (rightLeg) {
+          rightLeg.rotation.set(
+            -Math.sin(t * 9.8 + 0.4) * 0.95,
+            -Math.cos(t * 5.3) * 0.25,
+            0.28 + Math.abs(Math.cos(t * 6.1)) * 0.35
+          );
+        }
+        if (leftCalf) leftCalf.rotation.set(0.55 + 0.50 * Math.sin(t * 11.2), 0, 0);
+        if (rightCalf) rightCalf.rotation.set(0.55 + 0.50 * Math.cos(t * 10.8 + 0.7), 0, 0);
+        if (head) head.rotation.set(-0.45 + Math.sin(t * 7.2) * 0.35, Math.sin(t * 5.4) * 0.55, Math.cos(t * 6.1) * 0.25, 'YXZ');
+        if (torso) torso.rotation.set(-0.22 + Math.sin(t * 6.5) * 0.28, Math.sin(t * 4.8) * 0.38, Math.cos(t * 5.2) * 0.22, 'YXZ');
+        if (hips) hips.rotation.set(Math.cos(t * 6.5) * 0.20, -Math.sin(t * 4.8) * 0.25, Math.sin(t * 5.2) * 0.20, 'YXZ');
+      } else {
+        this.avatarMesh.rotation.set(0, this.yaw, 0);
+        if (leftLeg) { leftLeg.rotation.y = 0; leftLeg.rotation.z = 0; }
+        if (rightLeg) { rightLeg.rotation.y = 0; rightLeg.rotation.z = 0; }
+        if (this.speed > 0.3) {
+          this.walkAnimTime += dt * (isNitro ? 16 : 9);
+          const swing = Math.sin(this.walkAnimTime) * 0.65;
+          if (leftLeg) leftLeg.rotation.x = swing;
+          if (rightLeg) rightLeg.rotation.x = -swing;
+          if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
+            if (leftArm) { leftArm.rotation.x = -swing * 0.8; leftArm.rotation.y = 0; leftArm.rotation.z = 0; }
+            if (rightArm) { rightArm.rotation.x = swing * 0.8; rightArm.rotation.y = 0; rightArm.rotation.z = 0; }
+          }
+        } else {
+          if (leftLeg) leftLeg.rotation.x = 0;
+          if (rightLeg) rightLeg.rotation.x = 0;
+          if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
+            if (leftArm) leftArm.rotation.set(0, 0, 0);
+            if (rightArm) rightArm.rotation.set(0, 0, 0);
+          }
         }
       }
-      if ((this.isGrounded || this.walkVelY >= -10.0) && (!this.walkerWeapons || !this.walkerWeapons.isArmed())) {
-        if (leftArm) leftArm.rotation.z = 0;
-        if (rightArm) rightArm.rotation.z = 0;
+
+      const mo = this.avatarMesh.userData.motion; // [human-motion] locomotion state for the avatar's procedural pose
+      if (mo) {
+        mo.speed = this.speed;
+        mo.grounded = this.isGrounded;
+        mo.vy = this.walkVelY;
+        mo.sprint = isNitro;
+        mo.freefall = inFreefall;
+        mo.freefallTime = this._freefallTime || 0;
+        mo.dead = Boolean(this.walkerWeapons && this.walkerWeapons.playerDead);
+        mo.punch = this._punchTimer > 0 ? 1 - this._punchTimer / (this._punchDuration || 0.32) : -1;
+        mo.punchHand = this._punchHand;
+        mo.t = performance.now();
       }
 
       if (this._punchTimer > 0) {
@@ -197240,6 +197523,11 @@ class WorldExplorerApp {
     } else {
       this.camPivot.copy(this.pos);
       const isWalk = this.mode === "walk";
+      const inFreefallCam = Boolean(
+        isWalk &&
+        !this.isGrounded &&
+        (this._bailingOutMidAir || (this.walkVelY || 0) < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
+      );
       const isHeli = this.mode === "helicopter";
       const isAirliner = this.mode === "airliner";
       const isBoat = this.mode === "boat";
@@ -197253,13 +197541,15 @@ class WorldExplorerApp {
           ? this.camMode === "street" ? 12.0 : 22.0
           : isHeli
             ? this.camMode === "street" ? 12.5 : 18.5
-            : isWalk
-              ? this.camMode === "street" ? 3.8 : 6.4
-              : isBus
-                ? this.camMode === "street" ? 13.5 : 19.5
-                : isUtility
-                  ? this.camMode === "street" ? 8.2 : 15.2
-                  : this.camMode === "street" ? 6.8 : 13.5;
+            : inFreefallCam
+              ? this.camMode === "street" ? 3.0 : 4.2
+              : isWalk
+                ? this.camMode === "street" ? 3.8 : 6.4
+                : isBus
+                  ? this.camMode === "street" ? 13.5 : 19.5
+                  : isUtility
+                    ? this.camMode === "street" ? 8.2 : 15.2
+                    : this.camMode === "street" ? 6.8 : 13.5;
       const baseDist = rawBaseDist * (this.camZoom || 1.0);
       const pivotH = isAirliner
         ? 6.8
@@ -197267,8 +197557,10 @@ class WorldExplorerApp {
           ? 2.8
           : isHeli
             ? 2.45
-            : isWalk
-              ? 1.55
+            : inFreefallCam
+              ? 0.95
+              : isWalk
+                ? 1.55
               : isBus
                 ? this.camMode === "street" ? 3.85 : 4.25
                 : isUtility
@@ -197301,7 +197593,7 @@ class WorldExplorerApp {
       const camY = Math.max(minCamY, rawCamY);
 
       this.camera.position.set(camX, camY, camZ);
-      const lookAhead = isAirliner ? 6.0 : isBoat ? 8.5 : isHeli ? 10.5 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
+      const lookAhead = isAirliner ? 6.0 : isBoat ? 8.5 : isHeli ? 10.5 : inFreefallCam ? 0.35 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
       const lookY = isAirliner ? (this.camPivot.y + 4.8) : (this.camPivot.y + pivotH);
       this.camera.lookAt(
         this.camPivot.x + Math.sin(viewYaw) * lookAhead,
@@ -197325,6 +197617,7 @@ class WorldExplorerApp {
         ? 42.0
         : Math.max(1.2, Math.min(4.0, activeOrbitDist * 0.22));
     let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
+    if (this.mode === "walk" && this.camMode !== "topdown") targetNear = Math.min(targetNear, 0.45);
     if (this.camMode !== "topdown" && activeOrbitDist < 5.0) targetNear = Math.max(0.25, Math.min(targetNear, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
     const targetFar = Math.max(36000, Math.min(138000, this.camera.position.y * 16.0 + 42000));
     if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15 || Math.abs(this.camera.far - targetFar) > 250) {
@@ -197364,9 +197657,22 @@ class WorldExplorerApp {
     const streetText = this._roadDisplayName(roadRaw);
     const cityText = this.currentCityName || "Beijing, CN";
 
+    const wo = this.worldOrigin;
+    const liveLat = (wo && wo.mPerDegLat) ? (wo.centerLat - this.pos.z / wo.mPerDegLat) : (this.currentLat || 0);
+    const liveLon = (wo && wo.mPerDegLon) ? (wo.centerLon + this.pos.x / wo.mPerDegLon) : (this.currentLon || 0);
+    const baseAsl = this.demState?.baseAslM || 0;
+    const altAslM = Math.round(Math.max(0, baseAsl + this.pos.y));
+    const altFt = Math.round(altAslM * 3.28084);
+
     const pillTextEl = document.getElementById("location-pill-text");
     if (pillTextEl) {
-      pillTextEl.textContent = `${streetText} · ${cityText}`;
+      if (this.mode === "airliner" && this.airliner) {
+        const latStr = `${Math.abs(liveLat).toFixed(4)}°${liveLat >= 0 ? "N" : "S"}`;
+        const lonStr = `${Math.abs(liveLon).toFixed(4)}°${liveLon >= 0 ? "E" : "W"}`;
+        pillTextEl.textContent = `${cityText} · ${latStr}, ${lonStr} · ALT ${altAslM}m (${altFt}ft)`;
+      } else {
+        pillTextEl.textContent = `${streetText} · ${cityText}`;
+      }
     }
 
     const streetEl = document.getElementById("radar-street");
@@ -197375,8 +197681,19 @@ class WorldExplorerApp {
     const cityEl = document.getElementById("radar-city");
     if (cityEl) cityEl.textContent = cityText;
 
-    const absSpd = Math.abs(this.speed);
+    const inFreefallHud = Boolean(
+      this.mode === "walk" &&
+      !this.isGrounded &&
+      (this._bailingOutMidAir || (this.walkVelY || 0) < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
+    );
+    const absSpd = inFreefallHud
+      ? Math.hypot(
+          Math.hypot(this.speed || 0, Math.hypot(this._freefallVelX || 0, this._freefallVelZ || 0)),
+          this.walkVelY || 0
+        )
+      : Math.abs(this.speed);
     const kmh = Math.round(absSpd * 3.6);
+    const kts = Math.round(absSpd * 1.94384);
     const speedValEl = document.getElementById("speed-value");
     if (speedValEl) speedValEl.textContent = String(kmh);
 
@@ -197390,16 +197707,16 @@ class WorldExplorerApp {
         gearBadgeEl.textContent = "BOOST";
       } else if (this.mode === "airliner" && this.airliner) {
         if (this.airliner.stalling) {
-          gearBadgeEl.textContent = "STALL WARN";
+          gearBadgeEl.textContent = `STALL · ${kts}KT · ${altAslM}m`;
         } else if (this.airliner.grounded) {
-          gearBadgeEl.textContent = this.airliner.speed < -0.5 ? "REV PUSH" : `TAXI · IAS ${Math.round(this.airliner.ias * 3.6)}`;
+          gearBadgeEl.textContent = this.airliner.speed < -0.5 ? "REV PUSH" : `TAXI · ${kts}KT · ${altAslM}m`;
         } else if (this.pos.y >= 3000) {
-          gearBadgeEl.textContent = `M${this.airliner.mach.toFixed(2)} · FL${Math.round(this.pos.y / 30.48)}`;
+          gearBadgeEl.textContent = `M${this.airliner.mach.toFixed(2)} · FL${Math.round(altAslM / 30.48)} (${altAslM}m)`;
         } else {
-          gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m · ${this.airliner.gearDown ? "GEAR DN" : "CLIMB"}`;
+          gearBadgeEl.textContent = `ALT ${altAslM}m (${altFt}ft) · ${kts}KT`;
         }
       } else if (this.mode === "boat") {
-        gearBadgeEl.textContent = `KTS ${Math.round(absSpd * 1.944)}`;
+        gearBadgeEl.textContent = `KTS ${kts}`;
       } else if (this.mode === "helicopter") {
         if (this.heliLanded) {
           gearBadgeEl.textContent = getLang() === "zh" ? "已降落" : "LANDED";
@@ -197409,7 +197726,11 @@ class WorldExplorerApp {
           gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m`;
         }
       } else if (this.mode === "walk") {
-        gearBadgeEl.textContent = getLang() === "zh" ? "步行" : "WALK";
+        if (inFreefallHud) {
+          gearBadgeEl.textContent = `FREEFALL · ${Math.round(Math.max(0, this.pos.y))}m`;
+        } else {
+          gearBadgeEl.textContent = getLang() === "zh" ? "步行" : "WALK";
+        }
       } else {
         const gear = kmh < 2 ? "N" : `D${Math.min(7, Math.max(1, Math.ceil(kmh / 42)))}`;
         gearBadgeEl.textContent = gear;
@@ -197418,7 +197739,7 @@ class WorldExplorerApp {
 
     const barFillEl = document.getElementById("speed-bar-fill");
     if (barFillEl) {
-      const maxRefKmh = this.nitroActive ? 1225 : this.mode === "helicopter" ? 330 : 320;
+      const maxRefKmh = this.nitroActive ? 1225 : this.mode === "airliner" ? 950 : this.mode === "helicopter" ? 330 : 320;
       const pct = Math.min(100, Math.round((kmh / maxRefKmh) * 100));
       barFillEl.style.width = `${pct}%`;
       barFillEl.classList.toggle("boost", Boolean(this.nitroActive));
@@ -197857,14 +198178,23 @@ class WorldExplorerApp {
         this._fallPeakY = this.pos.y;
         this.walkVelY = Math.min(-2.5, this.walkVelY || -2.5);
         this.isGrounded = false;
+        this._freefallTime = 0;
+        if (Math.hypot(this._freefallVelX || 0, this._freefallVelZ || 0) < 1.0) {
+          const carrySpd = Math.max(14.0, Math.min(26.0, Math.abs(this.speed || 18.0) * 0.65));
+          this._freefallVelX = Math.sin(this.yaw) * carrySpd;
+          this._freefallVelZ = Math.cos(this.yaw) * carrySpd;
+        }
       } else {
         this.pos.y = groundSupportY;
         this._fallPeakY = this.pos.y;
         this.walkVelY = 0;
         this.isGrounded = true;
+        this._freefallTime = 0;
+        this._freefallVelX = 0;
+        this._freefallVelZ = 0;
       }
       this.avatarMesh.position.copy(this.pos);
-      this.avatarMesh.rotation.y = this.yaw;
+      this.avatarMesh.rotation.set(0, this.yaw, 0);
       this.camPivot.copy(this.pos);
     } else if (newMode === "airliner") {
       this.avatarMesh.visible = false;

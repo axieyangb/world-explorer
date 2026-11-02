@@ -19,8 +19,8 @@ import { isNight } from './daylight.js';
 const POLL_S = 12;
 const MAX = 64;
 const DRAW_M = 30000;
-const LABEL_M = 1500;
-const LABEL_MAX = 6;
+const LABEL_M = 18000;
+const LABEL_MAX = 10;
 const STALE_S = 45;
 const DEG = Math.PI / 180;
 
@@ -279,6 +279,9 @@ export class LiveSky {
       }
       ac.fx = x; ac.fy = y; ac.fz = z; ac.fixT = fixT;
       ac.vx = vx; ac.vz = vz; ac.vy = ground ? 0 : (vrate || 0); ac.gs = sp;
+      ac.lat = lat; ac.lon = lon;
+      ac.altAslM = ground ? baseAsl : (altM ?? y + baseAsl);
+      ac.trackDeg = Math.round(((track || 0) % 360 + 360) % 360);
       ac.ground = ground;
       ac.tYaw = Math.PI - trk;
       ac.seen = now;
@@ -330,6 +333,13 @@ export class LiveSky {
       const tPitch = ac.ground ? 0 : Math.max(-0.25, Math.min(0.3, Math.atan2(ac.vy, Math.max(30, ac.gs))));
       ac.pitch += (tPitch - ac.pitch) * Math.min(1, dt * 1.5);
       ac.rx = x; ac.ry = y; ac.rz = z;
+      const [curLat, curLon] = this._toLatLon(x, z);
+      ac.lat = curLat;
+      ac.lon = curLon;
+      const baseAsl = (getBeijingDemState() && getBeijingDemState().baseAslM) || 0;
+      ac.altAslM = ac.ground ? baseAsl + terr : Math.max(baseAsl + terr, baseAsl + y);
+      ac.speedKmh = Math.round((ac.gs || 0) * 3.6);
+      ac.speedKts = Math.round((ac.gs || 0) * 1.94384);
       const dCam = Math.hypot(x - cam.x, y - cam.y, z - cam.z);
       ac.dCam = dCam;
       const dPl = Math.hypot(x - px, z - pz);
@@ -434,11 +444,14 @@ export class LiveSky {
       if (n >= LABEL_MAX || ac.dCam > LABEL_M) break;
       if (!ac.cs) continue;
       const sp = this.labels[n++];
-      const e = this._labelTexture(ac.cs);
-      if (sp.userData.key !== ac.cs) {
+      const altBucket = ac.ground ? 'GND' : `${Math.round((ac.altAslM ?? ac.ry) / 10) * 10}m`;
+      const spdBucket = `${Math.round(((ac.gs || 0) * 3.6) / 5) * 5}km/h`;
+      const labelText = `${ac.cs} · ${altBucket} · ${spdBucket}`;
+      const e = this._labelTexture(labelText);
+      if (sp.userData.key !== labelText) {
         sp.material.map = e.tex;
         sp.material.needsUpdate = true;
-        sp.userData.key = ac.cs;
+        sp.userData.key = labelText;
       }
       const h = Math.max(2.2, ac.dCam * 0.024);
       sp.scale.set(h * e.aspect, h, 1);
@@ -531,7 +544,24 @@ export class LiveSky {
   list() {
     return [...this.aircraft.values()]
       .sort((a, b) => (a.dCam || 0) - (b.dCam || 0))
-      .map((a) => ({ cs: a.cs, kind: a.kind, ground: a.ground, x: Math.round(a.rx), y: Math.round(a.ry), z: Math.round(a.rz), agl: Math.round(a.agl || 0), gs: Math.round(a.gs), dCam: Math.round(a.dCam || 0) }));
+      .map((a) => ({
+        cs: a.cs,
+        kind: a.kind,
+        ground: a.ground,
+        lat: Number((a.lat ?? 0).toFixed(5)),
+        lon: Number((a.lon ?? 0).toFixed(5)),
+        altM: Math.round(a.altAslM ?? a.ry),
+        altFt: Math.round((a.altAslM ?? a.ry) * 3.28084),
+        agl: Math.round(a.agl || 0),
+        gs: Number((a.gs || 0).toFixed(1)),
+        speedKmh: Math.round((a.gs || 0) * 3.6),
+        speedKts: Math.round((a.gs || 0) * 1.94384),
+        trackDeg: a.trackDeg ?? 0,
+        x: Math.round(a.rx),
+        y: Math.round(a.ry),
+        z: Math.round(a.rz),
+        dCam: Math.round(a.dCam || 0),
+      }));
   }
 }
 

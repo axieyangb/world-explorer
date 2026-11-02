@@ -426,7 +426,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r2" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;
@@ -1863,6 +1863,17 @@ class WorldExplorerApp {
         this._fallPeakY = this.pos.y;
       }
 
+      if (!this.isGrounded && (Math.abs(this._freefallVelX || 0) > 0.05 || Math.abs(this._freefallVelZ || 0) > 0.05)) {
+        const drag = Math.exp(-0.55 * dt);
+        this._freefallVelX *= drag;
+        this._freefallVelZ *= drag;
+        const fx = this.pos.x + this._freefallVelX * dt;
+        const fz = this.pos.z + this._freefallVelZ * dt;
+        const col = this.collision.resolve(fx, this.pos.y + 0.6, fz, this.yaw, 0.45, [0], null, this.pos.x, this.pos.z);
+        this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.x));
+        this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
+      }
+
       const prevPosY = this.pos.y;
       const prevWalkVelY = this.walkVelY || 0;
       this.walkVelY = Math.max(-62.0, prevWalkVelY - 25.0 * dt);
@@ -1935,40 +1946,104 @@ class WorldExplorerApp {
         }
       }
 
-      this.avatarMesh.position.copy(this.pos);
-      this.avatarMesh.rotation.y = this.yaw;
-      const mo = this.avatarMesh.userData.motion; // [human-motion] locomotion state for the avatar's procedural pose
-      if (mo) { mo.speed = this.speed; mo.grounded = this.isGrounded; mo.vy = this.walkVelY; mo.sprint = isNitro; mo.punch = this._punchTimer > 0 ? 1 - this._punchTimer / (this._punchDuration || 0.32) : -1; mo.punchHand = this._punchHand; mo.t = performance.now(); }
-
-      const { leftLeg, rightLeg, leftArm, rightArm } = this.avatarMesh.userData;
-      if (!this.isGrounded && this.walkVelY < -10.0) {
-        // High-velocity freefall flailing pose
-        this.walkAnimTime += dt * 28.0;
-        const flail = Math.sin(this.walkAnimTime) * 0.95;
-        if (leftLeg) leftLeg.rotation.x = flail * 0.8;
-        if (rightLeg) rightLeg.rotation.x = -flail * 0.8;
-        if (leftArm) { leftArm.rotation.x = -2.3 + flail * 0.55; leftArm.rotation.z = 0.55; }
-        if (rightArm) { rightArm.rotation.x = -2.3 - flail * 0.55; rightArm.rotation.z = -0.55; }
-      } else if (this.speed > 0.3) {
-        this.walkAnimTime += dt * (isNitro ? 16 : 9);
-        const swing = Math.sin(this.walkAnimTime) * 0.65;
-        if (leftLeg) leftLeg.rotation.x = swing;
-        if (rightLeg) rightLeg.rotation.x = -swing;
-        if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) { // [weapon-pickups] unarmed arms swing
-          if (leftArm) leftArm.rotation.x = -swing * 0.8;
-          if (rightArm) rightArm.rotation.x = swing * 0.8;
-        }
+      const inFreefall = Boolean(
+        !this.isGrounded &&
+        (this._bailingOutMidAir || this.walkVelY < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
+      );
+      if (inFreefall) {
+        this._freefallTime = (this._freefallTime || 0) + dt;
       } else {
-        if (leftLeg) leftLeg.rotation.x = 0;
-        if (rightLeg) rightLeg.rotation.x = 0;
-        if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
-          if (leftArm) leftArm.rotation.x = 0;
-          if (rightArm) rightArm.rotation.x = 0;
+        this._freefallTime = 0;
+        this._freefallVelX = 0;
+        this._freefallVelZ = 0;
+      }
+
+      this.avatarMesh.position.copy(this.pos);
+      const {
+        leftLeg, rightLeg, leftArm, rightArm,
+        leftForearm, rightForearm, leftCalf, rightCalf,
+        head, torso, hips
+      } = this.avatarMesh.userData;
+
+      if (inFreefall) {
+        const t = this._freefallTime;
+        // 3D whole-body somersaulting, barrel-rolling, and yaw spin during freefall
+        const tumblePitch = t * 3.8 + Math.sin(t * 2.3) * 0.65;
+        const tumbleYaw = this.yaw + t * 2.4 + Math.cos(t * 1.9) * 0.5;
+        const tumbleRoll = Math.sin(t * 3.1) * 0.95 + t * 1.7;
+        this.avatarMesh.rotation.set(tumblePitch, tumbleYaw, tumbleRoll);
+
+        // Multi-joint articulated limb flailing: windmilling arms, flexing elbows, pedaling/scissoring legs & knees
+        if (leftArm) {
+          leftArm.rotation.set(
+            -1.4 + Math.sin(t * 11.5) * 1.15,
+            Math.cos(t * 8.7) * 0.55,
+            -1.45 - Math.sin(t * 7.3) * 0.55
+          );
+        }
+        if (rightArm) {
+          rightArm.rotation.set(
+            -1.4 + Math.cos(t * 10.3 + 0.8) * 1.15,
+            -Math.sin(t * 9.1) * 0.55,
+            1.45 + Math.cos(t * 6.9 + 0.5) * 0.55
+          );
+        }
+        if (leftForearm) leftForearm.rotation.set(-0.65 - 0.55 * Math.sin(t * 13.7), 0, 0);
+        if (rightForearm) rightForearm.rotation.set(-0.65 - 0.55 * Math.cos(t * 12.9 + 0.6), 0, 0);
+        if (leftLeg) {
+          leftLeg.rotation.set(
+            Math.sin(t * 9.8) * 0.95,
+            Math.sin(t * 5.7) * 0.25,
+            -0.28 - Math.abs(Math.sin(t * 6.4)) * 0.35
+          );
+        }
+        if (rightLeg) {
+          rightLeg.rotation.set(
+            -Math.sin(t * 9.8 + 0.4) * 0.95,
+            -Math.cos(t * 5.3) * 0.25,
+            0.28 + Math.abs(Math.cos(t * 6.1)) * 0.35
+          );
+        }
+        if (leftCalf) leftCalf.rotation.set(0.55 + 0.50 * Math.sin(t * 11.2), 0, 0);
+        if (rightCalf) rightCalf.rotation.set(0.55 + 0.50 * Math.cos(t * 10.8 + 0.7), 0, 0);
+        if (head) head.rotation.set(-0.45 + Math.sin(t * 7.2) * 0.35, Math.sin(t * 5.4) * 0.55, Math.cos(t * 6.1) * 0.25, 'YXZ');
+        if (torso) torso.rotation.set(-0.22 + Math.sin(t * 6.5) * 0.28, Math.sin(t * 4.8) * 0.38, Math.cos(t * 5.2) * 0.22, 'YXZ');
+        if (hips) hips.rotation.set(Math.cos(t * 6.5) * 0.20, -Math.sin(t * 4.8) * 0.25, Math.sin(t * 5.2) * 0.20, 'YXZ');
+      } else {
+        this.avatarMesh.rotation.set(0, this.yaw, 0);
+        if (leftLeg) { leftLeg.rotation.y = 0; leftLeg.rotation.z = 0; }
+        if (rightLeg) { rightLeg.rotation.y = 0; rightLeg.rotation.z = 0; }
+        if (this.speed > 0.3) {
+          this.walkAnimTime += dt * (isNitro ? 16 : 9);
+          const swing = Math.sin(this.walkAnimTime) * 0.65;
+          if (leftLeg) leftLeg.rotation.x = swing;
+          if (rightLeg) rightLeg.rotation.x = -swing;
+          if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
+            if (leftArm) { leftArm.rotation.x = -swing * 0.8; leftArm.rotation.y = 0; leftArm.rotation.z = 0; }
+            if (rightArm) { rightArm.rotation.x = swing * 0.8; rightArm.rotation.y = 0; rightArm.rotation.z = 0; }
+          }
+        } else {
+          if (leftLeg) leftLeg.rotation.x = 0;
+          if (rightLeg) rightLeg.rotation.x = 0;
+          if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
+            if (leftArm) leftArm.rotation.set(0, 0, 0);
+            if (rightArm) rightArm.rotation.set(0, 0, 0);
+          }
         }
       }
-      if ((this.isGrounded || this.walkVelY >= -10.0) && (!this.walkerWeapons || !this.walkerWeapons.isArmed())) {
-        if (leftArm) leftArm.rotation.z = 0;
-        if (rightArm) rightArm.rotation.z = 0;
+
+      const mo = this.avatarMesh.userData.motion; // [human-motion] locomotion state for the avatar's procedural pose
+      if (mo) {
+        mo.speed = this.speed;
+        mo.grounded = this.isGrounded;
+        mo.vy = this.walkVelY;
+        mo.sprint = isNitro;
+        mo.freefall = inFreefall;
+        mo.freefallTime = this._freefallTime || 0;
+        mo.dead = Boolean(this.walkerWeapons && this.walkerWeapons.playerDead);
+        mo.punch = this._punchTimer > 0 ? 1 - this._punchTimer / (this._punchDuration || 0.32) : -1;
+        mo.punchHand = this._punchHand;
+        mo.t = performance.now();
       }
 
       if (this._punchTimer > 0) {
@@ -2245,6 +2320,11 @@ class WorldExplorerApp {
     } else {
       this.camPivot.copy(this.pos);
       const isWalk = this.mode === "walk";
+      const inFreefallCam = Boolean(
+        isWalk &&
+        !this.isGrounded &&
+        (this._bailingOutMidAir || (this.walkVelY || 0) < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
+      );
       const isHeli = this.mode === "helicopter";
       const isAirliner = this.mode === "airliner";
       const isBoat = this.mode === "boat";
@@ -2258,13 +2338,15 @@ class WorldExplorerApp {
           ? this.camMode === "street" ? 12.0 : 22.0
           : isHeli
             ? this.camMode === "street" ? 12.5 : 18.5
-            : isWalk
-              ? this.camMode === "street" ? 3.8 : 6.4
-              : isBus
-                ? this.camMode === "street" ? 13.5 : 19.5
-                : isUtility
-                  ? this.camMode === "street" ? 8.2 : 15.2
-                  : this.camMode === "street" ? 6.8 : 13.5;
+            : inFreefallCam
+              ? this.camMode === "street" ? 3.0 : 4.2
+              : isWalk
+                ? this.camMode === "street" ? 3.8 : 6.4
+                : isBus
+                  ? this.camMode === "street" ? 13.5 : 19.5
+                  : isUtility
+                    ? this.camMode === "street" ? 8.2 : 15.2
+                    : this.camMode === "street" ? 6.8 : 13.5;
       const baseDist = rawBaseDist * (this.camZoom || 1.0);
       const pivotH = isAirliner
         ? 6.8
@@ -2272,8 +2354,10 @@ class WorldExplorerApp {
           ? 2.8
           : isHeli
             ? 2.45
-            : isWalk
-              ? 1.55
+            : inFreefallCam
+              ? 0.95
+              : isWalk
+                ? 1.55
               : isBus
                 ? this.camMode === "street" ? 3.85 : 4.25
                 : isUtility
@@ -2306,7 +2390,7 @@ class WorldExplorerApp {
       const camY = Math.max(minCamY, rawCamY);
 
       this.camera.position.set(camX, camY, camZ);
-      const lookAhead = isAirliner ? 6.0 : isBoat ? 8.5 : isHeli ? 10.5 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
+      const lookAhead = isAirliner ? 6.0 : isBoat ? 8.5 : isHeli ? 10.5 : inFreefallCam ? 0.35 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
       const lookY = isAirliner ? (this.camPivot.y + 4.8) : (this.camPivot.y + pivotH);
       this.camera.lookAt(
         this.camPivot.x + Math.sin(viewYaw) * lookAhead,
@@ -2330,6 +2414,7 @@ class WorldExplorerApp {
         ? 42.0
         : Math.max(1.2, Math.min(4.0, activeOrbitDist * 0.22));
     let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
+    if (this.mode === "walk" && this.camMode !== "topdown") targetNear = Math.min(targetNear, 0.45);
     if (this.camMode !== "topdown" && activeOrbitDist < 5.0) targetNear = Math.max(0.25, Math.min(targetNear, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
     const targetFar = Math.max(36000, Math.min(138000, this.camera.position.y * 16.0 + 42000));
     if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15 || Math.abs(this.camera.far - targetFar) > 250) {
@@ -2369,9 +2454,22 @@ class WorldExplorerApp {
     const streetText = this._roadDisplayName(roadRaw);
     const cityText = this.currentCityName || "Beijing, CN";
 
+    const wo = this.worldOrigin;
+    const liveLat = (wo && wo.mPerDegLat) ? (wo.centerLat - this.pos.z / wo.mPerDegLat) : (this.currentLat || 0);
+    const liveLon = (wo && wo.mPerDegLon) ? (wo.centerLon + this.pos.x / wo.mPerDegLon) : (this.currentLon || 0);
+    const baseAsl = this.demState?.baseAslM || 0;
+    const altAslM = Math.round(Math.max(0, baseAsl + this.pos.y));
+    const altFt = Math.round(altAslM * 3.28084);
+
     const pillTextEl = document.getElementById("location-pill-text");
     if (pillTextEl) {
-      pillTextEl.textContent = `${streetText} · ${cityText}`;
+      if (this.mode === "airliner" && this.airliner) {
+        const latStr = `${Math.abs(liveLat).toFixed(4)}°${liveLat >= 0 ? "N" : "S"}`;
+        const lonStr = `${Math.abs(liveLon).toFixed(4)}°${liveLon >= 0 ? "E" : "W"}`;
+        pillTextEl.textContent = `${cityText} · ${latStr}, ${lonStr} · ALT ${altAslM}m (${altFt}ft)`;
+      } else {
+        pillTextEl.textContent = `${streetText} · ${cityText}`;
+      }
     }
 
     const streetEl = document.getElementById("radar-street");
@@ -2380,8 +2478,19 @@ class WorldExplorerApp {
     const cityEl = document.getElementById("radar-city");
     if (cityEl) cityEl.textContent = cityText;
 
-    const absSpd = Math.abs(this.speed);
+    const inFreefallHud = Boolean(
+      this.mode === "walk" &&
+      !this.isGrounded &&
+      (this._bailingOutMidAir || (this.walkVelY || 0) < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
+    );
+    const absSpd = inFreefallHud
+      ? Math.hypot(
+          Math.hypot(this.speed || 0, Math.hypot(this._freefallVelX || 0, this._freefallVelZ || 0)),
+          this.walkVelY || 0
+        )
+      : Math.abs(this.speed);
     const kmh = Math.round(absSpd * 3.6);
+    const kts = Math.round(absSpd * 1.94384);
     const speedValEl = document.getElementById("speed-value");
     if (speedValEl) speedValEl.textContent = String(kmh);
 
@@ -2395,16 +2504,16 @@ class WorldExplorerApp {
         gearBadgeEl.textContent = "BOOST";
       } else if (this.mode === "airliner" && this.airliner) {
         if (this.airliner.stalling) {
-          gearBadgeEl.textContent = "STALL WARN";
+          gearBadgeEl.textContent = `STALL · ${kts}KT · ${altAslM}m`;
         } else if (this.airliner.grounded) {
-          gearBadgeEl.textContent = this.airliner.speed < -0.5 ? "REV PUSH" : `TAXI · IAS ${Math.round(this.airliner.ias * 3.6)}`;
+          gearBadgeEl.textContent = this.airliner.speed < -0.5 ? "REV PUSH" : `TAXI · ${kts}KT · ${altAslM}m`;
         } else if (this.pos.y >= 3000) {
-          gearBadgeEl.textContent = `M${this.airliner.mach.toFixed(2)} · FL${Math.round(this.pos.y / 30.48)}`;
+          gearBadgeEl.textContent = `M${this.airliner.mach.toFixed(2)} · FL${Math.round(altAslM / 30.48)} (${altAslM}m)`;
         } else {
-          gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m · ${this.airliner.gearDown ? "GEAR DN" : "CLIMB"}`;
+          gearBadgeEl.textContent = `ALT ${altAslM}m (${altFt}ft) · ${kts}KT`;
         }
       } else if (this.mode === "boat") {
-        gearBadgeEl.textContent = `KTS ${Math.round(absSpd * 1.944)}`;
+        gearBadgeEl.textContent = `KTS ${kts}`;
       } else if (this.mode === "helicopter") {
         if (this.heliLanded) {
           gearBadgeEl.textContent = getLang() === "zh" ? "已降落" : "LANDED";
@@ -2414,7 +2523,11 @@ class WorldExplorerApp {
           gearBadgeEl.textContent = `ALT ${Math.round(this.pos.y)}m`;
         }
       } else if (this.mode === "walk") {
-        gearBadgeEl.textContent = getLang() === "zh" ? "步行" : "WALK";
+        if (inFreefallHud) {
+          gearBadgeEl.textContent = `FREEFALL · ${Math.round(Math.max(0, this.pos.y))}m`;
+        } else {
+          gearBadgeEl.textContent = getLang() === "zh" ? "步行" : "WALK";
+        }
       } else {
         const gear = kmh < 2 ? "N" : `D${Math.min(7, Math.max(1, Math.ceil(kmh / 42)))}`;
         gearBadgeEl.textContent = gear;
@@ -2423,7 +2536,7 @@ class WorldExplorerApp {
 
     const barFillEl = document.getElementById("speed-bar-fill");
     if (barFillEl) {
-      const maxRefKmh = this.nitroActive ? 1225 : this.mode === "helicopter" ? 330 : 320;
+      const maxRefKmh = this.nitroActive ? 1225 : this.mode === "airliner" ? 950 : this.mode === "helicopter" ? 330 : 320;
       const pct = Math.min(100, Math.round((kmh / maxRefKmh) * 100));
       barFillEl.style.width = `${pct}%`;
       barFillEl.classList.toggle("boost", Boolean(this.nitroActive));
@@ -2862,14 +2975,23 @@ class WorldExplorerApp {
         this._fallPeakY = this.pos.y;
         this.walkVelY = Math.min(-2.5, this.walkVelY || -2.5);
         this.isGrounded = false;
+        this._freefallTime = 0;
+        if (Math.hypot(this._freefallVelX || 0, this._freefallVelZ || 0) < 1.0) {
+          const carrySpd = Math.max(14.0, Math.min(26.0, Math.abs(this.speed || 18.0) * 0.65));
+          this._freefallVelX = Math.sin(this.yaw) * carrySpd;
+          this._freefallVelZ = Math.cos(this.yaw) * carrySpd;
+        }
       } else {
         this.pos.y = groundSupportY;
         this._fallPeakY = this.pos.y;
         this.walkVelY = 0;
         this.isGrounded = true;
+        this._freefallTime = 0;
+        this._freefallVelX = 0;
+        this._freefallVelZ = 0;
       }
       this.avatarMesh.position.copy(this.pos);
-      this.avatarMesh.rotation.y = this.yaw;
+      this.avatarMesh.rotation.set(0, this.yaw, 0);
       this.camPivot.copy(this.pos);
     } else if (newMode === "airliner") {
       this.avatarMesh.visible = false;

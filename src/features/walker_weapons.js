@@ -2570,18 +2570,32 @@ export class WalkerWeaponsSystem {
       if (this.deathInWater && this.app.water && typeof this.app.water.splashAt === 'function') {
         this.app.water.splashAt(this.app.pos.x, this.app.pos.z, 2.5, 8.0);
       }
+      this.app._freefallTime = 0;
+      this.app._freefallVelX = 0;
+      this.app._freefallVelZ = 0;
       const avatar = this.app.avatarMesh || this.app.walker;
+      if (avatar) {
+        avatar.rotation.set(
+          this.deathInWater ? 0.45 : -Math.PI / 2,
+          this.app.yaw || 0,
+          this.deathInWater ? 0.22 : 0.14
+        );
+      }
       if (avatar && avatar.userData) {
-        const { hips, leftArm, rightArm, leftLeg, rightLeg } = avatar.userData;
-        if (hips) {
-          hips.rotation.x = this.deathInWater ? 0.55 : -1.48;
-          hips.rotation.z = this.deathInWater ? 0.25 : 0.18;
-          hips.position.y = this.deathInWater ? 0.35 : 0.18;
+        const { hips, leftArm, rightArm, leftLeg, rightLeg, motion } = avatar.userData;
+        if (motion) {
+          motion.dead = true;
+          motion.freefall = false;
+          motion.t = performance.now();
         }
-        if (leftArm) { leftArm.rotation.x = -1.2; leftArm.rotation.z = 0.65; }
-        if (rightArm) { rightArm.rotation.x = -1.2; rightArm.rotation.z = -0.65; }
-        if (leftLeg) { leftLeg.rotation.x = 0.25; leftLeg.rotation.z = 0.22; }
-        if (rightLeg) { rightLeg.rotation.x = -0.20; rightLeg.rotation.z = -0.22; }
+        if (hips) {
+          hips.rotation.set(0, 0, 0);
+          hips.position.y = 0.95;
+        }
+        if (leftArm) { leftArm.rotation.set(-0.35, 0.15, -1.05); }
+        if (rightArm) { rightArm.rotation.set(-0.25, -0.15, 0.95); }
+        if (leftLeg) { leftLeg.rotation.set(0.18, 0, -0.28); }
+        if (rightLeg) { rightLeg.rotation.set(-0.14, 0, 0.26); }
       }
     }
 
@@ -2624,16 +2638,30 @@ export class WalkerWeaponsSystem {
     const app = this.app;
     if (!app) return;
     const avatar = app.avatarMesh || app.walker;
+    if (avatar) {
+      avatar.rotation.set(0, app.yaw || 0, 0);
+    }
     if (avatar && avatar.userData) {
-      const { hips, leftArm, rightArm, leftLeg, rightLeg } = avatar.userData;
+      const { hips, leftArm, rightArm, leftLeg, rightLeg, leftForearm, rightForearm, leftCalf, rightCalf, head, torso, motion } = avatar.userData;
+      if (motion) {
+        motion.dead = false;
+        motion.freefall = false;
+        motion.t = performance.now();
+      }
       if (hips) {
         hips.rotation.set(0, 0, 0);
-        hips.position.y = 0.90;
+        hips.position.y = 0.95;
       }
       if (leftArm) leftArm.rotation.set(0, 0, 0);
       if (rightArm) rightArm.rotation.set(0, 0, 0);
+      if (leftForearm) leftForearm.rotation.set(0, 0, 0);
+      if (rightForearm) rightForearm.rotation.set(0, 0, 0);
       if (leftLeg) leftLeg.rotation.set(0, 0, 0);
       if (rightLeg) rightLeg.rotation.set(0, 0, 0);
+      if (leftCalf) leftCalf.rotation.set(0, 0, 0);
+      if (rightCalf) rightCalf.rotation.set(0, 0, 0);
+      if (head) head.rotation.set(0, 0, 0);
+      if (torso) torso.rotation.set(0, 0, 0);
     }
     if (app.water && typeof app.water._respawn === 'function') {
       app.water._respawn();
@@ -2646,6 +2674,9 @@ export class WalkerWeaponsSystem {
     app.isGrounded = true;
     app._fallPeakY = app.pos.y;
     app._bailingOutMidAir = false;
+    app._freefallTime = 0;
+    app._freefallVelX = 0;
+    app._freefallVelZ = 0;
   }
 
   update(dt) {
@@ -2693,7 +2724,11 @@ export class WalkerWeaponsSystem {
       this.fireCurrentWeapon();
     }
 
-    if (isWalk && this.isArmed()) {
+    const inFreefall = this._isInFreefall();
+    if (this.weaponRig) {
+      this.weaponRig.visible = Boolean(this.isArmed() && !inFreefall && !this.playerDead);
+    }
+    if (isWalk && this.isArmed() && !inFreefall && !this.playerDead) {
       this._updateWalkerAimPose();
     }
 
@@ -2712,7 +2747,18 @@ export class WalkerWeaponsSystem {
     this._updateWalkerAimPose();
   }
 
+  _isInFreefall() {
+    const app = this.app;
+    if (!app || app.mode !== 'walk' || app.isGrounded) return false;
+    return Boolean(
+      app._bailingOutMidAir ||
+      (app.walkVelY || 0) < -6.5 ||
+      ((app._fallPeakY ?? app.pos.y) - app.pos.y) > 4.0
+    );
+  }
+
   _updateWalkerAimPose() {
+    if (this.playerDead || this._isInFreefall()) return;
     const avatar = this.app.avatarMesh || this.app.walker;
     if (!avatar || !avatar.userData) return;
     const { rightArm, leftArm } = avatar.userData;
