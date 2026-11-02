@@ -2750,10 +2750,11 @@ export class WalkerWeaponsSystem {
   _isInFreefall() {
     const app = this.app;
     if (!app || app.mode !== 'walk' || app.isGrounded) return false;
+    if (typeof app.isInFreefall === 'function') return app.isInFreefall();
+    const fallDrop = (app._fallPeakY ?? app.pos.y) - app.pos.y;
     return Boolean(
       app._bailingOutMidAir ||
-      (app.walkVelY || 0) < -6.5 ||
-      ((app._fallPeakY ?? app.pos.y) - app.pos.y) > 4.0
+      (fallDrop > 12.0 && (app.walkVelY || 0) < -15.5)
     );
   }
 

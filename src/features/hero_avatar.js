@@ -1320,7 +1320,7 @@ function setArmBody(arm, qBody, shoulder, bend) {
 }
 
 function makePoser(R) {
-  const { root, body, pelvis, chest, neck, legs, armL, armR, rightArm, leftArm, own } = R;
+  const { root, body, pelvis, chest, neck, legs, armL, armR, rightArm, leftArm, leftLeg, rightLeg, own } = R;
   const st = {
     t: 0, px: 0, pz: 0, yaw: 0, ph: 0, spd: 0, spdPrev: 0, acc: 0, turn: 0, armedW: 0, air: 0, land: 0,
     wasGrounded: true, clock: Math.random() * 100, init: false, punchW: 0,
@@ -1336,9 +1336,13 @@ function makePoser(R) {
 
   return function pose() {
     const now = performance.now();
+    const moIn = root.userData.motion;
+    const moUpdated = Boolean(moIn && moIn.t !== st.lastMoT);
     let dt = (now - st.t) / 1000;
-    if (st.init && dt < 0.002) return; // second render in the same frame: pose unchanged
+    if (st.init && dt < 0.002 && !moUpdated) return; // second render in the same frame: pose unchanged
+    if (moUpdated && dt < 0.002) dt = 0.016;
     st.t = now;
+    if (moIn) st.lastMoT = moIn.t;
     const p = root.position;
     if (!st.init) { st.init = true; st.px = p.x; st.pz = p.z; st.yaw = root.rotation.y; dt = 0.016; }
     dt = Math.min(dt, 0.1);
@@ -1385,7 +1389,7 @@ function makePoser(R) {
         leg.thigh.rotation.set(0, 0, 0);
         leg.foot.rotation.set(0.25 * Math.sin(tm * 12.0 + i * 1.4), 0, 0);
       }
-      if (R.skirt) R.skirt(-leftLeg.rotation.x, -rightLeg.rotation.x);
+      if (R.skirt && leftLeg && rightLeg) R.skirt(-leftLeg.rotation.x, -rightLeg.rotation.x);
       chest.updateMatrix();
       for (let i = 0; i < 2; i++) {
         const s = i === 0 ? -1 : 1, arm = i === 0 ? armL : armR;
@@ -1408,11 +1412,14 @@ function makePoser(R) {
     st.yaw = root.rotation.y;
     st.turn += (clamp(dyaw / dt, -6, 6) - st.turn) * Math.min(1, dt * 6);
     const grounded = fresh ? mo.grounded !== false : true;
-    const vy = fresh ? mo.vy || 0 : 0;
+    const rawVy = fresh ? mo.vy || 0 : 0;
+    if (!grounded) st.airVy = rawVy;
+    else if (st.air < 0.02) st.airVy = 0;
+    const vy = grounded ? (st.airVy || 0) : rawVy;
     if (grounded && !st.wasGrounded) st.land = 1;
     st.wasGrounded = grounded;
-    st.land = Math.max(0, st.land - dt * 5);
-    st.air += ((grounded ? 0 : 1) - st.air) * Math.min(1, dt * 14);
+    st.land = Math.max(0, st.land - dt * 4.5);
+    st.air += ((grounded ? 0 : 1) - st.air) * Math.min(1, dt * (grounded ? 10 : 7.5));
     const punch = fresh && mo.punch >= 0 ? mo.punch : -1;
     const punchSide = fresh && mo.punchHand === 'L' ? 0 : 1; // arms[] index: 0 = leftArm (x < 0), 1 = rightArm
     st.punchW += ((punch >= 0 ? 1 : 0) - st.punchW) * Math.min(1, dt * 18);
@@ -1438,7 +1445,8 @@ function makePoser(R) {
 
     // ---- pelvis / body ----
     const bobW = -0.02 * Math.cos(2 * TAU * uL) - 0.024, bobR = -0.035 * Math.cos(2 * TAU * (uL - 0.18)) - 0.045;
-    const bob = mov * (bobW + (bobR - bobW) * run) - 0.13 * smooth(0, 1, st.land) - st.air * (vy > 0 ? 0.0 : 0.02);
+    const landCushion = Math.sin(Math.PI * st.land);
+    const bob = mov * (bobW + (bobR - bobW) * run) - 0.035 * landCushion - st.air * (vy > 0 ? 0.0 : 0.015);
     const sway = mov * -0.024 * s1 * (1 - 0.6 * run) + idle * 0.024 * ws;
     const yawP = mov * (0.11 - 0.04 * run) * c1;
     const rollP = mov * -0.05 * s1 * (1 - 0.5 * run) + idle * 0.04 * ws;
@@ -1450,7 +1458,7 @@ function makePoser(R) {
     // ---- chest: lean, counter-rotation, punch twist, breathing ----
     const ext = punch >= 0 ? Math.sin(Math.PI * clamp((punch - 0.06) / 0.62, 0, 1)) ** 0.7 : 0;
     const pSign = punchSide === 1 ? 1 : -1;
-    const lean = (0.04 + run * (0.16 - 0.08 * aw) + clamp(st.acc * 0.025, -0.08, 0.16)) * (1 - st.air * 0.5) + 0.06 * st.punchW - 0.012 * breath * idle + 0.12 * smooth(0, 1, st.land);
+    const lean = (0.04 + run * (0.16 - 0.08 * aw) + clamp(st.acc * 0.025, -0.08, 0.16)) * (1 - st.air * 0.5) + 0.06 * st.punchW - 0.012 * breath * idle + 0.08 * landCushion;
     const yawC = -mov * (0.1 + 0.06 * run) * c1 * (1 - 0.75 * aw) + idle * 0.04 * Math.sin(tm * 0.3) - pSign * 0.42 * ext * (1 - aw);
     chest.rotation.set(lean, yawC, -rollP * 0.6, 'YXZ');
     // ---- head: stabilised, looks around when idle, follows the aim when armed ----
@@ -1467,10 +1475,12 @@ function makePoser(R) {
       legIK(hz, HIP_H, _ft.z, _ft.y - bob, _ik);
       let a1 = _ik.a1, a2 = _ik.a2, fp = _ft.p;
       if (st.air > 0.01) {
-        // Airborne: tuck while rising (lead knee up, trail leg back), reach down to land while falling.
-        const lead = u < 0.5 ? 1 : 0, fall = smooth(-1, -6, vy);
-        const t1 = lead ? 0.95 - 0.55 * fall : -0.25 + 0.2 * fall, k = lead ? 1.5 - 1.0 * fall : 1.1 - 0.75 * fall;
-        a1 += (t1 - a1) * st.air; a2 += (t1 - k - a2) * st.air; fp += (-0.35 * (1 - fall) - fp) * st.air;
+        // Airborne: smooth athletic jump tuck while rising, landing-ready slight knee bend while descending.
+        const lead = u < 0.5 ? 1 : 0, rise = smooth(-3.0, 6.0, vy);
+        const strideSep = mov * (lead ? 0.16 : -0.14);
+        const t1 = 0.22 + 0.18 * rise + strideSep;
+        const k = 0.42 + 0.32 * rise + mov * (lead ? 0.15 : 0.05);
+        a1 += (t1 - a1) * st.air; a2 += (t1 - k - a2) * st.air; fp += (-0.14 * rise - fp) * st.air;
       }
       thighA[i] = a1;
       const gx = leg.pivot.rotation.x;
@@ -1492,7 +1502,12 @@ function makePoser(R) {
       let elbow = (0.14 + (0.26 + 0.35 * smooth(-0.4, 1, swN) - 0.14) * mov) * (1 - run) + (1.45 + 0.3 * swN) * run;
       let abd = 0.1 + run * 0.06 + idle * 0.03 + 0.03 * Math.sin(tm * 0.5 + i) * idle;
       let inY = -s * 0.25 * run * mov;
-      if (st.air > 0.01) { swing += (0.55 - swing) * st.air; abd += (0.55 - abd) * st.air; elbow += (0.8 - elbow) * st.air; }
+      if (st.air > 0.01) {
+        const rise = smooth(-2.5, 5.5, vy);
+        swing += ((0.20 + 0.16 * rise) - swing) * st.air;
+        abd += ((0.18 + 0.08 * rise) - abd) * st.air;
+        elbow += ((0.45 + 0.20 * rise) - elbow) * st.air;
+      }
       _qa.setFromEuler(_e2.set(-swing, inY, s * abd, 'YXZ'));
       // body frame = chest rotation * local arm rotation
       _qb.setFromEuler(chest.rotation).multiply(_qa);
@@ -1680,7 +1695,7 @@ export function buildHeroAvatar({ seed, seated = false } = {}) {
   const leftLeg = mkLimbPivot(HIP_H), rightLeg = mkLimbPivot(HIP_H);
   const leftArm = mkLimbPivot(SHOULDER_H), rightArm = mkLimbPivot(SHOULDER_H);
 
-  const R = { root, body, pelvis, chest, neck, rightArm, leftArm, own: new Set(), legs: null, armL: null, armR: null, skirt: null };
+  const R = { root, body, pelvis, chest, neck, rightArm, leftArm, leftLeg, rightLeg, own: new Set(), legs: null, armL: null, armR: null, skirt: null };
   let built = { meshes: [], groups: [], mats: null };
 
   const build = (look0) => {

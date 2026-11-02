@@ -426,7 +426,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r2" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r3" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;
@@ -1738,6 +1738,13 @@ class WorldExplorerApp {
     return Math.atan2(Math.sin(to - from), Math.cos(to - from));
   }
 
+  isInFreefall() {
+    if (this.mode !== "walk" || this.isGrounded) return false;
+    if (this._bailingOutMidAir) return true;
+    const fallDrop = (this._fallPeakY ?? this.pos.y) - this.pos.y;
+    return fallDrop > 12.0 && (this.walkVelY || 0) < -15.5;
+  }
+
   _ensureHeli() {
     if (!this.heli) this.heli = new HeliFlight(this, { halfWorld: HALF_WORLD });
     return this.heli;
@@ -1946,10 +1953,7 @@ class WorldExplorerApp {
         }
       }
 
-      const inFreefall = Boolean(
-        !this.isGrounded &&
-        (this._bailingOutMidAir || this.walkVelY < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
-      );
+      const inFreefall = this.isInFreefall();
       if (inFreefall) {
         this._freefallTime = (this._freefallTime || 0) + dt;
       } else {
@@ -2013,7 +2017,14 @@ class WorldExplorerApp {
         this.avatarMesh.rotation.set(0, this.yaw, 0);
         if (leftLeg) { leftLeg.rotation.y = 0; leftLeg.rotation.z = 0; }
         if (rightLeg) { rightLeg.rotation.y = 0; rightLeg.rotation.z = 0; }
-        if (this.speed > 0.3) {
+        if (!this.isGrounded) {
+          if (leftLeg) leftLeg.rotation.x = 0;
+          if (rightLeg) rightLeg.rotation.x = 0;
+          if (!this.walkerWeapons || !this.walkerWeapons.isArmed()) {
+            if (leftArm) leftArm.rotation.set(0, 0, 0);
+            if (rightArm) rightArm.rotation.set(0, 0, 0);
+          }
+        } else if (this.speed > 0.3) {
           this.walkAnimTime += dt * (isNitro ? 16 : 9);
           const swing = Math.sin(this.walkAnimTime) * 0.65;
           if (leftLeg) leftLeg.rotation.x = swing;
@@ -2139,12 +2150,50 @@ class WorldExplorerApp {
       else this.speed -= Math.sign(this.speed) * drag;
     }
 
-    const maxSteer = THREE.MathUtils.lerp(spec.steerLow, spec.steerHigh, speedRatio);
-    const targetSteer = steerInput * maxSteer * (handbrake ? 1.35 : 1.0);
-    this.steerAngle = THREE.MathUtils.lerp(this.steerAngle, targetSteer, Math.min(1, 10.0 * dt));
+    const isFsdDriving = Boolean(this.fsd && this.fsd.active);
+    const absDriveSpd = Math.abs(this.speed);
+    if (isFsdDriving) {
+      this._steerHoldTime = 0;
+      const maxSteer = THREE.MathUtils.lerp(spec.steerLow, spec.steerHigh, speedRatio);
+      const targetSteer = steerInput * maxSteer * (handbrake ? 1.35 : 1.0);
+      this.steerAngle = THREE.MathUtils.lerp(this.steerAngle, targetSteer, Math.min(1, 10.0 * dt));
+    } else {
+      // Progressive keyboard steering filter + real road-speed power steering attenuation
+      if (steerInput !== 0 && Math.sign(steerInput) === Math.sign(this._lastSteerSign || steerInput)) {
+        this._steerHoldTime = Math.min(1.0, (this._steerHoldTime || 0) + dt);
+      } else {
+        this._steerHoldTime = 0;
+      }
+      this._lastSteerSign = Math.sign(steerInput);
 
-    if (Math.abs(this.speed) > 0.15) {
-      const turnRate = (this.speed / spec.length) * Math.tan(this.steerAngle);
+      const holdT = Math.min(1, (this._steerHoldTime || 0) / 0.42);
+      const holdCurve = 0.34 + 0.66 * (holdT * holdT * (3 - 2 * holdT));
+
+      // Attenuate steering lock by actual ground speed (0..45 m/s = 0..162 km/h)
+      const roadSpeedT = Math.min(1, absDriveSpd / 45.0);
+      const manualLowLock = Math.min(spec.steerLow || 0.42, 0.36);
+      const manualHighLock = Math.min(spec.steerHigh || 0.10, 0.075);
+      const maxSteer = THREE.MathUtils.lerp(manualLowLock, manualHighLock, Math.pow(roadSpeedT, 0.72));
+      const targetSteer = steerInput * maxSteer * holdCurve * (handbrake ? 1.25 : 1.0);
+
+      const isCenteringOrCounter =
+        steerInput === 0 || (this.steerAngle !== 0 && Math.sign(steerInput) !== Math.sign(this.steerAngle));
+      const steerLerpRate = isCenteringOrCounter ? 12.0 : 5.2;
+      this.steerAngle = THREE.MathUtils.lerp(this.steerAngle, targetSteer, Math.min(1, steerLerpRate * dt));
+      if (steerInput === 0 && Math.abs(this.steerAngle) < 0.002) this.steerAngle = 0;
+    }
+
+    if (absDriveSpd > 0.15) {
+      let turnRate = (this.speed / spec.length) * Math.tan(this.steerAngle);
+      if (!isFsdDriving) {
+        const maxYawRate =
+          THREE.MathUtils.lerp(
+            1.08,
+            0.38,
+            Math.min(1, Math.max(0, (absDriveSpd - 8.0) / 52.0))
+          ) * (handbrake ? 1.25 : 1.0);
+        turnRate = THREE.MathUtils.clamp(turnRate, -maxYawRate, maxYawRate);
+      }
       this.yaw += turnRate * dt;
       if (mouseIdleSec > 0.9) {
         if (
@@ -2153,10 +2202,10 @@ class WorldExplorerApp {
           this.keys.has("KeyD") ||
           this.keys.has("ArrowRight")
         ) {
-          this.camYaw += turnRate * dt * 0.85;
+          this.camYaw += turnRate * dt * 0.35;
         }
         // Stay behind the car even when reversing (GTA): a reverse-facing camera mirrors A/D on screen.
-        this.camYaw += this._angleDiff(this.camYaw, this.yaw) * Math.min(1, 2.6 * dt);
+        this.camYaw += this._angleDiff(this.camYaw, this.yaw) * Math.min(1, 2.8 * dt);
       }
     }
 
@@ -2320,11 +2369,7 @@ class WorldExplorerApp {
     } else {
       this.camPivot.copy(this.pos);
       const isWalk = this.mode === "walk";
-      const inFreefallCam = Boolean(
-        isWalk &&
-        !this.isGrounded &&
-        (this._bailingOutMidAir || (this.walkVelY || 0) < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
-      );
+      const inFreefallCam = isWalk && this.isInFreefall();
       const isHeli = this.mode === "helicopter";
       const isAirliner = this.mode === "airliner";
       const isBoat = this.mode === "boat";
@@ -2478,11 +2523,7 @@ class WorldExplorerApp {
     const cityEl = document.getElementById("radar-city");
     if (cityEl) cityEl.textContent = cityText;
 
-    const inFreefallHud = Boolean(
-      this.mode === "walk" &&
-      !this.isGrounded &&
-      (this._bailingOutMidAir || (this.walkVelY || 0) < -6.5 || ((this._fallPeakY ?? this.pos.y) - this.pos.y) > 4.0)
-    );
+    const inFreefallHud = this.isInFreefall();
     const absSpd = inFreefallHud
       ? Math.hypot(
           Math.hypot(this.speed || 0, Math.hypot(this._freefallVelX || 0, this._freefallVelZ || 0)),
