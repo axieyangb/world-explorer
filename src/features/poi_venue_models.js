@@ -525,14 +525,15 @@ function menuBoard() {
 }
 function greenCross() {
   const P = [];
-  // Wall mounting cleat with 4 anchor bolts + twin cantilevered box arms + diagonal tie rod
-  P.push(box(0.20, 0.76, 0.05, S.steelDk, { y: -0.15, z: -0.58 }));
+  // Wall mounting cleat with 4 anchor bolts + twin cantilevered box arms + wrought-iron S-scroll & diagonal tie rod
+  P.push(box(0.22, 0.82, 0.05, S.steelDk, { y: -0.15, z: -0.58 }));
   for (const [bx, by] of [[-0.06, 0.15], [0.06, 0.15], [-0.06, -0.45], [0.06, -0.45]]) {
     P.push(cyl(0.016, 0.016, 0.04, 8, S.chrome, { x: bx, y: by, z: -0.55, rx: Math.PI / 2 }));
   }
-  P.push(box(0.08, 0.08, 1.1, S.steelDk, { z: -0.05 }));
-  P.push(box(0.06, 0.06, 0.75, S.steelDk, { y: -0.28, z: -0.22 }));
+  P.push(box(0.08, 0.08, 1.12, S.steelDk, { z: -0.04 }));
+  P.push(box(0.06, 0.06, 0.76, S.steelDk, { y: -0.28, z: -0.22 }));
   P.push(rod([0, -0.45, -0.55], [0, -0.02, 0.05], 0.025, 10, S.steelDk));
+  P.push(torus(0.11, 0.016, 8, 16, S.brass, { y: -0.14, z: -0.32, ry: Math.PI / 2 }));
   // Stepped neon/LED pharmacy cross casing with outer green ring, stepped cross bevels & bright white core
   const c0 = 0.94, t = 0.32;
   P.push(cyl(0.28, 0.28, 0.15, 20, S.steelDk, { z: 0.55, rz: Math.PI / 2 }));
@@ -609,15 +610,18 @@ function carFar() {
 
 function patioTable() {
   const P = [];
-  // Weighted round umbrella base + central pole + round bistro tabletop
-  P.push(cyl(0.28, 0.32, 0.05, 14, S.steelDk, { y: 0.025 }));
+  // Weighted cast-iron umbrella base + central pole + brass collar + round bistro tabletop with brass rim
+  P.push(cyl(0.28, 0.34, 0.06, 16, S.steelDk, { y: 0.03 }));
+  P.push(cyl(0.09, 0.12, 0.12, 12, S.brass, { y: 0.09 }));
   P.push(cyl(0.032, 0.035, 2.38, 10, S.wood, { y: 1.19 }));
   P.push(cyl(0.56, 0.56, 0.04, 18, S.woodLt, { y: 0.74 }));
-  P.push(cyl(0.57, 0.57, 0.032, 18, S.brass, { y: 0.74 }, true));
-  // Coffee cups + espresso saucer on tabletop
+  P.push(cyl(0.575, 0.575, 0.036, 18, S.brass, { y: 0.74 }, true));
+  // Coffee cups, porcelain pastry plate & warm table candle lantern on tabletop
   P.push(cyl(0.045, 0.038, 0.065, 10, S.white, { x: -0.18, y: 0.79, z: 0.12 }));
   P.push(cyl(0.045, 0.038, 0.065, 10, S.white, { x: 0.2, y: 0.79, z: -0.1 }));
-  P.push(cyl(0.06, 0.06, 0.015, 10, S.brass, { x: 0.02, y: 0.768, z: -0.02 }));
+  P.push(cyl(0.09, 0.07, 0.016, 12, S.white, { x: -0.04, y: 0.768, z: -0.16 }));
+  P.push(cyl(0.042, 0.048, 0.11, 10, S.lampWarm, { x: 0.03, y: 0.815, z: 0.04 }));
+  P.push(cyl(0.052, 0.052, 0.02, 10, S.brass, { x: 0.03, y: 0.875, z: 0.04 }));
   // Market umbrella canopy (tinted fabric cone + scalloped valance + finial + ribs)
   P.push(cyl(0.05, 1.38, 0.42, 16, S.tint, { y: 2.24 }));
   P.push(cyl(1.38, 1.38, 0.09, 16, S.white, { y: 2.0 }, true));
@@ -728,12 +732,14 @@ function bellhopCart() {
 function stanchion() {
   const P = [];
   for (const sz of [-0.85, 0.85]) {
-    P.push(cyl(0.16, 0.18, 0.035, 14, S.brass, { y: 0.018, z: sz }));
-    P.push(cyl(0.024, 0.024, 0.92, 10, S.brass, { y: 0.48, z: sz }));
-    P.push(sphere(0.048, 10, 8, S.brass, { y: 0.96, z: sz }));
-    P.push(cyl(0.034, 0.034, 0.04, 10, S.brass, { y: 0.86, z: sz }));
+    P.push(cyl(0.17, 0.19, 0.04, 16, S.brass, { y: 0.02, z: sz }));
+    P.push(cyl(0.055, 0.085, 0.06, 12, S.brass, { y: 0.06, z: sz }));
+    P.push(cyl(0.025, 0.025, 0.92, 12, S.brass, { y: 0.48, z: sz }));
+    P.push(sphere(0.052, 12, 8, S.brass, { y: 0.97, z: sz }));
+    P.push(cyl(0.038, 0.038, 0.045, 12, S.brass, { y: 0.86, z: sz }));
+    P.push(cyl(0.028, 0.028, 0.05, 10, S.chrome, { y: 0.84, z: sz * 0.94, rx: Math.PI / 2 }));
   }
-  P.push(tube([[0, 0.86, -0.82], [0, 0.68, -0.4], [0, 0.62, 0], [0, 0.68, 0.4], [0, 0.86, 0.82]], 0.024, 14, 8, S.velvet));
+  P.push(tube([[0, 0.86, -0.82], [0, 0.68, -0.4], [0, 0.62, 0], [0, 0.68, 0.4], [0, 0.86, 0.82]], 0.026, 16, 8, S.velvet));
   return merge(P);
 }
 function tireRack() {

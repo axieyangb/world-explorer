@@ -470,7 +470,7 @@ export const BEIJING_STYLES_24 = {
     groundFloorHeight: 4.6,
     symmetry: 'strict',
     roofStyle: 'xieshan_big_roof',
-    massingRules: { allowPodium: false, podiumFloors: [0], towerSetback: [0], upperSetbackRatio: 1.0, upperSetbackInset: 0 },
+    massingRules: { allowPodium: true, podiumFloors: [1, 2], towerSetback: [1.8, 2.6], upperSetbackRatio: 0.84, upperSetbackInset: 1.6 },
     palette: {
       wallPrimary: [0.68, 0.34, 0.27],
       wallSecondary: [0.77, 0.78, 0.76],
@@ -526,7 +526,7 @@ export const BEIJING_STYLES_24 = {
     groundFloorHeight: 4.4,
     symmetry: 'strict',
     roofStyle: 'yingshan_grey_tile',
-    massingRules: { allowPodium: false, podiumFloors: [0], towerSetback: [0], upperSetbackRatio: 1.0, upperSetbackInset: 0 },
+    massingRules: { allowPodium: true, podiumFloors: [1, 2], towerSetback: [1.6, 2.4], upperSetbackRatio: 0.85, upperSetbackInset: 1.5 },
     palette: {
       wallPrimary: [0.66, 0.26, 0.22],
       wallSecondary: [0.88, 0.86, 0.83],
@@ -1307,5 +1307,33 @@ export const ROOF_WFC_TILES = {
     sockets: { n: 'R_DECK', e: 'R_DECK', s: 'R_DECK', w: 'R_DECK' },
     interiorOnly: true,
     vizColor: '#29b6f6',
+  },
+  R_HELIPAD_DECK: {
+    id: 'R_HELIPAD_DECK',
+    label: '高空直升机停机坪 + 防护网 (Helipad Deck)',
+    sockets: { n: 'R_DECK', e: 'R_DECK', s: 'R_DECK', w: 'R_DECK' },
+    interiorOnly: true,
+    vizColor: '#ec407a',
+  },
+  R_ARTDECO_SPIRE: {
+    id: 'R_ARTDECO_SPIRE',
+    label: '装饰艺术阶梯塔冠与发光尖塔 (Art Deco Stepped Spire)',
+    sockets: { n: 'R_DECK', e: 'R_DECK', s: 'R_DECK', w: 'R_DECK' },
+    interiorOnly: true,
+    vizColor: '#ffca28',
+  },
+  R_SKYGARDEN_PERGOLA: {
+    id: 'R_SKYGARDEN_PERGOLA',
+    label: '屋顶空中花园廊架与阳光房 (Sky-Garden Pergola & Conservatory)',
+    sockets: { n: 'R_DECK', e: 'R_DECK', s: 'R_DECK', w: 'R_DECK' },
+    interiorOnly: true,
+    vizColor: '#66bb6a',
+  },
+  R_BROADCAST_TOWER: {
+    id: 'R_BROADCAST_TOWER',
+    label: '桁架广播通信铁塔与微波天线鼓 (Broadcast Lattice Tower)',
+    sockets: { n: 'R_DECK', e: 'R_DECK', s: 'R_DECK', w: 'R_DECK' },
+    interiorOnly: true,
+    vizColor: '#ab47bc',
   },
 };

@@ -22,6 +22,14 @@ export const EXTRA_FACADES = [
   { id: 'dubai_tower', index: 31, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.4, isCurtainWall: true, avgColor: [0.56, 0.58, 0.58] },
   { id: 'jp_house', index: 32, floors: 4, bays: 4, metersPerFloor: 2.9, metersPerBay: 2.9, isCurtainWall: false, avgColor: [0.74, 0.72, 0.68] },
   { id: 'us_brick_house', index: 33, floors: 4, bays: 4, metersPerFloor: 3.0, metersPerBay: 3.0, isCurtainWall: false, avgColor: [0.52, 0.38, 0.32] },
+  { id: 'art_deco_terracotta', index: 34, floors: 4, bays: 4, metersPerFloor: 3.7, metersPerBay: 3.5, isCurtainWall: false, avgColor: [0.68, 0.58, 0.46], paint: true },
+  { id: 'haussmann_limestone', index: 35, floors: 4, bays: 4, metersPerFloor: 3.6, metersPerBay: 3.4, isCurtainWall: false, avgColor: [0.78, 0.74, 0.66], paint: true },
+  { id: 'brutalist_coffered', index: 36, floors: 4, bays: 4, metersPerFloor: 3.7, metersPerBay: 3.8, isCurtainWall: false, avgColor: [0.58, 0.57, 0.54] },
+  { id: 'tudor_half_timber', index: 37, floors: 4, bays: 4, metersPerFloor: 3.1, metersPerBay: 3.0, isCurtainWall: false, avgColor: [0.72, 0.66, 0.56], paint: true },
+  { id: 'modern_timber_louvre', index: 38, floors: 4, bays: 4, metersPerFloor: 3.5, metersPerBay: 3.6, isCurtainWall: true, avgColor: [0.64, 0.48, 0.34] },
+  { id: 'neoclassical_ashlar', index: 39, floors: 4, bays: 4, metersPerFloor: 3.8, metersPerBay: 3.6, isCurtainWall: false, avgColor: [0.76, 0.73, 0.67], paint: true },
+  { id: 'venetian_gothic', index: 40, floors: 4, bays: 4, metersPerFloor: 3.6, metersPerBay: 3.3, isCurtainWall: false, avgColor: [0.72, 0.54, 0.46], paint: true },
+  { id: 'high_tech_diagrid', index: 41, floors: 4, bays: 4, metersPerFloor: 3.9, metersPerBay: 3.8, isCurtainWall: true, avgColor: [0.42, 0.54, 0.64] },
 ];
 
 /** Paint palettes for the paintable layers, by arch region (rgb multipliers on the light neutral wall). */
@@ -31,6 +39,11 @@ export const PAINT_PALETTES = {
   med_shutters: [[0.96, 0.78, 0.52], [0.92, 0.68, 0.46], [0.98, 0.86, 0.62], [0.90, 0.62, 0.48], [0.96, 0.90, 0.78], [0.86, 0.56, 0.40], [0.98, 0.82, 0.70]],
   latam_colour: [[1.0, 0.82, 0.42], [0.55, 0.80, 0.92], [0.98, 0.64, 0.56], [0.66, 0.88, 0.62], [1.0, 0.98, 0.94], [0.96, 0.70, 0.82], [0.98, 0.90, 0.74], [0.90, 0.95, 0.98]],
   nordic_wood: [[0.66, 0.26, 0.20], [0.96, 0.84, 0.52], [1.0, 1.0, 0.98], [0.64, 0.76, 0.84], [0.84, 0.86, 0.80], [0.40, 0.42, 0.40], [0.94, 0.90, 0.80], [0.72, 0.36, 0.26]],
+  art_deco_terracotta: [[0.98, 0.90, 0.78], [0.92, 0.76, 0.58], [0.84, 0.88, 0.82], [0.95, 0.82, 0.68], [0.88, 0.84, 0.78]],
+  haussmann_limestone: [[1.0, 0.97, 0.90], [0.96, 0.92, 0.84], [0.92, 0.89, 0.82], [0.98, 0.95, 0.88]],
+  tudor_half_timber: [[1.0, 0.97, 0.90], [0.98, 0.92, 0.80], [0.95, 0.88, 0.76], [0.96, 0.94, 0.88]],
+  neoclassical_ashlar: [[0.98, 0.95, 0.88], [0.94, 0.88, 0.76], [0.90, 0.92, 0.94], [0.96, 0.86, 0.74]],
+  venetian_gothic: [[0.96, 0.72, 0.58], [0.98, 0.84, 0.64], [0.90, 0.60, 0.50], [0.94, 0.88, 0.78], [0.88, 0.66, 0.52]],
 };
 
 function mulberry(seed) {
@@ -361,6 +374,365 @@ const STYLES = {
       }
     }
     P.noise(rng, 0.03, 2);
+  },
+
+  // 34: Art Deco Terracotta & Brass: Fluted limestone/terracotta vertical piers, geometric brass chevron spandrel panels, and stepped-arch casement windows.
+  art_deco_terracotta(P, S, rng) {
+    const stone = [0.82, 0.72, 0.58], terra = [0.76, 0.56, 0.42], brass = [0.82, 0.66, 0.28], bronzeDk = [0.22, 0.18, 0.12];
+    P.rect(0, 0, S, S, stone, PAINT);
+    for (let b = 0; b < 4; b++) {
+      const x0 = b * 128;
+      // Fluted vertical terracotta piers flanking each bay
+      for (const px of [x0, x0 + 104]) {
+        P.rect(px, 0, 24, S, terra, TRIM);
+        for (let fl = 3; fl < 22; fl += 5) {
+          P.rect(px + fl, 0, 2, S, shade(terra, 0.74), TRIM);
+          P.rect(px + fl + 2, 0, 1.5, S, shade(terra, 1.12), TRIM);
+        }
+      }
+      for (let f = 0; f < 4; f++) {
+        const y0 = f * 128;
+        // Geometric brass chevron spandrel panel between floors
+        const sx = x0 + 24, sw = 80, sy = y0 + 96, sh = 32;
+        P.rect(sx, sy, sw, sh, bronzeDk, TRIM);
+        P.rect(sx + 3, sy + 3, sw - 6, sh - 6, shade(bronzeDk, 1.25), TRIM);
+        for (let k = -2; k < 6; k++) {
+          const cx = sx + sw / 2, cy = sy + k * 7;
+          P.path((c) => {
+            c.moveTo(sx + 6, cy + 12);
+            c.lineTo(cx, cy);
+            c.lineTo(sx + sw - 6, cy + 12);
+            c.lineTo(sx + sw - 6, cy + 15);
+            c.lineTo(cx, cy + 3);
+            c.lineTo(sx + 6, cy + 15);
+            c.closePath();
+          }, brass, TRIM);
+        }
+        // Sunburst stepped-arch crown + bronze casement window with Art Deco ziggurat mullions
+        const wx = x0 + 30, wy = y0 + 18, ww = 68, wh = 74;
+        P.rect(wx - 4, wy - 6, ww + 8, 8, brass, TRIM);
+        P.rect(wx + 6, wy - 12, ww - 12, 6, brass, TRIM);
+        P.rect(wx + 16, wy - 16, ww - 32, 4, shade(brass, 1.12), TRIM);
+        glazing(P, wx, wy, ww, wh, bronzeDk, [0.46, 0.56, 0.62], [0.14, 0.18, 0.22], 3, 2);
+        P.rect(wx + 16, wy, 2.5, wh, brass, TRIM);
+        P.rect(wx + ww - 18.5, wy, 2.5, wh, brass, TRIM);
+        P.rect(wx, wy + 18, ww, 2.5, brass, TRIM);
+      }
+    }
+    P.noise(rng, 0.035, 2);
+  },
+
+  // 35: Haussmann Limestone: Warm Parisian dressed ashlar stone courses, tall French windows with transoms, molded stone lintels, and continuous wrought-iron fretwork balcony railings.
+  haussmann_limestone(P, S, rng) {
+    const stone = [0.88, 0.84, 0.76], joint = [0.74, 0.70, 0.62], iron = [0.11, 0.12, 0.13], frame = [0.94, 0.92, 0.88];
+    P.rect(0, 0, S, S, stone, PAINT);
+    for (let y = 0; y < S; y += 16) P.rect(0, y, S, 1.5, joint, TRIM);
+    for (let y = 0; y < S; y += 16) {
+      const off = ((y / 16) % 2) * 32;
+      for (let x = off; x < S; x += 64) P.rect(x, y, 1.2, 16, shade(stone, 0.9), TRIM);
+    }
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * 128;
+      // Molded stone cornice / string course at each floor
+      P.rect(0, y0 + 114, S, 10, shade(stone, 0.94), TRIM);
+      P.rect(0, y0 + 124, S, 4, shade(stone, 0.72), TRIM);
+      const contBalc = f === 0 || f === 2; // 2nd and 5th floor continuous balconies
+      for (let b = 0; b < 4; b++) {
+        const x0 = b * 128;
+        const wx = x0 + 34, wy = y0 + 20, ww = 60, wh = 92;
+        // Molded stone architrave, keystone & corbelled pediment lintel
+        P.rect(wx - 8, wy - 10, ww + 16, wh + 12, shade(stone, 0.96), TRIM);
+        P.rect(wx - 12, wy - 15, ww + 24, 6, shade(stone, 0.82), TRIM);
+        P.rect(wx + ww / 2 - 6, wy - 16, 12, 9, shade(stone, 1.04), TRIM);
+        // Tall French double casement window + upper transom bar
+        glazing(P, wx, wy, ww, wh, frame, [0.46, 0.54, 0.62], [0.13, 0.16, 0.21], 3, 0);
+        P.rect(wx, wy + 22, ww, 3.5, frame, TRIM);
+        P.rect(wx + ww / 2 - 2, wy + 22, 4, wh - 22, frame, TRIM);
+        P.rect(wx, wy + 56, ww, 2, frame, TRIM);
+        // Wrought-iron fretwork balcony railing (continuous or Juliet)
+        const bx = contBalc ? x0 : wx - 10, bw = contBalc ? 128 : ww + 20, by = y0 + 88, bh = 26;
+        P.rect(bx, by, bw, 3, iron, TRIM);
+        P.rect(bx, by + bh - 2, bw, 2.5, iron, TRIM);
+        for (let rx = bx + 3; rx < bx + bw - 3; rx += 8) {
+          P.rect(rx, by + 2, 1.6, bh - 4, iron, TRIM);
+          P.path((c) => { c.arc(rx + 4, by + bh / 2, 3.2, 0, Math.PI * 2); }, iron, TRIM);
+        }
+      }
+    }
+    P.noise(rng, 0.03, 2);
+  },
+
+  // 36: Brutalist Coffered Concrete: Deep architectural precast concrete waffle/coffered grid with recessed bronze-tinted ribbon glazing and bevelled shadow chamfers.
+  brutalist_coffered(P, S, rng) {
+    const conc = [0.64, 0.63, 0.60], concLt = [0.74, 0.73, 0.70], concDk = [0.36, 0.35, 0.34], bronze = [0.26, 0.21, 0.16];
+    P.rect(0, 0, S, S, conc, TRIM);
+    // Board-formed horizontal tie lines & tie-rod form holes
+    for (let y = 0; y < S; y += 16) P.rect(0, y, S, 1, shade(conc, 0.88), TRIM);
+    for (let f = 0; f < 4; f++) {
+      for (let b = 0; b < 4; b++) {
+        const x0 = b * 128, y0 = f * 128;
+        // Deep bevelled coffer chamfers: top/left cast shadow, bottom/right catch light
+        P.path((c) => {
+          c.moveTo(x0 + 6, y0 + 8); c.lineTo(x0 + 122, y0 + 8);
+          c.lineTo(x0 + 104, y0 + 26); c.lineTo(x0 + 24, y0 + 26); c.closePath();
+        }, concDk, TRIM);
+        P.path((c) => {
+          c.moveTo(x0 + 6, y0 + 8); c.lineTo(x0 + 24, y0 + 26);
+          c.lineTo(x0 + 24, y0 + 98); c.lineTo(x0 + 6, y0 + 116); c.closePath();
+        }, shade(conc, 0.72), TRIM);
+        P.path((c) => {
+          c.moveTo(x0 + 122, y0 + 8); c.lineTo(x0 + 122, y0 + 116);
+          c.lineTo(x0 + 104, y0 + 98); c.lineTo(x0 + 104, y0 + 26); c.closePath();
+        }, shade(conc, 0.84), TRIM);
+        P.path((c) => {
+          c.moveTo(x0 + 24, y0 + 98); c.lineTo(x0 + 104, y0 + 98);
+          c.lineTo(x0 + 122, y0 + 116); c.lineTo(x0 + 6, y0 + 116); c.closePath();
+        }, concLt, TRIM);
+        // Formwork tie holes on concrete pier corners
+        for (const [tx, ty] of [[x0 + 12, y0 + 4], [x0 + 116, y0 + 4], [x0 + 12, y0 + 121], [x0 + 116, y0 + 121]]) {
+          P.rect(tx - 2, ty - 2, 4, 4, concDk, TRIM);
+        }
+        // Recessed bronze-tinted ribbon glazing inside coffer well
+        glazing(P, x0 + 24, y0 + 26, 80, 72, bronze, [0.42, 0.36, 0.28], [0.16, 0.13, 0.10], 3, 2);
+      }
+    }
+    P.noise(rng, 0.05, 2);
+  },
+
+  // 37: Tudor Half-Timber: Historic English/German half-timbered plaster & herringbone brick nogging with dark oak structural posts, diagonal braces, and leaded diamond-mullion casements.
+  tudor_half_timber(P, S, rng) {
+    const plaster = [0.92, 0.89, 0.82], oak = [0.20, 0.13, 0.09], oakHi = [0.28, 0.19, 0.13], lead = [0.26, 0.28, 0.30];
+    P.rect(0, 0, S, S, plaster, PAINT);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * 128;
+      // Heavy horizontal oak bressummer beams & jetty shadow
+      P.rect(0, y0, S, 11, oak, TRIM);
+      P.rect(0, y0 + 11, S, 3, shade(plaster, 0.68), TRIM);
+      P.rect(0, y0 + 116, S, 12, oak, TRIM);
+      for (let b = 0; b < 4; b++) {
+        const x0 = b * 128;
+        // Vertical oak corner posts & intermediate studs
+        P.rect(x0, y0, 10, 128, oak, TRIM);
+        P.rect(x0 + 118, y0, 10, 128, oak, TRIM);
+        // Herringbone red-brick nogging in select lower apron panels
+        if ((b + f) % 3 === 0) {
+          P.rect(x0 + 10, y0 + 88, 108, 28, [0.58, 0.30, 0.22], TRIM);
+          for (let hx = x0 + 12; hx < x0 + 114; hx += 12) {
+            P.line(hx, y0 + 90, hx + 6, y0 + 102, [0.76, 0.70, 0.62], 1.5);
+            P.line(hx + 6, y0 + 102, hx + 12, y0 + 90, [0.76, 0.70, 0.62], 1.5);
+          }
+        }
+        // Diagonal oak wind-braces & Saint Andrew's crosses in side panels and apron
+        P.line(x0 + 8, y0 + 10, x0 + 34, y0 + 86, oak, 8);
+        P.line(x0 + 120, y0 + 10, x0 + 94, y0 + 86, oak, 8);
+        P.line(x0 + 12, y0 + 88, x0 + 64, y0 + 116, oak, 7);
+        P.line(x0 + 116, y0 + 88, x0 + 64, y0 + 116, oak, 7);
+        P.rect(x0 + 10, y0 + 84, 108, 7, oakHi, TRIM);
+        // Paired leaded casement windows with diamond quarrel mullions
+        const wx = x0 + 30, wy = y0 + 22, ww = 68, wh = 60;
+        glazing(P, wx, wy, ww, wh, oak, [0.44, 0.52, 0.58], [0.15, 0.18, 0.22], 4, 2);
+        P.c.strokeStyle = css(lead); P.c.lineWidth = 1.2;
+        for (let d = -wh; d < ww + wh; d += 12) {
+          P.c.beginPath();
+          P.c.moveTo(Math.max(wx, wx + d), wy + Math.max(0, -d));
+          P.c.lineTo(Math.min(wx + ww, wx + d + wh), wy + Math.min(wh, ww - d));
+          P.c.stroke();
+          P.c.beginPath();
+          P.c.moveTo(Math.max(wx, wx + d), wy + wh - Math.max(0, -d));
+          P.c.lineTo(Math.min(wx + ww, wx + d + wh), wy + wh - Math.min(wh, ww - d));
+          P.c.stroke();
+        }
+        // Re-assert oak casement frame over diamond lattice edges
+        P.rect(wx - 4, wy - 4, ww + 8, 4, oak, TRIM);
+        P.rect(wx - 4, wy + wh, ww + 8, 4, oak, TRIM);
+        P.rect(wx + ww / 2 - 2.5, wy, 5, wh, oak, TRIM);
+      }
+    }
+    P.noise(rng, 0.04, 2);
+  },
+
+  // 38: Modern Timber Louvre: Contemporary warm cedar vertical sun-louvre screens alternating with floor-to-ceiling low-iron architectural glass and charcoal steel spandrel I-beams.
+  modern_timber_louvre(P, S, rng) {
+    const cedar = [0.74, 0.48, 0.28], cedarDk = [0.42, 0.25, 0.14], steel = [0.16, 0.18, 0.20], steelHi = [0.30, 0.33, 0.36];
+    P.rect(0, 0, S, S, steel, TRIM);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * 128;
+      // Charcoal steel I-beam spandrel with top/bottom flange highlights
+      P.rect(0, y0 + 104, S, 24, steel, TRIM);
+      P.rect(0, y0 + 104, S, 3, steelHi, TRIM);
+      P.rect(0, y0 + 125, S, 3, steelHi, TRIM);
+      for (let b = 0; b < 4; b++) {
+        const x0 = b * 128;
+        P.rect(x0, y0, 6, 128, steel, TRIM);
+        // Full-height low-iron architectural glazing
+        glazing(P, x0 + 6, y0 + 4, 116, 98, steel, [0.50, 0.64, 0.72], [0.16, 0.24, 0.30], 2, 1);
+        // Alternating warm Western Red Cedar vertical sun-louvre screens over half of each bay
+        const louvreLeft = (b + f) % 2 === 0;
+        const lx = louvreLeft ? x0 + 8 : x0 + 64, lw = 56;
+        for (let sx = lx; sx < lx + lw; sx += 6) {
+          P.rect(sx, y0 + 4, 3.5, 98, cedar, TRIM);
+          P.rect(sx + 3.5, y0 + 4, 1.5, 98, cedarDk, TRIM);
+        }
+        // Horizontal stainless tie-rods through timber fins
+        P.rect(lx, y0 + 34, lw, 2, steelHi, TRIM);
+        P.rect(lx, y0 + 70, lw, 2, steelHi, TRIM);
+      }
+    }
+    P.noise(rng, 0.03, 2);
+  },
+
+  // 39: Neoclassical Ashlar: Rusticated stone blocks, Corinthian/Doric fluted pilaster strips, pedimented window headers, and classical balustrade apron panels.
+  neoclassical_ashlar(P, S, rng) {
+    const stone = [0.86, 0.83, 0.76], shadow = [0.62, 0.59, 0.53], hi = [0.95, 0.93, 0.88];
+    P.rect(0, 0, S, S, stone, PAINT);
+    // Rusticated V-groove ashlar block courses
+    for (let y = 0; y < S; y += 16) {
+      P.rect(0, y, S, 1.5, shadow, TRIM);
+      P.rect(0, y + 1.5, S, 1, hi, TRIM);
+      const off = ((y / 16) % 2) * 32;
+      for (let x = off; x < S; x += 64) P.rect(x, y, 1.5, 16, shadow, TRIM);
+    }
+    for (let b = 0; b < 4; b++) {
+      const x0 = b * 128;
+      // Fluted classical pilaster strips between bays
+      for (const px of [x0, x0 + 108]) {
+        P.rect(px, 0, 20, S, shade(stone, 1.03), TRIM);
+        for (let fx = 3; fx < 18; fx += 4) P.rect(px + fx, 0, 2, S, shadow, TRIM);
+      }
+      for (let f = 0; f < 4; f++) {
+        const y0 = f * 128;
+        // Classical entablature frieze & dentil band
+        P.rect(x0, y0, 128, 10, hi, TRIM);
+        for (let dx = x0 + 4; dx < x0 + 124; dx += 10) P.rect(dx, y0 + 10, 5, 5, shadow, TRIM);
+        // Pedimented window header (alternating triangular & segmental pediments)
+        const wx = x0 + 34, wy = y0 + 32, ww = 60, wh = 68;
+        if ((b + f) % 2 === 0) {
+          P.path((c) => {
+            c.moveTo(wx - 10, wy - 6); c.lineTo(wx + ww / 2, wy - 20); c.lineTo(wx + ww + 10, wy - 6); c.closePath();
+          }, hi, TRIM);
+          P.path((c) => {
+            c.moveTo(wx - 5, wy - 8); c.lineTo(wx + ww / 2, wy - 16); c.lineTo(wx + ww + 5, wy - 8); c.closePath();
+          }, shadow, TRIM);
+        } else {
+          P.path((c) => { c.arc(wx + ww / 2, wy - 4, ww / 2 + 8, Math.PI, 0); }, hi, TRIM);
+        }
+        P.rect(wx - 8, wy - 6, ww + 16, 6, hi, TRIM);
+        glazing(P, wx, wy, ww, wh, hi, [0.44, 0.52, 0.60], [0.14, 0.17, 0.22], 4, 3);
+        // Classical carved stone balustrade apron panel below sill
+        P.rect(wx - 8, wy + wh + 2, ww + 16, 22, shadow, TRIM);
+        P.rect(wx - 10, wy + wh + 2, ww + 20, 4, hi, TRIM);
+        P.rect(wx - 10, wy + wh + 20, ww + 20, 4, hi, TRIM);
+        for (let bx = wx - 2; bx < wx + ww + 2; bx += 9) {
+          P.rect(bx, wy + wh + 6, 5, 14, hi, TRIM);
+        }
+      }
+    }
+    P.noise(rng, 0.03, 2);
+  },
+
+  // 40: Venetian Gothic: Polychrome Istrian stone & terracotta brickwork with trefoil/quatrefoil pointed-arch colonnade windows and carved stone balconies.
+  venetian_gothic(P, S, rng) {
+    const terra = [0.80, 0.52, 0.42], istrian = [0.94, 0.92, 0.86], darkGlass = [0.12, 0.15, 0.18];
+    P.rect(0, 0, S, S, terra, PAINT);
+    // Subtle diaper/brick pattern on terracotta stucco wall
+    for (let y = 0; y < S; y += 16) {
+      for (let x = ((y / 16) % 2) * 16; x < S; x += 32) {
+        P.rect(x, y, 14, 7, shade(terra, 0.93));
+      }
+    }
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * 128;
+      // Istrian stone rope-molded string course
+      P.rect(0, y0 + 116, S, 8, istrian, TRIM);
+      P.rect(0, y0 + 124, S, 4, shade(istrian, 0.72), TRIM);
+      for (let b = 0; b < 4; b++) {
+        const x0 = b * 128;
+        // Quoined Istrian stone corner blocks
+        P.rect(x0, y0 + ((f % 2) * 16), 10, 16, istrian, TRIM);
+        P.rect(x0, y0 + 48, 14, 16, istrian, TRIM);
+        const wx = x0 + 24, wy = y0 + 36, ww = 80, wh = 66;
+        // Pointed Gothic ogee arch surround & quatrefoil tracery drum
+        P.rect(wx - 6, wy - 22, ww + 12, wh + 26, istrian, TRIM);
+        P.path((c) => {
+          c.moveTo(wx, wy);
+          c.quadraticCurveTo(wx + ww * 0.25, wy - 20, wx + ww * 0.5, wy - 24);
+          c.quadraticCurveTo(wx + ww * 0.75, wy - 20, wx + ww, wy);
+          c.closePath();
+        }, darkGlass, GLASS);
+        glazing(P, wx, wy, ww, wh, istrian, [0.38, 0.48, 0.54], darkGlass, 3, 0);
+        // Bifora / Trifora slender marble colonnettes + trefoil arches + carved quatrefoil oculus
+        for (const cx of [wx + ww / 3, wx + (2 * ww) / 3]) {
+          P.rect(cx - 2.5, wy, 5, wh, istrian, TRIM);
+          P.rect(cx - 5, wy, 10, 4, istrian, TRIM);
+          P.rect(cx - 5, wy + wh - 4, 10, 4, istrian, TRIM);
+        }
+        for (const qx of [wx + ww * 0.25, wx + ww * 0.5, wx + ww * 0.75]) {
+          P.path((c) => { c.arc(qx, wy - 10, 6.5, 0, Math.PI * 2); }, istrian, TRIM);
+          P.path((c) => { c.arc(qx, wy - 10, 4, 0, Math.PI * 2); }, darkGlass, GLASS);
+        }
+        // Carved Istrian stone balcony with miniature colonnade balusters
+        P.rect(wx - 10, wy + wh, ww + 20, 6, istrian, TRIM);
+        for (let bx = wx - 6; bx <= wx + ww + 4; bx += 8) {
+          P.rect(bx, wy + wh - 16, 3.5, 16, istrian, TRIM);
+        }
+        P.rect(wx - 10, wy + wh - 19, ww + 20, 3.5, istrian, TRIM);
+      }
+    }
+    P.noise(rng, 0.035, 2);
+  },
+
+  // 41: High-Tech Diagrid: Structural steel exterior diagrid bracing over reflective sapphire/teal curtain-wall glazing with mechanical louvre spandrel bands.
+  high_tech_diagrid(P, S, rng) {
+    const steel = [0.76, 0.80, 0.84], steelDk = [0.22, 0.26, 0.30], nodeCol = [0.90, 0.93, 0.96];
+    // Sapphire/teal reflective curtain wall gradient
+    const g = P.c.createLinearGradient(0, 0, 0, S);
+    g.addColorStop(0, css([0.36, 0.58, 0.72]));
+    g.addColorStop(0.5, css([0.22, 0.42, 0.56]));
+    g.addColorStop(1, css([0.14, 0.28, 0.40]));
+    P.c.fillStyle = g; P.c.fillRect(0, 0, S, S);
+    P.m.fillStyle = `rgb(${GLASS},${GLASS},${GLASS})`; P.m.fillRect(0, 0, S, S);
+    // Fine curtain-wall unitized sub-mullions
+    for (let x = 0; x < S; x += 32) P.rect(x, 0, 2.5, S, steelDk, TRIM);
+    for (let y = 0; y < S; y += 64) P.rect(0, y, S, 2, steelDk, TRIM);
+    // Mechanical louvre spandrel bands at each floor slab
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * 128 + 102;
+      P.rect(0, y0, S, 26, steelDk, TRIM);
+      for (let ly = y0 + 3; ly < y0 + 23; ly += 4) {
+        P.rect(0, ly, S, 2, [0.46, 0.50, 0.54], TRIM);
+      }
+    }
+    // Exterior structural steel diagrid X-bracing across 2x2 bay modules + gusset node plates
+    const drawBrace = (x1, y1, x2, y2) => {
+      P.path((c) => {
+        const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+        const nx = (-dy / len) * 7, ny = (dx / len) * 7;
+        c.moveTo(x1 - nx, y1 - ny); c.lineTo(x2 - nx, y2 - ny);
+        c.lineTo(x2 + nx, y2 + ny); c.lineTo(x1 + nx, y1 + ny); c.closePath();
+      }, steelDk, TRIM);
+      P.path((c) => {
+        const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+        const nx = (-dy / len) * 4.5, ny = (dx / len) * 4.5;
+        c.moveTo(x1 - nx, y1 - ny); c.lineTo(x2 - nx, y2 - ny);
+        c.lineTo(x2 + nx, y2 + ny); c.lineTo(x1 + nx, y1 + ny); c.closePath();
+      }, steel, TRIM);
+    };
+    for (let gy = 0; gy < S; gy += 256) {
+      for (let gx = 0; gx < S; gx += 256) {
+        drawBrace(gx, gy, gx + 256, gy + 256);
+        drawBrace(gx + 256, gy, gx, gy + 256);
+        for (const [nx, ny] of [[gx, gy], [gx + 128, gy + 128], [gx + 256, gy], [gx, gy + 256], [gx + 256, gy + 256]]) {
+          P.path((c) => { c.arc(nx, ny, 11, 0, Math.PI * 2); }, steelDk, TRIM);
+          P.path((c) => { c.arc(nx, ny, 7.5, 0, Math.PI * 2); }, nodeCol, TRIM);
+        }
+      }
+    }
+    // Diagonal sky reflection streaks on glass panes
+    for (let i = 0; i < 36; i++) {
+      const rx = Math.floor(rng() * 16) * 32 + 3, ry = Math.floor(rng() * 4) * 128 + 4;
+      P.c.fillStyle = `rgba(220,245,255,${0.05 + rng() * 0.08})`;
+      P.c.fillRect(rx, ry, 26, 94);
+    }
   },
 };
 

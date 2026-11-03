@@ -474,6 +474,10 @@ function buildArchFeatures(category, subKind = null) {
     twinSpires: category === 'sacred_historic' && subKind === 'cathedral',
     pagodaEaves: category === 'sacred_historic' && subKind === 'temple_palace',
     stadiumFloodlights: category === 'stadium_arena',
+    helipadDeck: category === 'hospital_med' || category === 'finance_hq' || category === 'tech_hq',
+    artDecoCrownSpire: category === 'finance_hq' || category === 'media_luxury',
+    skyGardenPergola: category === 'hotel_resort' || category === 'tech_hq' || category === 'media_luxury',
+    broadcastLatticeTower: category === 'media_luxury' || category === 'tech_hq' || category === 'finance_hq',
   };
 }
 

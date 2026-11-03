@@ -660,6 +660,19 @@ function emitTierRoofAndGreebles(pos, norm, col, tier, isTopTier, wfcSolution, t
       pushWorldBox(pos, norm, col, cx, roofY, cz, size * 0.90, 0.55, size * 0.70, [0.14, 0.28, 0.48], triEntity, entityIdx);
     } else if (tileId === 'R_SKYLIGHT_ATRIUM') {
       pushWorldBox(pos, norm, col, cx, roofY, cz, size * 0.90, 0.85, size * 0.90, palette.glassLit, triEntity, entityIdx, true);
+    } else if (tileId === 'R_HELIPAD_DECK') {
+      pushWorldBox(pos, norm, col, cx, roofY, cz, size * 0.92, 0.28, size * 0.92, [0.24, 0.26, 0.30], triEntity, entityIdx);
+      pushWorldBox(pos, norm, col, cx, roofY + 0.28, cz, size * 0.46, 0.06, size * 0.46, [0.95, 0.96, 0.98], triEntity, entityIdx, true);
+    } else if (tileId === 'R_ARTDECO_SPIRE') {
+      pushWorldBox(pos, norm, col, cx, roofY, cz, size * 0.84, 2.4, size * 0.84, palette.wallSecondary, triEntity, entityIdx);
+      pushWorldBox(pos, norm, col, cx, roofY + 2.4, cz, size * 0.52, 2.0, size * 0.52, palette.accent, triEntity, entityIdx, true);
+      pushWorldBox(pos, norm, col, cx, roofY + 4.4, cz, 0.28, 3.6, 0.28, palette.mullion, triEntity, entityIdx);
+    } else if (tileId === 'R_SKYGARDEN_PERGOLA') {
+      pushWorldBox(pos, norm, col, cx, roofY, cz, size * 0.88, 0.42, size * 0.88, [0.24, 0.48, 0.22], triEntity, entityIdx);
+      pushWorldBox(pos, norm, col, cx, roofY + 0.42, cz, size * 0.68, 2.1, size * 0.68, palette.glassLit, triEntity, entityIdx);
+    } else if (tileId === 'R_BROADCAST_TOWER') {
+      pushWorldBox(pos, norm, col, cx, roofY, cz, size * 0.44, 4.5, size * 0.44, [0.68, 0.70, 0.73], triEntity, entityIdx);
+      pushWorldBox(pos, norm, col, cx, roofY + 4.5, cz, 0.36, 0.36, 0.36, [1.0, 0.18, 0.08], triEntity, entityIdx, true);
     }
   }
 }
@@ -740,20 +753,28 @@ export function facadeV(index, v) {
 function archFacadePool(arch, h, btype) {
   const small = h <= 11.5;
   switch (arch) {
-    case 'sf': return h >= 40 ? [0, 1, 4, 7, 3] : h >= 17 ? [7, 8, 4, 20, 16, 25] : [24, 24, 24, 25, 24, 6];
-    case 'la': return h >= 40 ? [0, 1, 2, 5, 4] : h >= 14 ? [25, 20, 3, 16, 4] : [25, 25, 25, 21, 21, 33];
+    case 'sf': return h >= 40 ? [0, 1, 4, 7, 34, 41, 3] : h >= 17 ? [7, 34, 8, 4, 20, 16, 25, 38] : [24, 24, 24, 25, 24, 6, 34];
+    case 'la': return h >= 40 ? [0, 1, 2, 5, 4, 34, 41] : h >= 14 ? [25, 20, 34, 38, 3, 16, 4] : [25, 25, 25, 21, 21, 33, 38];
+    case 'nyc':
+      if (h >= 60) return [0, 1, 7, 34, 41, 5, 2];
+      if (h >= 18) return [7, 34, 8, 39, 36, 4, 6];
+      return [6, 6, 8, 34, 33, 39];
     case 'us':
-      if (h >= 40) return null;
-      if (h >= 14) return [8, 3, 4, 16, 20];
-      return small ? [21, 33, 21, 33, 21, 25] : [8, 6, 33, 21];
-    case 'uk': return h <= 16 ? [10, 10, 10, 8] : null;
-    case 'paris': return h >= 48 ? null : h >= 10 ? [9, 9, 9, 9, 4, 20] : [9, 11, 4];
-    case 'med': return h >= 45 ? [0, 4, 2] : [26, 26, 26, 11, 26, 11];
-    case 'nordic': return h <= 12 ? [29, 29, 29, 29, 11] : h <= 30 ? [20, 16, 11, 29] : [0, 1, 2, 20];
-    case 'latam': return h >= 45 ? [20, 0, 16, 1, 27, 20] : h >= 14 ? [27, 20, 16, 27, 11] : [27, 27, 27, 25];
-    case 'mideast': return h >= 60 ? [31, 0, 31, 1, 2, 31] : h >= 20 ? [28, 31, 16, 28, 20] : [28, 28, 25, 16];
-    case 'japan': return h >= 55 ? null : h >= 14 ? [12, 30, 13, 20, 12] : [32, 32, 30, 12];
-    case 'hk': return h >= 40 ? [14, 30, 0, 1, 14] : [30, 30, 12, 14];
+      if (h >= 40) return [0, 1, 7, 34, 41, 4, 5];
+      if (h >= 14) return [8, 34, 3, 4, 36, 38, 16, 20];
+      return small ? [21, 33, 21, 33, 21, 25, 37] : [8, 6, 33, 21, 34];
+    case 'uk': return h >= 42 ? [0, 1, 41, 38, 5, 4] : h <= 16 ? [10, 10, 37, 10, 8, 39] : [10, 39, 8, 36, 4, 37];
+    case 'paris': return h >= 48 ? [0, 1, 41, 38, 4, 5] : h >= 10 ? [9, 35, 9, 35, 39, 9, 4, 20] : [35, 9, 11, 39, 4];
+    case 'eu':
+    case 'centralEu':
+    case 'eastEu':
+      return h >= 45 ? [0, 1, 41, 38, 4] : h >= 15 ? [35, 39, 11, 9, 36, 38, 20] : [37, 11, 39, 35, 29];
+    case 'med': return h >= 45 ? [0, 4, 2, 41] : h >= 14 ? [26, 40, 26, 11, 39, 26] : [26, 26, 40, 26, 11, 25];
+    case 'nordic': return h <= 12 ? [29, 29, 29, 38, 11] : h <= 30 ? [38, 20, 16, 11, 29, 36] : [0, 1, 2, 38, 41, 20];
+    case 'latam': return h >= 45 ? [20, 0, 16, 1, 27, 36, 20] : h >= 14 ? [27, 20, 16, 27, 11, 34] : [27, 27, 27, 25];
+    case 'mideast': return h >= 60 ? [31, 0, 41, 31, 1, 2, 31] : h >= 20 ? [28, 31, 16, 28, 39, 20] : [28, 28, 25, 16];
+    case 'japan': return h >= 55 ? [0, 1, 13, 41, 38, 14] : h >= 14 ? [12, 30, 13, 36, 38, 20, 12] : [32, 32, 30, 12];
+    case 'hk': return h >= 40 ? [14, 30, 0, 1, 41, 14] : [30, 30, 12, 14];
     default: return null;
   }
 }
@@ -904,52 +925,54 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   if (famousInfo && famousInfo.facadeLayers && famousInfo.facadeLayers.length > 0) {
     pool = famousInfo.facadeLayers;
   } else if (isTechCampus) {
-    pool = (techBrand === 'apple' || techBrand === 'nvidia') ? [1, 13, 0, 2] : [0, 2, 1, 13];
+    pool = (techBrand === 'apple' || techBrand === 'nvidia') ? [1, 13, 41, 0, 2, 38] : [0, 2, 38, 41, 1, 13];
   } else if (isCivicBuilding) {
-    pool = [7, 4, 9];
+    pool = [39, 7, 35, 4, 9, 34];
   } else if (btype === 'parking' || btype === 'garages') {
-    pool = [18, 18, 23];
+    pool = [18, 18, 36, 23];
   } else if (btype === 'industrial' || btype === 'warehouse' || btype === 'manufacture') {
-    pool = region === 'nyc' || region === 'london' ? [8, 4, 8, 3] : [3, 4, 13, 20, 8, 22];
+    pool = region === 'nyc' || region === 'london' ? [8, 4, 8, 36, 3] : [3, 4, 13, 20, 8, 22, 36];
   } else if (btype === 'retail' && h <= 10.5) {
-    pool = [17, 22, 4, 20];
+    pool = [17, 22, 34, 38, 4, 20];
+  } else if (btype === 'university' || btype === 'college' || btype === 'school' || btype === 'hospital') {
+    pool = [39, 36, 34, 38, 8, 4, 7, 10];
   } else if (isOfficeOrCommercial) {
-    pool = h >= 28 ? [0, 1, 2, 5, 4, 3, 13] : [0, 2, 3, 4, 13, 20, 22, 8];
+    pool = h >= 28 ? [0, 1, 2, 41, 5, 34, 4, 3, 13, 38] : [0, 2, 38, 34, 36, 39, 3, 4, 13, 20, 22, 8];
   } else if (archPool) {
     pool = archPool;
   } else if (region === 'paris') {
     if (h >= 48) {
-      pool = [0, 1, 2, 4, 5];
+      pool = [0, 1, 2, 41, 4, 5, 38];
     } else if (h >= 12) {
-      pool = [9, 9, 9, 4, 11, 20];
+      pool = [9, 35, 9, 35, 39, 4, 11, 20];
     } else {
-      pool = [11, 9, 4];
+      pool = [35, 11, 9, 39, 4];
     }
   } else if (region === 'london') {
     if (h >= 48) {
-      pool = [0, 1, 2, 5, 4];
+      pool = [0, 1, 2, 41, 5, 4];
     } else if (h >= 16) {
-      pool = [10, 10, 8, 4, 3, 20, 5];
+      pool = [10, 39, 10, 8, 4, 36, 3, 20, 5];
     } else {
-      pool = [10, 10, 8, 11];
+      pool = [10, 37, 10, 8, 39, 11];
     }
   } else if (region === 'nyc' || region === 'us') {
     if (h >= 65) {
-      pool = [0, 1, 2, 7, 5, 7, 0];
+      pool = [0, 1, 2, 7, 34, 41, 5, 7, 0];
     } else if (h >= 24) {
-      pool = [7, 8, 3, 4, 5, 0, 20, 16];
+      pool = [7, 34, 8, 39, 36, 3, 4, 5, 0, 20, 16];
     } else if (h <= 10.5 && (region === 'us' || btype === 'house' || btype === 'detached' || btype === 'residential')) {
-      pool = [21, 6, 8, 21];
+      pool = [21, 33, 6, 8, 21, 37];
     } else {
-      pool = [6, 6, 8, 7, 10, 21];
+      pool = [6, 6, 8, 34, 7, 10, 21, 39];
     }
   } else if (region === 'tokyo') {
     if (h >= 55) {
-      pool = [0, 1, 2, 13, 5, 14];
+      pool = [0, 1, 2, 13, 41, 5, 14];
     } else if (h >= 18) {
-      pool = [12, 13, 14, 20, 3, 16, 12];
+      pool = [12, 13, 14, 36, 38, 20, 3, 16, 12];
     } else {
-      pool = [12, 12, 13, 20, 16];
+      pool = [12, 32, 12, 13, 38, 20, 16];
     }
   } else if (region === 'beijing' || region === 'asia') {
     if (
@@ -964,31 +987,31 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     ) {
       pool = [15, 15, 19];
     } else if (h >= 65) {
-      pool = [0, 1, 2, 5, 13, 4];
+      pool = [0, 1, 2, 41, 5, 13, 4];
     } else if (h <= 25 && (btype.includes('apartments') || btype.includes('residential') || rawStyle !== 'glass')) {
-      pool = [19, 19, 16, 20, 12, 14];
+      pool = [19, 19, 16, 20, 12, 14, 36];
     } else if (btype.includes('apartments') || btype.includes('residential')) {
-      pool = [14, 14, 16, 20, 19];
+      pool = [14, 14, 16, 20, 19, 38];
     } else if (h >= 24) {
-      pool = [13, 3, 4, 5, 0, 14, 20, 16];
+      pool = [13, 3, 4, 34, 36, 5, 0, 14, 20, 16];
     } else {
-      pool = [19, 12, 16, 15, 20];
+      pool = [19, 12, 16, 15, 20, 38];
     }
   } else if (region === 'europe') {
     if (h >= 45) {
-      pool = [0, 1, 2, 4, 5];
+      pool = [0, 1, 2, 41, 4, 5];
     } else {
-      pool = [11, 9, 10, 20, 4, 16];
+      pool = [11, 35, 39, 37, 40, 9, 10, 20, 4, 16];
     }
   } else {
     if (h >= 55) {
-      pool = [0, 1, 2, 5, 7, 4];
+      pool = [0, 1, 2, 41, 5, 7, 34, 4];
     } else if (h >= 20) {
-      pool = [3, 4, 20, 16, 13, 8, 7];
+      pool = [3, 4, 34, 36, 38, 39, 20, 16, 13, 8, 7];
     } else if (h <= 10.5) {
-      pool = [21, 6, 11, 19, 12];
+      pool = [21, 33, 37, 6, 11, 19, 12];
     } else {
-      pool = [6, 8, 11, 20, 16, 12];
+      pool = [6, 8, 34, 39, 11, 20, 16, 12];
     }
   }
 
@@ -1362,11 +1385,32 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   // [roofs] walls stop at the eaves; the roof takes the top of the OSM height (raised where that leaves < 1 storey)
   const yEave = roofPlan ? Math.max(surfY + Math.max(2.7, totalSpan * 0.45), topY - roofRise(roofPlan)) : topY;
 
-  // Use clean 1-3 tier architectural setbacks for tall full buildings; 1 tier for normal buildings
+  // Use clean 1-3 tier architectural setbacks for mid-rise and high-rise buildings (totalSpan >= 18m with sufficient footprint)
   let tiers;
-  if (!roofPlan && !isPart && (rawMinH || 0) <= 0.5 && totalSpan >= 38.0 && ccwOuter.length <= 24) {
+  let outerMinX = Infinity, outerMaxX = -Infinity, outerMinZ = Infinity, outerMaxZ = -Infinity;
+  let outerArea2 = 0.0;
+  for (let i = 0; i < ccwOuter.length; i += 2) {
+    const x = ccwOuter[i], z = ccwOuter[i + 1];
+    const nxPt = ccwOuter[(i + 2) % ccwOuter.length], nzPt = ccwOuter[(i + 3) % ccwOuter.length];
+    if (x < outerMinX) outerMinX = x;
+    if (x > outerMaxX) outerMaxX = x;
+    if (z < outerMinZ) outerMinZ = z;
+    if (z > outerMaxZ) outerMaxZ = z;
+    outerArea2 += x * nzPt - nxPt * z;
+  }
+  const outerMinSpan = Math.min(outerMaxX - outerMinX, outerMaxZ - outerMinZ);
+  const outerFootArea = Math.abs(outerArea2) * 0.5;
+  if (
+    !roofPlan &&
+    !isPart &&
+    (rawMinH || 0) <= 0.5 &&
+    totalSpan >= 18.0 &&
+    outerMinSpan >= 11.5 &&
+    outerFootArea >= 145.0 &&
+    ccwOuter.length <= 32
+  ) {
     const rng = createSeededRNG(seed ^ 0x9e3779b9);
-    const rawTiers = collapseVerticalMassingWFC(ccwOuter, flatHoles, totalSpan, arch, rng, false).slice(0, 3);
+    const rawTiers = collapseVerticalMassingWFC(ccwOuter, flatHoles, totalSpan, arch, rng, seed).slice(0, 3);
     tiers = rawTiers.map((t) => ({
       ...t,
       y0: surfY + t.y0,
@@ -2083,9 +2127,305 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, 0.0, len, -0.05, 0.14, -0.22, cOff + 0.10, capCol, false);
         }
 
-        // Neoclassical Front Portico Entrance Colonnade & Triangular Pediment on Government / Civic buildings
-        if (!isHole && tIdx === 0 && facadeSel.isCivicBuilding && entranceMap && entranceMap.has(i) && len >= 12.0 && edgeSpan >= 6.0) {
-          const portW = Math.min(14.0, Math.max(7.2, len * 0.42));
+        // 2a. Setback Terrace Balustrades & Landscaped Green Planter Strips on intermediate step-back ledges (!isTopTier)
+        if (!isHole && !isTopTier && len >= 4.2) {
+          const railPostCol = [Math.min(1, pr * 0.92), Math.min(1, pg * 0.92), Math.min(1, pb * 0.94)];
+          const glassBalCol = upperSpec.isCurtainWall
+            ? [0.36, 0.56, 0.72]
+            : [Math.min(1, pr * 1.05), Math.min(1, pg * 1.05), Math.min(1, pb * 1.04)];
+          // Continuous terrace safety balustrade rail along setback perimeter + periodic stone/steel piers
+          pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, 0.08, len - 0.08, 0.0, 0.88, -0.18, -0.04, glassBalCol, false);
+          pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, 0.04, len - 0.04, 0.88, 0.98, -0.22, 0.02, railPostCol, false);
+          const nPosts = Math.min(8, Math.max(2, Math.floor(len / 4.2)));
+          for (let pIdx = 0; pIdx <= nPosts; pIdx++) {
+            const pu = 0.14 + (pIdx / nPosts) * (len - 0.28);
+            pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, pu - 0.12, pu + 0.12, 0.0, 1.04, -0.24, 0.04, railPostCol, false);
+          }
+          // Landscaped setback terrace planter box + greenery hedge strip behind balustrade
+          if (len >= 6.8 && ((seed + i + tIdx) % 3 !== 0)) {
+            const planterBoxCol = [Math.min(1, pCol[0] * 0.82), Math.min(1, pCol[1] * 0.80), Math.min(1, pCol[2] * 0.76)];
+            const hedgeGreenCol = [0.22 * dirShade, 0.46 * dirShade, 0.20 * dirShade];
+            const plU0 = Math.min(1.6, len * 0.14);
+            const plU1 = Math.max(plU0 + 1.5, len - plU0);
+            pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, plU0, plU1, 0.0, 0.42, -1.18, -0.32, planterBoxCol, false);
+            pushDetailWallBox(x1, tier.y1, z1, tx, tz, nx, nz, plU0 + 0.12, plU1 - 0.12, 0.42, 0.82, -1.08, -0.40, hedgeGreenCol, false);
+          }
+        }
+
+        // 2b. Ornate Bracketed Crown Cornices (3D Corbel Brackets / Modillions under top cornice ledge on classical/historic/masonry buildings)
+        const isClassicalOrMasonry =
+          !upperSpec.isCurtainWall &&
+          (upperSpec.index >= 6 && upperSpec.index <= 12 ||
+            upperSpec.index === 15 ||
+            upperSpec.index === 19 ||
+            upperSpec.index === 24 ||
+            upperSpec.index === 26 ||
+            facadeSel.isCivicBuilding ||
+            archRegion === 'paris' ||
+            archRegion === 'london' ||
+            archRegion === 'nyc' ||
+            archRegion === 'sf' ||
+            archRegion === 'med');
+        if (!isHole && isTopTier && isClassicalOrMasonry && totalSpan >= 8.5 && totalSpan <= 58.0 && len >= 4.0) {
+          const corbelCol = [Math.min(1, pr * 0.94), Math.min(1, pg * 0.93), Math.min(1, pb * 0.90)];
+          const overhangCol = [Math.min(1, pr * 1.07), Math.min(1, pg * 1.06), Math.min(1, pb * 1.04)];
+          // Projecting molded crown cornice shelf
+          pushDetailWallBox(x1, shaftY1, z1, tx, tz, nx, nz, -0.06, len + 0.06, -0.10, 0.16, 0.02, cOff + 0.24, overhangCol, false);
+          // Periodic 3D corbel brackets / dentil modillions supporting the cornice shelf
+          const bracketSpacing = Math.max(1.35, Math.min(2.2, upperSpec.metersPerBay * 0.5));
+          const nBrackets = Math.min(18, Math.max(3, Math.floor(len / bracketSpacing)));
+          const brStep = (len - 0.48) / Math.max(1, nBrackets - 1);
+          for (let bIdx = 0; bIdx < nBrackets; bIdx++) {
+            const bu = 0.24 + bIdx * brStep;
+            pushDetailWallBox(x1, shaftY1, z1, tx, tz, nx, nz, bu - 0.09, bu + 0.09, -0.44, -0.10, 0.02, cOff + 0.19, corbelCol, false);
+          }
+        }
+
+        // 2c. Recessed Mechanical / Sky-Lobby Refuge Floors on Tall Towers (totalSpan >= 65m)
+        if (!isHole && totalSpan >= 65.0 && upperFloors >= 10 && len >= 6.5) {
+          const louvreDarkCol = [0.14 * dirShade, 0.16 * dirShade, 0.19 * dirShade];
+          const mechTrimCol = [Math.min(1, pCol[0] * dirShade * 0.95), Math.min(1, pCol[1] * dirShade * 0.95), Math.min(1, pCol[2] * dirShade * 0.97)];
+          const floorH = upperSpan / upperFloors;
+          const refugeInterval = 12;
+          for (let rFl = refugeInterval; rFl < upperFloors - 2; rFl += refugeInterval) {
+            const rv0 = rFl * floorH;
+            const rv1 = rv0 + Math.min(floorH * 1.05, 4.1);
+            // Dark recessed mechanical louvre band + top & bottom structural spandrel transfer beams
+            pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.12, len - 0.12, rv0 + 0.14, rv1 - 0.14, 0.01, 0.10, louvreDarkCol, false);
+            pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.0, len, rv0 - 0.10, rv0 + 0.14, 0.02, 0.24, mechTrimCol, false);
+            pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.0, len, rv1 - 0.14, rv1 + 0.10, 0.02, 0.24, mechTrimCol, false);
+            // Perimeter structural columns bridging the mechanical refuge floor
+            const nRefCols = Math.min(10, Math.max(2, Math.round(len / (upperSpec.metersPerBay * 2.0))));
+            for (let rc = 0; rc <= nRefCols; rc++) {
+              const cu = 0.22 + (rc / Math.max(1, nRefCols)) * (len - 0.44);
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, cu - 0.18, cu + 0.18, rv0 + 0.14, rv1 - 0.14, 0.02, 0.26, mechTrimCol, false);
+            }
+          }
+        }
+
+        // 2d. Vertical Brise-Soleil Sun-Shading Fins & Exoskeleton Mullions on Modern Office / Curtain-Wall Towers
+        const isModernOfficeOrGlass =
+          upperSpec.isCurtainWall ||
+          upperSpec.index === 3 ||
+          upperSpec.index === 4 ||
+          upperSpec.index === 5 ||
+          upperSpec.index === 13 ||
+          btype === 'office' ||
+          btype === 'commercial';
+        if (!isHole && isModernOfficeOrGlass && totalSpan >= 18.0 && len >= 6.4 && upperSpan >= 7.0) {
+          const finSeed = (seed ^ Math.imul(tIdx + 1, 2246822519)) >>> 0;
+          if ((finSeed % 3) !== 0) {
+            const nFinBays = Math.min(16, Math.max(2, Math.round(len / upperSpec.metersPerBay)));
+            const finBayW = len / nFinBays;
+            const finDepth = upperSpec.index === 5 ? 0.34 : 0.24;
+            const finHalfW = upperSpec.index === 5 ? 0.07 : 0.09;
+            const finCol =
+              upperSpec.index === 5
+                ? [0.58 * dirShade, 0.47 * dirShade, 0.32 * dirShade] // Champagne bronze aluminum fins
+                : facadeSel.parapetAccent && (finSeed & 1)
+                  ? [Math.min(1, (facadeSel.parapetAccent[0] * 0.4 + pCol[0] * 0.6) * dirShade),
+                     Math.min(1, (facadeSel.parapetAccent[1] * 0.4 + pCol[1] * 0.6) * dirShade),
+                     Math.min(1, (facadeSel.parapetAccent[2] * 0.4 + pCol[2] * 0.6) * dirShade)]
+                  : [Math.min(1, pCol[0] * dirShade * 1.04), Math.min(1, pCol[1] * dirShade * 1.04), Math.min(1, pCol[2] * dirShade * 1.06)];
+            for (let fb = 1; fb < nFinBays; fb++) {
+              const fu = fb * finBayW;
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, fu - finHalfW, fu + finHalfW, 0.10, upperSpan - 0.10, 0.02, finDepth, finCol, false);
+            }
+          }
+        }
+
+        // 2e. NYC / Chicago Cast-Iron Fire Escapes on Brick / Masonry Residential & Loft Facades (3 <= floors <= 12)
+        const isBrickOrLoftRes =
+          !upperSpec.isCurtainWall &&
+          (upperSpec.index === 6 ||
+            upperSpec.index === 7 ||
+            upperSpec.index === 8 ||
+            upperSpec.index === 10 ||
+            upperSpec.index === 19 ||
+            upperSpec.index === 33 ||
+            region === 'nyc' ||
+            region === 'us' ||
+            archRegion === 'sf' ||
+            archRegion === 'uk');
+        if (
+          !isHole &&
+          tIdx === 0 &&
+          isBrickOrLoftRes &&
+          !facadeSel.isTechCampus &&
+          !facadeSel.isCivicBuilding &&
+          upperFloors >= 3 &&
+          upperFloors <= 12 &&
+          len >= 6.8
+        ) {
+          const feSeed = (seed ^ Math.imul(i + 1, 3266489917)) >>> 0;
+          if ((feSeed % 3) === 0) {
+            const ironDark = [0.13 * dirShade, 0.14 * dirShade, 0.16 * dirShade];
+            const ironRail = [0.18 * dirShade, 0.19 * dirShade, 0.21 * dirShade];
+            const floorH = upperSpan / upperFloors;
+            const nBaysFe = Math.max(2, Math.round(len / upperSpec.metersPerBay));
+            const feBayIdx = Math.min(nBaysFe - 1, Math.max(0, 1 + (feSeed % Math.max(1, nBaysFe - 2))));
+            const bayWFe = len / nBaysFe;
+            const fuMid = (feBayIdx + 0.5) * bayWFe;
+            const platW = Math.min(2.6, Math.max(1.65, bayWFe * 0.78));
+            const pu0 = Math.max(0.35, fuMid - platW * 0.5);
+            const pu1 = Math.min(len - 0.35, fuMid + platW * 0.5);
+            const platD = 0.82;
+            const maxFeFl = Math.min(upperFloors, 9);
+            if (pu1 - pu0 >= 1.35) {
+              for (let fl = 1; fl < maxFeFl; fl++) {
+                const fy = fl * floorH;
+                // Perforated cast-iron landing platform grating + front & side safety railings
+                pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, pu0, pu1, fy - 0.06, fy + 0.05, 0.02, platD, ironDark, false);
+                pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, pu0, pu1, fy + 0.78, fy + 0.86, platD - 0.07, platD, ironRail, false);
+                pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, pu0, pu1, fy + 0.38, fy + 0.44, platD - 0.06, platD - 0.01, ironRail, false);
+                pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, pu0, pu0 + 0.06, fy + 0.05, fy + 0.86, 0.04, platD, ironRail, false);
+                pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, pu1 - 0.06, pu1, fy + 0.05, fy + 0.86, 0.04, platD, ironRail, false);
+                // Stepped diagonal zig-zag stair flight connecting to next floor landing (or drop-down ladder on fl === 1)
+                if (fl < maxFeFl - 1) {
+                  const dirZig = (fl & 1) ? 1 : -1;
+                  for (let st = 0; st < 3; st++) {
+                    const stFrac = (st + 0.5) / 3.0;
+                    const suMid = fuMid + dirZig * (stFrac - 0.5) * (platW * 0.56);
+                    const sv0 = fy + stFrac * floorH - 0.12;
+                    const sv1 = sv0 + floorH * 0.34;
+                    pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, suMid - 0.20, suMid + 0.20, sv0, sv1, 0.26, 0.58, ironDark, false);
+                  }
+                }
+              }
+              // Vertical drop-down steel fire ladder on one side of the fire escape stack
+              const ladU = Math.min(len - 0.25, pu1 - 0.22);
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, ladU - 0.04, ladU + 0.04, -Math.min(1.4, upperY0 - edgeSurfY), (maxFeFl - 1) * floorH + 0.9, platD - 0.14, platD - 0.06, ironDark, false);
+            }
+          }
+        }
+
+        // 2f. Architectural Window Hoods / Pediments, Haussmann Wrought-Iron Balcony Bands & Modern Glass Loggia Balconies
+        const isHaussmannOrEuro =
+          !upperSpec.isCurtainWall &&
+          (upperSpec.index === 9 ||
+            upperSpec.index === 11 ||
+            upperSpec.index === 26 ||
+            region === 'paris' ||
+            region === 'europe' ||
+            archRegion === 'paris' ||
+            archRegion === 'med');
+        if (!isHole && isHaussmannOrEuro && totalSpan >= 10.5 && totalSpan <= 44.0 && len >= 5.5 && upperFloors >= 3) {
+          const floorH = upperSpan / upperFloors;
+          const wroughtIronCol = [0.14 * dirShade, 0.15 * dirShade, 0.17 * dirShade];
+          const stoneMoldingCol = [Math.min(1, pCol[0] * dirShade * 1.05), Math.min(1, pCol[1] * dirShade * 1.04), Math.min(1, pCol[2] * dirShade * 1.02)];
+          // Continuous Haussmann wrought-iron balcony band at Noble Floor (floor 1) and top Mansard base (upperFloors - 1)
+          const haussmannBandFloors = upperFloors >= 5 ? [1, upperFloors - 1] : [1];
+          for (const bFl of haussmannBandFloors) {
+            if (bFl >= 1 && bFl < upperFloors) {
+              const by = bFl * floorH;
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.12, len - 0.12, by - 0.10, by + 0.07, 0.02, 0.46, stoneMoldingCol, false);
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.16, len - 0.16, by + 0.07, by + 0.84, 0.36, 0.44, wroughtIronCol, false);
+            }
+          }
+          // Projecting stone window lintel hoods & triangular pediments over windows on mid floors
+          const nWinBays = Math.min(12, Math.max(2, Math.round(len / upperSpec.metersPerBay)));
+          const winBayW = len / nWinBays;
+          const lintelFl = Math.min(2, upperFloors - 1);
+          const ly = (lintelFl + 0.80) * floorH;
+          for (let wb = 0; wb < nWinBays; wb++) {
+            const wuMid = (wb + 0.5) * winBayW;
+            const hw = Math.min(0.86, winBayW * 0.34);
+            pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, wuMid - hw, wuMid + hw, ly, ly + 0.14, 0.02, 0.22, stoneMoldingCol, false);
+            if ((wb & 1) === 0) {
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, wuMid - hw * 0.62, wuMid + hw * 0.62, ly + 0.14, ly + 0.28, 0.02, 0.18, stoneMoldingCol, false);
+            }
+          }
+        } else if (
+          !isHole &&
+          (btype === 'apartments' || btype === 'residential' || btype === 'hotel' || upperSpec.index === 14 || upperSpec.index === 20) &&
+          totalSpan >= 28.0 &&
+          len >= 7.5 &&
+          upperFloors >= 6
+        ) {
+          // Modern High-Rise Residential Glass-Box Loggia Balconies
+          const floorH = upperSpan / upperFloors;
+          const nLogBays = Math.max(2, Math.round(len / upperSpec.metersPerBay));
+          const logBayW = len / nLogBays;
+          const slabWhiteCol = [Math.min(1, pCol[0] * dirShade * 1.06), Math.min(1, pCol[1] * dirShade * 1.06), Math.min(1, pCol[2] * dirShade * 1.08)];
+          const glassRailCol = [0.34, 0.56, 0.72];
+          const maxLogFl = Math.min(upperFloors - 1, 14);
+          const logStride = nLogBays >= 4 ? 2 : 1;
+          for (let fl = 2; fl <= maxLogFl; fl += 2) {
+            const fy = fl * floorH;
+            for (let lb = (seed + tIdx) % logStride; lb < nLogBays; lb += logStride) {
+              const lu0 = (lb + 0.12) * logBayW;
+              const lu1 = (lb + 0.88) * logBayW;
+              if (lu1 - lu0 < 1.4) continue;
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, lu0, lu1, fy - 0.08, fy + 0.08, 0.02, 0.78, slabWhiteCol, false);
+              pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, lu0 + 0.04, lu1 - 0.04, fy + 0.08, fy + 0.96, 0.68, 0.76, glassRailCol, false);
+            }
+          }
+        }
+
+        // 2g. Street-Facing Ground-Floor Colonnade Pillars, Stone Arcade Piers & Cantilevered Glass-and-Bronze Marquees
+        const isCommOrCivicGround =
+          hasRetailPodium ||
+          btype === 'commercial' ||
+          btype === 'office' ||
+          btype === 'retail' ||
+          btype === 'mall' ||
+          btype === 'department_store' ||
+          btype === 'hotel' ||
+          btype === 'civic' ||
+          btype === 'public' ||
+          btype === 'government';
+        if (!isHole && tIdx === 0 && isCommOrCivicGround && len >= 9.0 && edgeSpan >= 4.2) {
+          const hasRoadEntrance = Boolean(entranceMap && entranceMap.has(i));
+          const colSeed = (seed ^ Math.imul(i + 1, 1597334677)) >>> 0;
+          if (hasRoadEntrance || (hasRetailPodium && (colSeed & 1) === 0)) {
+            const arcadeH = hasRetailPodium ? podiumH : Math.min(4.8, Math.max(3.6, edgeSpan * 0.28));
+            const pierStoneCol = [Math.min(1, pCol[0] * dirShade * 0.94), Math.min(1, pCol[1] * dirShade * 0.93), Math.min(1, pCol[2] * dirShade * 0.91)];
+            const pierBaseCol = [pierStoneCol[0] * 0.82, pierStoneCol[1] * 0.82, pierStoneCol[2] * 0.84];
+            const nArcadeBays = Math.min(12, Math.max(3, Math.round(len / 4.2)));
+            const arcBayW = len / nArcadeBays;
+            // Rhythmic 3D street-level colonnade pillars / stone arcade piers + top entablature spandrel beam
+            for (let pIdx = 0; pIdx <= nArcadeBays; pIdx++) {
+              const pu = 0.22 + (pIdx / nArcadeBays) * (len - 0.44);
+              pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, pu - 0.22, pu + 0.22, 0.0, 0.42, 0.02, 0.56, pierBaseCol, false);
+              pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, pu - 0.17, pu + 0.17, 0.42, arcadeH - 0.24, 0.02, 0.48, pierStoneCol, false);
+            }
+            pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, 0.0, len, arcadeH - 0.24, arcadeH + 0.08, 0.02, 0.54, pierStoneCol, false);
+
+            // Projecting glass-and-bronze cantilevered marquee with diagonal steel tension rods over primary street entrance
+            if (hasRoadEntrance && (btype === 'hotel' || btype === 'office' || btype === 'commercial' || hasRetailPodium) && !facadeSel.isCivicBuilding) {
+              const edgeDoors = entranceMap.get(i);
+              const mainDoorU = edgeDoors && edgeDoors.length > 0 ? edgeDoors[0].uCenter : len * 0.5;
+              const mqW = Math.min(7.8, Math.max(3.8, len * 0.34));
+              const mqu0 = Math.max(0.4, mainDoorU - mqW * 0.5);
+              const mqu1 = Math.min(len - 0.4, mainDoorU + mqW * 0.5);
+              if (mqu1 - mqu0 >= 3.2) {
+                const mqY = Math.min(edgeSpan - 0.5, Math.max(3.4, arcadeH - 0.18));
+                const mqDepth = 1.48;
+                const bronzeCol = [0.26 * dirShade, 0.22 * dirShade, 0.18 * dirShade];
+                const marqueeGlassCol = [0.22, 0.38, 0.50];
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mqu0, mqu1, mqY, mqY + 0.16, 0.04, mqDepth, bronzeCol, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mqu0 + 0.16, mqu1 - 0.16, mqY + 0.16, mqY + 0.22, 0.12, mqDepth - 0.10, marqueeGlassCol, false);
+                pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, mqu0 + 0.24, mqu1 - 0.24, mqY - 0.05, mqY, 0.20, mqDepth - 0.22, [1.0, 0.86, 0.56], true);
+                // Twin upper tie-rod anchor brackets & tension rods above marquee
+                for (const rodU of [mqu0 + 0.45, mqu1 - 0.45]) {
+                  pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, rodU - 0.05, rodU + 0.05, mqY + 0.16, mqY + 0.92, 0.04, mqDepth * 0.65, bronzeCol, false);
+                }
+              }
+            }
+          }
+        }
+
+        // Neoclassical Front Portico Entrance Colonnade & Triangular Pediment on Government / Civic / Monumental buildings
+        const wantPortico =
+          facadeSel.isCivicBuilding ||
+          btype === 'civic' ||
+          btype === 'government' ||
+          btype === 'public' ||
+          btype === 'university' ||
+          btype === 'museum' ||
+          (upperSpec.index === 7 && totalSpan >= 18.0 && (seed % 4 === 0));
+        if (!isHole && tIdx === 0 && wantPortico && entranceMap && entranceMap.has(i) && len >= 10.5 && edgeSpan >= 5.5) {
+          const portW = Math.min(14.0, Math.max(6.8, len * 0.42));
           const pu0 = (len - portW) * 0.5;
           const pu1 = pu0 + portW;
           const portD = 1.65;
@@ -2433,12 +2773,150 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           }
         }
 
-        // 4g. High-Rise Telecom Mast & Red Aviation Obstruction Warning Beacons (height >= 45m)
+        // 4g. Illuminated Art Deco Stepped Spire / Crown Finials on Tall Classic & Art Deco Skyscrapers
+        const wantArtDecoSpire =
+          (fInfo && fInfo.archFeatures && fInfo.archFeatures.artDecoCrownSpire && totalSpan >= 48.0) ||
+          ((upperSpec.index === 5 || upperSpec.index === 7 || arch.roofStyle === 'stepped_stone_crown') && totalSpan >= 48.0) ||
+          (totalSpan >= 78.0 && ((seed >>> 8) % 4) === 0);
+        if (wantArtDecoSpire && spanX >= 11.0 && spanZ >= 11.0) {
+          const decoStoneCol = [Math.min(1, secCol[0] * 1.12), Math.min(1, secCol[1] * 1.08), Math.min(1, secCol[2] * 0.98)];
+          const decoGoldGlow = [1.0, 0.86, 0.46];
+          const crownW0 = Math.min(9.6, Math.min(spanX, spanZ) * 0.42);
+          const crownH = Math.min(11.0, Math.max(4.8, totalSpan * 0.10));
+          const cBaseY = roofY + ph + 0.18;
+          // 3-tier wedding-cake stepped ziggurat crown + illuminated vertical Art Deco lantern slots + needle spire
+          for (let tierStep = 0; tierStep < 3; tierStep++) {
+            const frac0 = tierStep / 3.0;
+            const frac1 = (tierStep + 1) / 3.0;
+            const tierW = crownW0 * (1.0 - frac0 * 0.56);
+            const yStep0 = cBaseY + frac0 * crownH;
+            const stepH = (frac1 - frac0) * crownH;
+            pushDetailWorldBox(cx, yStep0, cz, tierW, stepH, tierW * 0.82, decoStoneCol, false);
+            pushDetailWorldBox(cx, yStep0, cz, tierW * 0.82, stepH, tierW, decoStoneCol, false);
+            pushDetailWorldBox(cx, yStep0 + stepH * 0.18, cz, tierW * 1.03, stepH * 0.64, tierW * 0.24, decoGoldGlow, true);
+            pushDetailWorldBox(cx, yStep0 + stepH * 0.18, cz, tierW * 0.24, stepH * 0.64, tierW * 1.03, decoGoldGlow, true);
+          }
+          const spireNeedleH = Math.min(9.5, Math.max(4.2, totalSpan * 0.08));
+          pushDetailWorldBox(cx, cBaseY + crownH, cz, 0.36, spireNeedleH, 0.36, [0.88, 0.82, 0.64], false);
+          pushDetailWorldBox(cx, cBaseY + crownH + spireNeedleH, cz, 0.48, 0.48, 0.48, [1.0, 0.24, 0.10], true);
+        }
+
+        // 4h. Helipad Deck with Perimeter Safety Netting, Wind Cone & Beacon Lights on Tall Modern Office / Hospital Towers (totalSpan >= 70m or Hospital >= 28m)
+        const isHospitalHelipad =
+          (btype === 'hospital' || (fInfo && fInfo.category === 'hospital_med')) && totalSpan >= 28.0;
+        const isTowerHelipad =
+          !wantArtDecoSpire &&
+          totalSpan >= 70.0 &&
+          (upperSpec.isCurtainWall || btype === 'office' || btype === 'commercial' || btype === 'hotel' || (fInfo && fInfo.archFeatures && fInfo.archFeatures.helipadDeck)) &&
+          ((seed >>> 9) % 3) === 0;
+        if ((isHospitalHelipad || isTowerHelipad) && spanX >= 14.0 && spanZ >= 14.0) {
+          const heliW = Math.min(11.5, Math.min(spanX, spanZ) * 0.46);
+          const heliY = roofY + ph + 0.20;
+          const padDarkCol = [0.22, 0.24, 0.27];
+          const netFrameCol = [0.46, 0.49, 0.53];
+          const markWhiteCol = [0.95, 0.96, 0.98];
+          const markRedCol = [0.88, 0.20, 0.18];
+          const helipadBeaconCol = [0.20, 0.94, 0.42];
+          // Octagonal elevated helipad landing deck + recessed perimeter safety netting apron
+          pushDetailWorldBox(cx, heliY - 0.45, cz, heliW * 0.68, 0.45, heliW * 0.68, secCol, false);
+          pushDetailWorldBox(cx, heliY - 0.10, cz, heliW + 1.3, 0.08, heliW * 0.82, netFrameCol, false);
+          pushDetailWorldBox(cx, heliY - 0.10, cz, heliW * 0.82, 0.08, heliW + 1.3, netFrameCol, false);
+          pushDetailWorldBox(cx, heliY, cz, heliW, 0.22, heliW * 0.78, padDarkCol, false);
+          pushDetailWorldBox(cx, heliY, cz, heliW * 0.78, 0.22, heliW, padDarkCol, false);
+          // Central 'H' landing marking (2 vertical bars + 1 crossbar)
+          const hSpan = heliW * 0.36;
+          const hThick = Math.max(0.32, heliW * 0.06);
+          const hCol = isHospitalHelipad ? markRedCol : markWhiteCol;
+          pushDetailWorldBox(cx - hSpan * 0.42, heliY + 0.22, cz, hThick, 0.05, hSpan, hCol, true);
+          pushDetailWorldBox(cx + hSpan * 0.42, heliY + 0.22, cz, hThick, 0.05, hSpan, hCol, true);
+          pushDetailWorldBox(cx, heliY + 0.22, cz, hSpan * 0.84, 0.05, hThick, hCol, true);
+          // 4 perimeter green/amber helipad threshold beacon lights + orange windsock mast
+          const bOff = heliW * 0.44;
+          for (const [bx, bz] of [[-bOff, -bOff], [bOff, -bOff], [-bOff, bOff], [bOff, bOff]]) {
+            pushDetailWorldBox(cx + bx, heliY + 0.22, cz + bz, 0.30, 0.24, 0.30, helipadBeaconCol, true);
+          }
+          pushDetailWorldBox(cx + bOff + 0.45, heliY, cz, 0.12, 1.85, 0.12, markWhiteCol, false);
+          pushDetailWorldBox(cx + bOff + 0.82, heliY + 1.55, cz, 0.72, 0.28, 0.28, [0.98, 0.42, 0.08], true);
+        }
+
+        // 4i. Rooftop Sky-Garden Pergola & Glass Conservatory Pavilion on Luxury Residential / Hotel / Tech Towers
+        const wantSkyGardenPergola =
+          !isHospitalHelipad &&
+          !isTowerHelipad &&
+          totalSpan >= 24.0 &&
+          spanX >= 13.0 &&
+          spanZ >= 13.0 &&
+          (btype === 'hotel' ||
+            btype === 'apartments' ||
+            btype === 'residential' ||
+            (fInfo && fInfo.archFeatures && fInfo.archFeatures.skyGardenPergola)) &&
+          ((seed >>> 10) % 3) === 0;
+        if (wantSkyGardenPergola) {
+          const pergX = cx - hDirX * (pw * 0.5 + 2.4);
+          const pergZ = cz - hDirZ * (pd * 0.35);
+          const pergW = Math.min(5.6, spanX * 0.26);
+          const pergD = Math.min(4.4, spanZ * 0.24);
+          if (isBoxSafe(pergX, pergZ, pergW, pergD, 0.8)) {
+            const timberBronzeCol = [0.42, 0.29, 0.19];
+            const conservatoryGlass = [0.32, 0.58, 0.74];
+            const warmPavilionGlow = [1.0, 0.86, 0.56];
+            const hedgeCol = [0.22, 0.48, 0.20];
+            const pergH = 2.65;
+            // Glass conservatory pavilion core + warm interior lantern glow
+            pushDetailWorldBox(pergX, roofY, pergZ, pergW * 0.68, pergH - 0.15, pergD * 0.68, conservatoryGlass, false);
+            pushDetailWorldBox(pergX, roofY + 0.25, pergZ, pergW * 0.46, pergH * 0.65, pergD * 0.46, warmPavilionGlow, true);
+            // 4 corner pergola columns + open trellis beams
+            const pxOff = pergW * 0.46, pzOff = pergD * 0.46;
+            for (const [lx, lz] of [[-pxOff, -pzOff], [pxOff, -pzOff], [-pxOff, pzOff], [pxOff, pzOff]]) {
+              pushDetailWorldBox(pergX + lx, roofY, pergZ + lz, 0.22, pergH, 0.22, timberBronzeCol, false);
+            }
+            for (let bIdx = 0; bIdx < 5; bIdx++) {
+              const bzBeam = pergZ - pzOff + (bIdx / 4.0) * (pzOff * 2.0);
+              pushDetailWorldBox(pergX, roofY + pergH, bzBeam, pergW + 0.3, 0.16, 0.18, timberBronzeCol, false);
+            }
+            // Flanking rooftop sky-garden greenery planter beds
+            pushDetailWorldBox(pergX, roofY, pergZ + pzOff + 0.55, pergW, 0.55, 0.65, hedgeCol, false);
+          }
+        }
+
+        // 4j. Broadcast Lattice Tower with Microwave Dish Drums & Aviation Beacons on Tall Commercial / Telecom High-Rises
         if (totalSpan >= 45.0) {
           const beaconCol = [1.0, 0.18, 0.08];
-          const mastH = Math.min(5.2, Math.max(2.8, totalSpan * 0.045));
-          pushDetailWorldBox(cx, roofY + ph + 0.18, cz, 0.22, mastH, 0.22, ductCol, false);
-          pushDetailWorldBox(cx, roofY + ph + 0.18 + mastH, cz, 0.42, 0.42, 0.42, beaconCol, true);
+          const dishWhiteCol = [0.92, 0.94, 0.96];
+          const isMajorBroadcastTower =
+            !wantArtDecoSpire &&
+            totalSpan >= 56.0 &&
+            (btype === 'office' || btype === 'commercial' || upperSpec.isCurtainWall || (fInfo && fInfo.archFeatures && fInfo.archFeatures.broadcastLatticeTower)) &&
+            ((seed >>> 11) % 3) === 0;
+          if (isMajorBroadcastTower) {
+            const tBaseY = roofY + ph + 0.18;
+            const latH = Math.min(12.5, Math.max(6.2, totalSpan * 0.095));
+            const baseSpread = 1.15;
+            // 4-leg tapered steel lattice tower + 3 horizontal cross-brace rings + twin microwave dish drums
+            for (let tierIdx = 0; tierIdx < 3; tierIdx++) {
+              const f0 = tierIdx / 3.0, f1 = (tierIdx + 1) / 3.0;
+              const wRing = baseSpread * (1.0 - f0 * 0.55);
+              const segY0 = tBaseY + f0 * latH;
+              const segH = (f1 - f0) * latH;
+              const legOff = wRing * 0.44;
+              for (const [lx, lz] of [[-legOff, -legOff], [legOff, -legOff], [-legOff, legOff], [legOff, legOff]]) {
+                pushDetailWorldBox(cx + lx, segY0, cz + lz, 0.14, segH, 0.14, ductCol, false);
+              }
+              pushDetailWorldBox(cx, segY0 + segH - 0.12, cz, wRing, 0.12, wRing, ductCol, false);
+            }
+            // Twin circular/box microwave relay dish drums mounted at mid-height
+            const dishY = tBaseY + latH * 0.52;
+            pushDetailWorldBox(cx + baseSpread * 0.48, dishY, cz, 0.36, 0.78, 0.78, dishWhiteCol, false);
+            pushDetailWorldBox(cx - baseSpread * 0.48, dishY + 0.9, cz, 0.36, 0.68, 0.68, dishWhiteCol, false);
+            // Upper whip antenna + twin aviation obstruction beacons
+            pushDetailWorldBox(cx, tBaseY + latH, cz, 0.16, 2.6, 0.16, ductCol, false);
+            pushDetailWorldBox(cx, tBaseY + latH * 0.66, cz, 0.34, 0.34, 0.34, beaconCol, true);
+            pushDetailWorldBox(cx, tBaseY + latH + 2.6, cz, 0.44, 0.44, 0.44, beaconCol, true);
+          } else {
+            const mastH = Math.min(5.2, Math.max(2.8, totalSpan * 0.045));
+            pushDetailWorldBox(cx, roofY + ph + 0.18, cz, 0.22, mastH, 0.22, ductCol, false);
+            pushDetailWorldBox(cx, roofY + ph + 0.18 + mastH, cz, 0.42, 0.42, 0.42, beaconCol, true);
+          }
         }
       }
     }

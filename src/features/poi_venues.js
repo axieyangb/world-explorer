@@ -597,66 +597,121 @@ export function buildPoiVenues(ctx) {
     A_ceiling(F, W, D, GH);
     // shelving
     if (o.shelves !== false) shelving(F, -W / 2 + 0.3, W / 2 - 0.3, D, rnd, o.tall ? 1.9 : 1.55, o.doorW || 1.9, o.doorX || 0);
-    // side pilasters with stepped granite plinth base & cornice capital
+    const frameCol = o.frame || C.aluDk;
+    const brassKick = [0.78, 0.62, 0.24];
+    // Decorative fluted side pilasters with stepped granite plinth base, shaft flutes, necking ring & corbelled capital brackets
     for (const s of [-1, 1]) {
       const px = s * (W / 2 - 0.11);
-      box(bld, F, px, (GH + fB) / 2, D / 2 + 0.04, 0.22, GH + fB, D + 0.08, o.frame || C.aluDk, false, 'b');
-      box(bld, F, px, 0.20, D / 2 + 0.06, 0.26, 0.40, D + 0.12, C.granite, false, 'b');
-      box(bld, F, px, GH - 0.05, D / 2 + 0.06, 0.26, 0.10, D + 0.12, o.frame || C.aluDk);
+      box(bld, F, px, (GH + fB) / 2, D / 2 + 0.04, 0.24, GH + fB, D + 0.08, frameCol, false, 'b');
+      box(bld, F, px, 0.22, D / 2 + 0.06, 0.28, 0.44, D + 0.13, C.granite, false, 'b');
+      // Fluted vertical pilaster strips on front face
+      for (const df of [-0.055, 0, 0.055]) {
+        box(bld, F, px + df, (GH + 0.35) / 2, D + 0.09, 0.028, GH - 0.55, 0.025, mul(frameCol, 1.22));
+      }
+      // Capital necking molding + stepped corbel bracket supporting fascia cornice
+      box(bld, F, px, GH - 0.16, D / 2 + 0.06, 0.28, 0.05, D + 0.13, mul(frameCol, 1.18));
+      box(bld, F, px, GH - 0.04, D / 2 + 0.07, 0.30, 0.12, D + 0.15, frameCol);
+      box(bld, F, px, GH + 0.08, D + 0.12, 0.22, 0.16, 0.14, mul(frameCol, 1.15));
     }
-    // glass + mullions + stepped sill + transom + mullion brackets
+    // glass + mullions + recessed bulkhead kickplates + transom fanlights
     const gz = D - 0.06;
-    face(glass, F, -W / 2 + 0.22, W / 2 - 0.22, 0.32, GH, gz, [0.6, 0.72, 0.78]);
-    const mullW = 0.07;
-    box(bld, F, 0, GH - 0.035, gz, W - 0.3, 0.07, 0.1, o.frame || C.aluDk);
-    box(bld, F, 0, 0.36, gz, W - 0.3, 0.08, 0.1, o.frame || C.aluDk);
-    box(bld, F, 0, 0.31, gz + 0.03, W - 0.22, 0.05, 0.14, C.granite);
-    const tr = GH - 0.55;
-    box(bld, F, 0, tr, gz, W - 0.3, 0.06, 0.08, o.frame || C.aluDk);
     const doorW = o.doorW || 1.9, doorX = o.doorX || 0;
+    const kickH = 0.42;
+    face(glass, F, -W / 2 + 0.22, W / 2 - 0.22, kickH, GH, gz, [0.6, 0.72, 0.78]);
+    const mullW = 0.07;
+    box(bld, F, 0, GH - 0.035, gz, W - 0.3, 0.07, 0.1, frameCol);
+    box(bld, F, 0, kickH, gz, W - 0.3, 0.08, 0.11, frameCol);
+    box(bld, F, 0, kickH - 0.05, gz + 0.03, W - 0.22, 0.05, 0.14, C.granite);
+    // Recessed Bulkhead Kickplates under display windows (left and right of entrance door)
+    for (const [kx0, kx1] of [[-W / 2 + 0.22, doorX - doorW / 2 - 0.04], [doorX + doorW / 2 + 0.04, W / 2 - 0.22]]) {
+      const span = kx1 - kx0;
+      if (span < 0.45) continue;
+      const km = (kx0 + kx1) / 2;
+      box(bld, F, km, kickH / 2, gz - 0.01, span, kickH, 0.09, frameCol, false, 'b');
+      box(bld, F, km, 0.04, gz + 0.04, span + 0.02, 0.07, 0.04, brassKick, false, 'b');
+      const nCoff = Math.max(1, Math.round(span / 1.35));
+      for (let c = 0; c < nCoff; c++) {
+        const cx0 = kx0 + (span * c) / nCoff + 0.06, cx1 = kx0 + (span * (c + 1)) / nCoff - 0.06;
+        if (cx1 - cx0 < 0.2) continue;
+        box(bld, F, (cx0 + cx1) / 2, kickH * 0.54, gz + 0.025, cx1 - cx0, kickH - 0.16, 0.03, mul(scheme[0], 0.75));
+        face(bld, F, cx0 + 0.04, cx1 - 0.04, 0.13, kickH - 0.10, gz + 0.045, mul(frameCol, 1.25));
+      }
+    }
+    const tr = GH - 0.56;
+    box(bld, F, 0, tr, gz, W - 0.3, 0.065, 0.09, frameCol);
     const nBays = Math.max(1, Math.round((W - doorW) / 1.6));
     for (let i = 1; i < nBays; i++) {
       const x = -W / 2 + ((W) * i) / nBays;
       if (Math.abs(x - doorX) < doorW / 2 + 0.1) continue;
-      box(bld, F, x, (GH + 0.36) / 2, gz, mullW, GH - 0.36, 0.09, o.frame || C.aluDk);
-      box(bld, F, x, 0.42, gz + 0.01, mullW + 0.04, 0.12, 0.11, C.alu);
+      box(bld, F, x, (GH + kickH) / 2, gz, mullW, GH - kickH, 0.09, frameCol);
+      box(bld, F, x, kickH + 0.06, gz + 0.01, mullW + 0.04, 0.12, 0.11, C.alu);
       box(bld, F, x, tr, gz + 0.01, mullW + 0.05, 0.10, 0.10, C.alu);
     }
-    // sliding door: frame, leaves (meeting stiles), header sensor, mat
-    for (const s of [-1, 1]) box(bld, F, doorX + (s * doorW) / 2, (tr + 0.32) / 2, gz + 0.02, 0.09, tr - 0.32, 0.12, o.frame || C.aluDk);
+    // Transom Fanlight above entrance doorway (arched fanlight muntin bars + warm backlit transom pane)
+    const fanH = Math.max(0.28, GH - tr - 0.08);
+    const fanR = Math.min(doorW * 0.44, fanH * 0.92);
+    face(bld, F, doorX - doorW * 0.46, doorX + doorW * 0.46, tr + 0.03, GH - 0.06, gz - 0.02, [0.98, 0.88, 0.66], true);
+    for (let k = 0; k < 6; k++) {
+      const a0 = (k / 6) * Math.PI, a1 = ((k + 1) / 6) * Math.PI;
+      const ax0 = doorX + Math.cos(a0) * fanR, ay0 = tr + 0.03 + Math.sin(a0) * fanR;
+      const ax1 = doorX + Math.cos(a1) * fanR, ay1 = tr + 0.03 + Math.sin(a1) * fanR;
+      // Arched rim segment + radiating spoke bar from hub
+      const dx = ax1 - ax0, dy = ay1 - ay0, dl = Math.hypot(dx, dy) || 1;
+      const nx = (-dy / dl) * 0.028, ny = (dx / dl) * 0.028;
+      bld.quad(F.p(ax0 - nx, ay0 - ny, gz + 0.03), F.p(ax1 - nx, ay1 - ny, gz + 0.03), F.p(ax1 + nx, ay1 + ny, gz + 0.03), F.p(ax0 + nx, ay0 + ny, gz + 0.03), frameCol);
+      if (k > 0) {
+        const sx = Math.cos(a0), sy = Math.sin(a0), wx = -sy * 0.018, wy = sx * 0.018;
+        bld.quad(F.p(doorX - wx, tr + 0.03 - wy, gz + 0.03), F.p(doorX + wx, tr + 0.03 + wy, gz + 0.03), F.p(ax0 + wx, ay0 + wy, gz + 0.03), F.p(ax0 - wx, ay0 - wy, gz + 0.03), C.alu);
+      }
+    }
+    // sliding door: frame, leaves (meeting stiles), brass push/pull handles, header sensor, mat
+    for (const s of [-1, 1]) box(bld, F, doorX + (s * doorW) / 2, (tr + 0.32) / 2, gz + 0.02, 0.09, tr - 0.32, 0.12, frameCol);
     box(bld, F, doorX - 0.02, (tr + 0.32) / 2, gz + 0.05, 0.05, tr - 0.4, 0.05, C.alu);
     box(bld, F, doorX + 0.04, (tr + 0.32) / 2, gz + 0.09, 0.05, tr - 0.4, 0.05, C.alu);
+    for (const s of [-0.14, 0.14]) box(bld, F, doorX + s, 1.05, gz + 0.11, 0.025, 0.32, 0.035, brassKick);
     box(bld, F, doorX, tr - 0.1, gz + 0.1, 0.42, 0.1, 0.12, C.black);
     box(bld, F, doorX, tr - 0.12, gz + 0.17, 0.1, 0.03, 0.02, [0.9, 0.1, 0.05], true);
     flat(bld, F, doorX - doorW / 2, doorX + doorW / 2, D + 0.02, D + 1.25, 0.03, C.black);
-    // fascia sign band (lit box), upper/lower cornice trim moldings, accent stripes, sign text
+    // fascia sign band (lit box), upper/lower cornice trim moldings + dentil blocks, accent stripes, sign text
     const fz0 = -0.02, fz1 = D + 0.18;
     box(bld, F, 0, GH + fB / 2, (fz0 + fz1) / 2, W + 0.08, fB, fz1 - fz0, scheme[0], 'f', 'k');
-    box(bld, F, 0, GH + fB + 0.03, (fz0 + fz1) / 2 + 0.02, W + 0.16, 0.06, fz1 - fz0 + 0.06, o.frame || C.aluDk);
-    box(bld, F, 0, GH - 0.015, fz1 - 0.04, W + 0.12, 0.04, 0.10, o.frame || C.aluDk);
+    box(bld, F, 0, GH + fB + 0.03, (fz0 + fz1) / 2 + 0.02, W + 0.16, 0.06, fz1 - fz0 + 0.06, frameCol);
+    box(bld, F, 0, GH - 0.015, fz1 - 0.04, W + 0.12, 0.04, 0.10, frameCol);
     if (scheme[1]) box(bld, F, 0, GH + 0.07, fz1 + 0.005, W + 0.1, 0.1, 0.03, scheme[1], 'f');
     if (scheme[2]) box(bld, F, 0, GH + fB - 0.05, fz1 + 0.005, W + 0.1, 0.07, 0.03, scheme[2], 'f');
     if (o.signText !== false) {
       const sw = Math.min(W - 0.6, Math.max(2.4, (o.signText || '').length * fB * 0.62 + 1.2));
       sign(F, o.signX || 0, GH + fB / 2 + 0.02, fz1 + 0.03, sw, Math.max(0.35, fB - 0.3), o.signStyle || 1, o.signText, o.signTextEn, o.signBg, o.signFg);
     }
-    // awning below the fascia: slanted cloth + valance
+    // awning below the fascia: slanted cloth + striped valance scallops + wrought-iron scroll brackets
     if (o.awning) {
       const aw = o.awning;
       const az0 = fz1 - 0.02, az1 = az0 + (o.awningDepth || 1.5), ay0 = GH - 0.02, ay1 = GH - 0.6;
       const stripes = Math.max(2, Math.round(W / 0.55));
       for (let i = 0; i < stripes; i++) {
-        const x0 = -W / 2 + (W * i) / stripes, x1 = -W / 2 + (W * (i + 1)) / stripes;
+        const x0 = -W / 2 + (W * i) / stripes, x1 = -W / 2 + (W * (i + 1)) / stripes, xm = (x0 + x1) / 2;
         const c = aw[1] && i % 2 ? aw[1] : aw[0];
         bld.quad(F.p(x0, ay1, az1), F.p(x1, ay1, az1), F.p(x1, ay0, az0), F.p(x0, ay0, az0), c);
-        bld.quad(F.p(x0, ay1 - 0.28, az1), F.p(x1, ay1 - 0.28, az1), F.p(x1, ay1, az1), F.p(x0, ay1, az1), c);
+        bld.quad(F.p(x0, ay1 - 0.24, az1), F.p(x1, ay1 - 0.24, az1), F.p(x1, ay1, az1), F.p(x0, ay1, az1), c);
+        // Striped valance scallop tab hanging below front valance bar
+        bld.quad(F.p(x0 + 0.03, ay1 - 0.34, az1 + 0.005), F.p(x1 - 0.03, ay1 - 0.34, az1 + 0.005), F.p(x1, ay1 - 0.24, az1), F.p(x0, ay1 - 0.24, az1), c);
+        bld.tri(F.p(x0 + 0.03, ay1 - 0.34, az1 + 0.005), F.p(xm, ay1 - 0.39, az1 + 0.005), F.p(x1 - 0.03, ay1 - 0.34, az1 + 0.005), c);
       }
-      // Front awning valance bar + side cheek triangles
-      box(bld, F, 0, ay1 - 0.02, az1 - 0.02, W - 0.04, 0.045, 0.045, o.frame || C.aluDk);
+      // Front awning valance bar + side cheek triangles + wrought-iron scroll brackets
+      box(bld, F, 0, ay1 - 0.02, az1 - 0.02, W - 0.04, 0.045, 0.045, frameCol);
       for (const s of [-1, 1]) {
         const x = (s * W) / 2;
-        const a = F.p(x, ay0, az0), b = F.p(x, ay1, az1), c = F.p(x, ay1 - 0.28, az1), d = F.p(x, ay0 - 0.05, az0);
+        const a = F.p(x, ay0, az0), b = F.p(x, ay1, az1), c = F.p(x, ay1 - 0.24, az1), d = F.p(x, ay0 - 0.05, az0);
         if (s < 0) { bld.tri(a, d, b, aw[0]); bld.tri(b, d, c, aw[0]); } else { bld.tri(a, b, d, aw[0]); bld.tri(b, c, d, aw[0]); }
+      }
+      const bracketXs = W > 6.8 ? [-W / 2 + 0.14, 0, W / 2 - 0.14] : [-W / 2 + 0.14, W / 2 - 0.14];
+      for (const bx of bracketXs) {
+        box(bld, F, bx, ay0 - 0.36, az0 - 0.02, 0.05, 0.56, 0.04, C.black);
+        // Diagonal wrought-iron strut + decorative scroll crossbars
+        const p0 = F.p(bx, ay0 - 0.58, az0), p1 = F.p(bx, ay1 - 0.03, az1 - 0.08);
+        const p0u = F.p(bx, ay0 - 0.52, az0), p1u = F.p(bx, ay1 + 0.02, az1 - 0.08);
+        bld.quad(p0, p1, p1u, p0u, C.black);
+        box(bld, F, bx, ay0 - 0.36, az0 + (az1 - az0) * 0.36, 0.035, 0.14, 0.14, brassKick);
       }
     }
     // spill light on the pavement at night
@@ -670,6 +725,80 @@ export function buildPoiVenues(ctx) {
     for (let i = 0; i < n; i++) {
       const x = -W / 2 + 0.3 + ((W - 0.6) * (i + 0.5)) / n;
       box(bld, F, x, GH - 0.09, D * 0.45, Math.min(1.4, (W - 0.6) / n - 0.3), 0.02, 0.22, C.light, true);
+    }
+  }
+  // Projecting illuminated double-sided blade sign with wrought-iron hanging bracket & scroll tie-rod
+  function bladeSign(F, bx, by, bz, bladeD, bladeH, bgRgb, trimRgb, textZh, textEn, fgHex = 0xffffff, style = 2) {
+    const zArm0 = Math.max(0.05, bz - bladeD * 0.62);
+    const armLen = bladeD + 0.28;
+    const zArmMid = zArm0 + armLen / 2;
+    // Wall cleat plate + top & bottom cantilever bracket arms + diagonal scroll brace + hanging chains
+    box(bld, F, bx, by + 0.08, zArm0 + 0.02, 0.12, bladeH + 0.36, 0.04, C.black);
+    box(bld, F, bx, by + bladeH / 2 + 0.14, zArmMid, 0.055, 0.055, armLen, C.black);
+    box(bld, F, bx, by - bladeH / 2 - 0.10, zArm0 + armLen * 0.38, 0.045, 0.045, armLen * 0.72, C.black);
+    const pA = F.p(bx, by + bladeH / 2 + 0.34, zArm0 + 0.04), pB = F.p(bx, by + bladeH / 2 + 0.14, bz + bladeD * 0.35);
+    const pAu = F.p(bx, by + bladeH / 2 + 0.38, zArm0 + 0.04), pBu = F.p(bx, by + bladeH / 2 + 0.18, bz + bladeD * 0.35);
+    bld.quad(pA, pB, pBu, pAu, C.black);
+    for (const dz of [-bladeD * 0.28, bladeD * 0.28]) {
+      box(bld, F, bx, by + bladeH / 2 + 0.07, bz + dz, 0.03, 0.12, 0.03, trimRgb);
+    }
+    // Illuminated double-sided sign cabinet + metallic bezel + glowing edge strip
+    box(bld, F, bx, by, bz, 0.14, bladeH, bladeD, bgRgb, 'lr');
+    box(bld, F, bx, by, bz, 0.16, bladeH + 0.06, bladeD + 0.06, trimRgb, false, 'lr');
+    box(bld, F, bx, by, bz + bladeD / 2 + 0.035, 0.09, bladeH - 0.08, 0.04, [1.0, 0.92, 0.72], true);
+    const bgHex = toHex(bgRgb);
+    for (const s of [-1, 1]) {
+      const BFrame = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
+      sign(BFrame, s > 0 ? -bz : bz, by, s > 0 ? bx + 0.085 : -bx + 0.085, bladeD * 0.86, bladeH * 0.78, style, textZh, textEn, bgHex, fgHex);
+    }
+  }
+  // Sidewalk cafe / pub patio enclosure: brass-post velvet/canvas barriers, corner planters & overhead timber pergola with festoon lights
+  function patioEnclosure(F, W, z0, z1, postCol, panelCol, hasPergola = true, pergolaCol = [0.30, 0.18, 0.10]) {
+    const pW = Math.min(W - 0.2, 8.6), hx = pW / 2, gap = 0.95;
+    const railH = 0.88;
+    // Corner planter boxes with boxwood greenery + brass-capped barrier posts
+    for (const sx of [-1, 1]) {
+      const cx = sx * hx;
+      box(bld, F, cx, 0.24, z1, 0.42, 0.48, 0.42, pergolaCol, false, 'b');
+      box(bld, F, cx, 0.56, z1, 0.36, 0.26, 0.36, [0.16, 0.46, 0.18]);
+      // Side return barrier panels (z0 -> z1)
+      const zMid = (z0 + z1) / 2, zSpan = z1 - z0 - 0.24;
+      if (zSpan > 0.4) {
+        box(bld, F, cx, railH, zMid, 0.04, 0.04, zSpan, postCol);
+        box(bld, F, cx, 0.20, zMid, 0.04, 0.04, zSpan, postCol);
+        box(bld, F, cx, 0.54, zMid, 0.025, 0.56, zSpan - 0.12, panelCol);
+      }
+      // Front barrier wing (from corner cx inward to central entrance gap)
+      const gx = sx * gap;
+      const wMid = (cx + gx) / 2, wSpan = Math.abs(cx - gx);
+      if (wSpan > 0.45) {
+        box(bld, F, gx, railH / 2, z1, 0.06, railH, 0.06, postCol, false, 'b');
+        box(bld, F, gx, railH + 0.04, z1, 0.09, 0.07, 0.09, postCol);
+        box(bld, F, wMid, railH, z1, wSpan, 0.04, 0.04, postCol);
+        box(bld, F, wMid, 0.20, z1, wSpan, 0.04, 0.04, postCol);
+        box(bld, F, wMid, 0.54, z1, wSpan - 0.14, 0.56, 0.028, panelCol);
+        box(bld, F, wMid, 0.54, z1, wSpan - 0.26, 0.08, 0.034, postCol);
+      }
+    }
+    if (hasPergola) {
+      const pH = 2.62, zMid = (z0 + z1) / 2, zDepth = z1 - z0 + 0.16;
+      for (const sx of [-1, 1]) {
+        for (const pz of [z0 + 0.08, z1 - 0.08]) {
+          box(bld, F, sx * hx, pH / 2, pz, 0.11, pH, 0.11, pergolaCol, false, 'b');
+          box(bld, F, sx * hx, 0.14, pz, 0.16, 0.28, 0.16, postCol, false, 'b');
+        }
+        box(bld, F, sx * hx, pH - 0.06, zMid, 0.12, 0.12, zDepth, pergolaCol);
+      }
+      box(bld, F, 0, pH - 0.06, z0 + 0.08, pW + 0.2, 0.12, 0.10, pergolaCol);
+      box(bld, F, 0, pH - 0.06, z1 - 0.08, pW + 0.2, 0.12, 0.10, pergolaCol);
+      const nRafters = Math.max(4, Math.round(pW / 0.72));
+      for (let i = 0; i <= nRafters; i++) {
+        const rx = -hx + (pW * i) / nRafters;
+        box(bld, F, rx, pH + 0.03, zMid, 0.06, 0.09, zDepth + 0.18, pergolaCol);
+        if (i % 2 === 1 && i < nRafters) {
+          box(bld, F, rx, pH - 0.12, zMid, 0.09, 0.08, 0.09, C.lightWarm, true);
+        }
+      }
     }
   }
   // Gondola shelving facing the window, with product fronts (2 tris each) that glow a little at night
@@ -1125,12 +1254,17 @@ export function buildPoiVenues(ctx) {
     let res;
     if (kind === 'conv' || kind === 'fuelShop' || kind === 'kiosk') {
       const GH = Math.min(2.95, hostTop - 1.05);
+      const sZh = o.name || (kind === 'conv' ? '便利店' : '商店');
+      const sEn = o.nameEn || o.name || (kind === 'conv' ? 'MART 24' : 'FOOD MART');
       res = storefront(F, W, {
         rnd, scheme, hostTop, glassH: GH, fasciaH: 0.85, depth: 0.95,
-        signText: o.name || (kind === 'conv' ? '便利店' : '商店'), signTextEn: o.nameEn || o.name || (kind === 'conv' ? 'MART 24' : 'FOOD MART'),
+        signText: sZh, signTextEn: sEn,
         signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 1,
         awning: kind === 'conv' && o.awning ? o.awning : null, frame: C.aluDk,
       });
+      if (kind === 'conv') {
+        bladeSign(F, -W / 2 + 0.16, GH + 0.25, res.D + 0.62, 0.78, 0.68, scheme[0], C.alu, '24H便利', '24H MART', toHex(scheme[1]), 2);
+      }
       if (!o.noDressingRoom && fr.E) shopDressing(F, W, fr.E, o.kinds || ['atm', 'news', 'freezer'], rnd, res.D);
       else if (o.kinds) {
         // free-standing kiosk: freezer + rack in front of the glass, off the door line
@@ -1145,9 +1279,10 @@ export function buildPoiVenues(ctx) {
         rnd, scheme, hostTop, glassH: GH, fasciaH: 0.8, depth: 0.95, interior: [0.92, 0.94, 0.92],
         signText: o.name || '药店', signTextEn: o.nameEn || o.name || 'PHARMACY', signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 1, frame: C.aluDk,
       });
-      // projecting double-sided green cross on a bracket at the storefront corner
+      // projecting double-sided green cross on +W/2 corner + illuminated pharmacy blade sign on -W/2 corner
       const [cx, , cz] = F.p(W / 2 + 0.05, 0, 0.75);
       push('greenCross', cx, F.y0 + Math.min(hostTop - 0.8, GH + 1.6), cz, F.rotY(Math.PI / 2), 1, 1, 1, 0xffffff);
+      bladeSign(F, -W / 2 + 0.16, GH + 0.22, res.D + 0.60, 0.76, 0.66, [0.04, 0.52, 0.22], C.white, '大药房', 'RX DRUGS', 0xffffff, 2);
     } else if (kind === 'bank') {
       const GH = Math.min(3.0, hostTop - 1.05);
       res = storefront(F, W, {
@@ -1199,7 +1334,8 @@ export function buildPoiVenues(ctx) {
         signBg: toHex(scheme[0]), signFg: toHex(scheme[1]), signStyle: 4,
         awning: [scheme[0], scheme[1]], awningDepth: 1.75, frame: woodFrame,
       });
-      // Brass fascia accent rail + warm interior espresso bar & glowing pendant lamps
+      // Projecting illuminated double-sided cafe blade sign + brass fascia accent rail + warm espresso bar
+      bladeSign(F, -W / 2 + 0.16, GH + 0.32, res.D + 0.64, 0.82, 0.68, scheme[0], brassTrim, '精品咖啡', 'CAFE BISTRO', toHex(scheme[1]), 4);
       box(bld, F, 0, GH + 0.04, res.D + 0.19, W + 0.12, 0.05, 0.04, brassTrim);
       box(bld, F, 0, 0.85, 0.38, Math.min(W - 1.6, 5.2), 1.0, 0.42, woodFrame);
       box(bld, F, 0, 1.37, 0.38, Math.min(W - 1.5, 5.3), 0.05, 0.48, [0.92, 0.90, 0.85]);
@@ -1208,8 +1344,9 @@ export function buildPoiVenues(ctx) {
         const px = -W * 0.36 + (W * 0.72 * i) / Math.max(1, nPend - 1);
         box(bld, F, px, GH - 0.55, 0.52, 0.24, 0.18, 0.24, [1.0, 0.86, 0.55], true);
       }
-      // Sidewalk patio dining zone: 2-3 bistro tables with umbrellas + A-frame chalkboard menu sign
+      // Sidewalk Cafe Pergola & Brass-Post Canvas Barrier Enclosure around outdoor patio dining zone
       const patioZ = res.D + 1.85;
+      patioEnclosure(F, W, res.D + 0.28, res.D + 2.68, brassTrim, scheme[0], true, woodFrame);
       const nTables = W >= 8.2 ? 3 : 2;
       const span = Math.min(W - 1.4, (nTables - 1) * 2.55);
       const uTint = toHex(scheme[0]);
@@ -1219,7 +1356,7 @@ export function buildPoiVenues(ctx) {
         const [wx, , wz] = F.p(tx, 0, patioZ);
         if (!bldAt(wx, wz, 0.2)) push('patioTable', wx, groundTop(wx, wz), wz, F.rotY((i % 2) * 0.35), 1, 1, 1, uTint);
       }
-      const [mx, , mz] = F.p(W / 2 - 0.35, 0, res.D + 2.35);
+      const [mx, , mz] = F.p(W / 2 - 0.35, 0, res.D + 2.85);
       if (!bldAt(mx, mz, 0.2)) push('menuAFrame', mx, groundTop(mx, mz), mz, F.rotY(0.28), 1, 1, 1, uTint);
       pool(F.wx(0, patioZ), F.wz(0, patioZ), Math.min(5.5, W * 0.55), C.lightWarm, 0.38, 0.11, 2.8, F.rotY());
     } else if (kind === 'pub_bar') {
@@ -1236,17 +1373,15 @@ export function buildPoiVenues(ctx) {
         box(bld, F, wx, 0.55, res.D - 0.02, ww, 0.78, 0.14, brickW, false, 'b');
         face(bld, F, wx - ww * 0.44, wx + ww * 0.44, GH - 0.52, GH - 0.08, res.D + 0.01, [0.98, 0.68, 0.18], true);
       }
-      // Projecting wrought-iron hanging tavern sign bracket at corner
-      const bx = W / 2 - 0.15, by = GH + 0.35;
-      box(bld, F, bx, by + 0.28, res.D + 0.55, 0.06, 0.06, 1.05, C.black);
-      box(bld, F, bx, by - 0.08, res.D + 0.68, 0.08, 0.56, 0.68, scheme[0], 'lr');
-      box(bld, F, bx, by - 0.08, res.D + 0.68, 0.09, 0.60, 0.72, gold, false, 'fb');
+      // Projecting wrought-iron double-sided illuminated tavern blade sign + brass-post velvet barrier beer-garden enclosure
+      bladeSign(F, W / 2 - 0.15, GH + 0.32, res.D + 0.68, 0.84, 0.72, scheme[0], gold, '精酿酒馆', 'PUB & ALE', 0xf5d76e, 4);
+      patioEnclosure(F, W, res.D + 0.28, res.D + 2.65, gold, [0.52, 0.08, 0.10], true, darkOak);
       // Outdoor oak barrels flanking entrance + beer-garden bench table
       for (const s of [-1, 1]) {
         const [px, , pz] = F.p(s * (W * 0.34), 0, res.D + 0.65);
         if (!bldAt(px, pz, 0.15)) push('pubBarrel', px, groundTop(px, pz), pz, F.rotY(s * 0.4), 1, 1, 1, toHex(scheme[0]));
       }
-      const [bx2, , bz2] = F.p(W * 0.26, 0, res.D + 2.05);
+      const [bx2, , bz2] = F.p(W * 0.26, 0, res.D + 1.95);
       if (!bldAt(bx2, bz2, 0.2)) push('beerBench', bx2, groundTop(bx2, bz2), bz2, F.rotY(Math.PI / 2), 1, 1, 1, toHex(scheme[0]));
     } else if (kind === 'hotel') {
       const GH = Math.min(3.5, hostTop - 1.1);
@@ -1323,6 +1458,9 @@ export function buildPoiVenues(ctx) {
         box(bld, F, px, 1.55, res.D + 0.04, 1.05, 1.55, 0.1, [0.85, 0.68, 0.24]);
         face(bld, F, px - 0.44, px + 0.44, 0.85, 2.25, res.D + 0.1, posterCols[(s > 0 ? 1 : 0) + ((rnd() * 2) | 0)], true);
       }
+      // Projecting vertical double-sided Broadway/cinema illuminated blade sign above marquee
+      const cBladeH = Math.min(4.2, Math.max(2.2, hostTop - (my + mh / 2) - 0.6));
+      bladeSign(F, -W / 2 + 0.28, my + mh / 2 + 0.4 + cBladeH / 2, res.D + 0.65, 0.92, cBladeH, scheme[0], goldGlow, sZh, 'CINEMA', 0xfff6dc, 2);
       // Red carpet runner + twin brass velvet-rope stanchion posts
       flat(bld, F, -1.25, 1.25, res.D + 0.02, res.D + md + 0.7, 0.09, carpetR);
       for (const s of [-1, 1]) {
@@ -1700,11 +1838,25 @@ export function buildPoiVenues(ctx) {
       // deck slab with a hole where the ramp comes up
       box(bld, F, ramp / 2, y - 0.15, 0, 2 * hl - ramp, 0.3, 2 * hw, conc, false, '');
       box(bld, F, -hl + ramp / 2, y - 0.15, ramp / 2, ramp, 0.3, 2 * hw - ramp, conc, false, '');
-      // parapet + cable rails (open sides)
+      // parapet + cable rails + vertical perforated metal / architectural terracotta fin facade screening
+      const terraFin = [0.74, 0.44, 0.30], perfMetal = [0.48, 0.52, 0.56];
       for (const s of [-1, 1]) {
         box(bld, F, 0, y + 0.45, s * (hw - 0.1), 2 * hl, 0.9, 0.2, concDk, false, 'b');
         box(bld, F, s * (hl - 0.1), y + 0.45, 0, 0.2, 0.9, 2 * hw, concDk, false, 'b');
         box(bld, F, 0, y + 0.95, s * (hw - 0.1), 2 * hl, 0.06, 0.06, C.galv);
+        // Architectural facade screening along long (+-z) and short (+-x) exterior elevations
+        if (L < levels) {
+          const finH = LH - 0.38, finY = y + 0.15 + finH / 2;
+          box(bld, F, 0, finY, s * (hw + 0.03), 2 * hl - 1.2, finH * 0.78, 0.04, perfMetal);
+          for (let fx = -hl + 1.2; fx <= hl - 1.2; fx += 1.45) {
+            const finCol = ((Math.round(fx) + L) & 1) ? terraFin : C.galv;
+            box(bld, F, fx, finY, s * (hw + 0.08), 0.11, finH, 0.24, finCol);
+          }
+          for (let fz = -hw + 1.4; fz <= hw - 1.4; fz += 1.55) {
+            const finCol = ((Math.round(fz) + L) & 1) ? terraFin : C.galv;
+            box(bld, F, s * (hl + 0.08), finY, fz, 0.24, finH, 0.11, finCol);
+          }
+        }
       }
       // bays: painted lines, parked cars on the decks
       const bayW = 2.6;
@@ -1722,6 +1874,23 @@ export function buildPoiVenues(ctx) {
         for (let x = -hl + 6; x < hl - 3; x += 14) for (const z of [-hw + 1, hw - 1]) {
           const [wx, , wz] = F.p(x, 0, z);
           push('lotLamp', wx, F.y0 + y, wz, F.rotY(), 0.7, 0.7, 0.7, 0xffffff);
+        }
+        // Rooftop solar canopies over the top parking deck bays
+        const solSpanX = Math.max(6.0, 2 * hl - ramp - 3.6);
+        const solCx = (-hl + ramp + 1.2 + hl - 1.8) / 2;
+        const solH = 2.55, solD = 4.6;
+        for (const side of [-1, 1]) {
+          const zc = side * (hw - 2.9);
+          for (let px = -hl + ramp + 2.0; px <= hl - 2.0; px += 6.2) {
+            box(bld, F, px, y + solH / 2, zc, 0.22, solH, 0.22, C.steel, false, 'b');
+            box(bld, F, px, y + solH - 0.06, zc, 0.18, 0.14, solD, C.galv);
+          }
+          // Photovoltaic solar panel array + silver aluminum frame + cell grid dividers
+          box(bld, F, solCx, y + solH + 0.06, zc, solSpanX + 0.2, 0.09, solD + 0.16, C.alu);
+          flat(bld, F, solCx - solSpanX / 2, solCx + solSpanX / 2, zc - solD / 2, zc + solD / 2, y + solH + 0.115, [0.07, 0.13, 0.24]);
+          for (let sx = solCx - solSpanX / 2 + 1.6; sx < solCx + solSpanX / 2 - 0.4; sx += 1.6) {
+            flat(bld, F, sx - 0.025, sx + 0.025, zc - solD / 2, zc + solD / 2, y + solH + 0.12, C.alu);
+          }
         }
       }
       // ramp from the level below (sloped slab along -z side)
@@ -1748,6 +1917,21 @@ export function buildPoiVenues(ctx) {
       const E = new Frame(F.x0, F.y0, F.z0, F.bx * s, F.bz * s);
       sign(E, s > 0 ? sx : -sx, levels * LH + 1.1, hw + 0.02, 1.6, 1.6, 6, 'P', 'P', 0x1f4fbf, 0xffffff);
       sign(E, 0, LH * 0.62, hw + 0.03, Math.min(2 * hl - 6, 9), 0.7, 3, '停车场', 'PARKING', 0x1f4fbf, 0xffffff);
+    }
+    // Rooftop illuminated P beacon crown on stair/elevator core
+    const roofBeaconY = levels * LH + 2.85;
+    box(bld, F, sx, roofBeaconY, sz, 2.2, 1.35, 2.2, [0.12, 0.30, 0.75], 'flrk', 'b');
+    box(bld, F, sx, roofBeaconY + 0.72, sz, 2.36, 0.12, 2.36, C.lightCool, true);
+    // Street-level illuminated P entrance totem pylon + LED space availability counter
+    const tx = -hl + 1.1, tz = -hw - 1.25, tH = 4.2;
+    box(bld, F, tx, 0.22, tz, 1.15, 0.44, 0.58, C.concrete, false, 'b');
+    box(bld, F, tx, tH / 2 + 0.2, tz, 0.96, tH, 0.36, [0.12, 0.30, 0.75], 'fb', 'b');
+    box(bld, F, tx, tH / 2 + 0.2, tz, 1.04, tH + 0.08, 0.28, C.alu, false, 'fb');
+    box(bld, F, tx, 1.35, tz + 0.19, 0.72, 0.26, 0.04, [0.12, 0.95, 0.38], true);
+    for (const s of [1, -1]) {
+      const TFrame = new Frame(F.x0, F.y0, F.z0, F.bx * s, F.bz * s);
+      sign(TFrame, s > 0 ? tx : -tx, 3.25, s > 0 ? -tz + 0.20 : tz + 0.20, 0.82, 0.82, 6, 'P', 'P', 0x1f4fbf, 0xffffff);
+      sign(TFrame, s > 0 ? tx : -tx, 2.15, s > 0 ? -tz + 0.20 : tz + 0.20, 0.84, 0.42, 3, '空位充足', 'OPEN 24H', 0x0f2557, 0x4dff88);
     }
     // entry barrier at ground level
     const [ex, , ez] = F.p(-hl + 3, 0, -hw - 0.5);

@@ -419,8 +419,22 @@ export function classifyBeijingArchetype(bldg, wx = 0, wz = 0, seed = 0) {
  * preserving the exact ground-level 2D footprint at y=0 so street frontages and courtyards remain 1:1 exact.
  */
 export function collapseVerticalMassingWFC(flatOuter, flatHoles, totalHeight, totalLevels, archetypeId, seed) {
-  const arch = BEIJING_ARCHETYPES[archetypeId] || BEIJING_STYLES_24.S01_zgc_pailou_glass;
-  const rng = createSeededRNG(seed ^ 0x9e3779b9);
+  // Support both compact signature (flatOuter, flatHoles, totalSpan, archObj, rngFn)
+  // and full signature (flatOuter, flatHoles, totalHeight, totalLevels, archetypeId, seed)
+  let arch;
+  let rng;
+  let levels;
+  if (typeof totalLevels === 'object' && totalLevels !== null) {
+    arch = totalLevels;
+    rng = typeof archetypeId === 'function' ? archetypeId : createSeededRNG((seed || 1) ^ 0x9e3779b9);
+    const fH = (arch && arch.floorHeight) || 3.5;
+    levels = Math.max(1, Math.round(totalHeight / fH));
+  } else {
+    arch = BEIJING_ARCHETYPES[archetypeId] || BEIJING_STYLES_24.S01_zgc_pailou_glass;
+    rng = typeof seed === 'function' ? seed : createSeededRNG((seed || 1) ^ 0x9e3779b9);
+    levels = Math.max(1, Number(totalLevels) || Math.round(totalHeight / (arch.floorHeight || 3.5)));
+  }
+
   const outerCCW = ensureCCWFlatXZ(flatOuter);
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -432,20 +446,31 @@ export function collapseVerticalMassingWFC(flatOuter, flatHoles, totalHeight, to
     if (z > maxZ) maxZ = z;
   }
   const minSpan = Math.min(maxX - minX, maxZ - minZ);
-  const rules = arch.massingRules;
+  const footArea = Math.abs(signedAreaFlatXZ(outerCCW));
+  const rules = (arch && arch.massingRules) || {
+    allowPodium: true,
+    podiumFloors: [2, 3],
+    towerSetback: [2.2, 3.4],
+    upperSetbackRatio: 0.78,
+    upperSetbackInset: 2.0,
+  };
+
+  const canInsetMidRise = totalHeight >= 18.0 && levels >= 5 && minSpan >= 11.5 && footArea >= 145.0;
+  const allowSetback =
+    (!flatHoles || flatHoles.length === 0) &&
+    canInsetMidRise &&
+    (rules.allowPodium || (totalHeight >= 22.0 && rng() < 0.68));
 
   const tiers = [];
-  if (
-    rules.allowPodium &&
-    (!flatHoles || flatHoles.length === 0) &&
-    totalLevels >= 8 &&
-    minSpan >= 14.5
-  ) {
-    const podiumChoices = rules.podiumFloors;
-    const podiumLvls = podiumChoices[Math.floor(rng() * podiumChoices.length)];
+  if (allowSetback) {
+    const podiumChoices = (rules.podiumFloors && rules.podiumFloors[0] > 0) ? rules.podiumFloors : [1, 2];
+    const rawPodLvls = podiumChoices[Math.floor(rng() * podiumChoices.length)];
+    const podiumLvls = Math.max(1, Math.min(levels - 3, rawPodLvls));
+    const gfH = arch.groundFloorHeight || 4.5;
+    const flH = arch.floorHeight || 3.5;
     const podiumH = Math.min(
-      totalHeight * 0.35,
-      arch.groundFloorHeight + Math.max(0, podiumLvls - 1) * arch.floorHeight
+      totalHeight * 0.34,
+      gfH + Math.max(0, podiumLvls - 1) * flH
     );
 
     tiers.push({
@@ -461,13 +486,17 @@ export function collapseVerticalMassingWFC(flatOuter, flatHoles, totalHeight, to
       hasTopCrown: false,
     });
 
-    const setbackChoices = rules.towerSetback;
-    const setbackM = setbackChoices[Math.floor(rng() * setbackChoices.length)];
+    const setbackChoices = (rules.towerSetback && rules.towerSetback[0] > 0) ? rules.towerSetback : [1.6, 2.4];
+    const rawSetbackM = setbackChoices[Math.floor(rng() * setbackChoices.length)];
+    const setbackM = Math.min(rawSetbackM, minSpan * 0.16);
     const shaftOuter = insetPolygonFlatXZ(outerCCW, setbackM);
-    const remLevels = Math.max(3, totalLevels - podiumLvls);
+    const remLevels = Math.max(3, levels - podiumLvls);
 
-    if (totalLevels >= 16 && rules.upperSetbackRatio < 0.95 && minSpan >= 20.0 && rng() < 0.75) {
-      const mainLvls = Math.max(4, Math.round(remLevels * rules.upperSetbackRatio));
+    const upperRatio = rules.upperSetbackRatio < 0.95 ? rules.upperSetbackRatio : 0.78;
+    const upperInset = rules.upperSetbackInset > 0.3 ? rules.upperSetbackInset : 1.65;
+
+    if (levels >= 9 && minSpan >= 14.5 && rng() < 0.80) {
+      const mainLvls = Math.max(3, Math.round(remLevels * upperRatio));
       const upperLvls = Math.max(2, remLevels - mainLvls);
       const mainH = podiumH + (totalHeight - podiumH) * (mainLvls / remLevels);
 
@@ -484,11 +513,11 @@ export function collapseVerticalMassingWFC(flatOuter, flatHoles, totalHeight, to
         hasTopCrown: false,
       });
 
-      const upperOuter = insetPolygonFlatXZ(shaftOuter, rules.upperSetbackInset);
+      const upperOuter = insetPolygonFlatXZ(shaftOuter, Math.min(upperInset, minSpan * 0.14));
       tiers.push({
         tierIndex: 2,
         role: 'upper_crown',
-        label: `高区退台冠顶段 (${podiumLvls + mainLvls + 1}–${totalLevels}F, 二次退台 ${rules.upperSetbackInset.toFixed(1)}m)`,
+        label: `高区退台冠顶段 (${podiumLvls + mainLvls + 1}–${levels}F, 二次退台 ${upperInset.toFixed(1)}m)`,
         y0: mainH,
         y1: totalHeight,
         levels: upperLvls,
@@ -501,7 +530,7 @@ export function collapseVerticalMassingWFC(flatOuter, flatHoles, totalHeight, to
       tiers.push({
         tierIndex: 1,
         role: 'shaft',
-        label: `主塔楼 (${podiumLvls + 1}–${totalLevels}F, 裙房退台 ${setbackM.toFixed(1)}m)`,
+        label: `主塔楼 (${podiumLvls + 1}–${levels}F, 裙房退台 ${setbackM.toFixed(1)}m)`,
         y0: podiumH,
         y1: totalHeight,
         levels: remLevels,
@@ -515,10 +544,10 @@ export function collapseVerticalMassingWFC(flatOuter, flatHoles, totalHeight, to
     tiers.push({
       tierIndex: 0,
       role: 'full',
-      label: `整体主体结构 (1–${totalLevels}F)`,
+      label: `整体主体结构 (1–${levels}F)`,
       y0: 0.0,
       y1: totalHeight,
-      levels: Math.max(1, totalLevels),
+      levels: Math.max(1, levels),
       flatOuter: outerCCW,
       flatHoles: flatHoles || [],
       hasGroundRow: true,
@@ -819,20 +848,25 @@ export function collapseRooftopGreebleWFC(flatOuter, flatHoles, archetypeId, see
 
       let tileId = 'R_OPEN_DECK';
       const r = rng();
-      if (arch.roofStyle === 'pailou_crown' || arch.category === '现代玻璃/商务') {
-        if (r < 0.20) tileId = 'R_HVAC_TOWER';
-        else if (r < 0.36) tileId = 'R_PENTHOUSE';
-        else if (r < 0.45) tileId = 'R_SKYLIGHT_ATRIUM';
-      } else if (arch.roofStyle === 'mall_skylight_hvac') {
-        if (r < 0.28) tileId = 'R_SKYLIGHT_ATRIUM';
-        else if (r < 0.48) tileId = 'R_HVAC_TOWER';
-        else if (r < 0.58) tileId = 'R_PENTHOUSE';
-      } else if (arch.category === '高层商品房/塔楼') {
-        if (r < 0.24) tileId = 'R_PENTHOUSE';
-        else if (r < 0.40) tileId = 'R_SOLAR_BANK';
-      } else if (arch.category === '多层板楼/大院') {
+      const isCenterCell = gx === Math.floor(gxCount * 0.5) && gz === Math.floor(gzCount * 0.5);
+      if (arch.roofStyle === 'pailou_crown' || arch.category === 'office' || arch.category === '现代玻璃/商务') {
+        if (isCenterCell && r < 0.45) tileId = r < 0.22 ? 'R_HELIPAD_DECK' : 'R_ARTDECO_SPIRE';
+        else if (r < 0.18) tileId = 'R_HVAC_TOWER';
+        else if (r < 0.32) tileId = 'R_PENTHOUSE';
+        else if (r < 0.40) tileId = 'R_SKYLIGHT_ATRIUM';
+        else if (r < 0.46) tileId = 'R_BROADCAST_TOWER';
+      } else if (arch.roofStyle === 'mall_skylight_hvac' || arch.category === 'commercial') {
+        if (r < 0.26) tileId = 'R_SKYLIGHT_ATRIUM';
+        else if (r < 0.44) tileId = 'R_HVAC_TOWER';
+        else if (r < 0.54) tileId = 'R_PENTHOUSE';
+        else if (r < 0.62) tileId = 'R_SKYGARDEN_PERGOLA';
+      } else if (arch.category === 'residential_tower' || arch.category === '高层商品房/塔楼') {
+        if (r < 0.22) tileId = 'R_PENTHOUSE';
+        else if (r < 0.36) tileId = 'R_SOLAR_BANK';
+        else if (r < 0.46) tileId = 'R_SKYGARDEN_PERGOLA';
+      } else if (arch.category === 'slab' || arch.category === '多层板楼/大院' || arch.category === 'civic') {
         if (r < 0.16) tileId = 'R_SOLAR_BANK';
-        else if (r < 0.25) tileId = 'R_PENTHOUSE';
+        else if (r < 0.26) tileId = 'R_PENTHOUSE';
       }
 
       if (tileId !== 'R_OPEN_DECK') {

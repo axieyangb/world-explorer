@@ -23,7 +23,7 @@ import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feat
 import { chunkGroundSampler } from './features/ground_cover.js'; // [ground]
 import { appendInfillBuilding } from './features/infill_buildings.js'; // [ground]
 import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod } from './features/roofs_chunk.js'; // [roofs]
-import { drawExtraFacadeLayers } from './features/facade_styles.js'; // [roofs]
+import { EXTRA_FACADES, drawExtraFacadeLayers } from './features/facade_styles.js'; // [roofs]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
 import { buildPoiVenues, poiVenuesTransfer, createPoiVenueMats } from './features/poi_venues.js'; // [venues-poi]
@@ -370,10 +370,13 @@ export async function loadFacadeArrayTexture(mats) {
     ]);
 
     const S = 512;
-    const N0 = Math.max(1, Math.round(rgbImg.height / S));
-    const totalH = S * N0;
-    const extraLayers = N0 === 24 ? drawExtraFacadeLayers(S) : []; // [roofs] procedural regional layers 24..
-    const N = N0 + extraLayers.length;
+    const numLayers = Math.max(1, Math.round(rgbImg.height / S));
+    const N0 = numLayers;
+    const totalH = S * numLayers;
+    const extraLayers = numLayers === 24 ? drawExtraFacadeLayers(S) : []; // [roofs] procedural regional layers 24..41 (EXTRA_FACADES)
+    const totalLayers = numLayers + (extraLayers.length || EXTRA_FACADES.length);
+    const N = numLayers + extraLayers.length;
+    void totalLayers;
 
     const cRgb = document.createElement('canvas');
     cRgb.width = S;
@@ -764,7 +767,8 @@ export function createSharedMaterials() {
           float xLayer = clamp(floor((vFacadeUv.x + 0.5) / 1000.0), 0.0, 23.0);
           float yLayer = floor((vFacadeUv.y - 999.0 + 50.0) / 200.0);
           bool extraLayer = vFacadeUv.y > 949.5;
-          float texLayer = extraLayer ? min(24.0 + yLayer, ${FACADE_CATALOG.length - 1}.0) : xLayer;
+          float maxFacadeLayer = float(${24 + EXTRA_FACADES.length - 1});
+          float texLayer = extraLayer ? clamp(24.0 + yLayer, 24.0, maxFacadeLayer) : xLayer;
           float uRep = max(0.0, extraLayer ? vFacadeUv.x : vFacadeUv.x - xLayer * 1000.0);
           float vRep = max(0.0, extraLayer ? vFacadeUv.y - 1000.0 - yLayer * 200.0 : vFacadeUv.y - 1.0);
 
@@ -781,16 +785,21 @@ export function createSharedMaterials() {
           if (texPx > 1.6) {
             float sh = clamp((texPx - 1.6) * 0.5, 0.0, 1.0);
             vec3 blurRgb = textureLod(uFacadeArray, vec3(uRep, vRep, texLayer), 1.6).rgb;
-            facadeRgb = max(facadeRgb + (facadeRgb - blurRgb) * (0.85 * sh), vec3(0.0));
+            facadeRgb = max(facadeRgb + (facadeRgb - blurRgb) * (0.92 * sh), vec3(0.0));
             vec2 gq = vec2(uRep, vRep) * 1536.0;
             float grain = fract(sin(dot(floor(gq), vec2(12.9898, 78.233))) * 43758.5453);
-            facadeRgb *= 1.0 + (grain - 0.5) * 0.07 * sh * (1.0 - winMask);
+            facadeRgb *= 1.0 + (grain - 0.5) * 0.08 * sh * (1.0 - winMask);
           }
 
           // Room grid coordinates (FACADE_UNITS for photo layers 0..23, 4x4 grid for procedural layers >= 24)
           int li = int(min(texLayer, 23.0) + 0.5);
           vec4 fu = texLayer > 23.5 ? vec4(0.25, 0.25, 0.0, 0.0) : FACADE_UNITS[li];
-          float kind = texLayer > 23.5 ? (abs(texLayer - 31.0) < 0.5 ? 1.0 : 0.0) : FACADE_KIND[li];
+          float extraOffice = (
+            abs(texLayer - 31.0) < 0.5 || abs(texLayer - 34.0) < 0.5 ||
+            abs(texLayer - 36.0) < 0.5 || abs(texLayer - 38.0) < 0.5 ||
+            abs(texLayer - 39.0) < 0.5 || abs(texLayer - 41.0) < 0.5
+          ) ? 1.0 : 0.0;
+          float kind = texLayer > 23.5 ? extraOffice : FACADE_KIND[li];
           vec2 gp = vec2((uRep - fu.z) / fu.x, (vRep - fu.w) / fu.y);
           vec2 cell = floor(gp);
           vec2 cellUv = fract(gp);
@@ -801,7 +810,12 @@ export function createSharedMaterials() {
           float hC = nightHash(cell.yx + vec2(19.7, bSeed * 23.0));
           float uvGrad = max(fwidth(uRep), fwidth(vRep));
           float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
-          float isCurtain = (texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5 || abs(texLayer - 31.0) < 0.5) ? 1.0 : 0.0;
+          float camDist = length(vViewPosition);
+          float closeParallaxFade = (1.0 - smoothstep(155.0, 220.0, camDist)) * bumpFade;
+          float isCurtain = (
+            texLayer < 2.5 || abs(texLayer - 5.0) < 0.5 || abs(texLayer - 22.0) < 0.5 ||
+            abs(texLayer - 31.0) < 0.5 || abs(texLayer - 38.0) < 0.5 || abs(texLayer - 41.0) < 0.5
+          ) ? 1.0 : 0.0;
 
           // Pure photographic AI facade albedo modulated by subtle per-building tint, vertical AO & analytical sky reflection on glass
           vec3 baseAlbedo = facadeRgb * diffuseColor.rgb * 1.08;
@@ -811,29 +825,48 @@ export function createSharedMaterials() {
             baseAlbedo = mix(unpainted, baseAlbedo, paint);
           }
 
-          // Under-sill rain-drip weathering & floor ledge micro-shadow on masonry/cladding outside window glass
+          // Micro-relief masonry mortar courses, ashlar V-grooves & curtain-wall spandrel seams + recessed window-well AO
+          float courseY = fract(vRep * 24.0);
+          float courseRow = floor(vRep * 24.0);
+          float jointX = fract(uRep * 12.0 + 0.5 * mod(courseRow, 2.0));
+          float mortarSeam = (1.0 - smoothstep(0.0, 0.09, courseY) * smoothstep(1.0, 0.91, courseY)) +
+                             0.65 * (1.0 - smoothstep(0.0, 0.06, jointX) * smoothstep(1.0, 0.94, jointX));
+          float spandrelSeam = (1.0 - smoothstep(0.0, 0.035, cellUv.y) * smoothstep(1.0, 0.965, cellUv.y)) +
+                               (1.0 - smoothstep(0.0, 0.03, cellUv.x) * smoothstep(1.0, 0.97, cellUv.x));
+          float wallMicroRelief = mix(clamp(mortarSeam, 0.0, 1.0) * 0.075, clamp(spandrelSeam, 0.0, 1.0) * 0.09, isCurtain);
+          float wellRing = smoothstep(0.05, 0.42, rawAlpha) * (1.0 - winMask);
           float sillBand = smoothstep(0.16, 0.0, cellUv.y) * (0.55 + 0.45 * sin(cellUv.x * 18.85 + hU * 6.28));
-          baseAlbedo *= 1.0 - sillBand * 0.11 * bumpFade * (1.0 - winMask) * (1.0 - isCurtain * 0.75);
+          float wallAo = 1.0 - (sillBand * 0.11 * (1.0 - isCurtain * 0.75) + wallMicroRelief + wellRing * 0.14) * bumpFade * (1.0 - winMask);
+          baseAlbedo *= clamp(wallAo, 0.72, 1.04);
 
-          // Recessed window frame reveal shadow + True 3D Raycasted Interior Cube-Mapping (ceiling, floor, walls, decor)
-          vec3 skyRefl = mix(vec3(0.54, 0.68, 0.84), vec3(0.08, 0.13, 0.22), nightLevel);
-          vec3 glassAlbedo = mix(baseAlbedo * 1.15, skyRefl, 0.24);
+          // Recessed window frame reveal shadow + True 3D Raycasted Interior Cube-Mapping (ceiling, floor, walls, partitions, desks, blinds/drapes)
+          vec3 N = normalize(vWorldNorm);
+          vec3 V = normalize(vBldgWorld - cameraPosition);
+          vec3 reflDir = reflect(V, N);
+          float fresnel = 0.12 + 0.88 * pow(1.0 - clamp(-dot(V, N), 0.0, 1.0), 3.0);
+          vec3 daySkyZenith = vec3(0.36, 0.56, 0.82);
+          vec3 daySkyHorizon = vec3(0.74, 0.82, 0.90);
+          vec3 nightSkyRefl = mix(vec3(0.05, 0.09, 0.16), vec3(0.18, 0.14, 0.12), smoothstep(0.35, -0.25, reflDir.y));
+          vec3 skyGrad = mix(daySkyHorizon, daySkyZenith, clamp(reflDir.y * 1.45 + 0.32, 0.0, 1.0));
+          float cloudPatch = 0.5 + 0.5 * sin(reflDir.x * 6.5 + vBldgWorld.x * 0.012) * cos(reflDir.z * 5.2 + vBldgWorld.y * 0.018);
+          skyGrad = mix(skyGrad, vec3(0.94, 0.96, 0.99), smoothstep(0.58, 0.88, cloudPatch) * 0.26);
+          vec3 skyRefl = mix(skyGrad, nightSkyRefl, nightLevel);
+          vec3 glassAlbedo = mix(baseAlbedo * 1.12, skyRefl, clamp(0.18 + 0.34 * fresnel, 0.18, 0.52));
           vec3 interiorRoomCol = vec3(0.72, 0.68, 0.62);
           float interiorLamp = 0.0;
           float isGroundShowcase = step(vRep, 1.35) * (1.0 - step(2.5, kind));
-          if (winMask > 0.25 && bumpFade > 0.01) {
-            float revTop = smoothstep(0.94, 0.76, cellUv.y);
-            float revSide = smoothstep(0.04, 0.16, cellUv.x) * smoothstep(0.96, 0.84, cellUv.x);
-            float revealShadow = mix(1.0, 0.70 + 0.30 * revTop * revSide, bumpFade * (1.0 - isCurtain * 0.5));
+          if (winMask > 0.25 && closeParallaxFade > 0.01) {
+            float revTop = smoothstep(0.95, 0.74, cellUv.y);
+            float revBot = smoothstep(0.03, 0.14, cellUv.y);
+            float revSide = smoothstep(0.04, 0.17, cellUv.x) * smoothstep(0.96, 0.83, cellUv.x);
+            float revealShadow = mix(1.0, 0.66 + 0.34 * revTop * revBot * revSide, closeParallaxFade * (1.0 - isCurtain * 0.45));
 
             // Tangent basis on vertical wall & camera-to-fragment ray in room space (rd.z > 0 points into the room)
-            vec3 N = normalize(vWorldNorm);
             vec3 T = normalize(vec3(-N.z, 0.0, N.x) + vec3(1e-5, 0.0, 0.0));
             vec3 B = vec3(0.0, 1.0, 0.0);
-            vec3 V = normalize(vBldgWorld - cameraPosition);
             vec3 rd = vec3(dot(V, T), dot(V, B), max(0.14, -dot(V, N)));
             vec3 ro = vec3(cellUv.x - 0.5, cellUv.y - 0.5, 0.0);
-            float roomDepth = mix(0.65, 0.78, isGroundShowcase);
+            float roomDepth = mix(0.66, 0.82, isGroundShowcase);
             float tBack = roomDepth / rd.z;
             float sX = rd.x >= 0.0 ? 0.5 : -0.5;
             float tX = (sX - ro.x) / (abs(rd.x) < 1e-4 ? (rd.x >= 0.0 ? 1e-4 : -1e-4) : rd.x);
@@ -847,59 +880,92 @@ export function createSharedMaterials() {
             float hitFloor = step(pRoom.y, -0.48) * (1.0 - hitCeil);
             float hitWall = 1.0 - max(hitCeil, hitFloor);
 
-            // Ceiling: warm acoustic tiles + glowing rectangular ceiling light fixture strip
-            float ceilGrid = 0.93 + 0.07 * cos(pRoom.x * 25.1) * cos(pRoom.z * 25.1);
-            float lampMask = step(abs(pRoom.x), 0.22) * step(abs(pRoom.z - 0.32), 0.14);
+            // Ceiling slab: recessed coffer ribs + dual office troffer strips / warm apartment pendant downlights
+            float ceilGrid = 0.91 + 0.09 * cos(pRoom.x * 25.1) * cos(pRoom.z * 25.1);
+            float trofferPair = step(abs(abs(pRoom.x) - 0.18), 0.075) * step(abs(pRoom.z - 0.34), 0.18);
+            float centerFixture = step(length(vec2(pRoom.x * 1.2, pRoom.z - 0.32)), 0.16);
+            float lampMask = mix(centerFixture, trofferPair, step(0.5, kind));
             interiorLamp = lampMask * hitCeil;
-            vec3 ceilCol = mix(vec3(0.82, 0.78, 0.72) * ceilGrid, vec3(1.35, 1.24, 1.02), lampMask);
+            vec3 ceilCol = mix(vec3(0.80, 0.77, 0.72) * ceilGrid, vec3(1.42, 1.30, 1.06), lampMask);
 
-            // Floor: warm hardwood parquet / commercial tile planks with subtle board joints along pRoom.x
-            float plank = 0.88 + 0.12 * sin(pRoom.x * 36.0 + floor(pRoom.z * 6.0) * 1.7);
-            vec3 woodFloor = mix(vec3(0.48, 0.34, 0.22), vec3(0.42, 0.44, 0.47), step(0.5, kind)) * plank;
-            float floorWallAo = smoothstep(0.5, 0.22, max(abs(pRoom.x), abs(pRoom.z - roomDepth * 0.5)));
-            vec3 floorCol = woodFloor * (0.72 + 0.28 * floorWallAo);
+            // Floor: warm hardwood parquet / commercial stone tile planks with board joints & wall corner AO
+            float plank = 0.87 + 0.13 * sin(pRoom.x * 38.0 + floor(pRoom.z * 6.0) * 1.7);
+            vec3 woodFloor = mix(vec3(0.48, 0.34, 0.22), vec3(0.42, 0.45, 0.49), step(0.5, kind)) * plank;
+            float floorWallAo = smoothstep(0.5, 0.20, max(abs(pRoom.x), abs(pRoom.z - roomDepth * 0.5)));
+            vec3 floorCol = woodFloor * (0.70 + 0.30 * floorWallAo);
 
-            // Back & Side Walls: warm plaster + procedural bookshelves / framed art / office monitors seeded by hU
-            vec3 wallBase = mix(vec3(0.78, 0.73, 0.66), vec3(0.72, 0.76, 0.80), step(0.5, kind));
-            wallBase = mix(wallBase, vec3(0.88, 0.76, 0.58), isGroundShowcase);
+            // Back & Side Walls: warm/cool paint variation + interior partition wall + bookshelves/artwork + desk silhouette
+            vec3 warmWall = mix(vec3(0.84, 0.76, 0.66), vec3(0.76, 0.69, 0.62), fract(hC * 3.7));
+            vec3 coolWall = mix(vec3(0.68, 0.75, 0.82), vec3(0.76, 0.80, 0.84), fract(hC * 5.3));
+            vec3 wallBase = mix(warmWall, coolWall, step(0.52, fract(hU * 9.1 + kind * 0.35)));
+            wallBase = mix(wallBase, vec3(0.90, 0.78, 0.60), isGroundShowcase);
             float wallCoordX = abs(pRoom.x) > 0.48 ? (pRoom.z / roomDepth - 0.5) : pRoom.x;
-            float hasShelves = step(0.38, fract(hU * 11.3));
-            float shelfBand = step(abs(pRoom.y + 0.05), 0.28) * step(abs(wallCoordX), 0.34) * hasShelves;
-            float shelfRow = step(0.42, fract((pRoom.y + 0.35) * 7.5));
+            // Interior partition wall / doorway recess silhouette at mid-depth
+            float partSide = fract(hU * 6.3) > 0.5 ? 1.0 : -1.0;
+            float partitionSil = step(0.12, wallCoordX * partSide) * step(pRoom.y, 0.38) * step(0.45, fract(hC * 11.7));
+            wallBase *= 1.0 - partitionSil * 0.18;
+
+            float hasShelves = step(0.36, fract(hU * 11.3));
+            float shelfBand = step(abs(pRoom.y + 0.04), 0.27) * step(abs(wallCoordX), 0.35) * hasShelves;
+            float shelfRow = step(0.40, fract((pRoom.y + 0.35) * 7.5));
             float bookColorHash = fract(sin(floor((wallCoordX + 0.5) * 18.0 + floor((pRoom.y + 0.5) * 7.5) * 13.0 + hU * 41.0)) * 43758.5453);
-            vec3 shelfCol = mix(vec3(0.34, 0.22, 0.14), mix(vec3(0.68, 0.26, 0.22), vec3(0.24, 0.46, 0.62), bookColorHash), shelfRow);
+            vec3 shelfCol = mix(vec3(0.32, 0.20, 0.13), mix(vec3(0.70, 0.26, 0.22), vec3(0.22, 0.46, 0.64), bookColorHash), shelfRow);
             float frameOffset = (fract(hU * 5.7) - 0.5) * 0.26;
-            float artFrame = (1.0 - hasShelves) * step(abs(wallCoordX - frameOffset), 0.17) * step(abs(pRoom.y - 0.06), 0.14);
-            vec3 artCol = mix(vec3(0.24, 0.36, 0.48), vec3(0.76, 0.58, 0.36), fract(hU * 17.9));
-            vec3 wallCol = mix(wallBase, shelfCol, shelfBand * 0.85);
-            wallCol = mix(wallCol, artCol, artFrame * 0.80);
+            float artFrame = (1.0 - hasShelves) * step(abs(wallCoordX - frameOffset), 0.17) * step(abs(pRoom.y - 0.08), 0.14);
+            vec3 artCol = mix(vec3(0.24, 0.36, 0.48), vec3(0.78, 0.58, 0.36), fract(hU * 17.9));
+            // Desk / credenza & monitor silhouette in lower portion of room
+            float deskTop = step(pRoom.y, -0.18) * step(-0.36, pRoom.y) * step(abs(wallCoordX), 0.38);
+            float monitorSil = step(abs(wallCoordX - frameOffset * 0.5), 0.11) * step(abs(pRoom.y + 0.10), 0.08) * step(0.35, fract(hU * 19.3));
+            vec3 wallCol = mix(wallBase, shelfCol, shelfBand * 0.86);
+            wallCol = mix(wallCol, artCol, artFrame * 0.82);
+            wallCol = mix(wallCol, vec3(0.24, 0.18, 0.14), deskTop * 0.78);
+            wallCol = mix(wallCol, mix(vec3(0.14, 0.16, 0.20), vec3(0.45, 0.68, 0.92), nightLevel * 0.65), monitorSil * 0.85);
 
-            float depthAo = 1.0 - 0.35 * clamp(pRoom.z / roomDepth, 0.0, 1.0);
+            float depthAo = 1.0 - 0.36 * clamp(pRoom.z / roomDepth, 0.0, 1.0);
             interiorRoomCol = (ceilCol * hitCeil + floorCol * hitFloor + wallCol * hitWall) * depthAo;
-            interiorRoomCol *= mix(1.0, 1.22, isGroundShowcase);
+            interiorRoomCol *= mix(1.0, 1.24, isGroundShowcase);
 
-            // Venetian blind slats / sheer curtains in select upper windows (ground-floor showcases stay open)
-            float hasBlinds = step(0.60, fract(hU * 13.7)) * (1.0 - step(2.5, kind)) * (1.0 - isGroundShowcase);
-            float blindDrop = 0.28 + 0.52 * fract(hU * 7.9);
+            // Per-window randomized horizontal Venetian blinds + half-drawn vertical pleated drapes (upper floors)
+            float windowTreat = fract(hU * 13.7);
+            float hasBlinds = step(0.52, windowTreat) * (1.0 - step(2.5, kind)) * (1.0 - isGroundShowcase);
+            float blindDrop = 0.24 + 0.56 * fract(hU * 7.9);
             float inBlind = step(1.0 - blindDrop, cellUv.y) * hasBlinds;
-            float slats = 0.82 + 0.18 * sin(cellUv.y * 48.0);
-            vec3 blindTint = mix(vec3(0.84, 0.81, 0.75), vec3(0.74, 0.78, 0.82), step(0.5, hC)) * slats;
+            float slatStep = step(0.28, fract(cellUv.y * 32.0));
+            float slatShade = 0.74 + 0.26 * slatStep * (0.88 + 0.12 * sin(cellUv.y * 64.0));
+            vec3 blindTint = mix(vec3(0.86, 0.82, 0.75), vec3(0.74, 0.78, 0.83), step(0.5, hC)) * slatShade;
 
-            // Blend 3D interior room behind exterior glass reflection & blinds
-            vec3 dayRoomMix = mix(glassAlbedo * 0.88, interiorRoomCol * 0.68 + skyRefl * 0.22, 0.58 * bumpFade);
-            glassAlbedo = mix(dayRoomMix, blindTint * 0.58, inBlind * 0.48 * bumpFade) * revealShadow;
-            // Crisp sun/sky specular glint across glass panes
+            float hasDrapes = step(windowTreat, 0.34) * (1.0 - step(0.5, kind)) * (1.0 - isGroundShowcase);
+            float drapeSpan = 0.16 + 0.14 * fract(hC * 11.1);
+            float inDrape = step(0.5 - drapeSpan, abs(cellUv.x - 0.5)) * hasDrapes;
+            float pleat = 0.80 + 0.20 * sin(cellUv.x * 56.0 + hC * 6.28);
+            vec3 drapeCol = mix(vec3(0.82, 0.76, 0.68), vec3(0.62, 0.68, 0.74), fract(hU * 4.3)) * pleat;
+
+            // Blend 3D interior room behind exterior glass Fresnel reflection, venetian blinds & side drapes
+            vec3 dayRoomMix = mix(glassAlbedo * 0.88, interiorRoomCol * 0.72 + skyRefl * (0.16 + 0.20 * fresnel), 0.64 * closeParallaxFade);
+            vec3 dressedGlass = mix(dayRoomMix, blindTint * 0.64, inBlind * 0.56 * closeParallaxFade);
+            dressedGlass = mix(dressedGlass, drapeCol * 0.66, inDrape * 0.60 * closeParallaxFade);
+            glassAlbedo = dressedGlass * revealShadow;
+
+            // Crisp sun/sky & night city-light specular glint across glass panes
             vec3 viewDirV = normalize(vViewPosition);
-            float sunGlint = pow(clamp(dot(reflect(-viewDirV, normal), normalize(vec3(0.42, 0.74, 0.52))), 0.0, 1.0), 18.0);
-            glassAlbedo += vec3(0.95, 0.92, 0.84) * sunGlint * 0.22 * (1.0 - nightLevel * 0.85);
+            float sunGlint = pow(clamp(dot(reflect(-viewDirV, normal), normalize(vec3(0.42, 0.74, 0.52))), 0.0, 1.0), 20.0);
+            float nightCityGlint = pow(clamp(dot(reflect(-viewDirV, normal), normalize(vec3(-0.35, -0.25, 0.88))), 0.0, 1.0), 14.0);
+            glassAlbedo += vec3(0.96, 0.93, 0.85) * sunGlint * 0.25 * (1.0 - nightLevel * 0.85);
+            glassAlbedo += vec3(1.0, 0.78, 0.48) * nightCityGlint * 0.16 * nightLevel;
           }
           diffuseColor.rgb = mix(baseAlbedo, glassAlbedo, winMask);
 
-          // Screen-space micro-bump normal relief on masonry/mullions (fades smoothly at distance)
+          // Screen-space micro-bump normal relief on masonry/mullions + 3D window-frame bevel normal perturbation around glass boundary
           float lum = dot(facadeRgb, vec3(0.299, 0.587, 0.114));
-          float dLx = clamp(dFdx(lum), -0.08, 0.08);
-          float dLy = clamp(dFdy(lum), -0.08, 0.08);
-          normal = normalize(normal + vec3(-dLx, -dLy, 0.0) * (1.75 * bumpFade * (1.0 - 0.65 * winMask) * (texLayer > 23.5 ? 0.5 : 1.0))); // [roofs] crisp vector layers: softer screen-space bump
+          float dLx = clamp(dFdx(lum), -0.09, 0.09);
+          float dLy = clamp(dFdy(lum), -0.09, 0.09);
+          float wBx = clamp(dFdx(winMask), -0.28, 0.28);
+          float wBy = clamp(dFdy(winMask), -0.28, 0.28);
+          float mBx = clamp(dFdx(wallMicroRelief), -0.06, 0.06) * (1.0 - winMask);
+          float mBy = clamp(dFdy(wallMicroRelief), -0.06, 0.06) * (1.0 - winMask);
+          vec2 reliefGrad = vec2(dLx, dLy) * (1.85 * (1.0 - 0.65 * winMask) * (texLayer > 23.5 ? 0.58 : 1.0)) +
+                            vec2(wBx, wBy) * 0.55 + vec2(mBx, mBy) * 1.35;
+          normal = normalize(normal + vec3(-reliefGrad.x, -reliefGrad.y, 0.0) * bumpFade);
 
           // Keep metalness moderate so Three.js PBR without envMap never crushes shaded street-canyon glass to black
           roughnessFactor = mix(mix(0.78, 0.42, isCurtain), 0.15, winMask);
@@ -968,37 +1034,47 @@ export function createSharedMaterials() {
           float pat = 1.0;
           float rRough = 0.82, rMetal = 0.02;
           if (rMat < 1.5 || abs(rMat - 6.0) < 0.5 || abs(rMat - 7.0) < 0.5) {
-            // clay: barrel (1) / flat interlocking (6) / glazed Japanese (7) tiles in courses
+            // clay: terracotta barrel (1) / flat interlocking (6) / glazed Japanese kawara (7) tiles in courses
+            float isKawara = abs(rMat - 7.0) < 0.5 ? 1.0 : 0.0;
             float course = rMat < 1.5 ? 0.36 : 0.32;
             float row = floor(rt / course);
             float ft = fract(rt / course);
-            float width = rMat < 1.5 ? 0.24 : 0.3;
+            float width = rMat < 1.5 ? 0.24 : 0.30;
             float sc = rs / width + (rMat < 1.5 ? 0.0 : 0.5 * mod(row, 2.0));
             float fs = fract(sc);
             float hTile = fract(sin(dot(vec2(floor(sc), row), vec2(12.9898, 78.233))) * 43758.5453);
-            float crest = rMat < 1.5 ? sin(fs * 3.14159) : 1.0 - 0.5 * smoothstep(0.9, 1.0, fs) - 0.5 * smoothstep(0.1, 0.0, fs);
-            pat = (0.74 + 0.30 * crest) * (1.0 - 0.28 * smoothstep(0.72, 1.0, ft)) * (0.9 + 0.2 * hTile);
-            rRough = abs(rMat - 7.0) < 0.5 ? 0.45 : 0.8;
-            rMetal = abs(rMat - 7.0) < 0.5 ? 0.12 : 0.02;
+            float barrelWave = sin(fs * 3.14159);
+            float kawaraWave = 0.5 + 0.5 * cos((fs - 0.35) * 6.28318);
+            float crest = rMat < 1.5 ? barrelWave : mix(1.0 - 0.55 * smoothstep(0.88, 1.0, fs) - 0.55 * smoothstep(0.12, 0.0, fs), kawaraWave, isKawara);
+            float lapAo = (1.0 - 0.32 * smoothstep(0.70, 1.0, ft)) * (0.86 + 0.14 * smoothstep(0.0, 0.14, ft));
+            pat = (0.71 + 0.34 * crest) * lapAo * (0.89 + 0.22 * hTile);
+            rRough = mix(0.78, 0.36, isKawara);
+            rMetal = mix(0.03, 0.18, isKawara);
           } else if (abs(rMat - 2.0) < 0.5 || abs(rMat - 3.0) < 0.5) {
-            // slate (2) / asphalt shingles (3): staggered rectangles with dark gaps
+            // slate (2) / architectural asphalt shingles (3): staggered courses with crisp butt-edge shadow & riven grain
             float course = rMat < 2.5 ? 0.26 : 0.14;
             float width = rMat < 2.5 ? 0.32 : 0.33;
             float row = floor(rt / course);
             float sc = rs / width + 0.5 * mod(row, 2.0) + 0.17 * fract(row * 0.37);
             float fs = fract(sc), ft = fract(rt / course);
             float hTile = fract(sin(dot(vec2(floor(sc), row), vec2(39.3468, 11.135))) * 43758.5453);
-            float gap = smoothstep(0.0, 0.05, fs) * smoothstep(1.0, 0.95, fs) * smoothstep(0.0, 0.12, ft);
-            pat = (0.72 + 0.28 * gap) * (0.88 + 0.24 * hTile) * (1.0 - 0.18 * smoothstep(0.6, 1.0, ft));
-            rRough = rMat < 2.5 ? 0.55 : 0.92;
+            float gap = smoothstep(0.0, 0.06, fs) * smoothstep(1.0, 0.94, fs) * smoothstep(0.0, 0.15, ft);
+            float buttLip = 1.0 - 0.22 * smoothstep(0.62, 1.0, ft);
+            float grain = 0.96 + 0.04 * sin(rs * 42.0 + hTile * 12.0);
+            pat = (0.69 + 0.31 * gap) * (0.87 + 0.25 * hTile) * buttLip * grain;
+            rRough = rMat < 2.5 ? 0.48 : 0.90;
+            rMetal = rMat < 2.5 ? 0.06 : 0.02;
           } else if (abs(rMat - 4.0) < 0.5 || abs(rMat - 5.0) < 0.5) {
-            // standing-seam metal (4) / Paris zinc (5): seams down the slope, a little sheen
+            // standing-seam metal (4) / Paris zinc (5): raised batten seams down the slope + transverse lock-welt ribs
             float seamW = rMat < 4.5 ? 0.52 : 0.46;
             float fs = fract(rs / seamW);
-            float seam = smoothstep(0.0, 0.04, fs) * smoothstep(1.0, 0.94, fs);
-            pat = 0.78 + 0.26 * seam + 0.06 * sin(rs * 1.7 + rt * 0.3);
-            rRough = rMat < 4.5 ? 0.42 : 0.5;
-            rMetal = rMat < 4.5 ? 0.45 : 0.35;
+            float ftWelt = fract(rt / 1.85);
+            float seam = smoothstep(0.0, 0.045, fs) * smoothstep(1.0, 0.935, fs);
+            float ribHighlight = smoothstep(0.08, 0.03, abs(fs - 0.06)) * 0.10;
+            float welt = 0.94 + 0.06 * smoothstep(0.0, 0.04, ftWelt) * smoothstep(1.0, 0.96, ftWelt);
+            pat = (0.76 + 0.27 * seam + ribHighlight + 0.05 * sin(rs * 1.7 + rt * 0.3)) * welt;
+            rRough = rMat < 4.5 ? 0.38 : 0.46;
+            rMetal = rMat < 4.5 ? 0.50 : 0.38;
           } else if (abs(rMat - 10.0) < 0.5) {
             // wooden privacy fence: vertical boards, darker gaps, weathered streaks
             float fs = fract(rs / 0.14);

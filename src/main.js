@@ -426,7 +426,7 @@ class WorldExplorerApp {
     this.workerReady = false;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261102_r3" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261103_r1" : null);
       if (!workerUrl) {
         this.chunkWorker = null;
         return;

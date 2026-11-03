@@ -5,8 +5,9 @@ import { parseOsmBuildingColour } from '../wfc/wfc_mesh_builder.js';
 /**
  * [roofs] Chunk glue for roofs.js: the per-chunk roof context (architectural region, land-use sampler, mapped pools,
  * the houses that get yards) and the near-LOD "roof detail" meshes (chimneys, mansard dormers, driveways, fences /
- * hedges / garden walls, backyard pools). Detail goes in four quadrant meshes per chunk, each wrapped in a THREE.LOD
- * that drops it beyond ROOF_DETAIL_DIST (main thread; the worker only tags the meshes with `userData.roofLod`).
+ * hedges / garden walls, backyard pools, pergolas, greenhouses, firepits, topiary). Detail goes in four quadrant
+ * meshes per chunk, each wrapped in a THREE.LOD that drops it beyond ROOF_DETAIL_DIST (main thread; the worker only
+ * tags the meshes with `userData.roofLod`).
  */
 
 export const ROOF_DETAIL_DIST = 460;
@@ -24,7 +25,7 @@ export function poolRings(data) {
 }
 
 export function createRoofContext(opts, ox, oz, roads, getY, buildings) {
-  if (!opts || !opts.arch || opts.arch === 'beijing') return null;
+  if (!opts || !opts.arch) return null;
   return {
     arch: opts.arch,
     ground: opts.ground || null,
@@ -85,7 +86,7 @@ export function noteRoofHouse(ctx, entityRecord, meta, ring, cx, cz, id, collide
 }
 
 export function addHouse(ctx, ring, cx, cz, id, shape, btype = 'yes') {
-  if (!ctx || shape === 'mansard') return;
+  if (!ctx || shape === 'mansard' || shape === 'barrel') return;
   const bt = String(btype || 'yes').toLowerCase();
   if (!HOUSE_YARD_TYPES.has(bt)) return;
   if (roofFlav(ctx, cx, cz) < 0.28) return; // never fence commercial, office, institutional or industrial parcels
@@ -123,9 +124,13 @@ export function finishRoofDetail(ctx, group, mats) {
     geom.setAttribute('position', new THREE.Float32BufferAttribute(s.pos, 3));
     geom.setAttribute('normal', new THREE.Float32BufferAttribute(s.norm, 3));
     const c8 = new Uint8Array(s.col.length);
-    for (let i = 0; i < s.col.length; i++) c8[i] = Math.max(0, Math.min(255, Math.round(s.col[i] * 255)));
+    for (let i = 0; i < s.col.length; i++) {
+      const cv = Number.isFinite(s.col[i]) ? s.col[i] : 0.5;
+      c8[i] = Math.max(0, Math.min(255, Math.round(cv * 255)));
+    }
     geom.setAttribute('color', new THREE.BufferAttribute(c8, 3, true));
     while (s.uv.length < n * 2) s.uv.push(-10, -10);
+    if (s.uv.length > n * 2) s.uv.length = n * 2;
     geom.setAttribute('uv', new THREE.Float32BufferAttribute(s.uv, 2));
     geom.setAttribute('kBid', new THREE.BufferAttribute(new Uint16Array(n), 1)); // no per-building collapse for detail
     let ySum = 0;
