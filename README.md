@@ -4,13 +4,14 @@
 
 ### The whole planet as an interactive 3D open world — live in your browser at 60 FPS.
 
-Fly a commercial airliner, launch a multi-stage rocket into Low Earth Orbit, drive or walk any street on Earth, inspect real-estate parcels with live Photo-to-3D reconstruction, or defend the city from a Kaiju swarm. Real streets, real buildings, real terrain, real weather, and live global telemetry — rebuilt in 3D around you at 1:1 scale as you move.
+Fly a commercial airliner on 6-phase FSD autopilot between real ICAO/IATA airports, launch a multi-stage Starship into Low Earth Orbit, engage 15-angle LiDAR Full Self-Driving across real streets and underwater river tunnels, command 10 maritime vessel classes, skydive in 3D freefall, inspect real-estate parcels with live Photo-to-3D reconstruction, or defend the city from a Kaiju swarm. Real streets, real buildings, real terrain, real weather, and live global telemetry — rebuilt in 3D around you at 1:1 scale as you move.
 
 **[▶ Play it now](https://axieyangb.github.io/world-explorer/)** · [🎬 Watch the 30 s trailer](https://github.com/axieyangb/world-explorer/releases/latest)
 
 ![WebGL2](https://img.shields.io/badge/WebGL2-Three.js%20r161-black?logo=three.js)
 ![60 FPS](https://img.shields.io/badge/performance-60%20FPS%20governor-00c853)
 ![MVT Coverage](https://img.shields.io/badge/OpenMapTiles-599%203D%20classes-blue)
+![Facades](https://img.shields.io/badge/facades-42%20layers-9c27b0)
 ![No install](https://img.shields.io/badge/install-none-brightgreen)
 ![No API keys](https://img.shields.io/badge/API%20keys-none-blue)
 ![Data](https://img.shields.io/badge/data-OpenStreetMap-7ebc6f?logo=openstreetmap)
@@ -24,12 +25,12 @@ Fly a commercial airliner, launch a multi-stage rocket into Low Earth Orbit, dri
 
 ## 🌐 Go Anywhere on Earth
 
-Type any place or street address, click the world map, or pass coordinates in the URL. Within seconds, a **40 km × 40 km** open world streams in from Z14 OpenMapTiles vector tiles and AWS Terrarium elevation DEMs off the main thread.
+Type any place or street address, click the world map, or pass coordinates in the URL. Within seconds, a **40 km × 40 km** detailed chunk grid backed by a **120 km seamless horizon skirt** streams in from Z14 OpenMapTiles vector tiles and AWS Terrarium elevation DEMs off the main thread.
 
 <table>
   <tr>
-    <td width="33%"><img src="docs/screenshots/sf-interiors.jpg" alt="San Francisco Embarcadero at Night"><br><sub><b>San Francisco</b> — Ferry Building & raycasted 3D interior cube-mapped skyscraper windows at night</sub></td>
-    <td width="33%"><img src="docs/screenshots/shanghai.jpg" alt="Shanghai Lujiazui Waterfront"><br><sub><b>Shanghai</b> — Lujiazui supertalls, Huangpu River promenade, and docked vessels</sub></td>
+    <td width="33%"><img src="docs/screenshots/sf-interiors.jpg" alt="San Francisco Embarcadero at Night"><br><sub><b>San Francisco</b> — Ferry Building & raycasted 3D interior room parallax skyscraper windows at night</sub></td>
+    <td width="33%"><img src="docs/screenshots/shanghai.jpg" alt="Shanghai Lujiazui Waterfront"><br><sub><b>Shanghai</b> — Lujiazui supertalls, Huangpu River underwater tunnels, and docked vessels</sub></td>
     <td width="33%"><img src="docs/screenshots/newyork.jpg" alt="Lower Manhattan"><br><sub><b>New York</b> — Flying between the towers of Lower Manhattan</sub></td>
   </tr>
   <tr>
@@ -52,12 +53,36 @@ Type any place or street address, click the world map, or pass coordinates in th
 
 ---
 
-## 🏛️ 102+ Custom 3D Landmarks, 120+ Tech Campuses & Photo-to-3D World Model
+## 🧭 All Transport Modes & Universal All-Mode FSD (Full Self-Driving)
 
-Click **any building, tech campus, or landmark** to open the **Property & Landmark Inspector**:
-- **Live Wikimedia Commons & Wikidata Integration**: Fetches real geotagged street/aerial photography (`origin=*`) and live architectural claims (year built, architect, height, floors, structural material).
-- **Atlas-Style `Drone Orbit`**: One-click 360° cinematic drone orbit around any building or landmark.
-- **Client-Side Photo-to-3D Reconstruction & `.glb` Override**: Project real listing/street photos directly onto 3D building geometry with Sobel-derived normal maps, or drop in a custom World Labs `.glb` parcel mesh.
+Set any destination on the map or search bar and engage **Universal FSD Autopilot** across foot, road, rail/tunnel, sea, air, and orbit:
+
+- **🚶 Walk**: 3D articulated human & custom avatars, sidewalk-aware local A* navigation around building footprints, mid-air skydiving/freefall with 3D tumbling & limb flailing, sea swimming/drowning & fall-damage physics, pedestrian interactions (15-point Verlet ragdolls, carjacking), and infantry weapons.
+- **🚗 Drive (Car & Tank)**: 11 drivable vehicles with progressive speed-sensitive real-car steering, synchronous in-memory **A* Road Router** + OSRM fallback, **15-angle LiDAR FSD** avoiding moving AI traffic & parked cars (**ACC** adaptive cruise, **AEB** emergency braking, dynamic lane-change overtaking), cross-river underwater tunnels (e.g., Shanghai Huangpu River tunnels) & multi-level bridges, plus vehicle damage & burnt wreck physics.
+- **✈️ Airliner (`Boeing 787-9 Dreamliner` & `Airbus A350`)**: Spawn or board at real airports worldwide (`SFO`, `LAX`, `JFK`, `LHR`, `HND`, `CDG`, `PEK`, `PVG`, `SIN`, `DXB`, `SYD`…), 1:1 WGS84 altitude (`m` / `ft`) and groundspeed (`km/h` / `kts` / `Mach`) telemetry, **6-phase FSD Autopilot** (`TAKEOFF ROLL → ROTATE → INITIAL CLIMB → CRUISE → APPROACH → AUTOLAND`) between real ICAO/IATA airports, conformal cockpit windscreen visor, **120 km seamless horizon skirt** & domain-warped volumetric clouds, and 3D mid-air/maritime collision physics.
+- **🚁 Helicopter & Fighter Jet**: Attack helicopter & supersonic fighter jet flight dynamics, air-to-ground/air-to-air weapons, auto-land (`L`), and FSD point-to-point autopilot.
+- **🚢 Boat / Maritime**: **10 detailed 3D vessel classes** (container ships, oil tankers, bulk cargo ships, car ferries, passenger ferries, tugboats, fishing boats, naval patrol ships, sailboats, and speedboats), waterfront piers, boat-to-boat collision physics, and water-channel FSD navigation.
+- **🚀 Spaceflight & Orbital Earth**: 6 global launch complexes (**SpaceX Starbase**, **NASA Cape Canaveral LC-39B**, **Jiuquan Pad 921**, **Baikonur Site 1/5**, **ESA Kourou ELA-4**, **JAXA Tanegashima LA-Y2**), multi-stage Starship & orbital rocket launches (`0 → 380 km` LEO) into a real-time J2000/GMST orbital Earth view, live SGP4 satellite/ISS tracking, and hypersonic plasma re-entry into any city on Earth.
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/airport-boeing787.jpg" alt="Boarding Boeing 787 on SFO Tarmac"><br><sub><b>Airport Tarmac & 6-Phase FSD</b> — Board a Boeing 787 or Airbus A350 and fly or autoland between real ICAO/IATA airports</sub></td>
+    <td width="33%"><img src="docs/screenshots/airliner-climb.jpg" alt="Boeing 787 Climbing Through Cloud Deck"><br><sub><b>120 km Horizon & Volumetric Clouds</b> — 1:1 WGS84 altitude (<code>m/ft</code>) and groundspeed (<code>km/h/kts/Mach</code>)</sub></td>
+    <td width="33%"><img src="docs/screenshots/kaiju.jpg" alt="Kaiju Swarm Defense"><br><sub><b>Combat & Kaiju Defense</b> — Switch between Army Soldier, Main Battle Tank, Attack Helicopter & Fighter Jet</sub></td>
+  </tr>
+</table>
+
+---
+
+## 🏛️ Architectural & 3D World Detail (`599` MVT Classes · `42` Facade Layers)
+
+Every OpenMapTiles Z14 feature class across all 16 vector layers is synthesized into 3D architecture, massing, and street life at 60 FPS:
+
+- **42 Facade Layers (`24` Photo + `18` Procedural Regional Styles)**: High-precision UV-addressed atlas combining 24 photographic facade textures with 18 procedural regional styles — including **Art Deco**, **Haussmann**, **Brutalist**, **Tudor**, **Modern Timber**, **Neoclassical**, **Venetian Gothic**, and **High-Tech Diagrid**.
+- **3D Massing, Setbacks & Interior Parallax**: **3D interior room parallax shader** (furnished offices, retail shops, warm residential rooms), **multi-tier skyscraper setbacks**, ground-floor **colonnades**, **cast-iron fire escapes**, and street-level **storefronts**.
+- **8 3D Roof Typologies**: Swept East Asian **`xieshan` / `irimoya`** roofs, **Dutch stepped gables**, **mansard**, **gambrel**, **barrel-vault**, **pyramidal**, **hip**, and **gable** roofs, plus procedural flat-roof mechanical penthouses, HVAC chillers, solar arrays, and skylight strips.
+- **6 Multi-Archetype 3D Infill Houses**: Suburban and urban residential parcels with attached/detached **garages**, **porches**, **3-sided Victorian bay windows**, **front stoops**, and landscaped **yards with swimming pools, pergolas, and greenhouses**.
+- **100+ Hand-Built Global Landmarks & 120+ Tech Campuses**: Custom 3D icons at exact coordinates (Apple Park, Googleplex, Google Bay View, NVIDIA HQ, Meta, OpenAI, Microsoft, Golden Gate Bridge, Eiffel Tower, Sagrada Família, Burj Khalifa, Taj Mahal, Sydney Opera House, SF City Hall, Hollywood Sign, US Capitol & more) with live **Wikimedia Commons / Wikidata Inspector**, **360° Drone Orbit**, client-side **Photo-to-3D reconstruction**, and `.glb` parcel overrides.
 
 <table>
   <tr>
@@ -65,75 +90,34 @@ Click **any building, tech campus, or landmark** to open the **Property & Landma
     <td width="33%"><img src="docs/screenshots/tech-campuses.jpg" alt="Googleplex & NVIDIA HQ"><br><sub><b>Googleplex & NVIDIA HQ</b> — Open campus lawns, solar canopies & geodesic triangular domes</sub></td>
     <td width="33%"><img src="docs/screenshots/photo3d-cityhall.jpg" alt="SF City Hall Photo-to-3D"><br><sub><b>Photo-to-3D Inspector</b> — SF City Hall Beaux-Arts dome with live photo projection & parcel metadata</sub></td>
   </tr>
+  <tr>
+    <td><img src="docs/screenshots/neighborhood-599.jpg" alt="San Francisco Victorian Rowhouses & Muni Streetcar"><br><sub><b>Regional Roofs & Facades</b> — Victorian bay windows, stoops, cast-iron fire escapes & Muni streetcars</sub></td>
+    <td><img src="docs/screenshots/sunnyvale-lots.jpg" alt="Silicon Valley Suburban Lots & Plazas"><br><sub><b>3D Infill Houses & Yards</b> — Multi-archetype homes with garages, porches, pools, pergolas & greenhouses</sub></td>
+    <td><img src="docs/screenshots/drive.jpg" alt="Driving through Union Square"><br><sub><b>15-Angle LiDAR FSD</b> — Autonomous driving through Union Square with ACC, AEB, lane changes & storefronts</sub></td>
+  </tr>
 </table>
 
 ---
 
-## 🚀 Global Spaceports, Multi-Agency Rocket Launches & Live Orbital Earth
+## 📡 How Traffic & Live World Data Work (Hybrid Live Feeds + Real OSM Networks)
 
-Visit **6 authentic global launch complexes**, press **`F / E`** on the pad to ignite a multi-stage orbital launch (`0 → 380 km` LEO), and transition seamlessly into a **real-time J2000/GMST 3D Spherical Earth** surrounded by the Milky Way galaxy and live satellites:
-- **SpaceX Starbase (Boca Chica)** — *Starship & Super Heavy* + Mechazilla chopstick catch tower
-- **NASA Kennedy Space Center LC-39B** — *Artemis SLS Block 1 + Orion* & Vehicle Assembly Building (VAB)
-- **Jiuquan Satellite Launch Center Pad 921 (酒泉)** — *Long March 2F (长征二号F) + Shenzhou (神舟)*
-- **Baikonur Cosmodrome Site 1/5** — *Soyuz-2* with Korolev Cross 4-strap-on booster separation
-- **ESA Guiana Space Centre ELA-4 (Kourou)** — *Ariane 6*
-- **JAXA Tanegashima LA-Y2** — *H3 Launch Vehicle*
-- **Live Orbital Tracking & Plasma Re-Entry**: Track the **ISS** (`wheretheiss.at`), **Tiangong Space Station (`天宫`)**, **Hubble**, **BeiDou**, and **CelesTrak** constellations in real time, then double-click anywhere on the 3D globe (or press **`Esc`**) for hypersonic plasma re-entry into that city!
+World Explorer blends real-time global telemetry feeds with high-density procedural simulation anchored to real OpenStreetMap geometry:
+
+| Domain | Live Data Feeds & Real-World Synthesis |
+| :-- | :-- |
+| **✈️ Live ADS-B Flights** | Real-time aircraft positions, callsigns, altitudes, headings, and vertical rates streamed from **OpenSky Network**, **`adsb.fi`**, and **`adsb.lol`**, rendered as 3D widebody/narrowbody airliners in the sky and on airport radars. |
+| **🛰️ Live NORAD Satellites & ISS** | Real-time orbital elements (`TLE` / `OMM`) from **CelesTrak** and live ISS telemetry (`wheretheiss.at`) propagated in the browser via **SGP4 (`satellite.js`)** — tracking the **ISS**, **Tiangong (`天宫`)**, **Hubble**, **Starlink**, and **BeiDou** across a J2000/GMST globe. |
+| **🌦️ Live Weather, Sea State & Aurora** | Real local solar time, cloud cover, precipitation, wind, and wave heights from **[Open-Meteo](https://open-meteo.com)** coupled with **NOAA SWPC** planetary $K_p$ aurora oval nowcasts. |
+| **🚢 Live Rail & Maritime AIS** | Real-time vessel transponders and ferry schedules from **Fintraffic Digitraffic AIS**, **aisstream.io**, **NYC Ferry**, **WSDOT**, and **Entur**, plus live **BART** rapid-transit train telemetry in the Bay Area. |
+| **🚦 AI Road/Pedestrian Traffic + Live Sensors** | Multi-lane **OpenStreetMap** road & sidewalk graphs with country-correct driving side, junction turn reservations, stop bars, and pedestrian crosswalks — modulated by live city traffic speed sensors from **NYC DOT**, **London TfL**, **Hong Kong TD (`DATA.GOV.HK`)**, and optional **TomTom** flow data. |
 
 <table>
   <tr>
     <td width="33%"><img src="docs/screenshots/starbase-hollywood.jpg" alt="Hollywood Sign & SpaceX Starbase"><br><sub><b>Mount Lee & SpaceX Starbase</b> — 3D terrain-draped Hollywood Sign & Starbase Mechazilla pad</sub></td>
     <td width="33%"><img src="docs/screenshots/spaceports.jpg" alt="NASA KSC LC-39B & Jiuquan Pad 921"><br><sub><b>Multi-Agency Spaceports</b> — NASA KSC LC-39B (SLS + VAB) & Jiuquan Pad 921 (Long March 2F)</sub></td>
-    <td width="33%"><img src="docs/screenshots/orbital-earth.jpg" alt="Orbital Earth & Live Satellites"><br><sub><b>Low Earth Orbit (380 km)</b> — Real-time GMST globe, Milky Way, live ISS, Tiangong & Hubble</sub></td>
+    <td width="33%"><img src="docs/screenshots/orbital-earth.jpg" alt="Orbital Earth & Live Satellites"><br><sub><b>Low Earth Orbit (380 km)</b> — Real-time GMST globe, Milky Way, live SGP4 satellites, ISS & Tiangong</sub></td>
   </tr>
 </table>
-
----
-
-## ✈️ Commercial Airliners (`Boeing 787 / Airbus A350`), GTA-Style Vehicles & Kaiju Defense
-
-Walk onto any international airport tarmac (**SFO, LAX, JFK, LHR, HND, CDG, PEK, PVG, SIN, DXB, SYD…**) and press **`F / E`** to board a parked **Boeing 787-10 Dreamliner** or **Airbus A350-900**:
-- **Full Ground-to-Cruise Envelope (`0 → 12,500 m`)**: Reverse thrust pushback (`S`), nosewheel steering (`A / D`), rotation at `V_R ≈ 145 kt` (`Space / Q`), automatic gear retraction, contrails, and climbing above the 3D volumetric cloud deck (`920 km/h` / Mach 0.85).
-- **GTA-Style Street Vehicles, Boats & Sculpted Humans**: Enter any parked car or moored boat (`F / E`), switch between 11 garage vehicles (`G`), engage in infantry/vehicle combat with destructible car wrecks, and interact with sculpted 11-part anatomical pedestrians featuring 15-point constrained Verlet ragdoll physics.
-
-<table>
-  <tr>
-    <td width="33%"><img src="docs/screenshots/airport-boeing787.jpg" alt="Boarding Boeing 787 on SFO Tarmac"><br><sub><b>Airport Tarmac Boarding</b> — Walk up to any parked Boeing 787-10 or Airbus A350 and press <code>F / E</code></sub></td>
-    <td width="33%"><img src="docs/screenshots/airliner-climb.jpg" alt="Boeing 787 Climbing Through Cloud Deck"><br><sub><b>Cloud-Deck Climb</b> — Piloting a Boeing 787-10 through the 3D cloud layer up to 12,500 m</sub></td>
-    <td width="33%"><img src="docs/screenshots/kaiju.jpg" alt="Kaiju Swarm Defense"><br><sub><b>Kaiju Swarm Defense</b> — Switch between Army Soldier, Tank, Attack Helicopter & Fighter Jet</sub></td>
-  </tr>
-</table>
-
----
-
-## 🏘️ 100% Map-Tile 3D Coverage (`16` MVT Layers · `599` Classes & Subclasses)
-
-Every single OpenMapTiles Z14 feature class across all 16 vector layers is procedurally synthesized into rich 3D architecture and street life at 60 FPS:
-- **Architectural Realism**: Raycasted 3D interior cube-mapped windows (furnished offices, retail shops, warm residential rooms), Victorian 3-sided bay windows with pastel palettes and cornices, suburban curb-appeal lots (driveways, garages, front paths, lawn trees, backyard pools), and procedural flat roofs with HVAC chillers, solar arrays, skylight strips, and water tanks.
-- **599 Real-Map POIs & Landuse Classes**: Brand-colored gas station canopies (`Shell`, `Chevron`, `76`, `Mobil`, `Sinopec`) with pump islands & price totems, convenience marts (`7-Eleven`, `FamilyMart`, `Lawson`), car wash tunnels, dining patios with umbrellas, pubs, hotels, cinemas, auto repair lifts, marketplaces, stadiums, tennis/basketball/soccer pitches, skateparks, cemeteries, zoos, waterparks, emergency services, world religious architecture, and street furniture.
-
-<table>
-  <tr>
-    <td width="33%"><img src="docs/screenshots/neighborhood-599.jpg" alt="San Francisco Victorian Rowhouses & Muni Streetcar"><br><sub><b>Victorian Architecture & Transit</b> — 3-sided bay windows, Muni F streetcars & hillside streets</sub></td>
-    <td width="33%"><img src="docs/screenshots/sunnyvale-lots.jpg" alt="Silicon Valley Suburban Lots & Plazas"><br><sub><b>Suburban Curb Appeal at 60 FPS</b> — Detached houses, driveways, trees & commercial plazas</sub></td>
-    <td width="33%"><img src="docs/screenshots/drive.jpg" alt="Driving through Union Square"><br><sub><b>Street Level Life</b> — Driving through Union Square with traffic, signals, storefronts & pedestrians</sub></td>
-  </tr>
-</table>
-
----
-
-## ✨ What's in the World
-
-| Feature | Highlights |
-| :-- | :-- |
-| 🚁 **Fly, Drive, Sail, Walk, Launch** | Arcade helicopter with auto-land (`L`), commercial widebody jets (`Boeing 787` / `Airbus A350`), multi-stage orbital rockets, 11 street vehicles (from taxis to a Mach-1 hypercar and tank), drivable moored boats, and on foot. |
-| 🏙️ **599-Class Living Cities** | 100% OpenMapTiles 3D coverage across 16 MVT layers: AI road traffic on the correct side for each country, traffic signals, lane markings, gas stations, convenience marts, dining patios, sports courts, parks, rail, and ferries. |
-| 🏛️ **102+ Landmarks & 120+ Tech HQ** | Hand-crafted 3D icons at exact coordinates: Apple Park, Googleplex, Google Bay View, NVIDIA HQ, Meta, OpenAI, Microsoft, Golden Gate Bridge, Eiffel Tower, Sagrada Família, Burj Khalifa, Taj Mahal, Sydney Opera House, SF City Hall, Hollywood Sign, US Capitol & more. |
-| 📸 **Real-Estate Photo-to-3D** | Click any building or landmark for live Wikimedia Commons / Wikidata photos, architectural metadata, 360° **Drone Orbit**, client-side **Photo-to-3D Building Reconstruction**, and `.glb` parcel mesh overrides. |
-| 🚀 **Spaceports & Orbital Earth** | 6 global launchpads (SpaceX Starbase, NASA KSC LC-39B, Jiuquan, Baikonur, Kourou, Tanegashima) launching into a real-time J2000/GMST 3D Earth with the Milky Way, live ISS, Tiangong, Hubble & CelesTrak satellites. |
-| 📡 **Live Global Telemetry** | Real local time & weather ([Open-Meteo](https://open-meteo.com)), real sea state, NOAA aurora nowcast, live AIS ships (Digitraffic, Entur, WSDOT, NYC Ferry), live BART trains, live ADS-B aircraft, and real-time NYC / London / Hong Kong traffic speeds. |
-| 🦖 **Kaiju Swarm Defense** | Up to 3 Kaiju rise from the nearest water with atomic heat rays. Defend the city across 4 combat roles: **Army Soldier**, **Main Battle Tank**, **Attack Helicopter**, or **Fighter Jet**. |
-| ⚡ **60 FPS Frame Governor** | Off-thread Web Worker chunk builder, merged vertex-colored static buffers, GPU instanced props, and a proactive 60 FPS frame-budget governor with dynamic pixel-ratio and shadow distance scaling. |
 
 ---
 
@@ -141,7 +125,7 @@ Every single OpenMapTiles Z14 feature class across all 16 vector layers is proce
 
 | Key | Action |
 | :-- | :-- |
-| `W` `A` `S` `D` / Arrows | Move, steer, or pitch/bank |
+| `W` `A` `S` `D` / Arrows | Move, progressive car steering, vessel helm, or aircraft pitch/bank |
 | `1` `2` `3` | Switch mode: **Drive** (`1`) · **Walk** (`2`) · **Helicopter** (`3`) |
 | `4` | **Kaiju Defense** (then `1` `2` `3` `4` switches Gunship / Tank / Soldier / Fighter Jet) |
 | `F` / `E` | **Contextual Interact**: Board parked Airliner · Launch Orbital Rocket · Enter/Exit Car or Boat |
@@ -153,8 +137,8 @@ Every single OpenMapTiles Z14 feature class across all 16 vector layers is proce
 | `R` / `Tab` | Reload weapon / cycle owned infantry weapons |
 | `Shift` | Boost (vehicle / helicopter / sprint) |
 | `H` | Horn or emergency siren |
-| `M` | World Map (click anywhere to teleport; toggle live traffic overlay) |
-| `/` | Search any place, landmark, spaceport, or company HQ |
+| `M` | World Map (click anywhere to teleport or set **Universal FSD** destination; toggle live traffic overlay) |
+| `/` | Search any place, airport, landmark, spaceport, or company HQ |
 | `Esc` | Exit Orbital Space View (triggers plasma re-entry) or close modal |
 | `Shift` + `F` | Toggle Full Screen |
 
@@ -165,7 +149,9 @@ Every single OpenMapTiles Z14 feature class across all 16 vector layers is proce
 
 ---
 
-## 🛠️ Run It Yourself
+## 🛠️ Server (`server.py`) & Single-File Release Bundle (`tools/build_release.py`)
+
+### 1. Run Locally (`server.py` on port `8098`)
 
 ```bash
 python3 server.py                      # → http://localhost:8098
@@ -177,13 +163,14 @@ or with Docker:
 docker build -t world-explorer . && docker run -p 8098:8098 world-explorer
 ```
 
-Zero build step and zero required API keys. `server.py` serves the application along with `/api/sky` (live ADS-B aircraft proxy) and `/api/ships` (live maritime vessel relay). The app also runs from any static host (including GitHub Pages).
+Zero build step and zero required API keys. `server.py` serves the modular ES-module app on port `8098` along with `/api/sky` (live ADS-B aircraft proxy for OpenSky / `adsb.fi` / `adsb.lol`) and `/api/ships` (live maritime AIS vessel relay). The app also runs directly from any static host (including GitHub Pages).
 
-**Single-File Release Build:**
-`world_explorer.html` packages the entire engine into a single self-contained HTML file. Regenerate it after modifying `src/` with:
+### 2. Build the Standalone Single-File Release (`world_explorer.html`)
+
+`tools/build_release.py` compiles the entire engine (`src/`, Web Workers, shaders, and assets) into a **standalone, zero-dependency single-file `world_explorer.html`** that opens directly in any browser:
 
 ```bash
-python3 tools/build_release.py
+python3 tools/build_release.py         # → outputs standalone world_explorer.html
 ```
 
 ---
