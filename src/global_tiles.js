@@ -942,11 +942,15 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     const c = String(cls || "").toLowerCase();
     const s = String(subCls || "").toLowerCase();
     const rPenalty = Math.min(20, Math.max(0, Number(rank) || 10));
-    if (c === "hospital" || s === "hospital" || s === "clinic" || s === "doctors") return { btype: "hospital", priority: 100 - rPenalty };
+    // A clinic or doctor's practice is a tenant, not a hospital building (and must not outrank the real institutions)
+    if (s === "clinic" || s === "doctors") return { btype: "commercial", priority: 60 - rPenalty };
+    if (c === "hospital" || s === "hospital") return { btype: "hospital", priority: 100 - rPenalty };
     if (c === "university" || s === "university") return { btype: "university", priority: 98 - rPenalty };
     if (c === "college" || s === "college") return { btype: "college", priority: 96 - rPenalty };
     if (c === "school" || s === "school" || s === "kindergarten") return { btype: s === "kindergarten" ? "kindergarten" : "school", priority: 94 - rPenalty };
     if (c === "town_hall" || s === "town_hall" || s === "courthouse" || s === "embassy" || s === "government" || s === "community_centre") return { btype: "government", priority: 96 - rPenalty };
+    // (the tiles' "library" class also carries book shops: only the library subclass is a civic building)
+    if (c === "library" && s && s !== "library") return { btype: "retail", priority: 58 - rPenalty };
     if (c === "museum" || c === "library" || s === "museum" || s === "library" || s === "art_gallery" || s === "theatre" || s === "arts_centre") return { btype: "civic", priority: 92 - rPenalty };
     if (c === "police" || c === "fire_station" || c === "post" || s === "police" || s === "fire_station" || s === "post_office") return { btype: "public", priority: 90 - rPenalty };
     if (c === "place_of_worship" || s === "place_of_worship" || s === "church" || s === "cathedral" || s === "temple" || s === "mosque" || s === "shrine") {
@@ -1105,7 +1109,10 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
             const dist = inside ? 0.0 : pointToFlatRingDistXZ(p.lx, p.lz, flatOuter);
             if (!inside && dist > 14.0) continue;
             const sc = p.priority * 10.0 - (inside ? 0.0 : dist * 5.5);
-            if (sc > bestPoiScore) {
+            // An institution (priority >= 86: hospital, school, town hall, museum, police, church, stadium, station, hotel)
+            // types only the building its point stands in. Within 14 m it used to out-score every shop, so one shrine,
+            // clinic or police box turned the whole row around it into churches, hospitals and civic halls.
+            if (sc > bestPoiScore && (inside || p.priority < 66)) {
               bestPoiScore = sc;
               bestPoi = p;
             }

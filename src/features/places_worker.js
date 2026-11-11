@@ -333,6 +333,7 @@ export function computePlacesPayload(ctx) {
   const lat = places ? places.lat : 0;
   const lon = places ? places.lon : 0;
   const nyc = isNycRegion(lat, lon);
+  const usTanks = lat >= 24.0 && lat <= 50.0 && lon >= -126.0 && lon <= -66.0;
 
   // Usable ground-level building footprints (local coords) — only include buildings actually extruded by WFC
   const blds = [];
@@ -435,7 +436,8 @@ export function computePlacesPayload(ctx) {
 
     // Water tanks (classic NYC wooden tanks; rare elsewhere)
     let hasTank = false;
-    const tankP = nyc ? (rawH >= 18 && rawH <= 95 ? 0.5 : 0.0) : (rawH >= 15 && rawH <= 60 ? 0.035 : 0.0);
+    // (the model is the wooden barrel tank: New York, and now and then another older US city; nowhere else)
+    const tankP = nyc ? (rawH >= 18 && rawH <= 95 ? 0.5 : 0.0) : (usTanks && rawH >= 15 && rawH <= 60 ? 0.035 : 0.0);
     if (rng() < tankP) {
       const n = B.area > 1500 && rng() < 0.3 ? 2 : 1;
       for (let k = 0; k < n; k++) {
