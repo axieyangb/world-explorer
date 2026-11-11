@@ -394,8 +394,9 @@ const STYLES = {
         const y0 = f * 128;
         // Geometric brass chevron spandrel panel between floors
         const sx = x0 + 24, sw = 80, sy = y0 + 96, sh = 32;
-        P.rect(sx, sy, sw, sh, bronzeDk, TRIM);
-        P.rect(sx + 3, sy + 3, sw - 6, sh - 6, shade(bronzeDk, 1.25), TRIM);
+        // tone-on-tone terracotta relief (bright brass on near-black read as a hazard-stripe panel in the game)
+        P.rect(sx, sy, sw, sh, shade(terra, 0.66), TRIM);
+        P.rect(sx + 3, sy + 3, sw - 6, sh - 6, shade(terra, 0.80), TRIM);
         for (let k = -2; k < 6; k++) {
           const cx = sx + sw / 2, cy = sy + k * 7;
           P.path((c) => {
@@ -406,7 +407,7 @@ const STYLES = {
             c.lineTo(cx, cy + 3);
             c.lineTo(sx + 6, cy + 15);
             c.closePath();
-          }, brass, TRIM);
+          }, shade(terra, 1.06), TRIM);
         }
         // Sunburst stepped-arch crown + bronze casement window with Art Deco ziggurat mullions
         const wx = x0 + 30, wy = y0 + 18, ww = 68, wh = 74;

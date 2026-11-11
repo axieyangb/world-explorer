@@ -753,7 +753,7 @@ export function facadeV(index, v) {
 function archFacadePool(arch, h, btype) {
   const small = h <= 11.5;
   switch (arch) {
-    case 'sf': return h >= 40 ? [0, 1, 4, 7, 34, 41, 3] : h >= 17 ? [7, 34, 8, 4, 20, 16, 25, 38] : [24, 24, 24, 25, 24, 6, 34];
+    case 'sf': return h >= 40 ? [0, 1, 4, 7, 34, 41, 3] : h >= 17 ? [7, 34, 8, 4, 20, 16, 25, 38] : [24, 24, 24, 25, 24, 6, 24];
     case 'la': return h >= 40 ? [0, 1, 2, 5, 4, 34, 41] : h >= 14 ? [25, 20, 34, 38, 3, 16, 4] : [25, 25, 25, 21, 21, 33, 38];
     case 'nyc':
       if (h >= 60) return [0, 1, 7, 34, 41, 5, 2];
@@ -881,7 +881,36 @@ export function parseOsmBuildingColour(raw) {
   return null;
 }
 
+/**
+ * Region-bound layers picked through a shared pool (civic, famous, office, university) are swapped for the local
+ * equivalent: Haussmann stone belongs to Paris and continental Europe, Western classical / brick masonry does not
+ * belong to East Asian or Gulf streets, and brick lofts / Tudor / Georgian do not belong to the Mediterranean.
+ * `arch` is the architectural region (features/roofs.js archRegionFor); Beijing keeps its own bespoke pools.
+ */
+const SPAN_IS_FABRIC_ARCH = { paris: 1, uk: 1, eu: 1, centralEu: 1, eastEu: 1, med: 1, nordic: 1, latam: 1, mideast: 1, japan: 1, hk: 1 };
+const EAST_ASIA_ARCH = { japan: 1, hk: 1, china: 1, seasia: 1, seAsia: 1 };
+const HAUSSMANN_ARCH = { paris: 1, eu: 1, centralEu: 1, eastEu: 1 };
+const WEST_MASONRY_LAYERS = new Set([6, 7, 8, 9, 10, 11, 34, 35, 37, 39, 40]);
+function regionalFacadeIndex(idx, arch, h) {
+  if (!arch || arch === 'beijing') return idx;
+  if (EAST_ASIA_ARCH[arch]) {
+    if (!WEST_MASONRY_LAYERS.has(idx)) return idx;
+    if (idx === 6 || idx === 8) return 3;
+    return h >= 14 ? 13 : 12;
+  }
+  if (arch === 'mideast') return WEST_MASONRY_LAYERS.has(idx) ? 28 : idx;
+  if ((idx === 9 || idx === 35) && !HAUSSMANN_ARCH[arch]) {
+    if (arch === 'uk' || arch === 'nordic') return 39;
+    if (arch === 'med') return 26;
+    if (arch === 'latam') return 27;
+    return arch === 'global' ? 4 : 7;
+  }
+  if (arch === 'med' && (idx === 6 || idx === 8 || idx === 10 || idx === 34 || idx === 37)) return h >= 14 ? 26 : 11;
+  return idx;
+}
+
 const TECH_CAMPUS_RE = /\b(google|alphabet|youtube|apple|nvidia|meta|facebook|microsoft|amazon|openai|anthropic|salesforce)\b/i;
+const CIVIC_DOME_RE = /\b(city hall|town hall|capitol|state house|statehouse|parliament|supreme court|courthouse|rathaus|h[oô]tel de ville)\b/i;
 const CIVIC_GOV_RE = /\b(city hall|capitol|courthouse|parliament|ministry|embassy|federal|municipal|supreme court)\b/i;
 
 export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
@@ -898,6 +927,13 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     !isTechCampus &&
     (Boolean(famousInfo && famousInfo.archFeatures.colonnadePortico) ||
       btype === 'government' || btype === 'civic' || btype === 'public' || CIVIC_GOV_RE.test(name));
+
+  // Neoclassical ornament (entrance portico, cupola dome) is for government / academic / museum buildings in regions
+  // that build them. Churches, temples and shrines are "civic" for facade purposes but get their own roofs, and an
+  // East Asian, Gulf or Mediterranean-village public building gets neither. The dome needs a real seat of government.
+  const classicalRegion = !bldgInfo.arch || !(EAST_ASIA_ARCH[bldgInfo.arch] || bldgInfo.arch === 'mideast' || bldgInfo.arch === 'med');
+  const civicOrnament = isCivicBuilding && classicalRegion && !(famousInfo && famousInfo.category === 'sacred_historic');
+  const civicDome = civicOrnament && (btype === 'government' || CIVIC_DOME_RE.test(name));
 
   let maxSpan = Number(bldgInfo.span) || 0;
   if (!maxSpan && bldgInfo.flatOuter && bldgInfo.flatOuter.length >= 6) {
@@ -917,7 +953,10 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     btype === 'office' || btype === 'commercial' || btype === 'tech_campus' || btype === 'research' || btype === 'laboratory' ||
     btype === 'university' || btype === 'college' || btype === 'school' || btype === 'hospital' || btype === 'hotel' ||
     btype === 'supermarket' || btype === 'mall' || btype === 'department_store' ||
-    (!isResType && maxSpan >= 28.0 && btype !== 'parking' && btype !== 'garages');
+    (!isResType && maxSpan >= 28.0 && btype !== 'parking' && btype !== 'garages' &&
+      // a wide untyped footprint is an office block in a North American grid; elsewhere (Paris perimeter blocks,
+      // Italian and Alpine towns, London terraces) it is ordinary street fabric and takes the regional pool
+      !(SPAN_IS_FABRIC_ARCH[bldgInfo.arch] && h < 30.0));
 
   let pool;
   const archPool = !famousInfo && !isTechCampus && !isCivicBuilding && !isOfficeOrCommercial && bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
@@ -1015,7 +1054,7 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     }
   }
 
-  const pickIdx = pool[((seed >>> 3) ^ (seed >>> 11)) % pool.length];
+  const pickIdx = regionalFacadeIndex(pool[((seed >>> 3) ^ (seed >>> 11)) % pool.length], bldgInfo.arch, h);
   const spec = FACADE_CATALOG[pickIdx] || FACADE_CATALOG[0];
 
   // Subtle neutral wall tint so AI facade texture colors stay true while neighboring buildings vary slightly
@@ -1073,7 +1112,13 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
 
   let parapetAccent = null;
   if (famousInfo) {
-    if (famousInfo.secondaryAccentRgb && (seed & 1)) {
+    // Brand-coloured roof trim is for corporate brands only: the gold / amber / red accents of the generic civic,
+    // sacred, hotel, hospital, museum and university classes outlined ordinary flat roofs in bright yellow.
+    const brandTrim = famousInfo.category === 'tech_hq' || famousInfo.category === 'auto_aero' ||
+      famousInfo.category === 'finance_hq' || famousInfo.category === 'media_luxury';
+    if (!brandTrim) {
+      parapetAccent = null;
+    } else if (famousInfo.secondaryAccentRgb && (seed & 1)) {
       parapetAccent = famousInfo.secondaryAccentRgb;
     } else {
       parapetAccent = famousInfo.accentRgb;
@@ -1113,6 +1158,8 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
     techBrand,
     parapetAccent,
     isCivicBuilding,
+    civicOrnament,
+    civicDome,
     famousInfo,
   };
 }
@@ -1372,7 +1419,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
 
   const ccwOuter = ensureCCWFlatXZ(flatOuter);
   // [roofs] pitched / mansard roof plan (null = the flat deck + parapet below; tech campuses & civic buildings keep flat / domed roof)
-  const roofPlan = (archRegion && !facadeSel.isTechCampus && !facadeSel.isCivicBuilding)
+  const roofPlan = (archRegion && !facadeSel.isTechCampus && !facadeSel.civicOrnament)
     ? planRoof({ flatOuter: ccwOuter, hasHoles: (flatHoles || []).some((h) => h.length >= 6), rawH, btype, region: archRegion, seed,
       flav: bldgInfo.flav, isPart, minH: rawMinH, osm: bldgInfo.osmRoof || null, facadeId: upperSpec.id })
     : null;
@@ -2235,18 +2282,12 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // 2e. NYC / Chicago Cast-Iron Fire Escapes on Brick / Masonry Residential & Loft Facades (3 <= floors <= 12)
+        // (a North American feature: not on London Georgian brick, British streets or Chinese brick slabs)
         const isBrickOrLoftRes =
           !upperSpec.isCurtainWall &&
-          (upperSpec.index === 6 ||
-            upperSpec.index === 7 ||
-            upperSpec.index === 8 ||
-            upperSpec.index === 10 ||
-            upperSpec.index === 19 ||
-            upperSpec.index === 33 ||
-            region === 'nyc' ||
-            region === 'us' ||
-            archRegion === 'sf' ||
-            archRegion === 'uk');
+          (archRegion
+            ? archRegion === 'nyc' || archRegion === 'us' || archRegion === 'sf'
+            : region === 'nyc' || region === 'us');
         if (
           !isHole &&
           tIdx === 0 &&
@@ -2305,8 +2346,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           (upperSpec.index === 9 ||
             upperSpec.index === 11 ||
             upperSpec.index === 26 ||
-            region === 'paris' ||
-            region === 'europe' ||
+            upperSpec.index === 35 ||
+            (!archRegion && (region === 'paris' || region === 'europe')) ||
             archRegion === 'paris' ||
             archRegion === 'med');
         if (!isHole && isHaussmannOrEuro && totalSpan >= 10.5 && totalSpan <= 44.0 && len >= 5.5 && upperFloors >= 3) {
@@ -2374,12 +2415,18 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           btype === 'civic' ||
           btype === 'public' ||
           btype === 'government';
-        if (!isHole && tIdx === 0 && isCommOrCivicGround && len >= 9.0 && edgeSpan >= 4.2) {
+        // Ornament stone = the wall's own colour (the facade layer's average under the wall tint), so piers and
+        // columns belong to the building instead of reading as white / grey blocks set against it
+        const ornAv = upperSpec.avgColor, ornWt = facadeSel.wallTint;
+        const ornStone = [Math.min(1, ornAv[0] * ornWt[0] * 1.12 * dirShade), Math.min(1, ornAv[1] * ornWt[1] * 1.12 * dirShade), Math.min(1, ornAv[2] * ornWt[2] * 1.12 * dirShade)];
+        // An arcade needs a front to carry it: a retail podium, or a long street front of a building of 4+ storeys
+        const arcadeFront = hasRetailPodium || (len >= 14.0 && edgeSpan >= 13.0 && !EAST_ASIA_ARCH[archRegion]);
+        if (!isHole && tIdx === 0 && isCommOrCivicGround && arcadeFront && len >= 9.0 && edgeSpan >= 4.2) {
           const hasRoadEntrance = Boolean(entranceMap && entranceMap.has(i));
           const colSeed = (seed ^ Math.imul(i + 1, 1597334677)) >>> 0;
           if (hasRoadEntrance || (hasRetailPodium && (colSeed & 1) === 0)) {
             const arcadeH = hasRetailPodium ? podiumH : Math.min(4.8, Math.max(3.6, edgeSpan * 0.28));
-            const pierStoneCol = [Math.min(1, pCol[0] * dirShade * 0.94), Math.min(1, pCol[1] * dirShade * 0.93), Math.min(1, pCol[2] * dirShade * 0.91)];
+            const pierStoneCol = [ornStone[0] * 0.96, ornStone[1] * 0.96, ornStone[2] * 0.95];
             const pierBaseCol = [pierStoneCol[0] * 0.82, pierStoneCol[1] * 0.82, pierStoneCol[2] * 0.84];
             const nArcadeBays = Math.min(12, Math.max(3, Math.round(len / 4.2)));
             const arcBayW = len / nArcadeBays;
@@ -2416,21 +2463,18 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // Neoclassical Front Portico Entrance Colonnade & Triangular Pediment on Government / Civic / Monumental buildings
+        // (civicOrnament: government / academic / museum buildings in regions with that tradition; see selectFacadeForBuilding)
         const wantPortico =
-          facadeSel.isCivicBuilding ||
-          btype === 'civic' ||
-          btype === 'government' ||
-          btype === 'public' ||
-          btype === 'university' ||
-          btype === 'museum' ||
-          (upperSpec.index === 7 && totalSpan >= 18.0 && (seed % 4 === 0));
-        if (!isHole && tIdx === 0 && wantPortico && entranceMap && entranceMap.has(i) && len >= 10.5 && edgeSpan >= 5.5) {
-          const portW = Math.min(14.0, Math.max(6.8, len * 0.42));
+          facadeSel.civicOrnament ||
+          (upperSpec.index === 7 && totalSpan >= 18.0 && (seed % 4 === 0) && (archRegion ? archRegion === 'nyc' || archRegion === 'us' : region === 'nyc' || region === 'us'));
+        // A portico is an entrance to a substantial front: two storeys of column at most, a third of the front wide
+        if (!isHole && tIdx === 0 && wantPortico && entranceMap && entranceMap.has(i) && len >= 16.0 && edgeSpan >= 8.0) {
+          const portW = Math.min(12.0, Math.max(6.4, len * 0.34));
           const pu0 = (len - portW) * 0.5;
           const pu1 = pu0 + portW;
-          const portD = 1.65;
-          const colH = Math.min(edgeSpan * 0.72, 9.5);
-          const stoneCol = [Math.min(1, 0.86 * dirShade), Math.min(1, 0.83 * dirShade), Math.min(1, 0.77 * dirShade)];
+          const portD = 1.45;
+          const colH = Math.min(edgeSpan * 0.62, 7.2);
+          const stoneCol = ornStone;
           const shadowStone = [stoneCol[0] * 0.9, stoneCol[1] * 0.9, stoneCol[2] * 0.9];
           // Ceremonial stepped stylobate base
           pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, pu0 - 0.4, pu1 + 0.4, 0.0, 0.42, 0.02, portD + 0.45, shadowStone, false);
@@ -2438,7 +2482,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           const nCols = portW >= 10.5 ? 6 : 4;
           for (let cIdx = 0; cIdx < nCols; cIdx++) {
             const cu = pu0 + 0.35 + (cIdx / (nCols - 1)) * (portW - 0.70);
-            pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, cu - 0.24, cu + 0.24, 0.42, 0.42 + colH, portD - 0.42, portD, stoneCol, false);
+            pushDetailWallBox(x1, edgeSurfY, z1, tx, tz, nx, nz, cu - 0.21, cu + 0.21, 0.42, 0.42 + colH, portD - 0.42, portD, stoneCol, false);
           }
           // Entablature frieze beam + stepped triangular pediment crown
           const entY0 = 0.42 + colH;
@@ -2544,11 +2588,13 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         triEntity.push(entityIdx);
       }
       if (uv) {
-        // rMat = 8 procedural flat-roof coordinates centered at (500, 500) in building-local meters
+        // rMat = 8 procedural flat-roof coordinates centered at (500, 500) in building-local meters; only a tall
+        // tower's top deck is centered at (500, 2500), which is where the shader paints its helipad marking
+        const rV0 = isTopTier && totalSpan >= 60.0 && maxX - minX >= 16.0 && maxZ - minZ >= 16.0 ? 2500.0 : 500.0;
         uv.push(
-          8500.0 + (pa.x - rCx), -20.0 - (500.0 + (pa.y - rCz)),
-          8500.0 + (pc.x - rCx), -20.0 - (500.0 + (pc.y - rCz)),
-          8500.0 + (pb.x - rCx), -20.0 - (500.0 + (pb.y - rCz))
+          8500.0 + (pa.x - rCx), -20.0 - (rV0 + (pa.y - rCz)),
+          8500.0 + (pc.x - rCx), -20.0 - (rV0 + (pc.y - rCz)),
+          8500.0 + (pb.x - rCx), -20.0 - (rV0 + (pb.y - rCz))
         );
       }
     }
@@ -2625,14 +2671,19 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // 4c. Rooftop Water Tank on Steel Support Frame (mid-rise residential/industrial/masonry buildings)
-        if (totalSpan >= 14.0 && totalSpan <= 48.0 && ((seed >>> 4) % 3) === 0) {
+        // Wooden barrel tanks are a New York / older US city thing; continental Europe, Britain and the Mediterranean
+        // do not put tanks on their roofs at all, the rest of the world uses steel panel tanks
+        const tankArch = archRegion || region;
+        const tankOk = !(tankArch === 'paris' || tankArch === 'london' || tankArch === 'europe' || tankArch === 'uk' || tankArch === 'eu' ||
+          tankArch === 'centralEu' || tankArch === 'eastEu' || tankArch === 'med' || tankArch === 'nordic');
+        if (tankOk && totalSpan >= 14.0 && totalSpan <= 48.0 && ((seed >>> 4) % 3) === 0) {
           const tw = Math.min(2.6, Math.max(1.7, Math.min(spanX, spanZ) * 0.12));
           const legH = 1.15;
           const tankH = tw * 1.18;
           const txTank = cx - hDirX * (pw * 0.5 + tw * 0.5 + 1.9);
           const tzTank = cz - hDirZ * (pd * 0.25);
           if (isBoxSafe(txTank, tzTank, tw, tw, 0.8)) {
-            const isWoodTank = region !== 'beijing' && ((seed >>> 7) & 1) === 0;
+            const isWoodTank = (tankArch === 'nyc' || tankArch === 'us') && ((seed >>> 7) & 1) === 0;
             const tankCol = isWoodTank ? [0.48, 0.34, 0.22] : [0.60, 0.63, 0.66];
             const legOff = tw * 0.34;
             for (const [lx, lz] of [[-legOff, -legOff], [legOff, -legOff], [-legOff, legOff], [legOff, legOff]]) {
@@ -2674,7 +2725,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // 4e. Neoclassical Civic / Government Central Cupola Dome (copper-patina or gold-accented)
-        if (facadeSel.isCivicBuilding && spanX >= 14.0 && spanZ >= 14.0) {
+        if (facadeSel.civicDome && spanX >= 22.0 && spanZ >= 22.0 && totalSpan >= 10.0) {
           const isGoldDome = /capitol|state|supreme|parliament/i.test(String(bldgInfo.name || '')) || ((seed >>> 5) % 4 === 0);
           const domeCol = isGoldDome ? [0.84, 0.69, 0.24] : [0.28, 0.56, 0.48]; // gold leaf vs verdigris copper patina
           const drumCol = [0.84, 0.81, 0.75];

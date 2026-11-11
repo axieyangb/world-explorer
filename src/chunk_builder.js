@@ -1110,11 +1110,13 @@ export function createSharedMaterials() {
                 totalEmissiveRadiance += vec3(1.0, 0.82, 0.52) * inPane * rFade * nightLvl * 0.22;
               }
             } else if (vNightBid >= 0.86) {
-              // High-rise circular helipad ring + central H marking
-              float rDist = length(rp);
+              // High-rise circular helipad ring + central H marking: only tower top decks carry the (500, 2500)
+              // roof centre (wfc_mesh_builder.js), so ordinary flat roofs never get one
+              vec2 hp = rp - vec2(0.0, 2000.0);
+              float rDist = length(hp);
               float ringM = smoothstep(0.32, 0.18, abs(rDist - 5.8));
-              float hLegs = step(abs(abs(rp.x) - 1.35), 0.28) * step(abs(rp.y), 2.1);
-              float hBar = step(abs(rp.x), 1.35) * step(abs(rp.y), 0.28);
+              float hLegs = step(abs(abs(hp.x) - 1.35), 0.28) * step(abs(hp.y), 2.1);
+              float hBar = step(abs(hp.x), 1.35) * step(abs(hp.y), 0.28);
               float markM = clamp(ringM + max(hLegs, hBar), 0.0, 1.0) * step(rDist, 6.4);
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.78, 0.22), markM * rFade * 0.85);
             }

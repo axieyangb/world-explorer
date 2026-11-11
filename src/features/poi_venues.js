@@ -17,6 +17,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { getChunkTerrainMeshElevation, getBeijingTerrainElevation } from '../environment.js';
 import { kaijuPatchBuildingShader } from './kaiju/kaiju_destruction.js';
 import { classifyPoiVenueKind } from './poi_venues_extract.js';
+import { archRegionFor } from './roofs.js';
 
 export const POI_VENUE_STRIDE = 8;
 const HALF = 500;
@@ -353,6 +354,9 @@ export function buildPoiVenues(ctx) {
   if (!pois.length && !sites.garages.length && !(sites.venues && sites.venues.length)) return null;
   const lat = (data.places && data.places.lat) || 0, lon = (data.places && data.places.lon) || 0;
   // Seeds come from absolute lat/lon (1e-5 deg grid), so a venue looks the same whichever spawn point set the origin
+  // The projecting Broadway marquee and blade sign are a North American cinema front (unknown regions keep it)
+  const venueArch = archRegionFor({ centerLat: lat, centerLon: lon });
+  const broadwayMarquee = venueArch === 'us' || venueArch === 'nyc' || venueArch === 'la' || venueArch === 'sf' || venueArch === 'global';
   const latR = (lat * Math.PI) / 180;
   const nearBj = Math.hypot((lat - 39.9087) * 111.0, (lon - 116.3975) * 85.4) < 30.0; // same rule as computeWorldOrigin
   const mLat = nearBj ? 111033.0 : 111132.92 - 559.82 * Math.cos(2 * latR) + 1.175 * Math.cos(4 * latR);
@@ -1430,10 +1434,18 @@ export function buildPoiVenues(ctx) {
       const goldGlow = [1.0, 0.84, 0.24], neonTrim = scheme[2] || [0.95, 0.30, 0.65], carpetR = [0.72, 0.05, 0.08];
       res = storefront(F, W, {
         rnd, scheme, hostTop, glassH: GH, fasciaH: 1.05, depth: 1.1, shelves: false,
-        interior: [0.95, 0.78, 0.52], doorW: 2.4, signText: false, frame: [0.16, 0.12, 0.14],
+        interior: [0.95, 0.78, 0.52], doorW: 2.4, frame: [0.16, 0.12, 0.14],
+        ...(broadwayMarquee ? { signText: false } : {
+          // elsewhere: a plain fascia sign with the venue's own name (the generic fallbacks are American theatre names)
+          signText: GENERIC.cinema_theatre.some((g) => g[0] === o.name) ? '影院' : (o.name || '影院'),
+          signTextEn: GENERIC.cinema_theatre.some((g) => g[1] === (o.nameEn || o.name)) ? 'CINEMA' : (o.nameEn || o.name || 'CINEMA'),
+          signBg: toHex(scheme[0]), signFg: 0xfff6dc, signStyle: 2,
+        }),
       });
       // Iconic retro Broadway/Cinema 3-sided projecting marquee canopy with warm gold & neon bulb trim
-      const mw = Math.min(W + 0.6, 10.8), md = 2.65, my = GH + 0.55, mh = 1.18;
+      const mw = Math.min(W + 0.6, 10.8), md = broadwayMarquee ? 2.65 : 0.9, my = GH + 0.55, mh = 1.18;
+      const sZh = o.name || '百老汇剧院', sEn = o.nameEn || o.name || 'GRAND CINEMA';
+      if (broadwayMarquee) { // (block left unindented to keep the diff to the gate itself)
       box(bld, F, 0, my, res.D + md / 2, mw, mh, md, scheme[0], false, 'k');
       // Glowing marquee chaser bulbs / neon bands around all 3 sides (front + left + right)
       box(bld, F, 0, my + mh / 2 - 0.07, res.D + md / 2, mw + 0.1, 0.12, md + 0.1, goldGlow, 'flr', 'k');
@@ -1443,11 +1455,11 @@ export function buildPoiVenues(ctx) {
       // Glowing soffit light bulbs under marquee
       flat(bld, F, -mw / 2 + 0.2, mw / 2 - 0.2, res.D + 0.15, res.D + md - 0.15, my - mh / 2 - 0.01, goldGlow, true);
       // Front and side marquee sign panels
-      const sZh = o.name || '百老汇剧院', sEn = o.nameEn || o.name || 'GRAND CINEMA';
       sign(F, 0, my, res.D + md + 0.05, mw - 0.5, mh - 0.34, 2, sZh, sEn, 0xfff6dc, toHex(scheme[0]));
       for (const s of [-1, 1]) {
         const SFrame = new Frame(F.x0, F.y0, F.z0, F.ax * s, F.az * s);
         sign(SFrame, s > 0 ? -(res.D + md / 2) : res.D + md / 2, my, mw / 2 + 0.05, md - 0.35, mh - 0.36, 2, sZh, sEn, 0xfff6dc, toHex(scheme[0]));
+      }
       }
       // Ticket booth in center + glowing movie/show poster lightboxes flanking double doors
       box(bld, F, 0, 1.1, res.D + 0.25, 1.15, 2.1, 0.9, [0.78, 0.62, 0.22], false, 'b');
@@ -1460,7 +1472,7 @@ export function buildPoiVenues(ctx) {
       }
       // Projecting vertical double-sided Broadway/cinema illuminated blade sign above marquee
       const cBladeH = Math.min(4.2, Math.max(2.2, hostTop - (my + mh / 2) - 0.6));
-      bladeSign(F, -W / 2 + 0.28, my + mh / 2 + 0.4 + cBladeH / 2, res.D + 0.65, 0.92, cBladeH, scheme[0], goldGlow, sZh, 'CINEMA', 0xfff6dc, 2);
+      if (broadwayMarquee) bladeSign(F, -W / 2 + 0.28, my + mh / 2 + 0.4 + cBladeH / 2, res.D + 0.65, 0.92, cBladeH, scheme[0], goldGlow, sZh, 'CINEMA', 0xfff6dc, 2);
       // Red carpet runner + twin brass velvet-rope stanchion posts
       flat(bld, F, -1.25, 1.25, res.D + 0.02, res.D + md + 0.7, 0.09, carpetR);
       for (const s of [-1, 1]) {
