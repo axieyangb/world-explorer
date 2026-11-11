@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Multithreaded HTTP server for World Explorer: static files + the /api/sky live-aircraft proxy and the
-/api/ships live-vessel relay."""
+/api/ships live-vessel relay.
+
+Listens on 127.0.0.1:8098. Environment: PORT, and HOST to listen elsewhere (HOST=0.0.0.0 for the whole
+LAN). Only the app's own files are served (see STATIC_FILES / STATIC_DIRS); the two /api routes answer
+same-origin pages only.
+"""
 
 import base64
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import posixpath
 import socket
 import ssl
 import struct
@@ -18,6 +24,34 @@ import urllib.request
 import zlib
 
 ROOT_DIR = Path(__file__).resolve().parent
+
+# What the static side serves: these top-level files and everything under these directories, except
+# dotfiles and directory listings. The rest of the checkout (.git, server.py, tools/, docs/) is a 404.
+STATIC_FILES = {'', 'index.html', 'landmark_workbench.html', 'wfc_demo.html', 'world_explorer.html', 'styles.css'}
+STATIC_DIRS = {'src', 'vendor', 'assets', 'data'}
+CLIENT_TIMEOUT_S = 30  # a client that sends nothing for this long is disconnected
+
+_INFLIGHT = {}
+_INFLIGHT_LOCK = threading.Lock()
+
+
+def _single_flight(key, fn):
+  """Runs fn() for one caller per key at a time; callers that arrive meanwhile wait and share its result."""
+  with _INFLIGHT_LOCK:
+    slot = _INFLIGHT.get(key)
+    leader = slot is None
+    if leader:
+      slot = _INFLIGHT[key] = {'done': threading.Event(), 'value': None}
+  if not leader:
+    slot['done'].wait(30)
+    return slot['value']
+  try:
+    slot['value'] = fn()
+    return slot['value']
+  finally:
+    with _INFLIGHT_LOCK:
+      _INFLIGHT.pop(key, None)
+    slot['done'].set()
 
 
 # [live-sky] Same-origin live aircraft proxy: OpenSky / ADS-B feeds do not send CORS headers for
@@ -79,6 +113,10 @@ def _from_adsbx_v2(url):
 
 def sky_states(lat, lon):
   key = (round(lat, 1), round(lon, 1))
+  return _single_flight(('sky', key), lambda: _sky_states(key, lat, lon)) or {'source': 'none', 'time': time.time(), 'ac': []}
+
+
+def _sky_states(key, lat, lon):
   now = time.time()
   with SKY_LOCK:
     hit = SKY_CACHE.get(key)
@@ -193,33 +231,36 @@ def _gtfs_vehicles(data):
 
 
 def _gtfs_ships(lat, lon):
-  now = time.time()
   for name, url, (la0, lo0, la1, lo1) in GTFS_FERRIES:
-    if not (la0 <= lat <= la1 and lo0 <= lon <= lo1):
-      continue
-    with GTFS_LOCK:
-      hit = GTFS_CACHE.get(url)
-      if hit and now - hit[0] < 15:
-        return hit[1]
-    result = None
-    try:
-      req = urllib.request.Request(url, headers=_UA)
-      with urllib.request.urlopen(req, timeout=8) as resp:
-        vehicles = _gtfs_vehicles(resp.read())
-      ships = []
-      for v in vehicles:
-        age = max(0.0, now - v['ts']) if v['ts'] else 0.0
-        if age > 1800:
-          continue
-        ships.append([v['id'] or v['label'], v['label'], v['lat'], v['lon'], v['spd'], v['brg'], v['brg'], 60, 0, 0,
-                      round(age, 1)])
-      result = {'source': name, 'full': False, 'ferries': True, 'time': now, 'ships': ships}
-    except Exception:
-      result = None
-    with GTFS_LOCK:
-      GTFS_CACHE[url] = (now, result)
-    return result
+    if la0 <= lat <= la1 and lo0 <= lon <= lo1:
+      return _single_flight(('gtfs', url), lambda: _gtfs_feed(name, url))
   return None
+
+
+def _gtfs_feed(name, url):
+  now = time.time()
+  with GTFS_LOCK:
+    hit = GTFS_CACHE.get(url)
+    if hit and now - hit[0] < 15:
+      return hit[1]
+  result = None
+  try:
+    req = urllib.request.Request(url, headers=_UA)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+      vehicles = _gtfs_vehicles(resp.read())
+    ships = []
+    for v in vehicles:
+      age = max(0.0, now - v['ts']) if v['ts'] else 0.0
+      if age > 1800:
+        continue
+      ships.append([v['id'] or v['label'], v['label'], v['lat'], v['lon'], v['spd'], v['brg'], v['brg'], 60, 0, 0,
+                    round(age, 1)])
+    result = {'source': name, 'full': False, 'ferries': True, 'time': now, 'ships': ships}
+  except Exception:
+    result = None
+  with GTFS_LOCK:
+    GTFS_CACHE[url] = (now, result)
+  return result
 
 
 class _WebSocket:
@@ -316,6 +357,8 @@ class _WebSocket:
 class AisStream:
   """One background aisstream.io connection subscribed to the boxes pages asked for recently."""
 
+  MAX_CELLS = 16  # subscription boxes kept at once; the least recently asked-for cell is dropped first
+
   def __init__(self, key):
     self.key = key
     self.lock = threading.Lock()
@@ -332,6 +375,10 @@ class AisStream:
     with self.lock:
       self.cells[cell] = now
       self.since.setdefault(cell, now)
+      while len(self.cells) > self.MAX_CELLS:
+        oldest = min(self.cells, key=self.cells.get)
+        self.cells.pop(oldest)
+        self.since.pop(oldest, None)
       warming = now - self.since[cell] < 45
       if self.thread is None or not self.thread.is_alive():
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -476,46 +523,70 @@ def ship_states(lat, lon):
 
 
 class GameRequestHandler(SimpleHTTPRequestHandler):
+  timeout = CLIENT_TIMEOUT_S
+
   def __init__(self, *args, **kwargs):
     super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
 
   def end_headers(self):
     self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
-    self.send_header('Access-Control-Allow-Origin', '*')
     self.send_header('X-Live-Sky', '1')  # [live-sky] tells the page the /api/sky proxy exists
     self.send_header('X-Live-Ships', '1')  # [live-ships] tells the page the /api/ships relay exists
     super().end_headers()
 
+  def _static_allowed(self):
+    path = posixpath.normpath(urllib.parse.unquote(urllib.parse.urlsplit(self.path).path))
+    parts = [p for p in path.split('/') if p]
+    if '\\' in path or any(p.startswith('.') for p in parts):
+      return False
+    if len(parts) <= 1:
+      return (parts[0] if parts else '') in STATIC_FILES
+    return parts[0] in STATIC_DIRS
+
+  def send_head(self):
+    if not self._static_allowed():
+      self.send_error(404)
+      return None
+    return super().send_head()
+
+  def list_directory(self, path):
+    self.send_error(404)
+    return None
+
+  def _same_origin(self):
+    """False for requests that another website's page makes (the proxies are for this app only)."""
+    if self.headers.get('Sec-Fetch-Site', 'same-origin') not in ('same-origin', 'none'):
+      return False
+    origin = self.headers.get('Origin')
+    return not origin or urllib.parse.urlsplit(origin).netloc == self.headers.get('Host')
+
+  def _send_api(self, states, empty):
+    if not self._same_origin():
+      self.send_error(403)
+      return
+    q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+    try:
+      lat = max(-85.0, min(85.0, float(q.get('lat', ['0'])[0])))
+      lon = max(-180.0, min(180.0, float(q.get('lon', ['0'])[0])))
+      body = json.dumps(states(lat, lon), separators=(',', ':')).encode('utf-8')
+    except Exception:
+      body = empty
+    self.send_response(200)
+    self.send_header('Content-Type', 'application/json')
+    self.send_header('Content-Length', str(len(body)))
+    self.end_headers()
+    self.wfile.write(body)
+
   def do_GET(self):
-    if self.path.startswith('/api/ships'):
-      q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-      try:
-        lat = max(-85.0, min(85.0, float(q.get('lat', ['0'])[0])))
-        lon = max(-180.0, min(180.0, float(q.get('lon', ['0'])[0])))
-        body = json.dumps(ship_states(lat, lon), separators=(',', ':')).encode('utf-8')
-      except Exception:
-        body = b'{"source":"none","ships":[]}'
-      self.send_response(200)
-      self.send_header('Content-Type', 'application/json')
-      self.send_header('Content-Length', str(len(body)))
-      self.end_headers()
-      self.wfile.write(body)
-      return
-    if self.path.startswith('/api/sky'):
-      q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-      try:
-        lat = max(-85.0, min(85.0, float(q.get('lat', ['0'])[0])))
-        lon = max(-180.0, min(180.0, float(q.get('lon', ['0'])[0])))
-        body = json.dumps(sky_states(lat, lon), separators=(',', ':')).encode('utf-8')
-      except Exception:
-        body = b'{"source":"none","ac":[]}'
-      self.send_response(200)
-      self.send_header('Content-Type', 'application/json')
-      self.send_header('Content-Length', str(len(body)))
-      self.end_headers()
-      self.wfile.write(body)
-      return
-    super().do_GET()
+    route = urllib.parse.urlsplit(self.path).path
+    if route == '/api/ships':
+      self._send_api(ship_states, b'{"source":"none","ships":[]}')
+    elif route == '/api/sky':
+      self._send_api(sky_states, b'{"source":"none","ac":[]}')
+    elif route.startswith('/api/'):
+      self.send_error(404)
+    else:
+      super().do_GET()
 
   def log_message(self, fmt, *args):
     # Suppress per-chunk request spam in terminal
@@ -529,9 +600,10 @@ class GameRequestHandler(SimpleHTTPRequestHandler):
 
 
 def main():
+  host = os.environ.get('HOST', '127.0.0.1')
   port = int(os.environ.get('PORT', '8098'))
-  server = ThreadingHTTPServer(('0.0.0.0', port), GameRequestHandler)
-  print(f'World Explorer server listening on http://0.0.0.0:{port}')
+  server = ThreadingHTTPServer((host, port), GameRequestHandler)
+  print(f'World Explorer server listening on http://{host}:{port}')
   sys.stdout.flush()
   server.serve_forever()
 

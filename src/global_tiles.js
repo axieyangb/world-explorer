@@ -92,14 +92,35 @@ export function computeWorldOrigin(lat, lon, displayName = "Beijing, CN", street
   };
 }
 
+/**
+ * fetch() that cannot hang: gives up after timeoutMs (headers and body together) and retries timeouts,
+ * network errors, 429 and 5xx with backoff. Resolves { ok, status, bytes }; rejects when every attempt failed.
+ */
+export async function fetchBytes(url, { timeoutMs = 15000, attempts = 3 } = {}) {
+  for (let i = 1; ; i++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { signal: ctl.signal });
+      const retry = (resp.status === 429 || resp.status >= 500) && i < attempts;
+      if (!retry) return { ok: resp.ok, status: resp.status, bytes: resp.ok ? await resp.arrayBuffer() : null };
+    } catch (err) {
+      if (i >= attempts) throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((r) => setTimeout(r, 400 * 3 ** (i - 1)));
+  }
+}
+
 export async function discoverTileTemplate() {
   if (resolvedTileTemplate) return resolvedTileTemplate;
   if (templatePromise) return templatePromise;
   templatePromise = (async () => {
     try {
-      const resp = await fetch("https://tiles.openfreemap.org/planet");
+      const resp = await fetchBytes("https://tiles.openfreemap.org/planet", { timeoutMs: 8000, attempts: 2 });
       if (resp.ok) {
-        const json = await resp.json();
+        const json = JSON.parse(new TextDecoder().decode(resp.bytes));
         if (json && Array.isArray(json.tiles) && json.tiles[0]) {
           resolvedTileTemplate = json.tiles[0];
           return resolvedTileTemplate;
@@ -414,19 +435,25 @@ export function decodeMvtTile(arrayBuffer, z, tx, ty, wanted = INTERESTING_LAYER
 /**
  * Fetches and decodes one vector tile. `cache: false` is for one-off reads (the per-teleport Z12 overview):
  * those tiles cover a whole city each and are used once, so keeping them only fills the cache.
+ * A tile that could not be loaded (timeout, network or server error, after retries) resolves `{}`, or
+ * rejects with `strict: true` so the caller can try again later; a tile the server does not have is `{}`.
  */
-export async function fetchDecodedMvtTile(z, tx, ty, { cache = true } = {}) {
+export async function fetchDecodedMvtTile(z, tx, ty, { cache = true, strict = false } = {}) {
   const key = `${z}/${tx}/${ty}`;
   if (tileCache.has(key)) return tileCache.get(key);
-  if (tileInFlight.has(key)) return tileInFlight.get(key);
+  const settle = (tile) => {
+    if (!tile && strict) throw new Error(`map tile ${key} could not be loaded`);
+    return tile || {};
+  };
+  if (tileInFlight.has(key)) return tileInFlight.get(key).then(settle);
 
   const prom = (async () => {
     try {
       const tpl = await discoverTileTemplate();
       const url = tpl.replace("{z}", String(z)).replace("{x}", String(tx)).replace("{y}", String(ty));
-      const resp = await fetch(url);
-      if (!resp.ok) return {};
-      let buf = new Uint8Array(await resp.arrayBuffer());
+      const resp = await fetchBytes(url);
+      if (!resp.ok) return resp.status === 429 || resp.status >= 500 ? null : {};
+      let buf = new Uint8Array(resp.bytes);
       if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b && typeof DecompressionStream !== "undefined") {
         const ds = new DecompressionStream("gzip");
         const stream = new Blob([buf]).stream().pipeThrough(ds);
@@ -438,14 +465,14 @@ export async function fetchDecodedMvtTile(z, tx, ty, { cache = true } = {}) {
       tileCache.set(key, decoded);
       return decoded;
     } catch {
-      return {};
+      return null;
     } finally {
       tileInFlight.delete(key);
     }
   })();
 
   tileInFlight.set(key, prom);
-  return prom;
+  return prom.then(settle);
 }
 
 /**
@@ -582,7 +609,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
   const tileXY = []; // [feature/rail-transit] tile coords for exact-extent rail clipping
   for (let tx = Math.min(tx0, tx1); tx <= Math.max(tx0, tx1); tx++) {
     for (let ty = Math.min(ty0, ty1); ty <= Math.max(ty0, ty1); ty++) {
-      tilePromises.push(fetchDecodedMvtTile(z, tx, ty));
+      tilePromises.push(fetchDecodedMvtTile(z, tx, ty, { strict: true })); // a failed tile fails the chunk, which is retried
       tileXY.push([z, tx, ty]); // [feature/rail-transit]
     }
   }
@@ -1505,9 +1532,9 @@ export async function fetchGlobalDem(centerLat, centerLon) {
         (async () => {
           try {
             const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${tx}/${ty}.png`;
-            const resp = await fetch(url);
+            const resp = await fetchBytes(url);
             if (!resp.ok) return;
-            const blob = await resp.blob();
+            const blob = new Blob([resp.bytes], { type: "image/png" });
             const bmp = await createImageBitmap(blob);
             const canvas =
               typeof OffscreenCanvas !== "undefined"

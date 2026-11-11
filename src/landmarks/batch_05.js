@@ -19,7 +19,7 @@ export const BATCH_05 = [
     height: 48,
     osmIds: [942237399],
     build(b, p1, p2, p3) {
-      const cx = p3 !== undefined ? p1 : this.cx; const y0 = p3 !== undefined ? p2 : p1; const cz = p3 !== undefined ? p3 : this.cz;
+      let cx = p3 !== undefined ? p1 : this.cx; let y0 = p3 !== undefined ? p2 : p1; let cz = p3 !== undefined ? p3 : this.cz;
       if (cz === undefined) {
         cz = this.cz;
         y0 = cx;
@@ -117,7 +117,7 @@ export const BATCH_05 = [
     height: 41,
     osmIds: [43977851, 57941063],
     build(b, p1, p2, p3) {
-      const cx = p3 !== undefined ? p1 : this.cx; const y0 = p3 !== undefined ? p2 : p1; const cz = p3 !== undefined ? p3 : this.cz;
+      let cx = p3 !== undefined ? p1 : this.cx; let y0 = p3 !== undefined ? p2 : p1; let cz = p3 !== undefined ? p3 : this.cz;
       if (cz === undefined) {
         cz = this.cz;
         y0 = cx;
@@ -283,7 +283,7 @@ export const BATCH_05 = [
     height: 32,
     osmIds: [958430463, 130222178],
     build(b, p1, p2, p3) {
-      const cx = p3 !== undefined ? p1 : this.cx; const y0 = p3 !== undefined ? p2 : p1; const cz = p3 !== undefined ? p3 : this.cz;
+      let cx = p3 !== undefined ? p1 : this.cx; let y0 = p3 !== undefined ? p2 : p1; let cz = p3 !== undefined ? p3 : this.cz;
       if (cz === undefined) {
         cz = this.cz;
         y0 = cx;
@@ -406,7 +406,7 @@ export const BATCH_05 = [
     height: 26,
     osmIds: [228041535, 204714191],
     build(b, p1, p2, p3) {
-      const cx = p3 !== undefined ? p1 : this.cx; const y0 = p3 !== undefined ? p2 : p1; const cz = p3 !== undefined ? p3 : this.cz;
+      let cx = p3 !== undefined ? p1 : this.cx; let y0 = p3 !== undefined ? p2 : p1; let cz = p3 !== undefined ? p3 : this.cz;
       if (cz === undefined) {
         cz = this.cz;
         y0 = cx;

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Builds a self-contained single-file HTML release of World Explorer (world_explorer.html).
 
-Usage: python3 tools/build_release.py [out_file]   (default: <repo>/world_explorer.html)
+Usage: python3 tools/build_release.py [out_file] [--exports-json=FILE]
+  out_file             default: <repo>/world_explorer.html
+  --exports-json=FILE  also write {module: [exported names]} as the bundle sees them (used by tools/check.sh)
+
+The build fails if a module imports a name that its target does not export.
 """
 
 import base64
 import gzip
+import json
 from pathlib import Path
 import re
 import struct
@@ -13,7 +18,10 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent  # repo (or worktree) containing this script
-OUT_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'world_explorer.html'
+_ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
+_OPTS = dict(a[2:].split('=', 1) for a in sys.argv[1:] if a.startswith('--') and '=' in a)
+OUT_FILE = Path(_ARGS[0]) if _ARGS else ROOT / 'world_explorer.html'
+EXPORTS_JSON = _OPTS.get('exports-json')
 
 MOD_ID_MAP = {
     'vendor/three.module.js': '__MOD_three',
@@ -310,6 +318,146 @@ def module_order_for(entry: str) -> list:
   return order
 
 
+_IDENT_RE = re.compile(r'[A-Za-z_$][A-Za-z0-9_$]*')
+_REGEX_OK_AFTER = set('(,=:[!&|?{};+-*%<>~^')
+_REGEX_OK_AFTER_WORD = {'return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do'}
+_CONTINUES_AFTER = set('=+-*/%&|^<>?:,.([{!~')
+_CONTINUES_BEFORE = set('=+*/%&|^<>?:,.([`')  # a next line starting with one of these continues the statement
+
+
+def _skip_js_literal(code: str, i: int, prev: str, prev_word: str) -> int:
+  """If a comment, string, template or regex literal starts at i, returns the index just past it, else i."""
+  c = code[i]
+  two = code[i:i + 2]
+  if two == '//':
+    j = code.find('\n', i)
+    return len(code) if j < 0 else j
+  if two == '/*':
+    j = code.find('*/', i + 2)
+    return len(code) if j < 0 else j + 2
+  if c in '\'"':
+    j = i + 1
+    while j < len(code) and code[j] != c:
+      j += 2 if code[j] == '\\' else 1
+    return j + 1
+  if c == '`':
+    j = i + 1
+    while j < len(code) and code[j] != '`':
+      if code[j] == '\\':
+        j += 2
+      elif code[j:j + 2] == '${':
+        j = _skip_js_balanced(code, j + 2, '}') + 1
+      else:
+        j += 1
+    return j + 1
+  if c == '/' and (prev == '' or prev in _REGEX_OK_AFTER or prev_word in _REGEX_OK_AFTER_WORD):
+    j, in_class = i + 1, False
+    while j < len(code) and (code[j] != '/' or in_class) and code[j] != '\n':
+      if code[j] == '\\':
+        j += 1
+      elif code[j] == '[':
+        in_class = True
+      elif code[j] == ']':
+        in_class = False
+      j += 1
+    return j + 1
+  return i
+
+
+def _skip_js_balanced(code: str, i: int, closer: str) -> int:
+  """Returns the index of the `closer` that balances an opener just before i."""
+  depth, prev, prev_word = 0, '', ''
+  while i < len(code):
+    j = _skip_js_literal(code, i, prev, prev_word)
+    if j != i:
+      i, prev, prev_word = j, 'x', ''
+      continue
+    c = code[i]
+    if c in '([{':
+      depth += 1
+    elif c in ')]}':
+      if depth == 0 and c == closer:
+        return i
+      depth -= 1
+    m = _IDENT_RE.match(code, i) if (c.isalpha() or c in '_$') else None
+    if m:
+      i, prev, prev_word = m.end(), 'x', m.group(0)
+      continue
+    if not c.isspace():
+      prev, prev_word = c, ''
+    i += 1
+  return i
+
+
+def declared_names(code: str, i: int, where: str) -> list:
+  """Names declared by the `const|let|var` declarator list starting at i: `A = 1, B = f(x, y)` -> [A, B]."""
+  names = []
+  while True:
+    while code[i].isspace():
+      i += 1
+    m = _IDENT_RE.match(code, i)
+    if not m:
+      raise SystemExit(f'{where}: unsupported exported declaration (destructuring?) near {code[i:i + 40]!r}')
+    names.append(m.group(0))
+    i = m.end()
+    depth, prev, prev_word = 0, '', ''
+    while True:  # skip the initializer up to a top-level `,` (another declarator) or the end of the statement
+      if i >= len(code):
+        return names
+      j = _skip_js_literal(code, i, prev, prev_word)
+      if j != i:
+        i, prev, prev_word = j, 'x', ''
+        continue
+      c = code[i]
+      if c in '([{':
+        depth += 1
+      elif c in ')]}':
+        depth -= 1
+        if depth < 0:
+          return names
+      elif depth == 0:
+        if c == ';':
+          return names
+        if c == ',':
+          i += 1
+          break
+        if c == '\n' and prev not in _CONTINUES_AFTER:
+          rest = code[i:].lstrip()
+          while rest.startswith('//') or rest.startswith('/*'):
+            rest = rest[_skip_js_literal(rest, 0, '', ''):].lstrip()
+          word = _IDENT_RE.match(rest)
+          continues = (
+              rest[:1] in _CONTINUES_BEFORE
+              or (rest[:1] in '+-' and rest[:2] not in ('++', '--'))
+              or (word and word.group(0) in ('in', 'instanceof'))
+          )
+          if not rest or not continues:
+            return names
+      mw = _IDENT_RE.match(code, i) if (c.isalpha() or c in '_$') else None
+      if mw:
+        i, prev, prev_word = mw.end(), 'x', mw.group(0)
+        continue
+      if not c.isspace():
+        prev, prev_word = c, ''
+      i += 1
+
+
+MODULE_EXPORTS = {}  # rel path -> names the bundled module object exposes
+MODULE_IMPORTS = {}  # rel path -> [(target rel path, imported name)]
+
+
+def check_bundle_imports():
+  """Fails the build when a module imports a name that its target's bundled module object does not have."""
+  missing = sorted({
+      f'  {rel}: imports {name!r} from {target}, which does not export it'
+      for rel, imports in MODULE_IMPORTS.items()
+      for target, name in imports
+      if name not in MODULE_EXPORTS[target]
+  })
+  if missing:
+    raise SystemExit('BUILD FAILED - missing exports (these would be undefined in the bundle):\n' + '\n'.join(missing))
+
+
 def wrap_es_module_as_iife(rel_path: str) -> str:
   mod_var = MOD_ID_MAP[rel_path]
   code = (ROOT / rel_path).read_text(encoding='utf-8')
@@ -327,6 +475,8 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
       flags=re.M,
   )
 
+  imported = MODULE_IMPORTS.setdefault(rel_path, [])
+
   def repl_named_import(m):
     inner = re.sub(r'//.*', '', m.group(1))
     inner = re.sub(r'/\*.*?\*/', '', inner, flags=re.S)
@@ -341,7 +491,9 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
         orig, alias = [x.strip() for x in p.split(' as ', 1)]
         items.append(f'{orig}: {alias}')
       else:
+        orig = p
         items.append(p)
+      imported.append((target_rel, orig))
     return f'const {{ {", ".join(items)} }} = {MOD_ID_MAP[target_rel]};'
 
   code = re.sub(
@@ -356,20 +508,30 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
   def repl_export_decl(m):
     decl_prefix = m.group(1)
     name = m.group(2)
-    exported_names.append(name)
+    if decl_prefix in ('const', 'let', 'var'):
+      # `export const A = 1, B = 2;` exports every declarator, not just the first.
+      line = m.string.count('\n', 0, m.start()) + 1
+      exported_names.extend(declared_names(m.string, m.start(2), f'{rel_path}:{line}'))
+    else:
+      exported_names.append(name)
     return f'{decl_prefix} {name}'
 
   code = re.sub(
-      r'^export\s+((?:async\s+)?function|const|let|var|class)\s+([A-Za-z0-9_$]+)',
+      r'^export\s+((?:async\s+)?function\*?|const|let|var|class)\s*([A-Za-z0-9_$]*)',
       repl_export_decl,
       code,
       flags=re.M,
   )
 
   brace_returns = []
+  brace_names = []
+
+  if re.search(r'^export\s*(\{[^}]*\}|\*)\s*from\b', code, flags=re.M):
+    raise SystemExit(f'{rel_path}: unsupported syntax for the IIFE bundle: re-export (export ... from)')
 
   def repl_export_brace(m):
-    inner = m.group(1)
+    inner = re.sub(r'//.*', '', m.group(1))
+    inner = re.sub(r'/\*.*?\*/', '', inner, flags=re.S)
     for part in inner.split(','):
       p = part.strip()
       if not p:
@@ -377,8 +539,10 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
       if ' as ' in p:
         orig, alias = [x.strip() for x in p.split(' as ', 1)]
         brace_returns.append(f'{alias}: {orig}')
+        brace_names.append(alias)
       else:
         brace_returns.append(p)
+        brace_names.append(p)
     return ''
 
   code = re.sub(
@@ -395,6 +559,7 @@ def wrap_es_module_as_iife(rel_path: str) -> str:
   if re.search(r'^\s*(import|export)\s', code, flags=re.M):
     raise SystemExit(f'{rel_path}: unconverted import/export statement left in the IIFE bundle')
 
+  MODULE_EXPORTS[rel_path] = exported_names + brace_names
   all_exports = exported_names + brace_returns
   ret_stmt = f'return {{ {", ".join(all_exports)} }};' if all_exports else 'return {};'
   return f'const {mod_var} = (() => {{\n{code}\n{ret_stmt}\n}})();\n'
@@ -462,6 +627,9 @@ def build_world_explorer_html():
   module_order = module_order_for('src/main.js')
   print(f'  main bundle: {len(module_order)} modules, worker bundle: {len(worker_module_order)} modules', flush=True)
   bundled_js = '\n'.join(wrap_es_module_as_iife(m) for m in module_order)
+  check_bundle_imports()
+  if EXPORTS_JSON:
+    Path(EXPORTS_JSON).write_text(json.dumps(MODULE_EXPORTS, indent=0, sort_keys=True), encoding='utf-8')
 
   bootstrap_js = r"""
 await (async function bootstrapWorldExplorer() {

@@ -115,6 +115,43 @@ const LOAD_RADIUS = TOUCH_UI || QUALITY.tier === "low" ? 1 : 2; // [ui-mobile] L
 const UNLOAD_RADIUS = TOUCH_UI ? 2 : 3; // Hysteresis gap
 const TILE_CACHE_LIMIT = TOUCH_UI ? 12 : 24; // decoded vector tiles kept per thread (global_tiles.js)
 setTileCacheLimit(TILE_CACHE_LIMIT);
+const CHUNK_TIMEOUT_MS = 60000; // a worker that has not answered a chunk request for this long is treated as hung
+// Per-frame subsystem calls made by _frame(). Each is wrapped (see _guardFrameSteps) so that one which
+// keeps throwing is logged and switched off instead of stopping every frame before it is drawn.
+const FRAME_STEPS = [
+  "kaiju.update", "kaiju.postCamera", "walkerWeapons.update", "weaponPickups.update", "parkedCars.update",
+  "carjack.update", "propertyInspector.update", "spaceLaunch.update", "quality.update", "nitroFx.update",
+  "collision.applyCameraShake", "atmosphere.update", "traffic.update", "maritime.update", "streetFeatures.update",
+  "streetDetail.update", "vegetation.update", "places.update", "airliner.updateAmbient", "railTransit.update",
+  "liveSky.update", "liveWeather.update", "aurora.update", "seaState.update", "satellites.update",
+  "reflections.update", "venueRides.update", "poiVenues.update", "placesInfo.update", "landmarks.update",
+  "mapSystem.updateMinimap",
+].map((step) => step.split("."));
+
+// Shown when the WebGL context is lost (GPU reset, driver crash, too many tabs). The scene does not survive
+// a restored context here (rendering throws afterwards), so the message stays until the player reloads.
+function showGraphicsLost() {
+  let el = document.getElementById("gfx-lost");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "gfx-lost";
+    el.setAttribute("role", "alert");
+    el.style.cssText =
+      "position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:100000;display:flex;gap:14px;" +
+      "align-items:center;padding:14px 18px;border-radius:10px;background:rgba(12,16,24,.94);color:#fff;" +
+      "font:15px system-ui,sans-serif";
+    const text = document.createElement("span");
+    text.textContent = "The graphics stopped working.";
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.textContent = "Reload";
+    reload.style.cssText = "padding:6px 14px;border:0;border-radius:6px;background:#fff;color:#000;font:inherit;cursor:pointer";
+    reload.onclick = () => location.reload();
+    el.append(text, reload);
+    document.body.appendChild(el);
+  }
+}
+
 const TIME_PRESET_ORDER = ["noon", "sunset", "night", "overcast"];
 
 // [integration perf] Beijing skyline LOD as one InstancedMesh per ~5 km tile (frustum culling), behind the
@@ -217,6 +254,7 @@ function _createRendererWithFallback(initialCanvas) {
       canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
         console.warn("[WebGL] Context lost; prevented default");
+        showGraphicsLost();
       }, false);
       return { renderer, canvas };
     } catch (err) {
@@ -325,6 +363,7 @@ class WorldExplorerApp {
     this.buildQueue = new Map();
     this.readyWorkerPayloads = [];
     this.workerCallbacks = new Map();
+    this._chunkRetry = new Map(); // key -> { genId, n, at }: failed chunks and when to ask for them again
     this.chunkWorker = null;
     this._initChunkWorker();
     this.horizonCutoutDirty = false;
@@ -432,7 +471,7 @@ class WorldExplorerApp {
         return;
       }
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
-      this.chunkWorker = new Worker(workerUrl, opts);
+      const worker = (this.chunkWorker = new Worker(workerUrl, opts));
       this.chunkWorker.onmessage = (e) => {
         const msg = e.data;
         if (!msg) return;
@@ -460,18 +499,53 @@ class WorldExplorerApp {
           }
         }
       };
-      this.chunkWorker.onerror = () => {
-        this.workerReady = false;
-        this.chunkWorker = null;
-        if (this._onWorkerDemReady) {
-          this._onWorkerDemReady();
-          this._onWorkerDemReady = null;
-        }
-      };
+      this.chunkWorker.onerror = (e) => this._onChunkWorkerFailed(worker, e?.message || "error");
     } catch {
       this.workerReady = false;
       this.chunkWorker = null;
     }
+  }
+
+  /**
+   * The chunk worker died or stopped answering: fail the chunks it owed (they are asked for again, see
+   * _chunkFailed), build on the main thread meanwhile, and start a fresh worker (three times at most).
+   */
+  _onChunkWorkerFailed(worker, reason) {
+    if (worker !== this.chunkWorker) return;
+    worker.onmessage = worker.onerror = null;
+    worker.terminate();
+    this.workerReady = false;
+    this.chunkWorker = null;
+    if (this._onWorkerDemReady) {
+      this._onWorkerDemReady();
+      this._onWorkerDemReady = null;
+    }
+    const owed = [...this.workerCallbacks.values()];
+    this.workerCallbacks.clear();
+    for (const cb of owed) cb(null);
+    this._workerRestarts = (this._workerRestarts || 0) + 1;
+    const restart = this._workerRestarts <= 3;
+    console.warn(`[chunks] worker failed (${reason}); retrying ${owed.length} chunk(s); ${restart ? "restarting the worker" : "building on the main thread from now on"}`);
+    if (!restart) return;
+    setTimeout(() => {
+      if (this.chunkWorker) return;
+      this._initChunkWorker();
+      this._syncWorkerDem();
+    }, 1000 * this._workerRestarts);
+  }
+
+  /** Remembers a failed chunk so it is asked for again 1 s, 2 s, 4 s ... 30 s later instead of every frame. */
+  _chunkFailed(key, genId, err) {
+    const now = performance.now();
+    const prev = this._chunkRetry.get(key);
+    const n = prev && prev.genId === genId && now - prev.at < 120000 ? prev.n + 1 : 1;
+    this._chunkRetry.set(key, { genId, n, at: now + Math.min(30000, 1000 * 2 ** (n - 1)) });
+    if (n === 1) console.warn(`[chunks] ${key} failed${err ? ` (${err.message || err})` : ""}; retrying`);
+  }
+
+  _chunkRetryWaiting(key) {
+    const r = this._chunkRetry.get(key);
+    return !!r && r.genId === (this.teleportGeneration || 0) && performance.now() < r.at;
   }
 
   async _syncWorkerDem() {
@@ -1417,7 +1491,7 @@ class WorldExplorerApp {
         const cz = pcz + dz;
         if (cx < 0 || cx >= GRID_DIM || cz < 0 || cz >= GRID_DIM) continue;
         const key = `${cx},${cz}`;
-        if (!this.loadedChunks.has(key) && !this.pendingChunks.has(key) && !this.buildQueue.has(key)) {
+        if (!this.loadedChunks.has(key) && !this.pendingChunks.has(key) && !this.buildQueue.has(key) && !this._chunkRetryWaiting(key)) {
           needed.push({ cx, cz, key, d2: dx * dx + dz * dz });
         }
       }
@@ -1461,6 +1535,11 @@ class WorldExplorerApp {
       if (this.chunkWorker) {
         const payload = await new Promise((resolve) => {
           this.workerCallbacks.set(key, resolve);
+          const worker = this.chunkWorker;
+          setTimeout(() => {
+            if (this.workerCallbacks.get(key) !== resolve) return; // answered, or cancelled by a teleport
+            this._onChunkWorkerFailed(worker, `no answer for chunk ${key} in ${CHUNK_TIMEOUT_MS / 1000} s`);
+          }, CHUNK_TIMEOUT_MS);
           this.chunkWorker.postMessage({
             type: "buildChunk",
             key,
@@ -1473,6 +1552,7 @@ class WorldExplorerApp {
           });
           this._workerDemAcked = true;
         });
+        if (!payload && (this.teleportGeneration || 0) === genId) this._chunkFailed(key, genId);
         if (!payload || (this.teleportGeneration || 0) !== genId) return;
         const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
         if (!immediate && (Math.abs(cx - pcx) > UNLOAD_RADIUS || Math.abs(cz - pcz) > UNLOAD_RADIUS)) {
@@ -1500,8 +1580,8 @@ class WorldExplorerApp {
         const task = createChunkBuildTask(cx, cz, ox, oz, data, this.mats, this.layerVisibility, this.worldOrigin);
         this.buildQueue.set(key, task);
       }
-    } catch {
-      // Ignore individual chunk network timeouts
+    } catch (err) {
+      if ((this.teleportGeneration || 0) === genId) this._chunkFailed(key, genId, err);
     } finally {
       this.pendingChunks.delete(key);
     }
@@ -4395,6 +4475,58 @@ class WorldExplorerApp {
 
   _animate() {
     requestAnimationFrame(() => this._animate());
+    this._guardFrameSteps();
+    try {
+      this._frame();
+    } catch (err) {
+      this._frameFailed(err);
+    }
+  }
+
+  /** Wraps the FRAME_STEPS methods (also ones created or replaced later): 3 throws in a row switch a step off. */
+  _guardFrameSteps() {
+    for (const [owner, method] of FRAME_STEPS) {
+      const obj = this[owner];
+      const fn = obj && obj[method];
+      if (typeof fn !== "function" || fn.guarded) continue;
+      const step = `${owner}.${method}`;
+      let fails = 0;
+      let logged = false;
+      const guarded = function (...args) {
+        if (fails >= 3) return undefined;
+        try {
+          const result = fn.apply(this, args);
+          fails = 0;
+          return result;
+        } catch (err) {
+          fails++;
+          if (!logged) console.error(`[frame] ${step} failed`, err);
+          logged = true;
+          if (fails === 3) console.error(`[frame] ${step} failed 3 frames in a row; switched off`);
+          return undefined;
+        }
+      };
+      guarded.guarded = true;
+      obj[method] = guarded;
+    }
+  }
+
+  /** Something outside the guarded steps threw: log each distinct error once and still draw the frame. */
+  _frameFailed(err) {
+    const seen = (this._frameErrors ||= new Set());
+    const msg = String(err?.message || err);
+    if (!seen.has(msg) && seen.size < 20) {
+      seen.add(msg);
+      console.error("[frame] update failed; still rendering", err);
+    }
+    try {
+      this.renderer.render(this.scene, this.camera);
+    } catch {
+      // the renderer itself is what failed
+    }
+  }
+
+  _frame() {
     this._rendering = true;
 
     const rawDt = Math.min(0.05, this.clock.getDelta());
@@ -4501,6 +4633,15 @@ class WorldExplorerApp {
 
 const app = new WorldExplorerApp();
 if (typeof window !== "undefined") window.app = app;
+// Promise rejections that nothing handled: log each distinct one once rather than on every occurrence.
+const seenRejections = new Set();
+window.addEventListener("unhandledrejection", (e) => {
+  const msg = String(e.reason?.message || e.reason);
+  e.preventDefault();
+  if (seenRejections.has(msg) || seenRejections.size >= 50) return;
+  seenRejections.add(msg);
+  console.error("[unhandled rejection]", e.reason);
+});
 app.start().catch((err) => {
   console.error(err);
   window.__loading?.fail(`Couldn't start: ${err?.message || err}`);

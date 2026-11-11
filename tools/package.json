@@ -1,0 +1,9 @@
+{
+  "name": "world-explorer-checks",
+  "private": true,
+  "description": "Optional lint dependencies for tools/check.sh. The app itself has no build step and needs none of this.",
+  "devDependencies": {
+    "eslint": "10.14.0",
+    "globals": "17.14.0"
+  }
+}
