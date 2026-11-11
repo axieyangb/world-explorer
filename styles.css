@@ -379,7 +379,7 @@ kbd {
 }
 .popover-fold:hover { background: rgba(255, 255, 255, 0.12); color: var(--text-bright); }
 #menu-vehicle-now { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.popover-fold .fold-caret { margin-left: auto; font-size: 10px; opacity: 0.6; transition: transform 0.12s ease; }
+.popover-fold .fold-caret { margin-left: auto; font-size: 14px; line-height: 1; opacity: 0.6; transition: transform 0.12s ease; }
 .popover-fold[aria-expanded="true"] .fold-caret { transform: rotate(90deg); }
 .popover-fold-quiet {
   padding: 3px 9px;
@@ -1162,4 +1162,9 @@ body.touch-ui #walker-weapon-badge {
     left: auto;
     max-width: calc(100vw - 16px);
   }
+}
+/* Touch: no key caps in the menu; in portrait the location pill (second row) makes way for the open menu. */
+body.touch-ui #mode-vehicle-menu kbd { display: none; }
+@media (orientation: portrait) {
+  body.touch-ui:has(#mode-vehicle-menu:not(.hidden)) .location-bar { visibility: hidden; }
 }
