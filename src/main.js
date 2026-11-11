@@ -103,6 +103,8 @@ import { sampleRoadSurfaceIndexed, sampleBridgeUndersideAt, sampleTunnelCorridor
 import { TouchControls, isTouchDevice } from "./features/touch_controls.js"; // mobile
 import { QUALITY, QualityManager } from "./features/quality.js"; // [ui-mobile] graphics tiers + governor
 import { HudLayout } from "./features/hud_layout.js"; // [ui-mobile] top bar fit
+import { ControlsHint, KEY, keyCaps } from "./features/controls.js"; // one table of actions and keys: hints, tooltips, one-shot bindings
+import { ModeMenu } from "./features/mode_menu.js";
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
 import { SpaceLaunchSystem } from "./features/space_launch_system.js"; // [feature/space-launch]
@@ -2597,7 +2599,7 @@ class WorldExplorerApp {
         return;
       }
 
-      if (e.code === "Slash") {
+      if (e.code === KEY.search && !e.shiftKey) { // Shift+/ ("?") opens the key list (controls.js)
         e.preventDefault();
         const panel = document.getElementById("location-search-panel");
         const input = document.getElementById("location-input");
@@ -2610,9 +2612,9 @@ class WorldExplorerApp {
 
       this.keys.add(e.code);
 
-      if (e.code === "KeyL" && !e.repeat && this.mode === "helicopter") {
+      if (e.code === KEY.heli_land && !e.repeat && this.mode === "helicopter") {
         this._ensureHeli().toggleAutoLand();
-      } else if (e.code === "KeyX" && !e.repeat && this.mode === "helicopter") {
+      } else if (e.code === KEY.heli_rockets && !e.repeat && this.mode === "helicopter") {
         this._ensureHeli().fireRockets();
       } else if (e.code === "KeyR" && !e.repeat && this.mode === "walk") {
         if (this.walkerWeapons) this.walkerWeapons.reloadOrCycle(); // [weapon-pickups] reload, or switch when full
@@ -2636,7 +2638,7 @@ class WorldExplorerApp {
         const isTank = this.isDrivingTank();
         const minPitch = this.mode === "walk" ? -0.85 : -0.65;
         this.camPitch = THREE.MathUtils.clamp(this.camPitch - 0.08, minPitch, 1.18);
-      } else if (e.code === "KeyN" && !e.repeat) {
+      } else if (e.code === KEY.fsd && !e.repeat) {
         this.toggleFsd();
       } else if (e.code === "KeyF" && !e.repeat) {
         if (this.mode === "airliner" && this.airliner) {
@@ -2644,7 +2646,7 @@ class WorldExplorerApp {
         } else if (this.mode === "boat" && this.maritime) {
           this.maritime.exitToWalk();
         } else if (this.mode === "helicopter") {
-          this.handleVehicleInteract();
+          this._heliExitKey();
         } else if (this.mode === "walk") {
           // Try boarding nearby airliner, boat, helicopter, or parked/traffic car first; otherwise throw a punch
           if (!this.handleVehicleInteract()) {
@@ -2661,41 +2663,41 @@ class WorldExplorerApp {
         } else {
           this.setMode(this.mode === "helicopter" ? (this.heliLanded ? "walk" : "drive") : "helicopter");
         }
-      } else if (e.code === "Digit1" && !e.repeat) {
+      } else if (e.code === KEY.mode_drive && !e.repeat) {
         if (this.kaiju && this.kaiju.active) {
           this.kaiju.setPlayableUnit("heli");
         } else {
           this.setMode("drive");
         }
-      } else if (e.code === "Digit2" && !e.repeat) {
+      } else if (e.code === KEY.mode_walk && !e.repeat) {
         if (this.kaiju && this.kaiju.active) {
           this.kaiju.setPlayableUnit("tank");
         } else {
           this.setMode("walk");
         }
-      } else if (e.code === "Digit3" && !e.repeat) {
+      } else if (e.code === KEY.mode_helicopter && !e.repeat) {
         if (this.kaiju && this.kaiju.active) {
           this.kaiju.setPlayableUnit("soldier");
         } else {
           this.setMode("helicopter");
         }
-      } else if (e.code === "Digit4" && !e.repeat) {
+      } else if (e.code === KEY.mode_kaiju && !e.repeat) {
         this.setMode("kaiju");
-      } else if (e.code === "KeyV") {
+      } else if (e.code === KEY.camera) { // V: vehicle while driving (KEY.drive_vehicle), camera otherwise; Shift+V: camera
         if (this.mode === "drive" && !e.shiftKey) {
           this.cycleVehicle();
         } else {
           this.cycleCameraMode();
         }
-      } else if (e.code === "KeyG") {
+      } else if (e.code === KEY.vehicle_next) {
         if (this.mode === "airliner") return;
         if (this.mode !== "drive") this.setMode("drive");
         this.cycleVehicle();
-      } else if (e.code === "KeyE" && !e.repeat && (this.mode === "walk" || this.mode === "drive" || this.mode === "airliner" || this.mode === "boat" || this.mode === "helicopter")) {
+      } else if (e.code === "KeyE" && !e.repeat && (this.mode === "walk" || this.mode === "drive" || this.mode === "airliner" || this.mode === "boat")) { // not the helicopter: E is its climb key, F leaves it
         this.handleVehicleInteract();
-      } else if (e.code === "KeyH") {
+      } else if (e.code === KEY.drive_horn) {
         this.triggerHornOrSiren();
-      } else if (e.code === "KeyM") {
+      } else if (e.code === KEY.map) {
         if (this.mapSystem) this.mapSystem.toggleModal();
       } else if (e.code === "Escape") {
         if (this.mapSystem && this.mapSystem.isOpen) {
@@ -2821,38 +2823,22 @@ class WorldExplorerApp {
   }
 
   _showControlsHint() {
-    const hint = document.getElementById("hud-controls-hint");
-    if (!hint) return;
-    const zh = getLang() === "zh";
-    let text;
-    if (this.mode === "airliner") {
-      text = zh
-        ? "W/↑ 推力 · S/↓ 刹车/反推 · A/D 转向/滚转 · Space/Q 拉起起飞 · Shift/C 压机头 · G 起落架 · L 涂装 · F/E 下机"
-        : "W/Up Thrust · S/Down Brake/Reverse · A/D Steer/Bank · Space/Q Rotate & Climb · Shift/C Nose Down · G Gear · L Livery · F/E Exit";
-    } else if (this.mode === "boat") {
-      text = zh
-        ? "W/S 前进/倒船 · A/D 转向 · Shift 加速 · F/E 登岸"
-        : "W/S Throttle & Reverse · A/D Rudder Steer · Shift Boost · F/E Disembark";
-    } else if (this.mode === "helicopter") {
-      text = zh
-        ? "W/S 移动 · A/D 转向 · Q/E 升降 · ←/→ 平移 · 空格 机炮 · F 火箭弹 · L 降落"
-        : "W/S Move · A/D Turn · Q/E Alt · ←/→ Strafe · Space Cannon · F Rockets · L Land";
-    } else if (this.mode === "walk") {
-      text = zh
-        ? "WASD 移动 · Shift 疾跑 · 单击/F 出拳 · 空格/单击 射击 · R 换弹 · Tab 切枪 · X 火箭筒 · E 驾车"
-        : "WASD Walk · Shift Run · Click/F Punch · Space/Click Shoot · R Reload · Tab Weapon · X RPG · E Drive"; // [weapon-pickups]
-    } else if (this.isDrivingTank()) {
-      text = zh
-        ? "WASD 驾驶 · 空格/左键 120mm主炮 · Shift 加速 · V 换车 · E 下车"
-        : "WASD Drive · Space/LClick 120mm Cannon · Shift Boost · V Vehicle · E Exit";
-    } else {
-      text = zh
-        ? "WASD 驾驶 · Shift 加速 · 空格 刹车 · V 换车 · H 喇叭/警笛 · E 夺车/下车 · C 直升机"
-        : "WASD Drive · Shift Boost · Space Brake · V Vehicle · H Horn · E Exit · C Heli";
+    if (!this.controlsHint) this.controlsHint = new ControlsHint(this);
+    this.controlsHint.show();
+  }
+
+  // Helicopter exit key: on the ground it leaves at once; in the air it asks for a second press within
+  // 2.5 s, so nobody bails out into freefall by accident.
+  _heliExitKey() {
+    const grounded = Boolean(this.heliLanded || (this.heli && this.heli.state.grounded));
+    const now = performance.now();
+    if (!grounded && !(now < this._bailConfirmUntil)) {
+      this._bailConfirmUntil = now + 2500;
+      showVehicleToast(t("Press {key} again to bail out", { key: keyCaps("heli_exit") }), "");
+      return true;
     }
-    if (hint.textContent !== text) hint.textContent = text;
-    hint.classList.remove("faded");
-    clearTimeout(this._hintTimer);
+    this._bailConfirmUntil = 0;
+    return this.handleVehicleInteract();
   }
 
   _updateModeAndCamBadges() {
@@ -2902,38 +2888,37 @@ class WorldExplorerApp {
     const listEl = document.getElementById("vehicle-menu-list");
     if (!listEl) return;
     listEl.innerHTML = "";
-    VEHICLE_SPECS.forEach((spec, idx) => {
+    const add = (label, meta, active, pick) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `vehicle-option-btn${this.mode === "drive" && this.vehicleIdx === idx ? " active" : ""}`;
-      const vName = getVehicleName(spec.id, spec.name);
-      const topKmh = Math.round(spec.maxSpeed * 3.6);
-      btn.innerHTML = `<span>${vName}</span><span class="vehicle-option-meta">${topKmh} km/h</span>`;
+      btn.className = `vehicle-option-btn${active ? " active" : ""}`;
+      btn.innerHTML = `<span>${label}</span><span class="vehicle-option-meta">${meta}</span>`;
       btn.addEventListener("click", () => {
-        this.selectVehicle(idx);
+        pick();
         const pop = document.getElementById("mode-vehicle-menu");
         if (pop) pop.classList.add("hidden");
       });
       listEl.appendChild(btn);
-    });
-    // Also add playable Boeing 787-9 Dreamliner & Airbus A350-1000 XWB to the Vehicle dropdown
-    const airlinerOpts = [
-      { label: getLang() === "zh" ? "波音 787-9 梦想客机" : "Boeing 787-9 Dreamliner", liveryIdx: 0, meta: "950 km/h" },
-      { label: getLang() === "zh" ? "空客 A350-1000 宽体客机" : "Airbus A350-1000 XWB", liveryIdx: 1, meta: "945 km/h" }
-    ];
-    for (const ao of airlinerOpts) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = `vehicle-option-btn${this.mode === "airliner" && this.airliner && this.airliner.liveryIdx === ao.liveryIdx ? " active" : ""}`;
-      btn.innerHTML = `<span>✈ ${ao.label}</span><span class="vehicle-option-meta">${ao.meta}</span>`;
-      btn.addEventListener("click", () => {
+    };
+    if (this.mode === "airliner") {
+      // Jet mode: the two airliners (they are not in the car list)
+      const zh = getLang() === "zh";
+      [
+        { label: zh ? "波音 787-9 梦想客机" : "Boeing 787-9 Dreamliner", liveryIdx: 0, meta: "950 km/h" },
+        { label: zh ? "空客 A350-1000 宽体客机" : "Airbus A350-1000 XWB", liveryIdx: 1, meta: "945 km/h" },
+      ].forEach((ao) => add(ao.label, ao.meta, Boolean(this.airliner && this.airliner.liveryIdx === ao.liveryIdx), () => {
         if (this.airliner) this.airliner.cycleLivery(ao.liveryIdx);
-        this.setMode("airliner");
-        const pop = document.getElementById("mode-vehicle-menu");
-        if (pop) pop.classList.add("hidden");
-      });
-      listEl.appendChild(btn);
+        this._updateModeAndCamBadges();
+      }));
+    } else {
+      VEHICLE_SPECS.forEach((spec, idx) => add(
+        getVehicleName(spec.id, spec.name),
+        `${Math.round(spec.maxSpeed * 3.6)} km/h`,
+        this.mode === "drive" && this.vehicleIdx === idx,
+        () => this.selectVehicle(idx)
+      ));
     }
+    if (this.modeMenu) this.modeMenu.sync();
   }
 
   _refreshLocalizedUi() {
@@ -3777,14 +3762,13 @@ class WorldExplorerApp {
         popover.classList.toggle("hidden");
       });
     }
+    this.modeMenu = new ModeMenu(this);
 
     document.querySelectorAll(".popover-mode-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         btn.blur();
         this.setMode(btn.dataset.mode);
-        if (btn.dataset.mode !== "drive" && popover) {
-          popover.classList.add("hidden");
-        }
+        if (popover) popover.classList.add("hidden");
       });
     });
 

@@ -411,24 +411,25 @@
   <!-- Zone 2 — Top-Right: Compact Progressive-Disclosure Action Dock -->
   <nav id="hud-dock" class="hud-dock">
     <div class="dock-dropdown-wrap">
-      <button id="mode-vehicle-btn" class="dock-pill" type="button" title="Switch Mode or Vehicle [F / C / G]">
+      <button id="mode-vehicle-btn" class="dock-pill" type="button" title="Mode">
         <span id="mode-vehicle-label">DRIVE · GT COUPE</span>
         <span class="dock-caret">▾</span>
       </button>
+      <!-- Modes first; the vehicle list and graphics open on click (src/features/mode_menu.js).
+           Key caps and tooltips that name a key are filled in from src/features/controls.js. -->
       <div id="mode-vehicle-menu" class="dock-popover hidden">
-        <div id="menu-sec-mode" class="popover-label">Mode</div>
-        <div class="popover-mode-row">
-          <button type="button" class="popover-mode-btn active" data-mode="drive"><span data-i18n="mode_drive">Drive</span> <kbd>F</kbd></button>
-          <button type="button" class="popover-mode-btn" data-mode="walk"><span data-i18n="mode_walk">Walk</span> <kbd>F</kbd></button>
-          <button type="button" class="popover-mode-btn" data-mode="helicopter"><span data-i18n="mode_fly">Fly</span> <kbd>C</kbd></button>
+        <div class="popover-mode-row popover-modes">
+          <button type="button" class="popover-mode-btn active" data-mode="drive"><span data-i18n="mode_drive">Drive</span></button>
+          <button type="button" class="popover-mode-btn" data-mode="walk"><span data-i18n="mode_walk">Walk</span></button>
+          <button type="button" class="popover-mode-btn" data-mode="helicopter"><span data-i18n="mode_fly">Fly</span></button>
           <button type="button" class="popover-mode-btn" data-mode="airliner"><span data-i18n="mode_airliner">Jet</span></button>
           <button type="button" class="popover-mode-btn popover-mode-kaiju" data-mode="kaiju" title="Kaiju Defense" data-i18n-title="kaiju_title"><span data-i18n="mode_kaiju">Kaiju</span></button>
         </div>
-        <div id="menu-sec-vehicle" class="popover-label">Vehicle <kbd>G</kbd></div>
-        <div id="vehicle-menu-list" class="popover-vehicle-list"></div>
+        <button id="menu-sec-vehicle" class="popover-fold hidden" type="button" aria-expanded="false"><span id="menu-vehicle-now"></span><kbd></kbd><span class="fold-caret">▸</span></button>
+        <div id="vehicle-menu-list" class="popover-vehicle-list hidden"></div>
         <!-- [ui-mobile] graphics quality (src/features/quality.js) -->
-        <div id="menu-sec-graphics" class="popover-label">Graphics <span id="graphics-tier-now"></span></div>
-        <div id="graphics-row" class="popover-mode-row">
+        <button id="menu-sec-graphics" class="popover-fold popover-fold-quiet" type="button" aria-expanded="false">Graphics<span id="graphics-now" class="fold-now"></span><span id="graphics-tier-now" class="fold-now"></span><span class="fold-caret">▸</span></button>
+        <div id="graphics-row" class="popover-mode-row hidden">
           <button type="button" class="popover-gfx-btn" data-quality="auto">Auto</button>
           <button type="button" class="popover-gfx-btn" data-quality="high">High</button>
           <button type="button" class="popover-gfx-btn" data-quality="medium">Med</button>
@@ -441,15 +442,15 @@
       <span id="time-btn-label">DAY</span>
     </button>
 
-    <button id="camera-btn" class="dock-pill" type="button" title="Cycle Camera View [V]">
+    <button id="camera-btn" class="dock-pill" type="button" title="Camera">
       <span id="camera-btn-label">CHASE</span>
     </button>
 
-    <button id="fsd-btn" class="dock-pill" type="button" title="Toggle Full Self-Driving [N]">
+    <button id="fsd-btn" class="dock-pill" type="button" title="Self-drive">
       <span id="fsd-btn-label">FSD</span>
     </button>
 
-    <button id="map-btn" class="dock-pill" type="button" title="Open World Map [M]">
+    <button id="map-btn" class="dock-pill" type="button" title="Map">
       <span id="map-btn-label">MAP</span>
     </button>
 
@@ -490,10 +491,9 @@
     </div>
   </aside>
 
-  <!-- Bottom-Center: Controls Instruction Bar (Always Visible) -->
-  <footer id="hud-controls-hint" class="hud-controls-hint">
-    WASD Drive · Shift Boost · Space Brake · V Vehicle · E Hijack/Exit · H Siren/Horn · C Helicopter
-  </footer>
+  <!-- Bottom-Center: a few keys for the current mode; fades once the player moves; "?" lists them all
+       (filled in by src/features/controls.js) -->
+  <footer id="hud-controls-hint" class="hud-controls-hint"></footer>
 
   <!-- Full-Screen Interactive Vector GIS & A* Navigation Map Modal -->
   <div id="world-map-modal" class="map-modal hidden">

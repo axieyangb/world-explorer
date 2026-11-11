@@ -3,13 +3,15 @@
 // Controls (keyboard / gamepad standard mapping):
 //   W / S, Up / Down, Numpad 8 / 5   forward / back in horizontal plane (+55 / -25 m/s)
 //   A / D  (LB / RB)                 turn left / right (yaw) with subtle bank
-//   Q / E  (LT / RT)                 down / up (-16 / +18 m/s); released -> automatic altitude hold
+//   Q / E  (LT / RT)                 down / up (-16 / +18 m/s); released -> automatic altitude hold (E never leaves the heli)
 //   Left / Right, Numpad 4 / 6       strafe left / right (±28 m/s)
 //   L                                one-key auto-land (or auto-takeoff when landed)
 //   Mouse drag / right stick         free-look; camera recenters behind the heli after ~1.5 s
 //   Shift                            mild boost
 //   Space / hold left mouse          30mm nose cannon (straight at the point under #heli-reticle)
-//   F / X / right mouse              Hydra rocket salvo (converges on the reticle point)
+//   X / right mouse                  Hydra rocket salvo (converges on the reticle point)
+//   F                                exit: at once when landed; in the air press twice to bail out (main.js _heliExitKey)
+//   Keys shown to the player come from src/features/controls.js; keep that table in step with this list.
 //
 // Public API (app.heli):
 //   heli.state        live flight state (see constructor); position is app.pos (shared Vector3)

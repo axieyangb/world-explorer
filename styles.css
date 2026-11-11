@@ -359,6 +359,38 @@ kbd {
   gap: 8px;
 }
 
+/* Mode menu rows that open a list on click (src/features/mode_menu.js) */
+.popover-modes { grid-template-columns: repeat(5, 1fr); }
+.popover-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.popover-fold:hover { background: rgba(255, 255, 255, 0.12); color: var(--text-bright); }
+.popover-fold > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popover-fold .fold-caret { margin-left: auto; font-size: 10px; opacity: 0.6; transition: transform 0.12s ease; }
+.popover-fold[aria-expanded="true"] .fold-caret { transform: rotate(90deg); }
+.popover-fold-quiet {
+  padding: 3px 9px;
+  border-color: transparent;
+  background: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.popover-fold .fold-now { margin-left: 5px; opacity: 0.8; }
+.popover-fold .fold-now:empty { display: none; }
+
 .popover-label {
   font-size: 10.5px;
   font-weight: 600;
@@ -685,9 +717,59 @@ kbd {
   transition: opacity 0.6s ease;
 }
 
-.hud-controls-hint.faded {
-  opacity: 1;
+/* Hint bar (src/features/controls.js): a few keys, then only the "? Keys" chip once the player moves. */
+.hud-controls-hint { display: flex; align-items: center; }
+.hint-items {
+  display: inline-flex;
+  gap: 14px;
+  max-width: 720px;
+  overflow: hidden;
+  transition: opacity 0.6s ease, max-width 0.6s ease;
 }
+.hint-item b,
+.hint-more b { font-weight: 600; color: rgba(255, 255, 255, 0.92); }
+.hint-more {
+  pointer-events: auto;
+  margin-left: 14px;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: margin 0.6s ease, color 0.15s ease;
+}
+.hint-more:hover { color: rgba(255, 255, 255, 0.9); }
+.hud-controls-hint.faded { opacity: 0.6; }
+.hud-controls-hint.faded .hint-items { opacity: 0; max-width: 0; }
+.hud-controls-hint.faded .hint-more { margin-left: 0; }
+
+/* Full key list, one click (or "?") away from the hint bar. */
+.keys-panel {
+  position: fixed;
+  left: 50%;
+  bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 26;
+  display: flex;
+  gap: 22px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  color: var(--text-main);
+}
+.keys-col { display: flex; flex-direction: column; gap: 5px; }
+.keys-col + .keys-col { padding-left: 22px; border-left: 1px solid rgba(255, 255, 255, 0.1); }
+.keys-row { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.keys-row kbd { min-width: 46px; }
+body.touch-ui .keys-panel,
+body.kaiju-active .keys-panel,
+body.space-launch-active .keys-panel { display: none; }
 
 /* ============================================================================
  * Full-Screen World Map Modal
@@ -1063,4 +1145,21 @@ body.touch-ui #walker-weapon-badge {
   background: rgba(14, 165, 233, 0.32);
   border-color: rgba(56, 189, 248, 0.85);
   color: #e0f2fe;
+}
+
+/* Phones in portrait: the mode menu is pinned to the screen, not to its pill (which sits at the far left of
+   the dock there), and the dock never runs past the left edge: the mode label shortens instead. */
+.hud-dock { max-width: calc(100vw - 16px); }
+.hud-dock > * { flex-shrink: 0; }
+.hud-dock > .dock-dropdown-wrap:first-child { flex-shrink: 1; min-width: 0; }
+#mode-vehicle-btn { max-width: 100%; }
+#mode-vehicle-label { min-width: 0; flex-shrink: 1; }
+@media (max-width: 520px) {
+  #mode-vehicle-menu {
+    position: fixed;
+    top: calc(50px + env(safe-area-inset-top, 0px));
+    right: calc(8px + env(safe-area-inset-right, 0px));
+    left: auto;
+    max-width: calc(100vw - 16px);
+  }
 }
