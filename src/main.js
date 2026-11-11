@@ -121,6 +121,10 @@ const UNLOAD_DIST = LOAD_RADIUS + 1.0;
 const BLDG_BUILD_MAX_ALT = 900;
 const BLDG_FINE_BUILD_M = 600; // fine detail is built for chunks whose edge is this close to the player ...
 const BLDG_FINE_DROP_M = 900; // ... and freed again past this
+// One worker. Two were tried: in Midtown Manhattan the page then crashed now and then with a V8 out-of-memory,
+// because the page and all its workers share one 4 GB JS heap cage and each isolate only collects its own
+// garbage. The pool below works with more once chunk builds allocate less on the JS heap.
+const CHUNK_WORKERS = 1;
 const BLDG_STAGE_BYTES = 6 * 1048576; // building geometry handed to the GPU per frame
 const TILE_CACHE_LIMIT = TOUCH_UI ? 12 : 24; // decoded vector tiles kept per thread (global_tiles.js)
 setTileCacheLimit(TILE_CACHE_LIMIT);
@@ -435,8 +439,7 @@ class WorldExplorerApp {
     });
   }
 
-  // Chunk builds run on a small pool of workers (each has its own tile cache and DEM copy), so the
-  // chunks around the player build side by side instead of queueing behind one thread.
+  // Chunk builds run on a pool of CHUNK_WORKERS workers (each has its own tile cache and DEM copy).
   _initChunkWorker() {
     this.workerReady = false;
     this.chunkWorkers = [];
@@ -447,9 +450,7 @@ class WorldExplorerApp {
       const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261111_p1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
-      const cores = navigator.hardwareConcurrency || 4;
-      const count = TOUCH_UI || cores < 6 ? 1 : cores >= 12 ? 3 : 2;
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < CHUNK_WORKERS; i++) {
         const w = new Worker(workerUrl, opts);
         const slot = { worker: w, keys: new Set(), demGen: -1 };
         w.onmessage = (e) => this._onChunkWorkerMessage(slot, e.data);

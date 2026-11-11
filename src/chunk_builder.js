@@ -22,7 +22,7 @@ const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalk
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { chunkGroundSampler } from './features/ground_cover.js'; // [ground]
 import { appendInfillBuilding } from './features/infill_buildings.js'; // [ground]
-import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod } from './features/roofs_chunk.js'; // [roofs]
+import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod, compactRoofSinks } from './features/roofs_chunk.js'; // [roofs]
 import { EXTRA_FACADES, drawExtraFacadeLayers } from './features/facade_styles.js'; // [roofs]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
@@ -78,12 +78,11 @@ function ringCellIndex(flat) {
   return bldgCellIndex((x0 + x1) * 0.5, (z0 + z1) * 0.5);
 }
 
-function addBuildingCellMeshes(pos, norm, col, uv, kaijuRanges, bCells, group, mats) {
+function addBuildingCellMeshes(pos, norm, col, uv, bid, bCells, group, mats, colU8 = false) {
   const nVerts = (pos.length / 3) | 0;
   const nTris = (nVerts / 3) | 0;
   if (!nTris) return;
   const hasUv = uv.length === nVerts * 2;
-  const bid = kaijuBidAttribute(kaijuRanges, nVerts).array; // [kaiju]
   const nBuckets = BLDG_CELLS * BLDG_CELLS * 2;
 
   const triBucket = new Uint8Array(nTris).fill(255);
@@ -95,10 +94,10 @@ function addBuildingCellMeshes(pos, norm, col, uv, kaijuRanges, bCells, group, m
     const i = t * 9;
     let b = triBucket[t];
     if (b === 255) b = bldgCellIndex(pos[i], pos[i + 2]) * 2;
-    if (hasUv) {
+    {
       const j = t * 6;
       const u = uv[j], v = uv[j + 1];
-      if (u === uv[j + 2] && u === uv[j + 4] && v === uv[j + 3] && v === uv[j + 5]) { // one uv on all three: solid trim
+      if (!hasUv || (u === uv[j + 2] && u === uv[j + 4] && v === uv[j + 3] && v === uv[j + 5])) { // one uv on all three: solid trim
         const ax = pos[i], ay = pos[i + 1], az = pos[i + 2];
         const bx = pos[i + 3] - ax, by = pos[i + 4] - ay, bz = pos[i + 5] - az;
         const cx = pos[i + 6] - ax, cy = pos[i + 7] - ay, cz = pos[i + 8] - az;
@@ -139,7 +138,7 @@ function addBuildingCellMeshes(pos, norm, col, uv, kaijuRanges, bCells, group, m
         P[o + k] = Number.isFinite(x) ? x : 0;
         N[o + k] = norm[v3 + k];
         const cv = col[v3 + k];
-        C[o + k] = cv <= 0 ? 0 : cv >= 1 ? 255 : (cv * 255 + 0.5) | 0;
+        C[o + k] = colU8 ? cv : cv <= 0 ? 0 : cv >= 1 ? 255 : (cv * 255 + 0.5) | 0;
       }
       if (U) { U[nv * 2] = uv[v * 2]; U[nv * 2 + 1] = uv[v * 2 + 1]; }
       K[nv] = bid[v];
@@ -170,6 +169,30 @@ function addBuildingCellMeshes(pos, norm, col, uv, kaijuRanges, bCells, group, m
     mesh.receiveShadow = true;
     mesh.userData.bldgLod = b & 1 ? 'fine' : 'mass';
     group.add(mesh);
+  }
+}
+
+// [perf] Other merged meshes on the building material (venue storefronts, canopies, garages) get the same cells.
+function recellBuildingMeshes(group, mats) {
+  for (const mesh of [...group.children]) {
+    const g = mesh.geometry;
+    if (!mesh.isMesh || mesh.material !== mats.wfcBldgMat || mesh.userData.bldgLod || mesh.userData.roofLod) continue;
+    if (!g || g.index || !g.attributes.position || !g.attributes.normal || !g.attributes.color) continue;
+    const n = g.attributes.position.count;
+    if (n < 3000 || g.attributes.color.array.length !== n * 3) continue;
+    const before = group.children.length;
+    addBuildingCellMeshes(
+      g.attributes.position.array, g.attributes.normal.array, g.attributes.color.array,
+      g.attributes.uv ? g.attributes.uv.array : [],
+      g.attributes.kBid ? g.attributes.kBid.array : new Uint16Array(n),
+      [], group, mats, g.attributes.color.array instanceof Uint8Array
+    );
+    for (let i = before; i < group.children.length; i++) {
+      group.children[i].castShadow = mesh.castShadow;
+      group.children[i].name = mesh.name;
+    }
+    group.remove(mesh);
+    g.dispose();
   }
 }
 
@@ -1535,6 +1558,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         });
         root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders, isPointInWater }); // [venues] stadium bowls + theme-park rides
         addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater, street: root.userData.street }); // places-info
+
+        recellBuildingMeshes(subGroups.buildings, mats); // [perf]
 
         stage = 4;
         this.done = true;
@@ -3456,6 +3481,32 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
   const rfCol = [];
   const kaijuBid = []; // [kaiju] [v0, v1, entityIdx + 1] per building
   const bCells = []; // [perf] [v0, v1, LOD cell] per building
+  // [perf] The emitters push into plain JS arrays (8 bytes a number, inside V8's 4 GB heap cage that the page
+  // and its workers share). A dense chunk used to grow them to several hundred MB; they are now moved into typed
+  // segments every ~100k triangles, so the arrays stay small. `vBase` = vertices already moved.
+  const segs = { pos: [], norm: [], col: [], uv: [] };
+  let vBase = 0;
+  const flushBuildingArrays = () => {
+    const n = (wfcPos.length / 3) | 0;
+    if (!n) return;
+    while (wfcUv.length < n * 2) wfcUv.push(-10.0, -10.0);
+    if (wfcUv.length > n * 2) wfcUv.length = n * 2;
+    segs.pos.push(new Float32Array(wfcPos));
+    segs.norm.push(new Float32Array(wfcNorm));
+    segs.col.push(toUint8Colors(wfcCol));
+    segs.uv.push(new Float32Array(wfcUv));
+    vBase += n;
+    wfcPos.length = wfcNorm.length = wfcCol.length = wfcUv.length = 0;
+  };
+  const joinSegs = (list, Type) => {
+    let len = 0;
+    for (const a of list) len += a.length;
+    const out = new Type(len);
+    let o = 0;
+    for (const a of list) { out.set(a, o); o += a.length; }
+    list.length = 0;
+    return out;
+  };
 
   // Pre-collect parent buildings with name/role/colour in this chunk so `building:part` tiers or courtyard wings can inherit them
   const namedParentBuildings = [];
@@ -3538,9 +3589,10 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         curIdx++;
         const isPointInWater = roofOpts && roofOpts.isPointInWater;
         if (b[13]) { // [ground] plain infill block past the detailed-build budget
-          if (b[11] && b[11].length >= 6) bCells.push(wfcPos.length / 3, 0, ringCellIndex(b[11])); // [perf] v1 filled in below
+          if (wfcPos.length > 900000) { flushBuildingArrays(); compactRoofSinks(roofCtx); } // [perf]
+          if (b[11] && b[11].length >= 6) bCells.push(vBase + wfcPos.length / 3, 0, ringCellIndex(b[11])); // [perf] v1 filled in below
           appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders, roof: roofCtx, isPointInWater }); // [roofs] roof ctx
-          if (b[11] && b[11].length >= 6) bCells[bCells.length - 2] = wfcPos.length / 3;
+          if (b[11] && b[11].length >= 6) bCells[bCells.length - 2] = vBase + wfcPos.length / 3;
           continue;
         }
 
@@ -3817,7 +3869,8 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
 
         // 3. Emit 24-Style 3D WFC Building Geometry (1D Massing Setback + 2D Facade Columns + 3D Roof & Greebles)
-        const kaijuV0 = wfcPos.length / 3; // [kaiju]
+        if (wfcPos.length > 900000) { flushBuildingArrays(); compactRoofSinks(roofCtx); } // [perf]
+        const kaijuV0 = vBase + wfcPos.length / 3; // [kaiju]
         const wfcMeta = appendCompactChunkBuildingWFC(
           {
             id: osmId || (i + 1),
@@ -3849,8 +3902,8 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           entityIdx,
           wfcUv
         );
-        kaijuBid.push(kaijuV0, wfcPos.length / 3, entityIdx + 1); // [kaiju]
-        bCells.push(kaijuV0, wfcPos.length / 3, bldgCellIndex(cx, cz)); // [perf]
+        kaijuBid.push(kaijuV0, vBase + wfcPos.length / 3, entityIdx + 1); // [kaiju]
+        bCells.push(kaijuV0, vBase + wfcPos.length / 3, bldgCellIndex(cx, cz)); // [perf]
 
         if (wfcMeta && wfcMeta.arch) {
           entityRecord.styleDisplay = `${wfcMeta.facadeId || wfcMeta.arch.shortName} · ${wfcMeta.arch.category}`;
@@ -3882,7 +3935,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
       }
 
-      if (performance.now() - t0 >= budgetMs && !finalized && wfcPos.length > 9000) {
+      if (performance.now() - t0 >= budgetMs && !finalized && vBase * 3 + wfcPos.length > 9000) {
         return false;
       }
 
@@ -3890,8 +3943,11 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         finalized = true;
         finishRoofDetail(roofCtx, bldgGroup, mats, buildingColliders); // [roofs] yards + chimneys/dormers (near LOD meshes)
         // [perf] 250 m cells x mass / fine, indexed (was one merged non-indexed mesh per chunk)
-        addBuildingCellMeshes(wfcPos, wfcNorm, wfcCol, wfcUv, kaijuBid, bCells, bldgGroup, mats);
-        wfcPos.length = wfcNorm.length = wfcCol.length = wfcUv.length = 0;
+        flushBuildingArrays();
+        addBuildingCellMeshes(
+          joinSegs(segs.pos, Float32Array), joinSegs(segs.norm, Float32Array), joinSegs(segs.col, Uint8Array), joinSegs(segs.uv, Float32Array),
+          kaijuBidAttribute(kaijuBid, vBase).array, bCells, bldgGroup, mats, true // [kaiju] bid
+        );
 
         if (rfPos.length > 0) {
           const geom = new THREE.BufferGeometry();
