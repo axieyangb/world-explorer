@@ -47,6 +47,10 @@ imports() {
 lint() {
   tools/node_modules/.bin/eslint --config tools/eslint.config.mjs src && echo "no undefined names, const assignments or duplicate keys"
 }
+server_tests() {
+  python3 tools/test_server.py >"$tmp/server.log" 2>&1 || { cat "$tmp/server.log"; return 1; }
+  tail -n 1 "$tmp/server.log"
+}
 build() {
   python3 tools/build_release.py "$tmp/world_explorer.html" --exports-json="$tmp/exports.json" >"$tmp/build.log" 2>&1 || { cat "$tmp/build.log"; return 1; }
   # The bundle must expose exactly the names each module exports, and its script must parse.
@@ -71,6 +75,7 @@ elif [ "${CHECK_LINT:-}" = required ]; then
 else
   echo 'skip  lint (eslint): not installed; run once: npm --prefix tools ci'
 fi
+step 'server tests (stubbed upstreams)' server_tests
 step 'release build + export check' build
 
 total=$(($(date +%s) - t_start))

@@ -154,7 +154,8 @@ World Explorer blends real-time global telemetry feeds with high-density procedu
 ### 1. Run Locally (`server.py` on port `8098`)
 
 ```bash
-python3 server.py                      # → http://localhost:8098
+python3 server.py                      # → http://localhost:8098 (this machine only)
+HOST=0.0.0.0 python3 server.py         # → also reachable from other machines on your network
 ```
 
 or with Docker:
@@ -172,6 +173,14 @@ Zero build step and zero required API keys. `server.py` serves the modular ES-mo
 ```bash
 python3 tools/build_release.py         # → outputs standalone world_explorer.html
 ```
+
+### 3. Check Before Pushing (`tools/check.sh`)
+
+```bash
+tools/check.sh                         # syntax, imports, lint, server tests, release build (about 10 s)
+```
+
+Needs only `node` and `python3`. The lint step is optional and needs ESLint once: `npm --prefix tools ci`. To run the checks on every `git push`, opt in with `tools/install_git_hook.sh`.
 
 ---
 
