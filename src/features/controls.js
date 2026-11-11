@@ -87,7 +87,8 @@ const cap = (code) => CAP[code] || code.replace(/^Key|^Digit/, '');
 export function keyCaps(id, mode = '') {
   const r = BY_ID[id];
   if (!r) return '';
-  const caps = r.show || r.code.map(cap).join('/');
+  if (r.show) return r.show;
+  const caps = r.code.map(cap).join('/');
   // V alone changes the vehicle while driving, so the camera moves to Shift+V there (main.js keydown).
   const shift = r.shift || (id === 'camera' && mode === 'drive');
   return shift ? `Shift+${caps}` : caps;
@@ -216,6 +217,6 @@ export class ControlsHint {
       k.textContent = keyCaps(id);
     }
     const vk = document.querySelector('#menu-sec-vehicle kbd');
-    if (vk) vk.textContent = keyCaps('vehicle_next');
+    if (vk) { vk.textContent = keyCaps('vehicle_next'); vk.classList.toggle('hidden', mode !== 'drive'); } // G is the gear in a jet
   }
 }

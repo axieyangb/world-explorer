@@ -360,7 +360,7 @@ kbd {
 }
 
 /* Mode menu rows that open a list on click (src/features/mode_menu.js) */
-.popover-modes { grid-template-columns: repeat(5, 1fr); }
+.popover-mode-row.popover-modes { grid-template-columns: repeat(5, 1fr); }
 .popover-fold {
   display: flex;
   align-items: center;
@@ -378,7 +378,7 @@ kbd {
   cursor: pointer;
 }
 .popover-fold:hover { background: rgba(255, 255, 255, 0.12); color: var(--text-bright); }
-.popover-fold > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#menu-vehicle-now { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .popover-fold .fold-caret { margin-left: auto; font-size: 10px; opacity: 0.6; transition: transform 0.12s ease; }
 .popover-fold[aria-expanded="true"] .fold-caret { transform: rotate(90deg); }
 .popover-fold-quiet {
