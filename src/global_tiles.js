@@ -969,15 +969,22 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     const c = String(cls || "").toLowerCase();
     const s = String(subCls || "").toLowerCase();
     const rPenalty = Math.min(20, Math.max(0, Number(rank) || 10));
-    if (c === "hospital" || s === "hospital" || s === "clinic" || s === "doctors") return { btype: "hospital", priority: 100 - rPenalty };
+    // A clinic or doctor's practice is a tenant, not a hospital building (and must not outrank the real institutions)
+    // (the tiles' "hospital" class also carries clinics, opticians and nursing homes: only the hospital subclass counts)
+    if (s === "clinic" || s === "doctors" || (c === "hospital" && s && s !== "hospital")) return { btype: "commercial", priority: 60 - rPenalty };
+    if (c === "hospital" || s === "hospital") return { btype: "hospital", priority: 100 - rPenalty };
     if (c === "university" || s === "university") return { btype: "university", priority: 98 - rPenalty };
     if (c === "college" || s === "college") return { btype: "college", priority: 96 - rPenalty };
     if (c === "school" || s === "school" || s === "kindergarten") return { btype: s === "kindergarten" ? "kindergarten" : "school", priority: 94 - rPenalty };
     if (c === "town_hall" || s === "town_hall" || s === "courthouse" || s === "embassy" || s === "government" || s === "community_centre") return { btype: "government", priority: 96 - rPenalty };
+    // (the tiles' "library" class also carries book shops: only the library subclass is a civic building)
+    if (c === "library" && s && s !== "library") return { btype: "retail", priority: 58 - rPenalty };
     if (c === "museum" || c === "library" || s === "museum" || s === "library" || s === "art_gallery" || s === "theatre" || s === "arts_centre") return { btype: "civic", priority: 92 - rPenalty };
     if (c === "police" || c === "fire_station" || c === "post" || s === "police" || s === "fire_station" || s === "post_office") return { btype: "public", priority: 90 - rPenalty };
     if (c === "place_of_worship" || s === "place_of_worship" || s === "church" || s === "cathedral" || s === "temple" || s === "mosque" || s === "shrine") {
-      const bt = s === "temple" || s === "shrine" ? "temple" : s === "mosque" ? "mosque" : s === "cathedral" ? "cathedral" : "church";
+      // (the tiles give a place of worship's religion as its subclass, so a Buddhist temple or Shinto shrine is not a "church")
+      const bt = s === "temple" || s === "shrine" || s === "buddhist" || s === "shinto" || s === "taoist" || s === "hindu" ? "temple"
+        : s === "mosque" || s === "muslim" ? "mosque" : s === "cathedral" ? "cathedral" : "church";
       return { btype: bt, priority: 92 - rPenalty };
     }
     if (c === "stadium" || s === "stadium" || s === "sports_centre" || s === "arena" || c === "Ice_rink" || c === "swimming_pool") {
@@ -994,6 +1001,10 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     if (c === "industrial" || s === "industrial" || s === "warehouse") return { btype: "industrial", priority: 70 - rPenalty };
     if (c === "shop" || c === "grocery" || c === "clothing_store" || c === "restaurant" || c === "cafe" || c === "fast_food" || c === "bar" || c === "pharmacy" || c === "bakery" || c === "commercial" || c === "retail") {
       return { btype: "retail", priority: 58 - rPenalty };
+    }
+    // Street furniture and open-air points say nothing about the building next to them (their name can still label it)
+    if (/^(bus|park|playground|information|drinking_water|toilets|recycling|garden|dog_park|cemetery|picnic_site|campsite|bicycle_parking|bicycle_rental|bench|atm|telephone|post_box|fountain|viewpoint|artwork|pitch)$/.test(c)) {
+      return { btype: "", priority: 50 - rPenalty };
     }
     return { btype: "commercial", priority: 50 - rPenalty };
   };
@@ -1132,7 +1143,12 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
             const dist = inside ? 0.0 : pointToFlatRingDistXZ(p.lx, p.lz, flatOuter);
             if (!inside && dist > 14.0) continue;
             const sc = p.priority * 10.0 - (inside ? 0.0 : dist * 5.5);
-            if (sc > bestPoiScore) {
+            // An institution (priority >= 86: hospital, school, town hall, museum, police, church, stadium, station, hotel)
+            // types only the building its point stands in. Within 14 m it used to out-score every shop, so one shrine,
+            // clinic or police box turned the whole row around it into churches, hospitals and civic halls.
+            // A shop or office point (lower priority) usually sits on its facade line, so it may be up to 5 m outside;
+            // at 14 m every house beside a cafe or a bus stop became a commercial block with a flat roof.
+            if (p.btype && sc > bestPoiScore && (inside || (p.priority < 66 && dist <= 5.0))) {
               bestPoiScore = sc;
               bestPoi = p;
             }

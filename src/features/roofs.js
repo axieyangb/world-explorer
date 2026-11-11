@@ -49,7 +49,7 @@ export function archRegionFor(worldOrigin) {
 const REGION_ROOF = {
   us: { p: 0.96, hMax: 12, aMax: 480, gable: 0.55, k: [0.36, 0.55], eave: 0.55 },
   la: { p: 0.95, hMax: 11, aMax: 480, gable: 0.35, k: [0.30, 0.42], eave: 0.6 },
-  sf: { p: 0.45, hMax: 13, aMax: 360, gable: 0.85, k: [0.55, 0.85], eave: 0.3 },
+  sf: { p: 0.88, hMax: 13.5, aMax: 360, gable: 0.85, k: [0.55, 0.85], eave: 0.3 },
   nyc: { p: 0.75, hMax: 10, aMax: 300, gable: 0.7, k: [0.45, 0.65], eave: 0.4 },
   uk: { p: 0.95, hMax: 15, aMax: 1400, gable: 0.7, k: [0.62, 0.8], eave: 0.25 },
   paris: { p: 0.85, hMax: 11, aMax: 600, gable: 0.6, k: [0.7, 0.95], eave: 0.3 },
@@ -80,6 +80,8 @@ const FLAT_TYPES = new Set(['commercial', 'retail', 'industrial', 'warehouse', '
 
 const SOFT_FLAT = new Set(['commercial', 'retail', 'hotel', 'office', 'civic', 'public', 'government', 'pavilion', 'kiosk']);
 const OLD_TOWN = { med: 1, eu: 1, centralEu: 1, eastEu: 1, uk: 1, nordic: 1, paris: 1, latam: 1 };
+/** Largest untyped footprint (m2) still read as old-town street fabric (tiled / slated) rather than a commercial block. */
+const TOWN_FABRIC_AREA = { med: 1200, eu: 900, centralEu: 900, eastEu: 900, paris: 600, uk: 500, nordic: 500, latam: 320 };
 const EAST_ASIAN_TRAD = new Set(['temple', 'shrine', 'pagoda', 'historic', 'palace', 'pavilion', 'monastery', 'gatehouse', 'memorial', 'cultural']);
 const BARREL_TYPES = new Set(['warehouse', 'industrial', 'manufacture', 'train_station', 'transportation', 'hangar', 'grandstand', 'sports_centre', 'sports_hall', 'gymnasium', 'market', 'marketplace', 'supermarket']);
 const GAMBREL_TYPES = new Set(['barn', 'farm', 'farm_auxiliary', 'stable']);
@@ -339,7 +341,13 @@ export function planRoof(info) {
         if (holes && region !== 'med' && region !== 'eu' && rawRegion !== 'centralEu') return null;
         const isHouseSized = area >= 35 && area <= 320 && rawH <= 9.8 && obb.len <= 28;
         if ((info.flav ?? 0.5) < -0.35 && !isHouseSized) return null;
-        if (btype === 'yes' && !isHouseSized && (info.flav ?? 0.5) < 0.25) return null;
+        // The land-use flavour is low wherever blocks are packed (no lawns), which also describes housing: San Francisco
+        // row houses (narrow lots, three storeys, residential zoning) and the old-town fabric of the regions whose towns
+        // are tiled or slated. Those keep their pitched roofs; wide or tall untyped blocks stay flat.
+        const flavV = info.flav ?? 0.5;
+        const isRowHouse = region === 'sf' && area >= 35 && area <= 330 && obb.wid <= 12.5 && flavV >= 0.1;
+        const isTownFabric = Boolean(OLD_TOWN[rawRegion]) && area <= (TOWN_FABRIC_AREA[rawRegion] || 0) && rawH <= 22 && flavV >= -0.1;
+        if (btype === 'yes' && !isHouseSized && !isRowHouse && !isTownFabric && flavV < 0.25) return null;
         if (region === 'us' || region === 'la' || region === 'sf') {
           if (area > 320 && (info.flav ?? 0.5) < 0.3) return null;
         }
@@ -812,6 +820,42 @@ function capRings(out, rings, y, rgb, mat) {
 // Ornate Dormers, Chimneys, Skylights & Wrought-Iron Ridge Cresting / Weathervanes
 // ------------------------------------------------------------------------------------------------------------------
 
+/** Distance from (px, pz) to the nearest edge of a { x, z } ring, or -1 when the point is outside it. */
+function insideDist(ring, px, pz) {
+  const n = ring && ring.x ? ring.x.length : 0;
+  if (n < 3) return -1;
+  let inside = false, best = Infinity;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = ring.x[i], zi = ring.z[i], xj = ring.x[j], zj = ring.z[j];
+    if ((zi > pz) !== (zj > pz) && px < ((xj - xi) * (pz - zi)) / (zj - zi || 1e-9) + xi) inside = !inside;
+    const ex = xi - xj, ez = zi - zj;
+    const t = Math.max(0, Math.min(1, ((px - xj) * ex + (pz - zj) * ez) / (ex * ex + ez * ez || 1e-9)));
+    const d = Math.hypot(px - (xj + ex * t), pz - (zj + ez * t));
+    if (d < best) best = d;
+  }
+  return inside ? best : -1;
+}
+
+/** Same for the roof actually emitted: inside the wall ring and outside every courtyard hole (flat [x, z, ...] rings). */
+function roofInsideDist(ring, holes, px, pz) {
+  let d = insideDist(ring, px, pz);
+  if (d < 0) return -1;
+  for (const h of holes || []) {
+    if (!h || h.length < 6) continue;
+    const hr = { x: [], z: [] };
+    for (let i = 0; i < h.length; i += 2) { hr.x.push(h[i]); hr.z.push(h[i + 1]); }
+    const dh = insideDist(hr, px, pz);
+    if (dh >= 0) return -1;
+    const n = hr.x.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const ex = hr.x[i] - hr.x[j], ez = hr.z[i] - hr.z[j];
+      const t = Math.max(0, Math.min(1, ((px - hr.x[j]) * ex + (pz - hr.z[j]) * ez) / (ex * ex + ez * ez || 1e-9)));
+      d = Math.min(d, Math.hypot(px - (hr.x[j] + ex * t), pz - (hr.z[j] + ez * t)));
+    }
+  }
+  return d;
+}
+
 /**
  * Emits arched / bullseye Paris mansard dormers, twin gable dormers, skylight panes, ornate brick/stone chimneys
  * with stepped shoulders & terracotta pots/metal cowls, and wrought-iron ridge cresting / weathervane finials.
@@ -831,7 +875,7 @@ export function emitChimneyAndDormers(det, ring, edges, plan, yEave, topY, opts 
     const capRgb = [Math.max(0.14, rgb[0] * 0.88), Math.max(0.15, rgb[1] * 0.88), Math.max(0.17, rgb[2] * 0.90)];
     const trimRgb = [0.93, 0.91, 0.88];
     const glassRgb = [0.14, 0.19, 0.24];
-    let budget = isMansard ? 8 : 4;
+    let budget = isMansard ? 6 : 4; // 6 (was 8): pays for the mansards and row-house roofs that used to be flat decks
     const spacing = isMansard ? 4.3 : 5.4;
 
     for (let i = 0; i < n && budget > 0; i++) {
@@ -974,12 +1018,24 @@ export function emitChimneyAndDormers(det, ring, edges, plan, yEave, topY, opts 
 
     for (let c = 0; c < nStacks; c++) {
       const side = nStacks === 2 ? (c === 0 ? -1 : 1) : (rnd(seed, 53) < 0.5 ? -1 : 1);
-      const a = side * Math.max(0.8, obb.len * 0.5 - (isMansard ? 2.2 : 1.35 + rnd(seed, 59 + c) * Math.max(0, obb.len * 0.18)));
-      const b = isMansard ? 0 : (rnd(seed, 61 + c) - 0.5) * obb.wid * 0.28;
-      const cx = obb.cx + obb.ax * a - obb.az * b;
-      const cz = obb.cz + obb.az * a + obb.ax * b;
-      const dist = Math.max(0, obb.wid * 0.5 - Math.abs(b));
-      const yBase = isMansard ? topY - 0.25 : yEave + Math.min(plan.maxRise || 3.0, dist * (plan.k || 0.55)) - 0.65;
+      const a0 = side * Math.max(0.8, obb.len * 0.5 - (isMansard ? 2.2 : 1.35 + rnd(seed, 59 + c) * Math.max(0, obb.len * 0.18)));
+      const b0 = isMansard ? 0 : (rnd(seed, 61 + c) - 0.5) * obb.wid * 0.28;
+      // The plan's box is the footprint's bounding box, but the roof sits on the (possibly set back, L-shaped or
+      // courtyard) wall ring: stand the stack on that ring, sliding it towards the middle when the box corner is
+      // off the roof, and drop it when no spot is found. Its base starts under the roof surface at that spot.
+      let cx = 0, cz = 0, edgeDist = -1;
+      for (const f of ring && ring.x ? [1, 0.6, 0.25, 0] : [1]) {
+        cx = obb.cx + obb.ax * a0 * f - obb.az * b0 * f;
+        cz = obb.cz + obb.az * a0 * f + obb.ax * b0 * f;
+        edgeDist = ring && ring.x ? roofInsideDist(ring, opts.holes, cx, cz) : obb.wid * 0.5 - Math.abs(b0);
+        if (edgeDist >= (isMansard ? 1.5 : 0.75)) break;
+        edgeDist = -1;
+        if (nStacks === 2 && f < 1) break; // paired stacks would meet in the middle
+      }
+      if (edgeDist < 0) continue;
+      const yBase = isMansard
+        ? yEave + 1.4
+        : yEave + Math.min(plan.maxRise || 3.0, edgeDist * (plan.k || 0.55)) - 0.65;
       const hTop = Math.max(topY + (isMansard ? 1.25 : 0.82), yBase + 1.45);
       const stackH = hTop - yBase;
       const ux = isMansard ? obb.az : obb.ax;
@@ -1021,12 +1077,15 @@ export function emitChimneyAndDormers(det, ring, edges, plan, yEave, topY, opts 
     const ridgeHalf = (plan.shape === 'gable' || plan.shape === 'stepped_gable')
       ? Math.max(0, obb.len * 0.5 - 0.25)
       : Math.max(0, (obb.len - obb.wid) * 0.5);
-
-    if (ridgeHalf > 0.45) {
+    // The ridge line comes from the bounding box: keep the cresting only where that line is over the emitted roof.
+    const onRoof = (t) => !ring || !ring.x || roofInsideDist(ring, opts.holes, obb.cx + obb.ax * t, obb.cz + obb.az * t) >= 0.2;
+    if (!onRoof(0) || (ridgeHalf > 0.45 && !(onRoof(-ridgeHalf) && onRoof(ridgeHalf)))) {
+      // no cresting: the box centre line is off this roof (L-shaped, set back or courtyard footprint)
+    } else if (ridgeHalf > 0.45) {
       // Bottom & top horizontal wrought-iron cresting rails along the ridge
       orientedBox(det, obb.cx, topY + 0.05, obb.cz, obb.ax, obb.az, ridgeHalf, 0.03, 0.03, ironRgb);
       orientedBox(det, obb.cx, topY + 0.26, obb.cz, obb.ax, obb.az, ridgeHalf, 0.025, 0.025, ironRgb);
-      const nSpikes = Math.min(14, Math.max(3, Math.floor((ridgeHalf * 2) / 0.95)));
+      const nSpikes = Math.min(9, Math.max(3, Math.floor((ridgeHalf * 2) / 0.95))); // 9 (was 14), same reason
       for (let s = 0; s < nSpikes; s++) {
         const posA = -ridgeHalf + ((s + 0.5) / nSpikes) * (ridgeHalf * 2);
         const sx = obb.cx + obb.ax * posA, sz = obb.cz + obb.az * posA;
@@ -1762,7 +1821,7 @@ function emitMansard(out, outer, holes, plan, yEave, opts) {
 
   // Arched / Bullseye / Pedimented Mansard Dormers, Ornate Party-Wall Chimneys & Wrought-Iron Cresting
   if (opts.detail && opts.lod !== 'cheap') {
-    emitChimneyAndDormers(opts.detail, rings[0], edges, plan, yEave, yTop, opts);
+    emitChimneyAndDormers(opts.detail, rings[0], edges, plan, yEave, yTop, { ...opts, holes });
   }
   return { ridgeY: yTop };
 }
