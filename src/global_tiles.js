@@ -975,6 +975,10 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     if (c === "shop" || c === "grocery" || c === "clothing_store" || c === "restaurant" || c === "cafe" || c === "fast_food" || c === "bar" || c === "pharmacy" || c === "bakery" || c === "commercial" || c === "retail") {
       return { btype: "retail", priority: 58 - rPenalty };
     }
+    // Street furniture and open-air points say nothing about the building next to them (their name can still label it)
+    if (/^(bus|park|playground|information|drinking_water|toilets|recycling|garden|dog_park|cemetery|picnic_site|campsite|bicycle_parking|bicycle_rental|bench|atm|telephone|post_box|fountain|viewpoint|artwork|pitch)$/.test(c)) {
+      return { btype: "", priority: 50 - rPenalty };
+    }
     return { btype: "commercial", priority: 50 - rPenalty };
   };
 
@@ -1115,7 +1119,9 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
             // An institution (priority >= 86: hospital, school, town hall, museum, police, church, stadium, station, hotel)
             // types only the building its point stands in. Within 14 m it used to out-score every shop, so one shrine,
             // clinic or police box turned the whole row around it into churches, hospitals and civic halls.
-            if (sc > bestPoiScore && (inside || p.priority < 66)) {
+            // A shop or office point (lower priority) usually sits on its facade line, so it may be up to 5 m outside;
+            // at 14 m every house beside a cafe or a bus stop became a commercial block with a flat roof.
+            if (p.btype && sc > bestPoiScore && (inside || (p.priority < 66 && dist <= 5.0))) {
               bestPoiScore = sc;
               bestPoi = p;
             }
