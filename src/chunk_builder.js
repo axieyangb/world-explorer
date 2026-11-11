@@ -4508,7 +4508,7 @@ function indexQuadTriangles(attrs) {
   if (nv > nVerts * 0.85) return null;
   return {
     arrays: attrs.map(([arr, sz]) => arr.slice(0, nv * sz)),
-    index: nv <= 65535 ? new Uint16Array(index) : index,
+    index: nv <= 65535 ? new Uint16Array(index.subarray(0, ni)) : index.slice(0, ni),
   };
 }
 
