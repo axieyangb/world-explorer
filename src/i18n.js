@@ -92,6 +92,12 @@ export const I18N = {
       leg_chunk: '已加载 3D 区块',
     },
     runtime: {
+      // Key labels (src/features/controls.js): the English label is the key; "Label@mode" overrides one mode.
+      Move: '移动', Turn: '转向', 'Down / Up': '升降', Strafe: '平移', Cannon: '机炮', Rockets: '火箭弹', Land: '降落',
+      Walk: '移动', Run: '疾跑', Punch: '出拳', Reload: '换弹', Weapon: '切枪', RPG: '火箭筒', Enter: '驾车',
+      Drive: '驾驶', Boost: '加速', Brake: '刹车', Vehicle: '换车', Horn: '喇叭', 'Exit@drive': '下车', Fire: '主炮',
+      'Exit@airliner': '下机', 'Exit@boat': '登岸', 'Thrust / Brake': '推力/刹车', Steer: '转向', Climb: '拉起',
+      'Nose down': '压机头', Gear: '起落架', Livery: '涂装', Throttle: '前进/倒船',
       // [kaiju]
       mode_kaiju: '怪兽',
       kaiju_title: '怪兽防卫',
