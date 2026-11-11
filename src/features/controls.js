@@ -7,7 +7,8 @@ import { t, getLang, onLanguageChange } from '../i18n.js';
 
 // code: KeyboardEvent.code values (first one is the binding main.js uses); shift: needs Shift;
 // show: text for the key cap when the codes do not read well; hint: shown in the short hint bar;
-// when: 'armed' / 'unarmed' (on foot), 'tank' / 'car' (driving); list: false keeps a row out of the key list.
+// when: 'armed' / 'unarmed' (on foot), 'tank' / 'car' (driving); list: false keeps a row out of the key list;
+// not: a mode where the key does something else.
 // Labels go through t(): the English text is the key, and "Label@mode" can override it for one mode.
 export const CONTROLS = {
   helicopter: [
@@ -68,7 +69,7 @@ export const CONTROLS = {
     { id: 'mode_walk', code: ['Digit2'], list: false },
     { id: 'mode_helicopter', code: ['Digit3'], list: false },
     { id: 'mode_kaiju', code: ['Digit4'], list: false },
-    { id: 'vehicle_next', code: ['KeyG'], label: 'Next vehicle' },
+    { id: 'vehicle_next', code: ['KeyG'], label: 'Next vehicle', not: 'airliner' }, // G is the gear in a jet
     { id: 'fullscreen', code: ['KeyF'], shift: true, label: 'Full screen' },
     { id: 'help', code: ['Slash'], shift: true, show: '?', label: 'Keys', list: false },
   ],
@@ -194,7 +195,7 @@ export class ControlsHint {
     const row = (r) => `<div class="keys-row"><kbd>${esc(keyCaps(r.id, ctx.mode))}</kbd><span>${esc(label(r, ctx.mode))}</span></div>`;
     this.panel.innerHTML =
       `<div class="keys-col">${rowsFor(ctx.mode, ctx).map(row).join('')}</div>` +
-      `<div class="keys-col">${CONTROLS.any.filter((r) => r.list !== false).map(row).join('')}</div>`;
+      `<div class="keys-col">${CONTROLS.any.filter((r) => r.list !== false && r.not !== ctx.mode).map(row).join('')}</div>`;
   }
 
   // Tooltips and key caps elsewhere in the HUD that name a key.
