@@ -875,7 +875,7 @@ export function emitChimneyAndDormers(det, ring, edges, plan, yEave, topY, opts 
     const capRgb = [Math.max(0.14, rgb[0] * 0.88), Math.max(0.15, rgb[1] * 0.88), Math.max(0.17, rgb[2] * 0.90)];
     const trimRgb = [0.93, 0.91, 0.88];
     const glassRgb = [0.14, 0.19, 0.24];
-    let budget = isMansard ? 8 : 4;
+    let budget = isMansard ? 6 : 4; // 6 (was 8): pays for the mansards and row-house roofs that used to be flat decks
     const spacing = isMansard ? 4.3 : 5.4;
 
     for (let i = 0; i < n && budget > 0; i++) {
@@ -1085,7 +1085,7 @@ export function emitChimneyAndDormers(det, ring, edges, plan, yEave, topY, opts 
       // Bottom & top horizontal wrought-iron cresting rails along the ridge
       orientedBox(det, obb.cx, topY + 0.05, obb.cz, obb.ax, obb.az, ridgeHalf, 0.03, 0.03, ironRgb);
       orientedBox(det, obb.cx, topY + 0.26, obb.cz, obb.ax, obb.az, ridgeHalf, 0.025, 0.025, ironRgb);
-      const nSpikes = Math.min(14, Math.max(3, Math.floor((ridgeHalf * 2) / 0.95)));
+      const nSpikes = Math.min(9, Math.max(3, Math.floor((ridgeHalf * 2) / 0.95))); // 9 (was 14), same reason
       for (let s = 0; s < nSpikes; s++) {
         const posA = -ridgeHalf + ((s + 0.5) / nSpikes) * (ridgeHalf * 2);
         const sx = obb.cx + obb.ax * posA, sz = obb.cz + obb.az * posA;

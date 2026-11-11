@@ -2751,7 +2751,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           const af = fInfo.archFeatures;
           const accCol = facadeSel.parapetAccent || fInfo.accentRgb || [0.22, 0.64, 0.96];
           // (i) Corporate / Tech / Finance / Auto / Media / Hotel Illuminated Rooftop Sky-Sign Monument Pylon & Atrium Skylight Spine
-          if (af.skySignMonument) {
+          // (a lit rooftop sign pylon belongs on a tower, not on every small named hotel or clinic of a village)
+          if (af.skySignMonument && totalSpan >= 20.0) {
             const signW = Math.min(8.5, Math.max(3.6, pw * 0.88));
             const signH = Math.min(2.2, Math.max(1.1, totalSpan * 0.038));
             const signBaseY = roofY + ph + 0.18;

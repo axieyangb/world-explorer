@@ -943,7 +943,8 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     const s = String(subCls || "").toLowerCase();
     const rPenalty = Math.min(20, Math.max(0, Number(rank) || 10));
     // A clinic or doctor's practice is a tenant, not a hospital building (and must not outrank the real institutions)
-    if (s === "clinic" || s === "doctors") return { btype: "commercial", priority: 60 - rPenalty };
+    // (the tiles' "hospital" class also carries clinics, opticians and nursing homes: only the hospital subclass counts)
+    if (s === "clinic" || s === "doctors" || (c === "hospital" && s && s !== "hospital")) return { btype: "commercial", priority: 60 - rPenalty };
     if (c === "hospital" || s === "hospital") return { btype: "hospital", priority: 100 - rPenalty };
     if (c === "university" || s === "university") return { btype: "university", priority: 98 - rPenalty };
     if (c === "college" || s === "college") return { btype: "college", priority: 96 - rPenalty };
