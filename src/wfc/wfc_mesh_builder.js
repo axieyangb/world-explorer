@@ -2799,7 +2799,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
                 pushDetailWorldBox(sx, sBaseY + spireH, cz, 0.26, 1.2, 0.26, [0.88, 0.74, 0.28], false);
               }
             }
-          } else if (af.pagodaEaves && spanX >= 11.0 && spanZ >= 11.0) {
+          } else if (af.pagodaEaves && spanX >= 11.0 && spanZ >= 11.0 && (archRegion ? archRegion === 'beijing' || EAST_ASIA_ARCH[archRegion] : region === 'beijing' || region === 'asia' || region === 'tokyo')) {
+            // (an East Asian crown: mosques, synagogues and 'historic' buildings elsewhere share the flag but not the roof)
             const eaveCol = [0.76, 0.48, 0.18];
             const redWall = [0.68, 0.18, 0.16];
             const pW = Math.min(9.5, Math.min(spanX, spanZ) * 0.34);

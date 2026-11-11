@@ -955,7 +955,9 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     if (c === "museum" || c === "library" || s === "museum" || s === "library" || s === "art_gallery" || s === "theatre" || s === "arts_centre") return { btype: "civic", priority: 92 - rPenalty };
     if (c === "police" || c === "fire_station" || c === "post" || s === "police" || s === "fire_station" || s === "post_office") return { btype: "public", priority: 90 - rPenalty };
     if (c === "place_of_worship" || s === "place_of_worship" || s === "church" || s === "cathedral" || s === "temple" || s === "mosque" || s === "shrine") {
-      const bt = s === "temple" || s === "shrine" ? "temple" : s === "mosque" ? "mosque" : s === "cathedral" ? "cathedral" : "church";
+      // (the tiles give a place of worship's religion as its subclass, so a Buddhist temple or Shinto shrine is not a "church")
+      const bt = s === "temple" || s === "shrine" || s === "buddhist" || s === "shinto" || s === "taoist" || s === "hindu" ? "temple"
+        : s === "mosque" || s === "muslim" ? "mosque" : s === "cathedral" ? "cathedral" : "church";
       return { btype: bt, priority: 92 - rPenalty };
     }
     if (c === "stadium" || s === "stadium" || s === "sports_centre" || s === "arena" || c === "Ice_rink" || c === "swimming_pool") {
