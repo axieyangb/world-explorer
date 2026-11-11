@@ -9,7 +9,7 @@ self.onmessage = async (e) => {
   if (msg.type === 'initDem') {
     if (msg.tileCacheLimit) setTileCacheLimit(msg.tileCacheLimit);
     setBeijingDemState(msg.demState);
-    self.postMessage({ type: 'demReady' });
+    self.postMessage({ type: 'demReady', gen: msg.gen });
     return;
   }
   if (msg.type === 'buildChunk') {

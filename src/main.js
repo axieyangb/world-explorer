@@ -240,6 +240,8 @@ class WorldExplorerApp {
     this.renderer.toneMappingExposure = 1.12;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Program validation (getProgramInfoLog etc.) stalls on every new shader; ?shaderdebug turns it back on.
+    this.renderer.debug.checkShaderErrors = /[?&]shaderdebug\b/.test(window.location.search);
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x9ec5e5);
@@ -422,72 +424,87 @@ class WorldExplorerApp {
     });
   }
 
+  // Chunk builds run on a small pool of workers (each has its own tile cache and DEM copy), so the
+  // chunks around the player build side by side instead of queueing behind one thread.
   _initChunkWorker() {
     this.workerReady = false;
+    this.chunkWorkers = [];
+    this.chunkWorker = null; // first live worker; null = build on the main thread
+    this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261103_r1" : null);
-      if (!workerUrl) {
-        this.chunkWorker = null;
-        return;
-      }
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261111_p1" : null);
+      if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
-      this.chunkWorker = new Worker(workerUrl, opts);
-      this.chunkWorker.onmessage = (e) => {
-        const msg = e.data;
-        if (!msg) return;
-        if (msg.type === "demReady") {
-          this.workerReady = true;
-          if (this._onWorkerDemReady) {
-            this._onWorkerDemReady();
-            this._onWorkerDemReady = null;
-          }
-          return;
-        }
-        if (msg.type === "chunkBuilt") {
-          const cb = this.workerCallbacks.get(msg.key);
-          if (cb) {
-            this.workerCallbacks.delete(msg.key);
-            cb(msg.payload);
-          }
-          return;
-        }
-        if (msg.type === "chunkError") {
-          const cb = this.workerCallbacks.get(msg.key);
-          if (cb) {
-            this.workerCallbacks.delete(msg.key);
-            cb(null);
-          }
-        }
-      };
-      this.chunkWorker.onerror = () => {
-        this.workerReady = false;
-        this.chunkWorker = null;
-        if (this._onWorkerDemReady) {
-          this._onWorkerDemReady();
-          this._onWorkerDemReady = null;
-        }
-      };
+      const cores = navigator.hardwareConcurrency || 4;
+      const count = TOUCH_UI || cores < 6 ? 1 : cores >= 12 ? 3 : 2;
+      for (let i = 0; i < count; i++) {
+        const w = new Worker(workerUrl, opts);
+        const slot = { worker: w, keys: new Set(), demGen: -1 };
+        w.onmessage = (e) => this._onChunkWorkerMessage(slot, e.data);
+        w.onerror = () => this._dropChunkWorker(slot);
+        this.chunkWorkers.push(slot);
+      }
+      this.chunkWorker = this.chunkWorkers[0].worker;
     } catch {
       this.workerReady = false;
-      this.chunkWorker = null;
+      if (!this.chunkWorkers.length) this.chunkWorker = null;
     }
   }
 
+  _onChunkWorkerMessage(slot, msg) {
+    if (!msg) return;
+    if (msg.type === "demReady") {
+      this.workerReady = true;
+      if (msg.gen === this._demGen) slot.demGen = msg.gen;
+      if (this._onWorkerDemReady) this._onWorkerDemReady();
+      return;
+    }
+    if (msg.type === "chunkBuilt" || msg.type === "chunkError") {
+      slot.keys.delete(msg.key);
+      const cb = this.workerCallbacks.get(msg.key);
+      if (cb) {
+        this.workerCallbacks.delete(msg.key);
+        cb(msg.type === "chunkBuilt" ? msg.payload : null);
+      }
+    }
+  }
+
+  // A worker that fails to load or crashes leaves the pool; its chunks are re-requested by streaming.
+  _dropChunkWorker(slot) {
+    const i = this.chunkWorkers.indexOf(slot);
+    if (i >= 0) this.chunkWorkers.splice(i, 1);
+    for (const key of slot.keys) {
+      const cb = this.workerCallbacks.get(key);
+      if (cb) {
+        this.workerCallbacks.delete(key);
+        cb(null);
+      }
+    }
+    slot.keys.clear();
+    this.chunkWorker = this.chunkWorkers.length ? this.chunkWorkers[0].worker : null;
+    if (!this.chunkWorker) this.workerReady = false;
+    if (this._onWorkerDemReady) this._onWorkerDemReady();
+  }
+
   async _syncWorkerDem() {
-    this._workerDemAcked = false;
-    if (!this.chunkWorker) return;
+    const gen = ++this._demGen;
+    if (!this.chunkWorkers.length) return;
     const demState = getBeijingDemState();
     if (!demState || !demState.elevations) return;
     await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        resolve();
-      }, 600);
-      this._onWorkerDemReady = () => {
+      const finish = () => {
         clearTimeout(timer);
+        this._onWorkerDemReady = null;
         resolve();
       };
-      this.chunkWorker.postMessage({ type: "initDem", demState, tileCacheLimit: TILE_CACHE_LIMIT });
+      const timer = setTimeout(finish, 600);
+      this._onWorkerDemReady = () => {
+        if (this.chunkWorkers.every((sl) => sl.demGen === gen)) finish();
+      };
+      for (const sl of this.chunkWorkers) {
+        sl.worker.postMessage({ type: "initDem", demState, tileCacheLimit: TILE_CACHE_LIMIT, gen });
+      }
     });
   }
 
@@ -558,23 +575,14 @@ class WorldExplorerApp {
     window.__WORLD_EXPLORER__ = api;
 
     window.__loading?.set(20, "Loading map data…");
-    const [resp, , lodResp] = await Promise.all([
-      fetch("data/global_overview.json?v=overture4").catch(() => null),
-      initBeijingDem(),
-      fetch("data/city_buildings_lod.bin?v=overture4").catch(() => null),
-      loadFacadeArrayTexture(this.mats),
-    ]);
-    this.beijingOverview = resp && resp.ok ? await resp.json() : await buildGlobalOverviewFromTiles(this.worldOrigin);
-    this.overview = this.beijingOverview;
-    this.beijingLodBuffer = lodResp && lodResp.ok ? await lodResp.arrayBuffer() : null;
+    // The start-up teleport below fetches the DEM, overview and horizon of wherever the player starts;
+    // the Beijing-only data (overview, DEM, skyline LOD: ~19 MB) loads when a teleport lands in Beijing.
+    await loadFacadeArrayTexture(this.mats);
+    this.beijingOverview = null;
+    this.beijingLodBuffer = null;
+    this.overview = null;
 
     window.__loading?.set(35, "Preparing the world…");
-    await this._syncWorkerDem();
-
-    this.horizonTerrainMesh = buildGlobalHorizonTerrain(this.mats.terrainMat);
-    this.horizonRoot.add(this.horizonTerrainMesh);
-
-    this._buildGlobalHorizonLayer(this.beijingLodBuffer);
 
     this.mapSystem = new MapSystem(
       this.overview,
@@ -598,6 +606,7 @@ class WorldExplorerApp {
     // so progress is polled on a timer rather than from _animate.
     this._loadingSince = performance.now();
     this._loadingTimer = setInterval(() => this._updateLoadingScreen(), 250);
+    this._startupTeleport = true; // first frame as soon as the centre chunk is in; the ring streams in after
     if (Number.isFinite(qLat) && Number.isFinite(qLon)) {
       await this.teleportToLocation(qLat, qLon, q.get("name") || "", "");
     } else {
@@ -609,6 +618,8 @@ class WorldExplorerApp {
       this.camYaw = this.yaw;
       this.camPivot.copy(this.pos);
     }
+
+    this._startupTeleport = false;
 
     this.world = { getHeightAt: (x, z) => Math.max(0, getBeijingTerrainElevation(x, z), getChunkTerrainMeshElevation(x, z)) };
     this._showToast = (msg) => showVehicleToast(String(msg || ""), "");
@@ -659,6 +670,17 @@ class WorldExplorerApp {
     }
   }
 
+  // Beijing overview (parks / water / arterials / bookmarks) and skyline LOD, fetched once on first use.
+  async _ensureBeijingData() {
+    if (this.beijingOverview) return;
+    const [resp, lodResp] = await Promise.all([
+      fetch("data/global_overview.json?v=overture4").catch(() => null),
+      fetch("data/city_buildings_lod.bin?v=overture4").catch(() => null),
+    ]);
+    this.beijingOverview = resp && resp.ok ? await resp.json() : null;
+    this.beijingLodBuffer = lodResp && lodResp.ok ? await lodResp.arrayBuffer() : null;
+  }
+
   /**
    * Teleports anywhere on Earth by latitude & longitude, streaming real AWS Terrarium DEM
    * and OpenFreeMap Zoom-14 vector tiles for the new 40km x 40km region.
@@ -697,6 +719,7 @@ class WorldExplorerApp {
       cb(null);
     }
     this.workerCallbacks.clear();
+    for (const sl of this.chunkWorkers) sl.keys.clear();
     this.pendingChunks.clear();
     this.readyWorkerPayloads = [];
 
@@ -735,6 +758,7 @@ class WorldExplorerApp {
       cb(null);
     }
     this.workerCallbacks.clear();
+    for (const sl of this.chunkWorkers) sl.keys.clear();
     this.pendingChunks.clear();
     this.readyWorkerPayloads = [];
     this.isTeleporting = false;
@@ -743,6 +767,7 @@ class WorldExplorerApp {
     this.horizonTerrainMesh = buildGlobalHorizonTerrain(this.mats.terrainMat);
     this.horizonRoot.add(this.horizonTerrainMesh);
 
+    if (isBj) await this._ensureBeijingData();
     if (isBj && this.beijingOverview) {
       this.overview = this.beijingOverview;
       this._buildGlobalHorizonLayer(this.beijingLodBuffer);
@@ -780,8 +805,8 @@ class WorldExplorerApp {
 
     if (this.mode === "helicopter" && this.heli) this.heli.place(this.pos.x, this.pos.y, this.pos.z, this.yaw);
 
-    // Load immediate 3x3 chunks synchronously and queue outer ring
-    await this._updateStreamingChunks(true);
+    // Load immediate 3x3 chunks synchronously and queue outer ring (start-up: centre chunk only)
+    await this._updateStreamingChunks(true, this._startupTeleport ? 0 : 1);
 
     // Resolve nearest street name (and road surface height if driving/walking)
     const [cx, cz] = this.worldToChunk(this.pos.x, this.pos.z);
@@ -1387,7 +1412,7 @@ class WorldExplorerApp {
     return [cx, cz];
   }
 
-  async _updateStreamingChunks(waitAll = false) {
+  async _updateStreamingChunks(waitAll = false, waitRadius = 1) {
     if (this.isTeleporting && !waitAll) return;
     const focusPos = this.pos;
     const [pcx, pcz] = this.worldToChunk(focusPos.x, focusPos.z);
@@ -1410,7 +1435,7 @@ class WorldExplorerApp {
     }
 
     const needed = [];
-    const activeRadius = waitAll ? 1 : LOAD_RADIUS;
+    const activeRadius = waitAll ? waitRadius : LOAD_RADIUS;
     for (let dx = -activeRadius; dx <= activeRadius; dx++) {
       for (let dz = -activeRadius; dz <= activeRadius; dz++) {
         const cx = pcx + dx;
@@ -1461,7 +1486,10 @@ class WorldExplorerApp {
       if (this.chunkWorker) {
         const payload = await new Promise((resolve) => {
           this.workerCallbacks.set(key, resolve);
-          this.chunkWorker.postMessage({
+          let slot = this.chunkWorkers[0];
+          for (const sl of this.chunkWorkers) if (sl.keys.size < slot.keys.size) slot = sl;
+          slot.keys.add(key);
+          slot.worker.postMessage({
             type: "buildChunk",
             key,
             cx,
@@ -1469,9 +1497,9 @@ class WorldExplorerApp {
             ox,
             oz,
             worldOrigin: this.worldOrigin,
-            demState: !this._workerDemAcked ? getBeijingDemState() : undefined,
+            demState: slot.demGen !== this._demGen ? getBeijingDemState() : undefined, // its initDem ack never came
           });
-          this._workerDemAcked = true;
+          slot.demGen = this._demGen;
         });
         if (!payload || (this.teleportGeneration || 0) !== genId) return;
         const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
