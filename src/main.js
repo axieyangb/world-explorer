@@ -8,6 +8,7 @@ import {
   subdivideTriangles2D,
   finalizeAndReleaseGeometry,
   assembleChunkFromWorkerPayload,
+  meshFromWorkerPayload,
 } from "./chunk_builder.js";
 import {
   initBeijingDem,
@@ -112,7 +113,15 @@ const GRID_DIM = 40;
 // Phones get a 3x3 streaming zone: a 5x5 one needs well over a gigabyte, more than mobile browsers allow a tab.
 const TOUCH_UI = isTouchDevice();
 const LOAD_RADIUS = TOUCH_UI || QUALITY.tier === "low" ? 1 : 2; // [ui-mobile] Low also streams 3x3;   // 5x5 chunks = 25 km^2 active streaming zone (3x3 on touch devices)
-const UNLOAD_RADIUS = TOUCH_UI ? 2 : 3; // Hysteresis gap
+// [perf] A chunk unloads once the player is more than this many chunk widths from its centre: half a chunk
+// (500 m) of hysteresis past the load zone. (Was a whole extra ring: up to 7x7 = 49 chunks kept on desktop.)
+const UNLOAD_DIST = LOAD_RADIUS + 1.0;
+// [perf] Building detail per chunk (see computeChunkWorkerPayload): none above this altitude (buildings are
+// hidden above 600 m), full detail for the chunks right around the player, massing only for the rest.
+const BLDG_BUILD_MAX_ALT = 900;
+const BLDG_FINE_BUILD_M = 600; // fine detail is built for chunks whose edge is this close to the player ...
+const BLDG_FINE_DROP_M = 900; // ... and freed again past this
+const BLDG_STAGE_BYTES = 6 * 1048576; // building geometry handed to the GPU per frame
 const TILE_CACHE_LIMIT = TOUCH_UI ? 12 : 24; // decoded vector tiles kept per thread (global_tiles.js)
 setTileCacheLimit(TILE_CACHE_LIMIT);
 const TIME_PRESET_ORDER = ["noon", "sunset", "night", "overcast"];
@@ -326,6 +335,8 @@ class WorldExplorerApp {
     this.pendingChunks = new Set();
     this.buildQueue = new Map();
     this.readyWorkerPayloads = [];
+    this._stagedChunks = []; // [perf] chunks whose building meshes are still being handed to the GPU
+    this._warmMeshes = [];
     this.workerCallbacks = new Map();
     this.chunkWorker = null;
     this._initChunkWorker();
@@ -1412,6 +1423,149 @@ class WorldExplorerApp {
     return [cx, cz];
   }
 
+  _chunkTooFar(cx, cz) {
+    // same clamp as worldToChunk, so the edge of the 40 km grid behaves like the load test
+    const fx = Math.max(0, Math.min(GRID_DIM, (this.pos.x + HALF_WORLD) / CHUNK_SIZE)) - (cx + 0.5);
+    const fz = Math.max(0, Math.min(GRID_DIM, (this.pos.z + HALF_WORLD) / CHUNK_SIZE)) - (cz + 0.5);
+    return Math.max(Math.abs(fx), Math.abs(fz)) > UNLOAD_DIST;
+  }
+
+  // [perf] Building detail level a chunk should have right now (0 none, 1 massing, 2 massing + fine detail).
+  _wantedBldgLevel(cx, cz) {
+    if (this.pos.y - getBeijingTerrainElevation(this.pos.x, this.pos.z) > BLDG_BUILD_MAX_ALT) return 0;
+    return this._chunkEdgeDist(cx, cz) <= BLDG_FINE_BUILD_M ? 2 : 1;
+  }
+
+  // Horizontal distance from the player to the nearest edge of a chunk (0 inside it).
+  _chunkEdgeDist(cx, cz) {
+    const dx = Math.max(0, Math.abs(this.pos.x - (-HALF_WORLD + cx * CHUNK_SIZE + 500)) - 500);
+    const dz = Math.max(0, Math.abs(this.pos.z - (-HALF_WORLD + cz * CHUNK_SIZE + 500)) - 500);
+    return Math.hypot(dx, dz);
+  }
+
+  // [perf] Brings loaded chunks to their wanted building level: asks a worker for the missing building meshes
+  // (nearest chunk first, two requests at a time) and frees fine detail of chunks the player has left behind.
+  _updateBldgLevels() {
+    const now = performance.now();
+    if (now < (this._bldgLevelNextT || 0)) return;
+    this._bldgLevelNextT = now + 250;
+    const px = (this.pos.x + HALF_WORLD) / CHUNK_SIZE, pz = (this.pos.z + HALF_WORLD) / CHUNK_SIZE;
+    let inFlight = 0;
+    const want = [];
+    for (const [key, g] of this.loadedChunks.entries()) {
+      const ud = g.userData;
+      if (!Number.isFinite(ud.bldgLevel)) continue; // built on the main thread: always complete
+      if (ud.bldgUpgrade) { inFlight++; continue; }
+      const d = Math.max(Math.abs(px - (ud.cx + 0.5)), Math.abs(pz - (ud.cz + 0.5)));
+      const lvl = this._wantedBldgLevel(ud.cx, ud.cz);
+      if (lvl > ud.bldgLevel) {
+        if (now >= (ud.bldgRetryT || 0)) want.push({ key, g, lvl, d });
+      } else if (ud.bldgLevel === 2 && this._chunkEdgeDist(ud.cx, ud.cz) > BLDG_FINE_DROP_M) {
+        this._dropBldgFine(g);
+      }
+    }
+    if (!this.chunkWorker || !want.length) return;
+    want.sort((a, b) => a.d - b.d);
+    for (const w of want) {
+      if (inFlight >= 2) break;
+      inFlight++;
+      this._requestBldgUpgrade(w.key, w.g, w.lvl);
+    }
+  }
+
+  _requestBldgUpgrade(key, group, level) {
+    const ud = group.userData;
+    const genId = this.teleportGeneration || 0;
+    const reqKey = `${key}#b${(this._bldgReqSeq = (this._bldgReqSeq || 0) + 1)}`;
+    ud.bldgUpgrade = true;
+    this.workerCallbacks.set(reqKey, (payload) => {
+      ud.bldgUpgrade = false;
+      if (!payload) { ud.bldgRetryT = performance.now() + 4000; return; }
+      if ((this.teleportGeneration || 0) !== genId || this.loadedChunks.get(key) !== group) return;
+      let meshes = payload.meshPayloads || [];
+      let got = payload.bldgLevel;
+      if (got === 2 && this._wantedBldgLevel(ud.cx, ud.cz) < 2) { // the player moved on while it was building
+        meshes = meshes.filter((m) => m.lodKind !== 'fine');
+        got = 1;
+      }
+      for (const m of meshes) ud.pendingMeshes.push(m);
+      ud.bldgLevel = Math.max(ud.bldgLevel, got);
+      if (!this._stagedChunks.includes(group)) this._stagedChunks.push(group);
+    });
+    let slot = this.chunkWorkers[0];
+    for (const sl of this.chunkWorkers) if (sl.keys.size < slot.keys.size) slot = sl;
+    slot.keys.add(reqKey);
+    slot.worker.postMessage({
+      type: "buildChunk",
+      key: reqKey,
+      cx: ud.cx,
+      cz: ud.cz,
+      ox: ud.ox,
+      oz: ud.oz,
+      worldOrigin: this.worldOrigin,
+      demState: slot.demGen !== this._demGen ? getBeijingDemState() : undefined,
+      opts: { bldgLevel: level, part: "buildings", haveLevel: ud.bldgLevel },
+    });
+    slot.demGen = this._demGen;
+  }
+
+  _dropBldgFine(group) {
+    const ud = group.userData;
+    const bg = ud.subGroups && ud.subGroups.buildings;
+    if (bg) {
+      for (let i = bg.children.length - 1; i >= 0; i--) {
+        const o = bg.children[i];
+        if (o.userData.bldgLod !== "fine") continue;
+        bg.remove(o);
+        o.traverse((c) => { if (c.isMesh && c.geometry) c.geometry.dispose(); });
+      }
+    }
+    ud.pendingMeshes = ud.pendingMeshes.filter((m) => m.lodKind !== "fine");
+    ud.bldgLevel = 1;
+  }
+
+  // [perf] Hands a chunk's building meshes to the scene a few MB per frame instead of all in the arrival frame
+  // (the GPU upload of a dense chunk was a 90-200 ms hitch). A new mesh is drawn once without culling so its
+  // buffers upload now rather than in one burst when the camera turns; the frame after, culling and LOD apply.
+  _stageChunkMeshes(all = false) {
+    if (this._warmMeshes.length) {
+      for (const o of this._warmMeshes) {
+        o.userData.warm = false;
+        if (o.isLOD) o.autoUpdate = true;
+        else o.frustumCulled = true;
+      }
+      this._warmMeshes.length = 0;
+      if (this.quality) this.quality._cullT = 0; // apply distance LOD to them on this frame
+    }
+    let bytes = 0;
+    const staged = this._stagedChunks;
+    for (let i = 0; i < staged.length; i++) {
+      const g = staged[i];
+      const ud = g.userData;
+      const bg = ud.subGroups.buildings;
+      const list = ud.pendingMeshes;
+      if (g.parent !== this.chunksRoot || !list.length) { staged.splice(i--, 1); continue; }
+      if (!all && !bg.visible) continue; // hidden (altitude / layer off): nothing would upload, wait
+      while (list.length && (all || bytes < BLDG_STAGE_BYTES)) {
+        const m = list.shift();
+        for (const a of [m.posArr, m.normArr, m.colArr, m.uvArr, m.idxArr, m.kBidArr]) if (a) bytes += a.byteLength;
+        const obj = meshFromWorkerPayload(m, this.mats);
+        bg.add(obj);
+        obj.updateMatrixWorld(true);
+        if (all) continue;
+        obj.userData.warm = true;
+        if (obj.isLOD) {
+          obj.autoUpdate = false;
+          obj.levels[0].object.visible = true;
+          obj.levels[0].object.frustumCulled = false;
+        } else obj.frustumCulled = false;
+        this._warmMeshes.push(obj);
+      }
+      if (!list.length) staged.splice(i--, 1);
+      if (!all && bytes >= BLDG_STAGE_BYTES) break;
+    }
+  }
+
   async _updateStreamingChunks(waitAll = false, waitRadius = 1) {
     if (this.isTeleporting && !waitAll) return;
     const focusPos = this.pos;
@@ -1419,7 +1573,7 @@ class WorldExplorerApp {
 
     for (const [key, group] of this.loadedChunks.entries()) {
       const { cx, cz } = group.userData;
-      if (Math.abs(cx - pcx) > UNLOAD_RADIUS || Math.abs(cz - pcz) > UNLOAD_RADIUS) {
+      if (this._chunkTooFar(cx, cz)) {
         this._disposeChunkGroup(group);
         this.chunksRoot.remove(group);
         this.loadedChunks.delete(key);
@@ -1428,7 +1582,7 @@ class WorldExplorerApp {
     }
     for (const [key, task] of this.buildQueue.entries()) {
       const { cx, cz } = task.root.userData;
-      if (Math.abs(cx - pcx) > UNLOAD_RADIUS || Math.abs(cz - pcz) > UNLOAD_RADIUS) {
+      if (this._chunkTooFar(cx, cz)) {
         this._disposeChunkGroup(task.root);
         this.buildQueue.delete(key);
       }
@@ -1465,9 +1619,11 @@ class WorldExplorerApp {
       if (promises.length > 0) {
         await Promise.all(promises);
       }
+      this._stageChunkMeshes(true); // [perf] behind the loading screen / teleport: everything at once
       this._updateHorizonCutoutsForLoadedChunks();
       return;
     }
+    this._updateBldgLevels(); // [perf]
 
     if (this.pendingChunks.size + this.buildQueue.size < 6 && needed.length > 0) {
       const batch = needed.slice(0, Math.max(1, 4 - this.pendingChunks.size));
@@ -1498,18 +1654,20 @@ class WorldExplorerApp {
             oz,
             worldOrigin: this.worldOrigin,
             demState: slot.demGen !== this._demGen ? getBeijingDemState() : undefined, // its initDem ack never came
+            opts: { bldgLevel: this._wantedBldgLevel(cx, cz) }, // [perf]
           });
           slot.demGen = this._demGen;
         });
         if (!payload || (this.teleportGeneration || 0) !== genId) return;
         const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
-        if (!immediate && (Math.abs(cx - pcx) > UNLOAD_RADIUS || Math.abs(cz - pcz) > UNLOAD_RADIUS)) {
+        if (!immediate && (this._chunkTooFar(cx, cz))) {
           return;
         }
         if (immediate) {
           const group = assembleChunkFromWorkerPayload(payload, this.mats, this.layerVisibility);
           this.chunksRoot.add(group);
           this.loadedChunks.set(key, group);
+          this._stagedChunks.push(group);
           this.horizonCutoutDirty = true;
         } else {
           this.readyWorkerPayloads.push({ key, cx, cz, payload, genId });
@@ -1537,14 +1695,16 @@ class WorldExplorerApp {
 
   _processChunkBuildQueue(budgetMs = 4.0) {
     const t0 = performance.now();
+    this._stageChunkMeshes(); // [perf]
     while (this.readyWorkerPayloads && this.readyWorkerPayloads.length > 0) {
       const item = this.readyWorkerPayloads.shift();
       if ((this.teleportGeneration || 0) !== item.genId || this.loadedChunks.has(item.key)) continue;
       const [pcx, pcz] = this.worldToChunk(this.pos.x, this.pos.z);
-      if (Math.abs(item.cx - pcx) > UNLOAD_RADIUS || Math.abs(item.cz - pcz) > UNLOAD_RADIUS) continue;
+      if (this._chunkTooFar(item.cx, item.cz)) continue;
       const group = assembleChunkFromWorkerPayload(item.payload, this.mats, this.layerVisibility);
       this.chunksRoot.add(group);
       this.loadedChunks.set(item.key, group);
+      this._stagedChunks.push(group); // [perf] its building meshes follow over the next frames
       this.horizonCutoutDirty = true;
       break; // Upload at most 1 completed worker chunk per frame for 60 FPS smoothness
     }
