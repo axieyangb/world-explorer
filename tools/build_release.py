@@ -77,6 +77,8 @@ MOD_ID_MAP = {
     'src/features/heli_flight.js': '__MOD_heli_flight',
     'src/features/fullscreen.js': '__MOD_fullscreen',
     'src/features/touch_controls.js': '__MOD_touch_controls',
+    'src/features/controls.js': '__MOD_controls',
+    'src/features/mode_menu.js': '__MOD_mode_menu',
     'src/features/quality.js': '__MOD_quality',  # [ui-mobile]
     'src/features/hud_layout.js': '__MOD_hud_layout',  # [ui-mobile]
     'src/features/people_agents.js': '__MOD_people_agents',  # [people-agents]

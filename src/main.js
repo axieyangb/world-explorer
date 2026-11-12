@@ -580,7 +580,6 @@ class WorldExplorerApp {
     const r = this._chunkRetry.get(key);
     return !!r && r.genId === (this.teleportGeneration || 0) && performance.now() < r.at;
   }
-  }
 
   async _syncWorkerDem() {
     const gen = ++this._demGen;
