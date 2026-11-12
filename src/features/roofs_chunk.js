@@ -96,6 +96,39 @@ export function addHouse(ctx, ring, cx, cz, id, shape, btype = 'yes') {
   ctx.houses.push({ ring, cx, cz, obb, region: ctx.arch, seed, id, warm: ctx.warm });
 }
 
+/**
+ * [perf] Moves detail sinks that have grown large into typed segments. The sinks are plain JS arrays (8 bytes a
+ * number inside V8's shared 4 GB heap cage); a dense chunk grew them to well over 100 MB. finishRoofDetail joins
+ * the segments again.
+ */
+export function compactRoofSinks(ctx, minLen = 600000) {
+  if (!ctx) return;
+  for (const s of ctx.sinks) {
+    if (s.pos.length < minLen || !s.pos.length) continue;
+    const n = (s.pos.length / 3) | 0;
+    while (s.uv.length < n * 2) s.uv.push(-10, -10);
+    if (s.uv.length > n * 2) s.uv.length = n * 2;
+    (s.segs || (s.segs = [])).push({
+      pos: new Float32Array(s.pos), norm: new Float32Array(s.norm), col: new Float32Array(s.col), uv: new Float32Array(s.uv),
+    });
+    s.pos.length = s.norm.length = s.col.length = s.uv.length = 0;
+  }
+}
+
+function joinedSink(s) {
+  if (!s.segs) return s;
+  const list = s.segs;
+  const join = (k) => {
+    let len = 0;
+    for (const g of list) len += g[k].length;
+    const out = new Float32Array(len);
+    let o = 0;
+    for (const g of list) { out.set(g[k], o); o += g[k].length; }
+    return out;
+  };
+  return { pos: join('pos'), norm: join('norm'), col: join('col'), uv: join('uv') };
+}
+
 /** Builds yards and turns the detail sinks into near-LOD meshes (added to the chunk's buildings group). */
 export function finishRoofDetail(ctx, group, mats) {
   if (!ctx) return;
@@ -117,7 +150,8 @@ export function finishRoofDetail(ctx, group, mats) {
   }
   const onMain = typeof window !== 'undefined' && mats && mats.wfcBldgMat && mats.wfcBldgMat.isMaterial;
   for (let q = 0; q < 4; q++) {
-    const s = ctx.sinks[q];
+    compactRoofSinks(ctx, 0); // [perf]
+    const s = joinedSink(ctx.sinks[q]);
     if (!s.pos.length) continue;
     const n = s.pos.length / 3;
     const geom = new THREE.BufferGeometry();

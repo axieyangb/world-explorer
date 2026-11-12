@@ -15,9 +15,9 @@ import { getLang } from '../i18n.js';
 
 const TIERS = {
   //        DPR cap/min    shadow map/dist/cull      traffic, peds, car shadows   prop, places, trees(near/mid/far)          chunk detail distances (m, from the chunk edge)                    min fog   labels
-  high: { dprCap: 1.5, dprMin: 0.60, shadowMap: 2048, shadowDist: 1.0, shadowM: 780, traffic: 1.0, peds: 1.0, carShadows: true, props: 1.0, places: 1.0, treeNear: 1.0, treeMid: 1.0, treeFar: 1.0, markingsM: Infinity, wear: true, roadsM: Infinity, buildingsM: Infinity, landcoverM: Infinity, horizonDetail: true, fogMin: 0, labels: 10 },
-  medium: { dprCap: 1.5, dprMin: 0.60, shadowMap: 1536, shadowDist: 0.8, shadowM: 520, traffic: 0.55, peds: 0.7, carShadows: true, props: 0.75, places: 0.7, treeNear: 0.85, treeMid: 0.8, treeFar: 0.8, markingsM: 650, wear: true, roadsM: 1300, buildingsM: Infinity, landcoverM: 1100, horizonDetail: true, fogMin: 0.00028, labels: 8 },
-  low: { dprCap: 1.25, dprMin: 0.60, shadowMap: 1024, shadowDist: 0.6, shadowM: 0, traffic: 0.18, peds: 0.35, carShadows: false, props: 0.55, places: 0.3, treeNear: 0.7, treeMid: 0.5, treeFar: 0.45, markingsM: 360, wear: false, roadsM: 850, buildingsM: 950, landcoverM: 650, horizonDetail: false, fogMin: 0.00055, labels: 6 },
+  high: { dprCap: 1.5, dprMin: 0.60, shadowMap: 2048, shadowDist: 1.0, shadowM: 780, traffic: 1.0, peds: 1.0, carShadows: true, props: 1.0, places: 1.0, treeNear: 1.0, treeMid: 1.0, treeFar: 1.0, markingsM: Infinity, wear: true, roadsM: Infinity, buildingsM: Infinity, bldgFineM: 300, landcoverM: Infinity, horizonDetail: true, fogMin: 0, labels: 10 },
+  medium: { dprCap: 1.5, dprMin: 0.60, shadowMap: 1536, shadowDist: 0.8, shadowM: 520, traffic: 0.55, peds: 0.7, carShadows: true, props: 0.75, places: 0.7, treeNear: 0.85, treeMid: 0.8, treeFar: 0.8, markingsM: 650, wear: true, roadsM: 1300, buildingsM: Infinity, bldgFineM: 230, landcoverM: 1100, horizonDetail: true, fogMin: 0.00028, labels: 8 },
+  low: { dprCap: 1.25, dprMin: 0.60, shadowMap: 1024, shadowDist: 0.6, shadowM: 0, traffic: 0.18, peds: 0.35, carShadows: false, props: 0.55, places: 0.3, treeNear: 0.7, treeMid: 0.5, treeFar: 0.45, markingsM: 360, wear: false, roadsM: 850, buildingsM: 950, bldgFineM: 160, landcoverM: 650, horizonDetail: false, fogMin: 0.00055, labels: 6 },
 };
 const ORDER = ['low', 'medium', 'high'];
 const MODES = ['auto', 'high', 'medium', 'low'];
@@ -253,6 +253,9 @@ export class QualityManager {
     const lcCut = (Number.isFinite(S.landcoverM) ? S.landcoverM : (ds < 0.99 ? 1600 : Infinity)) * ds;
     const shadowCut = (S.shadowM ?? 780) * ds;
     const shadowCutSq = shadowCut * shadowCut;
+    const fineCut = (S.bldgFineM ?? 300) * ds; // [perf] building trim draw distance (from the cell's edge)
+    const fineShadowCut = Math.min(shadowCut, 120); // trim only shadows what is right next to the camera
+    const fineShadowCutLod = fineShadowCut + 250; // roof-detail quadrants: measured from the quadrant centre
 
     for (const g of app.loadedChunks.values()) {
       const ud = g.userData;
@@ -279,7 +282,28 @@ export class QualityManager {
       }
       const withinShadowDist = shadowCut > 0 && distSq <= shadowCutSq;
       if (sg.buildings) {
-        for (const child of sg.buildings.children) child.castShadow = withinShadowDist;
+        // [perf] Buildings come as 250 m cells: 'mass' (always) and 'fine' (small trim, close up only), plus the
+        // roof-detail LODs. Each is culled and shadow-cast by its own distance from the camera.
+        for (const child of sg.buildings.children) {
+          const kind = child.userData.bldgLod;
+          if (child.userData.warm) continue; // first frame after arrival: drawn once so it uploads
+          if (child.isLOD) {
+            const m = child.levels[0].object;
+            const ddx = cam.x - (ud.ox + child.position.x), ddz = cam.z - (ud.oz + child.position.z);
+            m.castShadow = shadowCut > 0 && ddx * ddx + ddz * ddz <= fineShadowCutLod * fineShadowCutLod;
+            continue;
+          }
+          const bs = kind && child.geometry && child.geometry.boundingSphere;
+          if (!bs) { child.castShadow = withinShadowDist; continue; }
+          const dx = cam.x - (ud.ox + bs.center.x), dy = cam.y - bs.center.y, dz = cam.z - (ud.oz + bs.center.z);
+          const dc = Math.sqrt(dx * dx + dy * dy + dz * dz) - bs.radius;
+          if (kind === 'fine') {
+            child.visible = dc <= fineCut;
+            child.castShadow = shadowCut > 0 && dc <= fineShadowCut;
+          } else {
+            child.castShadow = shadowCut > 0 && dc <= shadowCut;
+          }
+        }
       }
       if (sg.bridges) {
         for (const child of sg.bridges.children) child.castShadow = withinShadowDist;

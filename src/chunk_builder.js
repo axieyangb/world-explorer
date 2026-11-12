@@ -22,7 +22,7 @@ const STREET_OWNS_LANE_MARKINGS = true; // [feature/street] lane lines/crosswalk
 import { buildVegetationLayer } from './features/vegetation_worker.js'; // [feature/vegetation]
 import { chunkGroundSampler } from './features/ground_cover.js'; // [ground]
 import { appendInfillBuilding } from './features/infill_buildings.js'; // [ground]
-import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod } from './features/roofs_chunk.js'; // [roofs]
+import { archRegionFor, poolRings, createRoofContext, roofInfoFor, noteRoofHouse, finishRoofDetail, wrapRoofLod, compactRoofSinks } from './features/roofs_chunk.js'; // [roofs]
 import { EXTRA_FACADES, drawExtraFacadeLayers } from './features/facade_styles.js'; // [roofs]
 import { computePlacesPayload, collectPlacesTransfer } from './features/places_worker.js'; // feature/places
 import { buildVenues, setVenueTerrainSampler } from './features/venues.js'; // [venues]
@@ -49,6 +49,153 @@ export function toUint8Colors(floatCol) {
   return u8;
 }
 
+// [perf] Building LOD cells. A chunk's merged building triangles are split into a 4 x 4 grid of 250 m cells so
+// frustum, shadow-frustum and distance culling work per cell, and each cell into two meshes:
+//   'mass' - walls, roofs, doors and every larger solid: what a building looks like from a distance;
+//   'fine' - small untextured trim (frames, sills, railings, steps, AC units, ...): only built for chunks near
+//            the player and only drawn close up (see QualityManager._cullChunks).
+// Geometry is indexed (quads share 4 vertices). `bCells` is [v0, v1, cell] per building, so a building never
+// straddles two cells.
+export const BLDG_CELL_M = 250;
+const BLDG_CELLS = 4;
+const BLDG_FINE_MAX_AREA2 = 2 * 2.0; // twice the largest 'fine' triangle area, m^2
+
+export function bldgCellIndex(x, z) {
+  const ix = Math.max(0, Math.min(BLDG_CELLS - 1, Math.floor((x + 500) / BLDG_CELL_M)));
+  const iz = Math.max(0, Math.min(BLDG_CELLS - 1, Math.floor((z + 500) / BLDG_CELL_M)));
+  return iz * BLDG_CELLS + ix;
+}
+
+function ringCellIndex(flat) {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let k = 0; k + 1 < flat.length; k += 2) {
+    const x = flat[k], z = flat[k + 1];
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (z < z0) z0 = z;
+    if (z > z1) z1 = z;
+  }
+  return bldgCellIndex((x0 + x1) * 0.5, (z0 + z1) * 0.5);
+}
+
+function addBuildingCellMeshes(pos, norm, col, uv, bid, bCells, group, mats, colU8 = false) {
+  const nVerts = (pos.length / 3) | 0;
+  const nTris = (nVerts / 3) | 0;
+  if (!nTris) return;
+  const hasUv = uv.length === nVerts * 2;
+  const nBuckets = BLDG_CELLS * BLDG_CELLS * 2;
+
+  const triBucket = new Uint8Array(nTris).fill(255);
+  for (let i = 0; i + 2 < bCells.length; i += 3) {
+    triBucket.fill(bCells[i + 2] * 2, (bCells[i] / 3) | 0, Math.min(nTris, (bCells[i + 1] / 3) | 0));
+  }
+  const counts = new Uint32Array(nBuckets);
+  for (let t = 0; t < nTris; t++) {
+    const i = t * 9;
+    let b = triBucket[t];
+    if (b === 255) b = bldgCellIndex(pos[i], pos[i + 2]) * 2;
+    {
+      const j = t * 6;
+      const u = uv[j], v = uv[j + 1];
+      if (!hasUv || (u === uv[j + 2] && u === uv[j + 4] && v === uv[j + 3] && v === uv[j + 5])) { // one uv on all three: solid trim
+        const ax = pos[i], ay = pos[i + 1], az = pos[i + 2];
+        const bx = pos[i + 3] - ax, by = pos[i + 4] - ay, bz = pos[i + 5] - az;
+        const cx = pos[i + 6] - ax, cy = pos[i + 7] - ay, cz = pos[i + 8] - az;
+        const nx = by * cz - bz * cy, ny = bz * cx - bx * cz, nz = bx * cy - by * cx;
+        if (nx * nx + ny * ny + nz * nz < BLDG_FINE_MAX_AREA2 * BLDG_FINE_MAX_AREA2) b += 1;
+      }
+    }
+    triBucket[t] = b;
+    counts[b]++;
+  }
+  // Triangles grouped by bucket, source order kept (the two halves of a quad stay adjacent).
+  const start = new Uint32Array(nBuckets + 1);
+  for (let b = 0; b < nBuckets; b++) start[b + 1] = start[b] + counts[b];
+  const fill = start.slice(0, nBuckets);
+  const order = new Uint32Array(nTris);
+  for (let t = 0; t < nTris; t++) order[fill[triBucket[t]]++] = t;
+
+  const sameVert = (a, b) => {
+    const a3 = a * 3, b3 = b * 3;
+    if (pos[a3] !== pos[b3] || pos[a3 + 1] !== pos[b3 + 1] || pos[a3 + 2] !== pos[b3 + 2]) return false;
+    if (norm[a3] !== norm[b3] || norm[a3 + 1] !== norm[b3 + 1] || norm[a3 + 2] !== norm[b3 + 2]) return false;
+    if (col[a3] !== col[b3] || col[a3 + 1] !== col[b3 + 1] || col[a3 + 2] !== col[b3 + 2]) return false;
+    if (hasUv && (uv[a * 2] !== uv[b * 2] || uv[a * 2 + 1] !== uv[b * 2 + 1])) return false;
+    return bid[a] === bid[b];
+  };
+
+  for (let b = 0; b < nBuckets; b++) {
+    const n = counts[b];
+    if (!n) continue;
+    const P = new Float32Array(n * 9), N = new Float32Array(n * 9), C = new Uint8Array(n * 9);
+    const U = hasUv ? new Float32Array(n * 6) : null, K = new Uint16Array(n * 3);
+    const I = new Uint32Array(n * 3);
+    let nv = 0, ni = 0;
+    const put = (v) => {
+      const v3 = v * 3, o = nv * 3;
+      for (let k = 0; k < 3; k++) {
+        const x = pos[v3 + k];
+        P[o + k] = Number.isFinite(x) ? x : 0;
+        N[o + k] = norm[v3 + k];
+        const cv = col[v3 + k];
+        C[o + k] = colU8 ? cv : cv <= 0 ? 0 : cv >= 1 ? 255 : (cv * 255 + 0.5) | 0;
+      }
+      if (U) { U[nv * 2] = uv[v * 2]; U[nv * 2 + 1] = uv[v * 2 + 1]; }
+      K[nv] = bid[v];
+      return nv++;
+    };
+    const end = start[b + 1];
+    for (let q = start[b]; q < end; q++) {
+      const v = order[q] * 3;
+      const i0 = put(v), i1 = put(v + 1), i2 = put(v + 2);
+      I[ni++] = i0; I[ni++] = i1; I[ni++] = i2;
+      // quad written as (a, b, c, a, c, d): reuse a and c
+      if (q + 1 < end && order[q + 1] === order[q] + 1 && sameVert(v, v + 3) && sameVert(v + 2, v + 4)) {
+        I[ni++] = i0; I[ni++] = i2; I[ni++] = put(v + 5);
+        q++;
+      }
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(P.slice(0, nv * 3), 3));
+    geom.setAttribute('normal', new THREE.BufferAttribute(N.slice(0, nv * 3), 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(C.slice(0, nv * 3), 3, true));
+    if (U) geom.setAttribute('uv', new THREE.BufferAttribute(U.slice(0, nv * 2), 2));
+    geom.setAttribute('kBid', new THREE.BufferAttribute(K.slice(0, nv), 1)); // [kaiju]
+    geom.setIndex(new THREE.BufferAttribute(nv <= 65535 ? new Uint16Array(I.subarray(0, ni)) : I.slice(0, ni), 1));
+    finalizeAndReleaseGeometry(geom, false);
+    const mesh = new THREE.Mesh(geom, mats.wfcBldgMat);
+    if (mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.bldgLod = b & 1 ? 'fine' : 'mass';
+    group.add(mesh);
+  }
+}
+
+// [perf] Other merged meshes on the building material (venue storefronts, canopies, garages) get the same cells.
+function recellBuildingMeshes(group, mats) {
+  for (const mesh of [...group.children]) {
+    const g = mesh.geometry;
+    if (!mesh.isMesh || mesh.material !== mats.wfcBldgMat || mesh.userData.bldgLod || mesh.userData.roofLod) continue;
+    if (!g || g.index || !g.attributes.position || !g.attributes.normal || !g.attributes.color) continue;
+    const n = g.attributes.position.count;
+    if (n < 3000 || g.attributes.color.array.length !== n * 3) continue;
+    const before = group.children.length;
+    addBuildingCellMeshes(
+      g.attributes.position.array, g.attributes.normal.array, g.attributes.color.array,
+      g.attributes.uv ? g.attributes.uv.array : [],
+      g.attributes.kBid ? g.attributes.kBid.array : new Uint16Array(n),
+      [], group, mats, g.attributes.color.array instanceof Uint8Array
+    );
+    for (let i = before; i < group.children.length; i++) {
+      group.children[i].castShadow = mesh.castShadow;
+      group.children[i].name = mesh.name;
+    }
+    group.remove(mesh);
+    g.dispose();
+  }
+}
+
 /**
  * Class A Memory Optimization: Computes boundingSphere (and normals if requested) and registers
  * `onUploadCallback` on all attributes so Three.js frees JS-side TypedArrays immediately after GPU VBO upload.
@@ -66,6 +213,10 @@ export function finalizeAndReleaseGeometry(geom, computeNormals = false, keepRay
   }
   geom.computeBoundingSphere();
   if (keepRaycastArrays) return geom;
+  return releaseGeometryArraysOnUpload(geom);
+}
+
+function releaseGeometryArraysOnUpload(geom) {
   for (const key of Object.keys(geom.attributes)) {
     const attr = geom.attributes[key];
     if (attr) {
@@ -74,7 +225,7 @@ export function finalizeAndReleaseGeometry(geom, computeNormals = false, keepRay
       };
     }
   }
-  if (geom.index && !keepRaycastArrays) {
+  if (geom.index) {
     geom.index.onUploadCallback = function () {
       this.array = null;
     };
@@ -1409,6 +1560,8 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         });
         root.userData.venues = buildVenues({ data, ox, oz, groups: subGroups, mats, colliders: buildingColliders, isPointInWater }); // [venues] stadium bowls + theme-park rides
         addPlacesInfo(root.userData.places, { data, ox, oz, buildingEntities, roadSegments, isPointInWater, street: root.userData.street }); // places-info
+
+        recellBuildingMeshes(subGroups.buildings, mats); // [perf]
 
         stage = 4;
         this.done = true;
@@ -3329,6 +3482,33 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
   const rfPos = [];
   const rfCol = [];
   const kaijuBid = []; // [kaiju] [v0, v1, entityIdx + 1] per building
+  const bCells = []; // [perf] [v0, v1, LOD cell] per building
+  // [perf] The emitters push into plain JS arrays (8 bytes a number, inside V8's 4 GB heap cage that the page
+  // and its workers share). A dense chunk used to grow them to several hundred MB; they are now moved into typed
+  // segments every ~100k triangles, so the arrays stay small. `vBase` = vertices already moved.
+  const segs = { pos: [], norm: [], col: [], uv: [] };
+  let vBase = 0;
+  const flushBuildingArrays = () => {
+    const n = (wfcPos.length / 3) | 0;
+    if (!n) return;
+    while (wfcUv.length < n * 2) wfcUv.push(-10.0, -10.0);
+    if (wfcUv.length > n * 2) wfcUv.length = n * 2;
+    segs.pos.push(new Float32Array(wfcPos));
+    segs.norm.push(new Float32Array(wfcNorm));
+    segs.col.push(toUint8Colors(wfcCol));
+    segs.uv.push(new Float32Array(wfcUv));
+    vBase += n;
+    wfcPos.length = wfcNorm.length = wfcCol.length = wfcUv.length = 0;
+  };
+  const joinSegs = (list, Type) => {
+    let len = 0;
+    for (const a of list) len += a.length;
+    const out = new Type(len);
+    let o = 0;
+    for (const a of list) { out.set(a, o); o += a.length; }
+    list.length = 0;
+    return out;
+  };
 
   // Pre-collect parent buildings with name/role/colour in this chunk so `building:part` tiers or courtyard wings can inherit them
   const namedParentBuildings = [];
@@ -3411,7 +3591,10 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         curIdx++;
         const isPointInWater = roofOpts && roofOpts.isPointInWater;
         if (b[13]) { // [ground] plain infill block past the detailed-build budget
+          if (wfcPos.length > 900000) { flushBuildingArrays(); compactRoofSinks(roofCtx); } // [perf]
+          if (b[11] && b[11].length >= 6) bCells.push(vBase + wfcPos.length / 3, 0, ringCellIndex(b[11])); // [perf] v1 filled in below
           appendInfillBuilding(b, ox, oz, getEdgeGroundY, regionTag, { pos: wfcPos, norm: wfcNorm, col: wfcCol, uv: wfcUv, colliders: buildingColliders, roof: roofCtx, isPointInWater }); // [roofs] roof ctx
+          if (b[11] && b[11].length >= 6) bCells[bCells.length - 2] = vBase + wfcPos.length / 3;
           continue;
         }
 
@@ -3688,7 +3871,8 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
 
         // 3. Emit 24-Style 3D WFC Building Geometry (1D Massing Setback + 2D Facade Columns + 3D Roof & Greebles)
-        const kaijuV0 = wfcPos.length / 3; // [kaiju]
+        if (wfcPos.length > 900000) { flushBuildingArrays(); compactRoofSinks(roofCtx); } // [perf]
+        const kaijuV0 = vBase + wfcPos.length / 3; // [kaiju]
         const wfcMeta = appendCompactChunkBuildingWFC(
           {
             id: osmId || (i + 1),
@@ -3720,7 +3904,8 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           entityIdx,
           wfcUv
         );
-        kaijuBid.push(kaijuV0, wfcPos.length / 3, entityIdx + 1); // [kaiju]
+        kaijuBid.push(kaijuV0, vBase + wfcPos.length / 3, entityIdx + 1); // [kaiju]
+        bCells.push(kaijuV0, vBase + wfcPos.length / 3, bldgCellIndex(cx, cz)); // [perf]
 
         if (wfcMeta && wfcMeta.arch) {
           entityRecord.styleDisplay = `${wfcMeta.facadeId || wfcMeta.arch.shortName} · ${wfcMeta.arch.category}`;
@@ -3752,29 +3937,19 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
         }
       }
 
-      if (performance.now() - t0 >= budgetMs && !finalized && wfcPos.length > 9000) {
+      if (performance.now() - t0 >= budgetMs && !finalized && vBase * 3 + wfcPos.length > 9000) {
         return false;
       }
 
       if (!finalized) {
         finalized = true;
         finishRoofDetail(roofCtx, bldgGroup, mats, buildingColliders); // [roofs] yards + chimneys/dormers (near LOD meshes)
-        if (wfcPos.length > 0) {
-          const geom = new THREE.BufferGeometry();
-          geom.setAttribute('position', new THREE.Float32BufferAttribute(wfcPos, 3));
-          geom.setAttribute('normal', new THREE.Float32BufferAttribute(wfcNorm, 3));
-          geom.setAttribute('color', new THREE.BufferAttribute(toUint8Colors(wfcCol), 3, true));
-          if (wfcUv.length > 0) {
-            geom.setAttribute('uv', new THREE.Float32BufferAttribute(wfcUv, 2));
-          }
-          geom.setAttribute('kBid', kaijuBidAttribute(kaijuBid, wfcPos.length / 3)); // [kaiju]
-          finalizeAndReleaseGeometry(geom, false);
-          const mesh = new THREE.Mesh(geom, mats.wfcBldgMat);
-          if (mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          bldgGroup.add(mesh);
-        }
+        // [perf] 250 m cells x mass / fine, indexed (was one merged non-indexed mesh per chunk)
+        flushBuildingArrays();
+        addBuildingCellMeshes(
+          joinSegs(segs.pos, Float32Array), joinSegs(segs.norm, Float32Array), joinSegs(segs.col, Uint8Array), joinSegs(segs.uv, Float32Array),
+          kaijuBidAttribute(kaijuBid, vBase).array, bCells, bldgGroup, mats, true // [kaiju] bid
+        );
 
         if (rfPos.length > 0) {
           const geom = new THREE.BufferGeometry();
@@ -4353,19 +4528,90 @@ const WORKER_DUMMY_MATS = {
  * Computes all chunk geometry and vertex normals inside a Web Worker and returns a transferable payload
  * along with its flat ArrayBuffer transfer list.
  */
-export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = null) {
+// [perf] Turns a non-indexed triangle list into an indexed one where two consecutive triangles are a quad written
+// as (a, b, c, a, c, d): 4 vertices instead of 6. `attrs` is [[typedArray, itemSize], ...]; returns the trimmed
+// arrays and the index, or null when nothing would be saved.
+function indexQuadTriangles(attrs) {
+  const nVerts = (attrs[0][0].length / attrs[0][1]) | 0;
+  const nTris = (nVerts / 3) | 0;
+  if (nTris < 2 || nTris * 3 !== nVerts) return null;
+  const same = (a, b) => {
+    for (let k = 0; k < attrs.length; k++) {
+      const arr = attrs[k][0], sz = attrs[k][1];
+      for (let c = 0; c < sz; c++) if (arr[a * sz + c] !== arr[b * sz + c]) return false;
+    }
+    return true;
+  };
+  const index = new Uint32Array(nVerts);
+  let nv = 0, ni = 0;
+  const put = (v) => {
+    if (nv !== v) {
+      for (let k = 0; k < attrs.length; k++) {
+        const arr = attrs[k][0], sz = attrs[k][1];
+        for (let c = 0; c < sz; c++) arr[nv * sz + c] = arr[v * sz + c];
+      }
+    }
+    return nv++;
+  };
+  for (let t = 0; t < nTris; t++) {
+    const v = t * 3;
+    const quad = t + 1 < nTris && same(v, v + 3) && same(v + 2, v + 4);
+    const i0 = put(v), i1 = put(v + 1), i2 = put(v + 2);
+    index[ni++] = i0; index[ni++] = i1; index[ni++] = i2;
+    if (quad) {
+      index[ni++] = i0; index[ni++] = i2; index[ni++] = put(v + 5);
+      t++;
+    }
+  }
+  if (nv > nVerts * 0.85) return null;
+  return {
+    arrays: attrs.map(([arr, sz]) => arr.slice(0, nv * sz)),
+    index: nv <= 65535 ? new Uint16Array(index.subarray(0, ni)) : index.slice(0, ni),
+  };
+}
+
+// [perf] Building detail levels of a chunk: 0 = no building meshes (the camera is too high to see them),
+// 1 = massing only (chunks away from the player), 2 = massing + fine detail (the chunks around the player).
+// `opts.bldgLevel` is what to ship; `opts.part === 'buildings'` ships only the building meshes a chunk that
+// already holds `opts.haveLevel` is missing (an upgrade), without the rest of the payload.
+export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = null, opts = null) {
   const root = buildChunkMeshGroup(cx, cz, ox, oz, data, WORKER_DUMMY_MATS, null, worldOrigin);
   const meshPayloads = [];
   const transferSet = new Set();
+  const bldgLevel = opts && Number.isFinite(opts.bldgLevel) ? opts.bldgLevel : 2;
+  const upgrade = Boolean(opts && opts.part === 'buildings');
+  const haveLevel = upgrade ? opts.haveLevel || 0 : 0;
 
   for (const [groupKey, subGroup] of Object.entries(root.userData.subGroups)) {
+    if (upgrade && groupKey !== 'buildings') continue;
     for (const mesh of subGroup.children) {
       const geom = mesh.geometry;
       if (!geom || !geom.attributes.position) continue;
+      const lodKind = groupKey !== 'buildings' ? null : mesh.userData.roofLod ? 'fine' : mesh.userData.bldgLod || 'mass';
+      if (lodKind && (bldgLevel < 1 || (lodKind === 'fine' && bldgLevel < 2) || (lodKind === 'mass' && haveLevel >= 1))) continue;
       if (!geom.attributes.normal) {
         geom.computeVertexNormals();
       }
+      if (lodKind && !geom.index && mesh.material?.name === 'wfcBldgMat') { // roof / yard detail, venue shells: index them too
+        const names = ['position', 'normal', 'color', 'uv', 'kBid'].filter((k) => geom.attributes[k]);
+        const packed = indexQuadTriangles(names.map((k) => [geom.attributes[k].array, geom.attributes[k].itemSize]));
+        if (packed) {
+          names.forEach((k, i) => {
+            const at = geom.attributes[k];
+            at.array = packed.arrays[i];
+            at.count = at.array.length / at.itemSize;
+          });
+          geom.setIndex(new THREE.BufferAttribute(packed.index, 1));
+        }
+      }
       const posArr = geom.attributes.position.array;
+      // The NaN scan and the bounds are done here so the main thread does not walk every vertex on arrival.
+      let dirty = false;
+      for (let i = 0; i < posArr.length; i++) {
+        if (!Number.isFinite(posArr[i])) { posArr[i] = 0; dirty = true; }
+      }
+      if (dirty || !geom.boundingSphere || !Number.isFinite(geom.boundingSphere.radius)) geom.computeBoundingSphere();
+      const sph = geom.boundingSphere;
       const normArr = geom.attributes.normal ? geom.attributes.normal.array : null;
       const colAttr = geom.attributes.color;
       const colArr = colAttr ? colAttr.array : null;
@@ -4394,8 +4640,13 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
         idxArr,
         kBidArr, // [kaiju]
         roofLod: mesh.userData.roofLod || null, // [roofs] near-LOD detail mesh
+        lodKind, // [perf] building meshes: 'mass' | 'fine'
+        bs: [sph.center.x, sph.center.y, sph.center.z, sph.radius], // [perf] bounding sphere
       });
     }
+  }
+  if (upgrade) {
+    return { payload: { cx, cz, ox, oz, part: 'buildings', bldgLevel, meshPayloads }, transferList: Array.from(transferSet) };
   }
 
   // [feature/traffic] worker-side lane graph for AI cars & pedestrians
@@ -4409,6 +4660,7 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
       cz,
       ox,
       oz,
+      bldgLevel, // [perf]
       meshPayloads,
       roadSegments: root.userData.roadSegments,
       buildingColliders: root.userData.buildingColliders,
@@ -4427,6 +4679,40 @@ export function computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin = nu
     },
     transferList: (collectPlacesTransfer(root.userData.places, transferSet), Array.from(transferSet)), // feature/places
   };
+}
+
+/** [perf] One mesh of a worker payload. Bounds and the NaN scan were done in the worker (`m.bs`). */
+export function meshFromWorkerPayload(m, mats) {
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(m.posArr, 3));
+  if (m.normArr) {
+    geom.setAttribute('normal', new THREE.BufferAttribute(m.normArr, 3));
+  }
+  if (m.colArr) {
+    geom.setAttribute('color', new THREE.BufferAttribute(m.colArr, 3, m.colNorm));
+  }
+  if (m.uvArr) {
+    geom.setAttribute('uv', new THREE.BufferAttribute(m.uvArr, 2));
+  }
+  if (m.idxArr) {
+    geom.setIndex(new THREE.BufferAttribute(m.idxArr, 1));
+  }
+  if (m.kBidArr) geom.setAttribute('kBid', new THREE.BufferAttribute(m.kBidArr, 1)); // [kaiju]
+  const keep = m.groupKey === 'terrain' || m.groupKey === 'roads';
+  if (m.bs && m.normArr) {
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(m.bs[0], m.bs[1], m.bs[2]), m.bs[3]);
+    if (!keep) releaseGeometryArraysOnUpload(geom);
+  } else {
+    finalizeAndReleaseGeometry(geom, !m.normArr, keep);
+  }
+  const mat = mats[m.matKey] || mats.roadMat;
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.castShadow = m.castShadow;
+  mesh.receiveShadow = m.receiveShadow;
+  if (m.kBidArr && mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
+  const obj = m.roofLod ? wrapRoofLod(mesh, m.roofLod) : mesh; // [roofs]
+  if (m.lodKind) obj.userData.bldgLod = m.lodKind;
+  return obj;
 }
 
 /**
@@ -4456,32 +4742,15 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     root.add(g);
   }
 
+  const pendingMeshes = []; // [perf] building meshes: added over the next frames by the app (staged GPU upload)
   for (const m of meshPayloads) {
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(m.posArr, 3));
-    if (m.normArr) {
-      geom.setAttribute('normal', new THREE.BufferAttribute(m.normArr, 3));
-    }
-    if (m.colArr) {
-      geom.setAttribute('color', new THREE.BufferAttribute(m.colArr, 3, m.colNorm));
-    }
-    if (m.uvArr) {
-      geom.setAttribute('uv', new THREE.BufferAttribute(m.uvArr, 2));
-    }
-    if (m.idxArr) {
-      geom.setIndex(new THREE.BufferAttribute(m.idxArr, 1));
-    }
-    if (m.kBidArr) geom.setAttribute('kBid', new THREE.BufferAttribute(m.kBidArr, 1)); // [kaiju]
-    finalizeAndReleaseGeometry(geom, !m.normArr, m.groupKey === 'terrain' || m.groupKey === 'roads');
-    const mat = mats[m.matKey] || mats.roadMat;
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.castShadow = m.castShadow;
-    mesh.receiveShadow = m.receiveShadow;
-    if (m.kBidArr && mats.wfcBldgDepthMat) mesh.customDepthMaterial = mats.wfcBldgDepthMat; // [kaiju]
-    if (subGroups[m.groupKey]) {
-      subGroups[m.groupKey].add(m.roofLod ? wrapRoofLod(mesh, m.roofLod) : mesh); // [roofs]
-    }
+    if (!subGroups[m.groupKey]) continue;
+    if (m.groupKey === 'buildings') pendingMeshes.push(m);
+    else subGroups[m.groupKey].add(meshFromWorkerPayload(m, mats));
   }
+  // [perf] Chunk meshes never move: world matrices are computed once here and when a mesh is added later.
+  root.matrixWorldAutoUpdate = false;
+  root.updateMatrixWorld(true);
 
   root.userData = {
     cx,
@@ -4503,6 +4772,8 @@ export function assembleChunkFromWorkerPayload(payload, mats, layerVisibility) {
     waterMask: payload.waterMask || null, // fix/water
     deckSegments: payload.deckSegments || [], // fix/water
     roadGrid: payload.roadGrid !== undefined ? payload.roadGrid : undefined, // fix/water (built lazily if absent)
+    bldgLevel: Number.isFinite(payload.bldgLevel) ? payload.bldgLevel : 2, // [perf] 0 none, 1 massing, 2 + fine detail
+    pendingMeshes,
   };
 
   return root;

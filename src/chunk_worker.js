@@ -9,7 +9,7 @@ self.onmessage = async (e) => {
   if (msg.type === 'initDem') {
     if (msg.tileCacheLimit) setTileCacheLimit(msg.tileCacheLimit);
     setBeijingDemState(msg.demState);
-    self.postMessage({ type: 'demReady' });
+    self.postMessage({ type: 'demReady', gen: msg.gen });
     return;
   }
   if (msg.type === 'buildChunk') {
@@ -18,7 +18,7 @@ self.onmessage = async (e) => {
     setStreetWorldOrigin(worldOrigin); // [feature/street]
     try {
       const data = msg.data || (await fetchGlobalChunkData(cx, cz, worldOrigin));
-      const { payload, transferList } = computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin);
+      const { payload, transferList } = computeChunkWorkerPayload(cx, cz, ox, oz, data, worldOrigin, msg.opts || null); // [perf] building detail level
       self.postMessage({ type: 'chunkBuilt', key, payload }, transferList);
     } catch (err) {
       self.postMessage({ type: 'chunkError', key, error: String(err && err.message ? err.message : err) });
