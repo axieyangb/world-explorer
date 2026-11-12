@@ -89,6 +89,15 @@ function addBuildingCellMeshes(pos, norm, col, uv, bid, bCells, group, mats, col
   for (let i = 0; i + 2 < bCells.length; i += 3) {
     triBucket.fill(bCells[i + 2] * 2, (bCells[i] / 3) | 0, Math.min(nTris, (bCells[i + 1] / 3) | 0));
   }
+  const sameVert = (a, b) => {
+    const a3 = a * 3, b3 = b * 3;
+    if (pos[a3] !== pos[b3] || pos[a3 + 1] !== pos[b3 + 1] || pos[a3 + 2] !== pos[b3 + 2]) return false;
+    if (norm[a3] !== norm[b3] || norm[a3 + 1] !== norm[b3 + 1] || norm[a3 + 2] !== norm[b3 + 2]) return false;
+    if (col[a3] !== col[b3] || col[a3 + 1] !== col[b3 + 1] || col[a3 + 2] !== col[b3 + 2]) return false;
+    if (hasUv && (uv[a * 2] !== uv[b * 2] || uv[a * 2 + 1] !== uv[b * 2 + 1])) return false;
+    return bid[a] === bid[b];
+  };
+
   const counts = new Uint32Array(nBuckets);
   for (let t = 0; t < nTris; t++) {
     const i = t * 9;
@@ -106,6 +115,12 @@ function addBuildingCellMeshes(pos, norm, col, uv, bid, bCells, group, mats, col
       }
     }
     triBucket[t] = b;
+    if (t + 1 < nTris && sameVert(t * 3, (t + 1) * 3) && sameVert(t * 3 + 2, (t + 1) * 3 + 1)) {
+      triBucket[t + 1] = b;
+      counts[b] += 2;
+      t++;
+      continue;
+    }
     counts[b]++;
   }
   // Triangles grouped by bucket, source order kept (the two halves of a quad stay adjacent).
@@ -114,15 +129,6 @@ function addBuildingCellMeshes(pos, norm, col, uv, bid, bCells, group, mats, col
   const fill = start.slice(0, nBuckets);
   const order = new Uint32Array(nTris);
   for (let t = 0; t < nTris; t++) order[fill[triBucket[t]]++] = t;
-
-  const sameVert = (a, b) => {
-    const a3 = a * 3, b3 = b * 3;
-    if (pos[a3] !== pos[b3] || pos[a3 + 1] !== pos[b3 + 1] || pos[a3 + 2] !== pos[b3 + 2]) return false;
-    if (norm[a3] !== norm[b3] || norm[a3 + 1] !== norm[b3 + 1] || norm[a3 + 2] !== norm[b3 + 2]) return false;
-    if (col[a3] !== col[b3] || col[a3 + 1] !== col[b3 + 1] || col[a3 + 2] !== col[b3 + 2]) return false;
-    if (hasUv && (uv[a * 2] !== uv[b * 2] || uv[a * 2 + 1] !== uv[b * 2 + 1])) return false;
-    return bid[a] === bid[b];
-  };
 
   for (let b = 0; b < nBuckets; b++) {
     const n = counts[b];
@@ -956,9 +962,17 @@ export function createSharedMaterials() {
           vec2 cellUv = fract(gp);
           vec2 gfw = fwidth(gp);
           float bSeed = vNightBid;
-          float hF = nightHash(vec2(cell.y, bSeed * 113.0));
-          float hU = nightHash(cell + vec2(bSeed * 57.0, texLayer * 3.1));
-          float hC = nightHash(cell.yx + vec2(19.7, bSeed * 23.0));
+
+          // [window-variety] True per-window deterministic hash combining building world cell, floor, and horizontal bay
+          vec2 bldgWorldCell = floor(vBldgWorld.xz * 0.25);
+          vec2 winCoord = bldgWorldCell + vec2(cell.x * 7.13 + bSeed * 43.1, cell.y * 11.37 + texLayer * 3.1);
+          float h1 = nightHash(winCoord);
+          float h2 = nightHash(winCoord.yx + vec2(17.43, 31.19));
+          float h3 = nightHash(winCoord * 1.37 + vec2(53.21, 89.63));
+          float h4 = nightHash(winCoord.yx * 2.11 + vec2(7.89, 93.41));
+          float hF = h2;
+          float hU = h1;
+          float hC = h3;
           float uvGrad = max(fwidth(uRep), fwidth(vRep));
           float bumpFade = 1.0 - smoothstep(0.04, 0.24, uvGrad);
           float camDist = length(vViewPosition);
@@ -1076,26 +1090,41 @@ export function createSharedMaterials() {
             interiorRoomCol = (ceilCol * hitCeil + floorCol * hitFloor + wallCol * hitWall) * depthAo;
             interiorRoomCol *= mix(1.0, 1.24, isGroundShowcase);
 
-            // Per-window randomized horizontal Venetian blinds + half-drawn vertical pleated drapes (upper floors)
-            float windowTreat = fract(hU * 13.7);
-            float hasBlinds = step(0.52, windowTreat) * (1.0 - step(2.5, kind)) * (1.0 - isGroundShowcase);
-            float blindDrop = 0.24 + 0.56 * fract(hU * 7.9);
-            float inBlind = step(1.0 - blindDrop, cellUv.y) * hasBlinds;
-            float slatStep = step(0.28, fract(cellUv.y * 32.0));
-            float slatShade = 0.74 + 0.26 * slatStep * (0.88 + 0.12 * sin(cellUv.y * 64.0));
-            vec3 blindTint = mix(vec3(0.86, 0.82, 0.75), vec3(0.74, 0.78, 0.83), step(0.5, hC)) * slatShade;
+            // [window-variety] Color temperature: warm tungsten (2800K) vs neutral halogen (3800K) vs cool office (5000K)
+            vec3 tungstenWarm = vec3(1.0, 0.80, 0.56);
+            vec3 halogenNeutral = vec3(1.0, 0.90, 0.76);
+            vec3 officeCool = vec3(0.84, 0.92, 1.0);
+            vec3 lightTemp = h3 < 0.45 ? tungstenWarm : h3 < 0.75 ? halogenNeutral : officeCool;
+            float isDarkUnoccupied = step(0.80, h1);
+            float roomIllum = isDarkUnoccupied > 0.5 ? 0.09 : mix(0.52, 0.98, h4);
+            vec3 litRoom = interiorRoomCol * lightTemp * roomIllum;
 
-            float hasDrapes = step(windowTreat, 0.34) * (1.0 - step(0.5, kind)) * (1.0 - isGroundShowcase);
-            float drapeSpan = 0.16 + 0.14 * fract(hC * 11.1);
+            // [window-variety] Randomized Window Coverings:
+            // ~20% open view (h1 >= 0.75 or isGroundShowcase)
+            // ~35% horizontal roller shade / venetian blind (0.20 <= h1 < 0.55)
+            // ~25% sheer / pleated side drapes (0.55 <= h1 < 0.80)
+            float hasBlinds = step(0.20, h1) * (1.0 - step(0.55, h1)) * (1.0 - isGroundShowcase);
+            float blindDrop = h2 < 0.25 ? 0.20 : h2 < 0.55 ? 0.45 : h2 < 0.82 ? 0.70 : 0.90;
+            float inBlind = step(1.0 - blindDrop, cellUv.y) * hasBlinds;
+            float isSlat = step(0.45, h3);
+            float slatStep = step(0.28, fract(cellUv.y * 36.0));
+            float slatShade = mix(1.0, 0.74 + 0.26 * slatStep * (0.88 + 0.12 * sin(cellUv.y * 72.0)), isSlat);
+            vec3 shadeFabric = h4 < 0.35 ? vec3(0.88, 0.85, 0.78) : h4 < 0.70 ? vec3(0.72, 0.75, 0.77) : vec3(0.30, 0.31, 0.33);
+            vec3 blindCol = shadeFabric * slatShade;
+
+            float hasDrapes = step(0.55, h1) * (1.0 - step(0.80, h1)) * (1.0 - isGroundShowcase);
+            float drapeSpan = 0.16 + 0.14 * h3;
             float inDrape = step(0.5 - drapeSpan, abs(cellUv.x - 0.5)) * hasDrapes;
-            float pleat = 0.80 + 0.20 * sin(cellUv.x * 56.0 + hC * 6.28);
-            vec3 drapeCol = mix(vec3(0.82, 0.76, 0.68), vec3(0.62, 0.68, 0.74), fract(hU * 4.3)) * pleat;
+            float pleat = 0.82 + 0.18 * sin(cellUv.x * 52.0 + h4 * 6.28);
+            vec3 drapeCol = mix(vec3(0.84, 0.80, 0.74), vec3(0.68, 0.72, 0.76), h2) * pleat;
 
             // Blend 3D interior room behind exterior glass Fresnel reflection, venetian blinds & side drapes
-            vec3 dayRoomMix = mix(glassAlbedo * 0.88, interiorRoomCol * 0.72 + skyRefl * (0.16 + 0.20 * fresnel), 0.64 * closeParallaxFade);
-            vec3 dressedGlass = mix(dayRoomMix, blindTint * 0.64, inBlind * 0.56 * closeParallaxFade);
-            dressedGlass = mix(dressedGlass, drapeCol * 0.66, inDrape * 0.60 * closeParallaxFade);
-            glassAlbedo = dressedGlass * revealShadow;
+            vec3 dressedInterior = mix(litRoom, blindCol, inBlind);
+            dressedInterior = mix(dressedInterior, drapeCol, inDrape);
+
+            vec3 dayRoomMix = mix(dressedInterior, skyRefl, clamp(0.22 + 0.44 * fresnel, 0.22, 0.70));
+            glassAlbedo = mix(glassAlbedo, dayRoomMix, closeParallaxFade * 0.92);
+            glassAlbedo *= revealShadow;
 
             // Crisp sun/sky & night city-light specular glint across glass panes
             vec3 viewDirV = normalize(vViewPosition);
@@ -4534,38 +4563,58 @@ const WORKER_DUMMY_MATS = {
 function indexQuadTriangles(attrs) {
   const nVerts = (attrs[0][0].length / attrs[0][1]) | 0;
   const nTris = (nVerts / 3) | 0;
-  if (nTris < 2 || nTris * 3 !== nVerts) return null;
+  if (nTris < 1 || nTris * 3 !== nVerts) return null;
+
   const same = (a, b) => {
     for (let k = 0; k < attrs.length; k++) {
       const arr = attrs[k][0], sz = attrs[k][1];
-      for (let c = 0; c < sz; c++) if (arr[a * sz + c] !== arr[b * sz + c]) return false;
+      const oA = a * sz, oB = b * sz;
+      for (let c = 0; c < sz; c++) {
+        if (arr[oA + c] !== arr[oB + c]) return false;
+      }
     }
     return true;
   };
-  const index = new Uint32Array(nVerts);
+
+  // Fresh output buffers so input attributes are never mutated in place
+  const outArrays = attrs.map(([arr]) => new arr.constructor(arr.length));
+  const index = new Uint32Array(nTris * 3);
   let nv = 0, ni = 0;
-  const put = (v) => {
-    if (nv !== v) {
-      for (let k = 0; k < attrs.length; k++) {
-        const arr = attrs[k][0], sz = attrs[k][1];
-        for (let c = 0; c < sz; c++) arr[nv * sz + c] = arr[v * sz + c];
-      }
+
+  const copyVert = (srcV) => {
+    const dstV = nv++;
+    for (let k = 0; k < attrs.length; k++) {
+      const srcArr = attrs[k][0], dstArr = outArrays[k], sz = attrs[k][1];
+      const s = srcV * sz, d = dstV * sz;
+      for (let c = 0; c < sz; c++) dstArr[d + c] = srcArr[s + c];
     }
-    return nv++;
+    return dstV;
   };
-  for (let t = 0; t < nTris; t++) {
+
+  let t = 0;
+  while (t < nTris) {
     const v = t * 3;
-    const quad = t + 1 < nTris && same(v, v + 3) && same(v + 2, v + 4);
-    const i0 = put(v), i1 = put(v + 1), i2 = put(v + 2);
-    index[ni++] = i0; index[ni++] = i1; index[ni++] = i2;
-    if (quad) {
-      index[ni++] = i0; index[ni++] = i2; index[ni++] = put(v + 5);
-      t++;
+    // Check if triangle t (v0, v1, v2) and t+1 (v3, v4, v5) form a quad (v3==v0 && v4==v2)
+    if (t + 1 < nTris && same(v, v + 3) && same(v + 2, v + 4)) {
+      const i0 = copyVert(v);
+      const i1 = copyVert(v + 1);
+      const i2 = copyVert(v + 2);
+      const i3 = copyVert(v + 5);
+      index[ni++] = i0; index[ni++] = i1; index[ni++] = i2;
+      index[ni++] = i0; index[ni++] = i2; index[ni++] = i3;
+      t += 2;
+    } else {
+      const i0 = copyVert(v);
+      const i1 = copyVert(v + 1);
+      const i2 = copyVert(v + 2);
+      index[ni++] = i0; index[ni++] = i1; index[ni++] = i2;
+      t += 1;
     }
   }
-  if (nv > nVerts * 0.85) return null;
+
+  if (nv >= nVerts) return null; // No saving achieved, keep original non-indexed arrays untouched
   return {
-    arrays: attrs.map(([arr, sz]) => arr.slice(0, nv * sz)),
+    arrays: outArrays.map((arr, i) => arr.slice(0, nv * attrs[i][1])),
     index: nv <= 65535 ? new Uint16Array(index.subarray(0, ni)) : index.slice(0, ni),
   };
 }

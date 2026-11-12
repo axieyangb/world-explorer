@@ -33,11 +33,11 @@ const CSS = `
 .pi-card-body { padding: 9px 12px 10px; }
 .pi-card-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pi-card-desc { opacity: 0.66; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pi-card-img, .pi-card-extract, .pi-card-link { display: none; }
+.pi-card-img, .pi-card-extract, .pi-card-link, .pi-card-osm { display: none; }
 .pi-card.expanded .pi-card-img { display: block; width: 100%; max-height: 132px; object-fit: cover; }
 .pi-card.expanded .pi-card-desc { white-space: normal; }
 .pi-card.expanded .pi-card-extract { display: block; margin-top: 6px; opacity: 0.85; max-height: 9.8em; overflow: hidden; }
-.pi-card.expanded .pi-card-link { display: inline-block; margin-top: 6px; font-size: 11px; color: #8cc4ff; text-decoration: none; opacity: 0.8; }
+.pi-card.expanded .pi-card-link, .pi-card.expanded .pi-card-osm { display: inline-block; margin-top: 6px; font-size: 11px; color: #8cc4ff; text-decoration: none; opacity: 0.8; }
 .pi-card-links { display: flex; gap: 12px; align-items: baseline; }
 .pi-card-osm { margin-top: 4px; font-size: 11px; color: #8cc4ff; text-decoration: none; opacity: 0.7; }
 .pi-card-osm:hover, .pi-card.expanded .pi-card-link:hover { opacity: 1; text-decoration: underline; }

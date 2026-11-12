@@ -1325,7 +1325,7 @@ export function stopVehicleSirenAudio() {
 
 export function playVehicleHornOrSiren(typeId, sirenActive) {
   stopVehicleSirenAudio();
-  if (true) return; // Vehicle audio muted by default
+  if (typeof window !== 'undefined' && window.__weMuted === true) return;
   try {
     const ctx = ensureAudioCtx();
     if (!ctx) return;

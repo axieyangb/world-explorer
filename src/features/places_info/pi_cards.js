@@ -115,10 +115,28 @@ export class InfoCards {
     const app = this.app;
     const o = app.worldOrigin;
     if (!o || !o.mPerDegLat || !app.camera || !app.pos) return;
-    const blocked = app.isTeleporting || (app.mapSystem && app.mapSystem.isOpen);
-    if (blocked) { this._hide(false); return; }
+    const blocked = app.isTeleporting || (app.mapSystem && app.mapSystem.isOpen) || app.mode === 'kaiju';
+    if (blocked) {
+      if (app.isTeleporting) {
+        this._spawnX = app.pos.x;
+        this._spawnZ = app.pos.z;
+      }
+      this._hide(false);
+      return;
+    }
 
     const P = app.pos;
+    if (this._spawnX === undefined || this._spawnX === null) {
+      this._spawnX = P.x;
+      this._spawnZ = P.z;
+    }
+    // [polish] Do not auto-open card on initial spawn until player moves away from spawn point
+    if (this._spawnX !== null) {
+      if (Math.hypot(P.x - this._spawnX, P.z - this._spawnZ) < 30.0) {
+        return;
+      }
+      this._spawnX = null;
+    }
     const cam = app.camera;
     const dir = cam.getWorldDirection ? cam.getWorldDirection(this._v || (this._v = cam.position.clone())) : null;
     let fx = dir ? dir.x : 0, fz = dir ? dir.z : 1;

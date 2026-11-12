@@ -10,7 +10,20 @@
 
 export const PROJECT_TITLE = 'World Explorer';
 
-let currentLang = 'en';
+function getInitialLang() {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('we_lang');
+      if (saved === 'zh' || saved === 'en') return saved;
+    } catch (_) {}
+  }
+  if (typeof navigator !== 'undefined' && navigator.language) {
+    if (navigator.language.toLowerCase().startsWith('zh')) return 'zh';
+  }
+  return 'en';
+}
+
+let currentLang = getInitialLang();
 const langChangeCallbacks = new Set();
 
 export const I18N = {
@@ -93,6 +106,9 @@ export const I18N = {
     },
     runtime: {
       // Key labels (src/features/controls.js): the English label is the key; "Label@mode" overrides one mode.
+      Jump: '跳跃', 'Jump / Shoot': '跳跃 / 射击', Keys: '按键', Exit: '退出', Camera: '视角', Search: '搜索', Map: '地图',
+      'Self-drive': '自动驾驶', Mode: '模式', 'Next vehicle': '下款载具', 'Full screen': '全屏',
+      'Press {key} again to bail out': '再次按 {key} 跳机', 'FELL TO DEATH': '坠落身亡', 'DROWNED IN THE SEA': '溺水遇难', WRECKED: '载具损毁',
       Move: '移动', Turn: '转向', 'Down / Up': '升降', Strafe: '平移', Cannon: '机炮', Rockets: '火箭弹', Land: '降落',
       Walk: '移动', Run: '疾跑', Punch: '出拳', Reload: '换弹', Weapon: '切枪', RPG: '火箭筒', Enter: '驾车',
       Drive: '驾驶', Boost: '加速', Brake: '刹车', Vehicle: '换车', Horn: '喇叭', 'Exit@drive': '下车', Fire: '主炮',
@@ -431,6 +447,9 @@ export const I18N = {
       leg_chunk: 'Loaded 3D Chunks',
     },
     runtime: {
+      Jump: 'Jump', 'Jump / Shoot': 'Jump / Shoot', Keys: 'Keys', Exit: 'Exit', Camera: 'Camera', Search: 'Search', Map: 'Map',
+      'Self-drive': 'Self-drive', Mode: 'Mode', 'Next vehicle': 'Next vehicle', 'Full screen': 'Full screen',
+      'Press {key} again to bail out': 'Press {key} again to bail out', 'FELL TO DEATH': 'FELL TO DEATH', 'DROWNED IN THE SEA': 'DROWNED IN THE SEA', WRECKED: 'WRECKED',
       // [kaiju]
       mode_kaiju: 'Kaiju',
       kaiju_title: 'Kaiju Defense',
@@ -709,6 +728,9 @@ export function onLanguageChange(fn) {
  */
 export function setLang(lang) {
   currentLang = lang === 'en' ? 'en' : 'zh';
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem('we_lang', currentLang); } catch (_) {}
+  }
   if (typeof document !== 'undefined') {
     if (document.documentElement) {
       document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
@@ -723,6 +745,10 @@ export function setLang(lang) {
     }
   }
   return currentLang;
+}
+
+export function L(en, zh) {
+  return currentLang === 'zh' ? zh : en;
 }
 
 /**

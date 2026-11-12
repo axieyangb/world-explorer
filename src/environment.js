@@ -575,6 +575,7 @@ export function createHorizonSkirtMesh(skyUniforms) {
     uZenithColor: skyUniforms?.uZenithColor || { value: new THREE.Color(0x2b6cb0) },
     uSunIntensity: skyUniforms?.uSunIntensity || { value: 1.0 },
     uCamPos: { value: new THREE.Vector3() },
+    uOceanFactor: skyUniforms?.uOceanFactor || { value: 0.0 }, // [Item 11] 0.0 = continental land/haze, 1.0 = ocean
   };
   const skirtMat = new THREE.ShaderMaterial({
     uniforms,
@@ -592,6 +593,7 @@ export function createHorizonSkirtMesh(skyUniforms) {
       uniform vec3 uZenithColor;
       uniform float uSunIntensity;
       uniform vec3 uCamPos;
+      uniform float uOceanFactor;
       varying vec3 vWorldPos;
 
       float hHash(vec2 p) {
@@ -618,13 +620,21 @@ export function createHorizonSkirtMesh(skyUniforms) {
         float macro = n1 * 0.55 + n2 * 0.30 + n3 * 0.15;
 
         float lightLvl = clamp(uSunIntensity, 0.04, 1.05);
-        vec3 coastalEarth = vec3(0.44, 0.45, 0.46) * lightLvl;
-        vec3 distantSlate = vec3(0.34, 0.38, 0.43) * lightLvl;
-        vec3 baseLand = mix(coastalEarth, distantSlate, smoothstep(0.35, 0.72, macro));
+        // Muted natural continental land/haze tone for inland locations (Paris, London, Beijing, etc.)
+        vec3 inlandEarth = vec3(0.38, 0.42, 0.36) * lightLvl;
+        vec3 inlandSlate = vec3(0.32, 0.36, 0.38) * lightLvl;
+        vec3 baseLand = mix(inlandEarth, inlandSlate, smoothstep(0.35, 0.72, macro));
+
+        // Deep ocean blue for coastal / island views (SF bay, NYC harbour, Tokyo bay)
+        vec3 oceanDeep = vec3(0.08, 0.22, 0.38) * lightLvl;
+        vec3 oceanShallow = vec3(0.12, 0.28, 0.45) * lightLvl;
+        vec3 oceanWater = mix(oceanDeep, oceanShallow, smoothstep(0.35, 0.72, macro));
+
+        vec3 groundSurface = mix(baseLand, oceanWater, clamp(uOceanFactor, 0.0, 1.0));
 
         // Aerial perspective atmospheric scatter toward horizon
         float hazeT = smoothstep(6000.0, 28000.0, radialDist);
-        vec3 col = mix(baseLand, uHorizonColor, clamp(0.55 + hazeT * 0.45, 0.0, 1.0));
+        vec3 col = mix(groundSurface, uHorizonColor, clamp(0.55 + hazeT * 0.45, 0.0, 1.0));
         gl_FragColor = vec4(col, 1.0);
       }
     `,

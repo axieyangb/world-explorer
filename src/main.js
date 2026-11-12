@@ -971,6 +971,14 @@ class WorldExplorerApp {
     this._updateCamera(0.016);
     this._updateHud();
     this._updateActiveQuickChip(numLat, numLon);
+    if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("lat", numLat.toFixed(5));
+        url.searchParams.set("lon", numLon.toFixed(5));
+        window.history.replaceState(null, "", url.toString());
+      } catch (_) {}
+    }
     if (this.propertyInspector) this.propertyInspector.onLocationJump(numLat, numLon, displayName, streetName);
     return this.worldOrigin;
   }
@@ -1927,8 +1935,8 @@ class WorldExplorerApp {
 
   async teleportToWorld(wx, wz, label = "", snapToRoad = true) {
     this.water.reset(); // fix/water
-    const clampedX = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wx));
-    const clampedZ = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wz));
+    let clampedX = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wx));
+    let clampedZ = Math.max(-HALF_WORLD + 50, Math.min(HALF_WORLD - 50, wz));
     this.parkedCars.dropFar(clampedX, clampedZ); // [parked-cars]
     const keepParked = this.parkedCars.isParked(this.vehicleMesh); // [parked-cars] a parked car stays put
     this._camArm = 0; // [cam-collision]
@@ -1995,6 +2003,12 @@ class WorldExplorerApp {
         this._noteRoadZh(surf.seg);
         this.currentLayer = surf.seg.layer;
       } else if (bldgCeil !== null) {
+        // [Item 26] Offset landmark spawn out of solid geometry if landing inside a building
+        const col = this.resolveBuildingCollisions(clampedX, initTerrY + 1.0, clampedZ, 3.5);
+        if (col && col.hit) {
+          clampedX = col.x;
+          clampedZ = col.z;
+        }
         exactY = Math.max(exactY, bldgCeil + 0.22);
         this.currentRoadName = label || t("map_teleport_label");
         this.currentLayer = 0;
@@ -2794,6 +2808,9 @@ class WorldExplorerApp {
     let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
     if (this.mode === "walk" && this.camMode !== "topdown") targetNear = Math.min(targetNear, 0.45);
     if (this.camMode !== "topdown" && activeOrbitDist < 5.0) targetNear = Math.max(0.25, Math.min(targetNear, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
+    if (camAlt > 400.0) {
+      targetNear = Math.max(targetNear, Math.min(80.0, camAlt * 0.012));
+    }
     const targetFar = Math.max(36000, Math.min(138000, this.camera.position.y * 16.0 + 42000));
     if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15 || Math.abs(this.camera.far - targetFar) > 250) {
       this.camera.near = targetNear;
@@ -4010,17 +4027,31 @@ class WorldExplorerApp {
     }
 
     const locDropdown = document.getElementById("location-dropdown");
-    const renderSearchResults = (items) => {
-      lastResults = items || [];
+    const renderSearchResults = (items, hasQueried = false) => {
+      const seen = new Set();
+      const uniqueItems = [];
+      for (const it of items || []) {
+        const k = `${it.name?.trim() || ""}|${(it.lat || 0).toFixed(4)}|${(it.lon || 0).toFixed(4)}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        uniqueItems.push(it);
+      }
+      lastResults = uniqueItems;
       if (!resultsSec || !resultsEl) return;
-      if (!items || items.length === 0) {
+      if (uniqueItems.length === 0) {
+        if (hasQueried) {
+          resultsSec.classList.remove("hidden");
+          if (locDropdown) locDropdown.classList.remove("hidden");
+          resultsEl.innerHTML = `<div class="loc-result-item" style="color:rgba(255,255,255,0.45);cursor:default;padding:8px 12px;font-size:12px;">${getLang() === "zh" ? "无搜索结果" : "No results found"}</div>`;
+          return;
+        }
         resultsSec.classList.add("hidden");
         if (locDropdown) locDropdown.classList.add("hidden");
         resultsEl.innerHTML = "";
         return;
       }
       resultsEl.innerHTML = "";
-      items.forEach((item) => {
+      uniqueItems.forEach((item) => {
         const btn = document.createElement("div");
         btn.className = "loc-result-item";
         btn.style.display = "flex";
@@ -4064,7 +4095,7 @@ class WorldExplorerApp {
         debounceTimer = setTimeout(async () => {
           const lmMatches = this.propertyInspector ? this.propertyInspector.searchLandmarks(q) : [];
           const addrResults = await searchAddress(q);
-          renderSearchResults([...lmMatches, ...(addrResults || [])].slice(0, 7));
+          renderSearchResults([...lmMatches, ...(addrResults || [])].slice(0, 7), true);
         }, 200);
       });
 
@@ -4659,24 +4690,25 @@ class WorldExplorerApp {
   toggleFsd() {
     if (this.fsd && this.fsd.active) {
       this.stopFsd();
-      showVehicleToast("FSD Disengaged");
+      showVehicleToast(getLang() === "zh" ? "自动驾驶已关闭" : "FSD Disengaged");
       return;
     }
     if (this.navigator && this.navigator.active && this.navigator.dest) {
-      this.setFsdDestination(this.navigator.dest.x, this.navigator.dest.z, this.fsd.label || "Destination");
+      this.setFsdDestination(this.navigator.dest.x, this.navigator.dest.z, this.fsd.label || (getLang() === "zh" ? "导航终点" : "Destination"));
       return;
     }
     if (this.fsd && (this.fsd.destX !== 0 || this.fsd.destZ !== 0)) {
       const d = Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z);
       if (d > 25) {
-        this.setFsdDestination(this.fsd.destX, this.fsd.destZ, this.fsd.label || "Destination");
+        this.setFsdDestination(this.fsd.destX, this.fsd.destZ, this.fsd.label || (getLang() === "zh" ? "巡航目标" : "Destination"));
         return;
       }
     }
     const dist = this.mode === "airliner" ? 2400 : this.mode === "helicopter" ? 850 : 480;
     const tx = this.pos.x + Math.sin(this.yaw) * dist;
     const tz = this.pos.z + Math.cos(this.yaw) * dist;
-    this.setFsdDestination(tx, tz, this.currentRoadName || "Waypoint Ahead");
+    const cruiseLabel = this.currentRoadName || (getLang() === "zh" ? "前方道路巡航" : "Cruise Ahead");
+    this.setFsdDestination(tx, tz, cruiseLabel);
   }
 
   stopFsd() {
@@ -4689,12 +4721,12 @@ class WorldExplorerApp {
 
   _onFsdArrived() {
     if (!this.fsd || !this.fsd.active) return;
-    const lbl = this.fsd.label || "Destination";
+    const lbl = this.fsd.label || (getLang() === "zh" ? "终点" : "Destination");
     this.fsd.active = false;
     if (this.fsd.beaconMesh) this.fsd.beaconMesh.visible = false;
     if (this.navigator) this.navigator.clearRoute();
     this._updateHud();
-    showVehicleToast(`FSD Arrived · ${lbl}`);
+    showVehicleToast(getLang() === "zh" ? `自动驾驶到达 · ${lbl}` : `FSD Arrived · ${lbl}`);
   }
 
   _updateHighAltitudeHorizonAndLod(camAlt) {
@@ -4706,6 +4738,19 @@ class WorldExplorerApp {
         if (su.uCamPos) su.uCamPos.value.copy(this.camera.position);
         if (su.uHorizonColor) su.uHorizonColor.value.copy(SURFACE_UNIFORMS.uSkyHorizon.value);
         if (su.uSunIntensity) su.uSunIntensity.value = SURFACE_UNIFORMS.uLightLevel.value;
+        if (su.uOceanFactor) {
+          let waterChunks = 0;
+          for (const grp of this.loadedChunks.values()) {
+            const mask = grp.userData?.waterMask;
+            if (mask && mask.bytes) {
+              for (let i = 0; i < mask.bytes.length; i += 16) {
+                if (mask.bytes[i] !== 0) { waterChunks++; break; }
+              }
+            }
+          }
+          const waterRatio = this.loadedChunks.size > 0 ? waterChunks / this.loadedChunks.size : 0;
+          su.uOceanFactor.value = THREE.MathUtils.clamp((waterRatio - 0.22) / 0.28, 0.0, 1.0);
+        }
       }
     }
     if (this.skylineInstanced) {

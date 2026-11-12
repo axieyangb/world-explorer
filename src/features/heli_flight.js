@@ -900,14 +900,51 @@ export class HeliFlight {
     this._wash.geometry.attributes.position.needsUpdate = true;
   }
 
-  // ---------------------------------------------------------------- audio (vehicle audio muted)
+  // ---------------------------------------------------------------- audio (subtle procedural rotor audio)
   _ensureAudio() {
-    this._audio = null;
-    return null;
+    if (typeof window === 'undefined' || window.__weMuted === true) return null;
+    if (this._audio) return this._audio;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      const ctx = this.app._sharedAudioCtx || new AC();
+      this.app._sharedAudioCtx = ctx;
+      if (ctx.state === 'suspended') return null; // Wait for user interaction
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(22, ctx.currentTime);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(90, ctx.currentTime);
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      this._audio = { ctx, osc, gain, filter };
+      return this._audio;
+    } catch (_) {
+      return null;
+    }
   }
 
-  _updateAudio() {
-    // Muted by default (silent helicopter/vehicle operation)
+  _updateAudio(dt) {
+    if (typeof window === 'undefined' || window.__weMuted === true) {
+      if (this._audio) {
+        try { this._audio.gain.gain.value = 0.0; } catch (_) {}
+      }
+      return;
+    }
+    const a = this._ensureAudio();
+    if (!a) return;
+    const rpm = this.rotorRpm || (this.state && !this.state.grounded ? 380 : 0);
+    const targetGain = this.app.mode === 'helicopter' ? Math.min(0.035, (rpm / 420) * 0.035) : 0.0;
+    const targetFreq = 16 + (rpm / 420) * 14;
+    try {
+      a.gain.gain.setTargetAtTime(targetGain, a.ctx.currentTime, 0.08);
+      a.osc.frequency.setTargetAtTime(targetFreq, a.ctx.currentTime, 0.08);
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------- gunship weapons (30mm nose cannon + wing-pod rockets)

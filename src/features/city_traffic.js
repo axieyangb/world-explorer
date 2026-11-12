@@ -1636,7 +1636,7 @@ export class CityTraffic {
 
   // Synthesized WebAudio impact thud / crunch (muted by default)
   _playHitSound(x, y, z, forceMul = 1) {
-    if (true) return;
+    if (typeof window !== 'undefined' && window.__weMuted === true) return;
     if (this._hitSoundCooldown > 0) return;
     this._hitSoundCooldown = 0.085;
     if (typeof window === 'undefined') return;

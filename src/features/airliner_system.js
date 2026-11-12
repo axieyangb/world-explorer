@@ -732,17 +732,31 @@ export class AirlinerSystem {
       }
       fsdYawErr = Math.atan2(Math.sin(desiredYaw - this.app.yaw), Math.cos(desiredYaw - this.app.yaw));
       const destTerrY = this.app.world.getHeightAt(fsd.destX, fsd.destZ);
-      fsdTargetAlt = Math.max(this.groundY + 180, destTerrY + 180, Math.min(680, 220 + fsdDist * 0.12));
+      // [Item 13-Heli / Airliner FSD Autoland] ILS 3.0 deg glideslope descending smoothly to runway touchdown
+      const glideAlt = Math.max(destTerrY, destTerrY + fsdDist * 0.0524);
+      fsdTargetAlt = Math.max(destTerrY, Math.min(destTerrY + 450, glideAlt));
       if (this.grounded) {
-        throttleUp = true;
-        throttleDown = false;
-        if (this.ias >= 46) pullUp = true;
+        if (fsdDist < 250) {
+          throttleUp = false;
+          throttleDown = true; // Brake & rollout to smooth stop
+        } else {
+          throttleUp = true;
+          throttleDown = false;
+          if (this.ias >= 46 && fsdDist > 800) pullUp = true;
+        }
       } else {
-        throttleUp = this.speed < 135;
-        throttleDown = false;
+        if (fsdDist < 600 && agl < 30) {
+          throttleUp = false;
+          throttleDown = true; // Flare & touchdown thrust reduction
+        } else {
+          throttleUp = this.speed < 135;
+          throttleDown = false;
+        }
       }
-      if (fsdDist < 110) {
-        this.app._onFsdArrived?.();
+      if (fsdDist < 120 && (this.grounded || agl < 4.0)) {
+        if (this.speed < 12.0) {
+          this.app._onFsdArrived?.();
+        }
       }
     }
 
@@ -969,6 +983,16 @@ export class AirlinerSystem {
       pos.x += Math.sin(this.app.yaw) * curHoriz * subDt;
       pos.z += Math.cos(this.app.yaw) * curHoriz * subDt;
       this.heroYaw = this.app.yaw;
+
+      // [Item 20] Building collision check when flying below skyscraper heights (< 380m)
+      if (!this.grounded && pos.y < 380 && typeof this.app.getBuildingCeilingAt === 'function') {
+        const bCeil = this.app.getBuildingCeilingAt(pos.x, pos.y, pos.z, 6.0);
+        if (bCeil !== null && pos.y <= bCeil + 1.2) {
+          this.applyDamage(MAX_HP + 100, pos);
+          this.app._showToast?.("Crash: Collided with building!", 3200);
+          break;
+        }
+      }
 
       // Resolve 3D collisions against all other airliners and all maritime ships/boats
       this._resolveActiveAirlinerCollisions(subDt);
