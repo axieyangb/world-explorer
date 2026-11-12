@@ -12,6 +12,7 @@ import { getLang } from '../i18n.js';
 import { isNight } from './daylight.js';
 import { QUALITY } from './quality.js'; // [ui-mobile]
 import { buildAirlinerInstancedGeometries } from './airliner_models.js';
+import { getBeijingTerrainElevation } from '../environment.js';
 
 const STRIDE = 8;
 const M4 = new THREE.Matrix4();
@@ -1848,9 +1849,27 @@ export class PlacesSystem {
         const cArr = pool.instanceColor.array;
         let n = counts[kind];
         const isPlaneKind = kind === 'plane' || kind === 'planeTail';
+        const isShipKind = kind === 'ship';
+        const camTerr = isShipKind ? getBeijingTerrainElevation(px, pz) : 0;
+        const camY = this._cam ? this._cam.position.y : (camTerr + 1.8);
         for (let i = 0; i < a.length && n < cap; i += STRIDE) {
           const dx = a[i] - px, dz = a[i + 2] - pz;
-          if (dx * dx + dz * dz > r2) continue;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > r2) continue;
+          if (isShipKind) {
+            const shipTerr = getBeijingTerrainElevation(a[i], a[i + 2]);
+            if (shipTerr > 0.8) continue;
+            if (camTerr > 4.0 && d2 > 1200 * 1200) {
+              let occ = false;
+              for (let s = 1; s <= 4; s++) {
+                const t = s * 0.22;
+                const sx = px + dx * t, sz = pz + dz * t;
+                const sy = camY + (a[i + 1] + 15.0 - camY) * t;
+                if (getBeijingTerrainElevation(sx, sz) > sy + 1.2) { occ = true; break; }
+              }
+              if (occ) continue;
+            }
+          }
           if (isPlaneKind) {
             const pKey = `${Math.round(a[i])}_${Math.round(a[i + 2])}`;
             if (this.hiddenPlanes && this.hiddenPlanes.has(pKey)) continue;

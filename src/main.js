@@ -488,7 +488,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261111_p1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261112_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -798,6 +798,12 @@ class WorldExplorerApp {
     this.teleportGeneration = (this.teleportGeneration || 0) + 1;
     this.isTeleporting = true;
     this.water.reset(); // fix/water
+    if (this.maritime) {
+      this.maritime.vessels.length = 0;
+      this.maritime.pierBoats.length = 0;
+      this.maritime.activeBoat = null;
+      this.maritime.boatSpeed = 0;
+    }
     if (this.walkerWeapons) this.walkerWeapons.clearAiSquad(); // AI squad positions belong to the old region
     if (this.walkerWeapons) this.walkerWeapons.resetInventory(); // [weapon-pickups] new city: empty-handed again
     const isBj =

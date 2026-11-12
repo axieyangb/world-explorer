@@ -1099,6 +1099,19 @@ export function createSharedMaterials() {
             float roomIllum = isDarkUnoccupied > 0.5 ? 0.09 : mix(0.52, 0.98, h4);
             vec3 litRoom = interiorRoomCol * lightTemp * roomIllum;
 
+            // Distinct warm ceiling lamp radial glow + ambient bounce
+            float lampDist = length(vec2(pRoom.x * 1.5, pRoom.y - 0.36));
+            float lampRadialGlow = clamp(1.0 - lampDist / 0.52, 0.0, 1.0);
+            vec3 lampGlowCol = tungstenWarm * pow(lampRadialGlow, 2.2) * 0.42 * (1.0 - isDarkUnoccupied);
+            litRoom += lampGlowCol;
+
+            // Crisp interior window sill & mullion frame shadows
+            float frameMullionX = smoothstep(0.0, 0.055, cellUv.x) * smoothstep(1.0, 0.945, cellUv.x);
+            float frameMullionY = smoothstep(0.0, 0.065, cellUv.y) * smoothstep(1.0, 0.935, cellUv.y);
+            float mullionShadow = mix(0.62, 1.0, frameMullionX * frameMullionY);
+            float sillShadow = mix(0.72, 1.0, smoothstep(0.0, 0.12, cellUv.y));
+            litRoom *= mullionShadow * sillShadow;
+
             // [window-variety] Randomized Window Coverings:
             // ~20% open view (h1 >= 0.75 or isGroundShowcase)
             // ~35% horizontal roller shade / venetian blind (0.20 <= h1 < 0.55)
@@ -1106,17 +1119,23 @@ export function createSharedMaterials() {
             float hasBlinds = step(0.20, h1) * (1.0 - step(0.55, h1)) * (1.0 - isGroundShowcase);
             float blindDrop = h2 < 0.25 ? 0.20 : h2 < 0.55 ? 0.45 : h2 < 0.82 ? 0.70 : 0.90;
             float inBlind = step(1.0 - blindDrop, cellUv.y) * hasBlinds;
-            float isSlat = step(0.45, h3);
-            float slatStep = step(0.28, fract(cellUv.y * 36.0));
-            float slatShade = mix(1.0, 0.74 + 0.26 * slatStep * (0.88 + 0.12 * sin(cellUv.y * 72.0)), isSlat);
-            vec3 shadeFabric = h4 < 0.35 ? vec3(0.88, 0.85, 0.78) : h4 < 0.70 ? vec3(0.72, 0.75, 0.77) : vec3(0.30, 0.31, 0.33);
+            float isSlat = step(0.40, h3);
+            // Crisp horizontal venetian blind slats with alternating slat highlight & under-slat shadow
+            float slatWave = sin(cellUv.y * 55.0);
+            float slatSerrate = fract(cellUv.y * (55.0 / 6.283185));
+            float slatShade = mix(1.0, 0.72 + 0.28 * clamp(slatWave * 1.5 + 0.4, 0.0, 1.0) * (0.80 + 0.20 * slatSerrate), isSlat);
+            float bottomRail = step(abs(cellUv.y - (1.0 - blindDrop)), 0.014);
+            slatShade = mix(slatShade, 0.58, bottomRail);
+            vec3 shadeFabric = h4 < 0.35 ? vec3(0.90, 0.87, 0.80) : h4 < 0.70 ? vec3(0.74, 0.77, 0.79) : vec3(0.28, 0.29, 0.31);
             vec3 blindCol = shadeFabric * slatShade;
 
             float hasDrapes = step(0.55, h1) * (1.0 - step(0.80, h1)) * (1.0 - isGroundShowcase);
             float drapeSpan = 0.16 + 0.14 * h3;
             float inDrape = step(0.5 - drapeSpan, abs(cellUv.x - 0.5)) * hasDrapes;
-            float pleat = 0.82 + 0.18 * sin(cellUv.x * 52.0 + h4 * 6.28);
-            vec3 drapeCol = mix(vec3(0.84, 0.80, 0.74), vec3(0.68, 0.72, 0.76), h2) * pleat;
+            // Rich curtain fabric fold waves with specular sheen
+            float foldWave = sin(cellUv.x * 58.0 + h4 * 6.28);
+            float pleat = 0.76 + 0.24 * foldWave + 0.10 * sin(cellUv.x * 116.0);
+            vec3 drapeCol = mix(vec3(0.92, 0.88, 0.82), vec3(0.70, 0.74, 0.78), h2) * pleat;
 
             // Blend 3D interior room behind exterior glass Fresnel reflection, venetian blinds & side drapes
             vec3 dressedInterior = mix(litRoom, blindCol, inBlind);

@@ -389,6 +389,28 @@ export class Maritime {
     return this.region ? this.region.ferryRoutes : [];
   }
 
+  _isVesselInWater(x, z, halfLen = 0, yaw = 0) {
+    const water = this.app.water;
+    const checkPt = (px, pz) => {
+      const ty = getBeijingTerrainElevation(px, pz);
+      if (ty > 0.20) return false;
+      if (water && typeof water.isPointInWater === "function") {
+        if (!water.isPointInWater(px, pz)) return false;
+      } else if (this.region && typeof this.region.isWater === "function") {
+        if (!this.region.isWater(px, pz)) return false;
+      }
+      return true;
+    };
+    if (!checkPt(x, z)) return false;
+    if (halfLen > 1.0) {
+      const fx = Math.sin(yaw), fz = Math.cos(yaw);
+      const testDist = halfLen * 0.85;
+      if (!checkPt(x + fx * testDist, z + fz * testDist)) return false;
+      if (!checkPt(x - fx * testDist, z - fz * testDist)) return false;
+    }
+    return true;
+  }
+
   update(dt) {
     const app = this.app;
     if (!app.worldOrigin) return;
@@ -404,6 +426,25 @@ export class Maritime {
     } else if (this.mode === 'sim' && this._relay && !this._relayTried) {
       this._relayTried = true; // the relay probe resolved after the region loaded
       this._startLive(this._gen);
+    }
+    // Despawn/hide any vessel on dry land or terrain elevation > 0.8m
+    const water = this.app.water;
+    if (this.vessels && this.vessels.length) {
+      for (let i = 0; i < this.vessels.length; i++) {
+        const v = this.vessels[i];
+        if (!v || v.state === "player") continue;
+        const ty = getBeijingTerrainElevation(v.x, v.z);
+        const inWater = (water && typeof water.isPointInWater === "function")
+          ? water.isPointInWater(v.x, v.z)
+          : (this.region && typeof this.region.isWater === "function")
+            ? this.region.isWater(v.x, v.z)
+            : false;
+        if (ty > 0.8 || !inWater) {
+          v.dead = true;
+          v.visible = false;
+        }
+      }
+      this.vessels = this.vessels.filter((v) => !v.dead);
     }
     this.uniforms.uLights.value = lightsLevel();
     this._step(dt);
@@ -953,6 +994,11 @@ export class Maritime {
           v.s = (0.15 + 0.7 * r()) * rt.L;
           v.speed = SPEED[type];
           this._placeOnPath(v, true);
+          if (!this._isVesselInWater(v.x, v.z, v.halfLen || 16.0, v.yaw)) {
+            v.dead = true;
+            this.vessels.pop();
+            continue;
+          }
           made++;
         }
       }
@@ -976,6 +1022,11 @@ export class Maritime {
         v.s = (0.05 + 0.9 * r()) * v.cum[v.cum.length - 1];
         v.speed = SPEED[type];
         this._placeOnPath(v, true);
+        if (!this._isVesselInWater(v.x, v.z, v.halfLen || 35.0, v.yaw)) {
+          v.dead = true;
+          this.vessels.pop();
+          break;
+        }
       }
     }
     // Anchored ships.
@@ -994,6 +1045,11 @@ export class Maritime {
       }
       v.s = r() * v.cum[v.cum.length - 1];
       this._placeOnPath(v, true);
+      if (!this._isVesselInWater(v.x, v.z, v.halfLen || 10.0, v.yaw)) {
+        v.dead = true;
+        this.vessels.pop();
+        break;
+      }
     }
     // Sailboats around the player.
     for (const v of this.vessels) {
@@ -1006,6 +1062,11 @@ export class Maritime {
       if (!this._wanderRoute(v, [px, pz], 3500, 2)) { this.vessels.pop(); break; }
       v.s = r() * v.cum[v.cum.length - 1];
       this._placeOnPath(v, true);
+      if (!this._isVesselInWater(v.x, v.z, v.halfLen || 8.0, v.yaw)) {
+        v.dead = true;
+        this.vessels.pop();
+        break;
+      }
     }
   }
 
@@ -1493,6 +1554,7 @@ export class Maritime {
 
   _render() {
     const cam = this.app.camera;
+    const water = this.app.water;
     const cx = cam.position.x, cz = cam.position.z;
     cam.updateMatrixWorld();
     _pm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
@@ -1508,11 +1570,33 @@ export class Maritime {
       order.push(v);
     }
     order.sort((a, b) => a.dist - b.dist);
+
+    const cy = cam.position.y;
+    const camTerr = getBeijingTerrainElevation(cx, cz);
+    const camOnInland = cy < 120.0 && camTerr > 4.0;
+
     for (const v of order) {
       const spec = VESSEL_TYPES[v.type];
       const d = v.dist;
       const L = spec.length * v.sz, B = spec.beam * v.sx, Hh = spec.height * v.sy;
-      v.visible = d < VIEW[v.type] * Math.max(1, v.sz);
+      const ty = getBeijingTerrainElevation(v.x, v.z);
+      const isWet = ty <= 0.8 && ((water && typeof water.isPointInWater === "function") ? water.isPointInWater(v.x, v.z) : true);
+      const maxView = camOnInland ? Math.min(2600.0, VIEW[v.type]) : VIEW[v.type] * Math.max(1, v.sz);
+      let blocked = !isWet || d > maxView;
+      if (!blocked && d > 1200.0) {
+        const targetTopY = v.y + Hh;
+        for (let s = 1; s <= 5; s++) {
+          const t = s * 0.18;
+          const px = cx + (v.x - cx) * t;
+          const pz = cz + (v.z - cz) * t;
+          const rayY = cy + (targetTopY - cy) * t;
+          if (getBeijingTerrainElevation(px, pz) > rayY + 1.2) {
+            blocked = true;
+            break;
+          }
+        }
+      }
+      v.visible = !blocked;
       if (!v.visible) continue;
       _sph.center.set(v.x, v.y + Hh * 0.4, v.z);
       _sph.radius = L * 0.6 + Hh;

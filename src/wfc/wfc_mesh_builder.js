@@ -2064,8 +2064,11 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
               }
             }
 
-            // Emit 3-Sided Projecting Bay Windows (central front quad + two 45-deg side quads + cornice cap)
-            const wantBay = archRegion === 'sf' ? (baySeed % 5) < 4 : (baySeed % 3) !== 0;
+            // Emit 3-Sided Projecting Bay Windows on Victorian/Edwardian wood facades only (never on brick lofts or facades with fire escapes)
+            const feSeedCheck = (seed ^ Math.imul(i + 1, 3266489917)) >>> 0;
+            const hasFireEscapeOnEdge = upperFloors >= 3 && upperFloors <= 12 && len >= 6.8 && ((feSeedCheck % 3) === 0);
+            const isBrickMasonry = upperSpec.index === 0 || upperSpec.index === 1 || upperSpec.index === 6 || upperSpec.index === 7 || upperSpec.index === 8 || upperSpec.index === 10;
+            const wantBay = !hasFireEscapeOnEdge && !isBrickMasonry && (archRegion === 'sf' ? (baySeed % 5) < 3 : (baySeed % 4) === 0);
             if (wantBay && (edgeDoors || (baySeed % 2) === 0)) {
               const nBayStacks = len >= 13.5 ? 2 : 1;
               const segSpan = len / nBayStacks;
@@ -2075,8 +2078,6 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
               const invSqrt2 = 0.70710678;
               const lnx = (nx - tx) * invSqrt2, lnz = (nz - tz) * invSqrt2;
               const rnx = (nx + tx) * invSqrt2, rnz = (nz + tz) * invSqrt2;
-              const bayU0 = facadeUvBase(upperSpec.index);
-              const bayU1 = facadeUvBase(upperSpec.index) + 1.0 / upperSpec.bays;
 
               for (let bIdx = 0; bIdx < nBayStacks; bIdx++) {
                 let uMid = (bIdx + 0.5) * segSpan;
@@ -2112,24 +2113,20 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
                 const flx = x1 + fu0 * tx + nx * bayDepth, flz = z1 + fu0 * tz + nz * bayDepth;
                 const frx = x1 + fu1 * tx + nx * bayDepth, frz = z1 + fu1 * tz + nz * bayDepth;
 
-                const bayFloors = Math.max(1.0, Math.round((by1 - by0) / upperSpec.floorHeight));
-                const bayV0 = facadeV(upperSpec.index, 1.0);
-                const bayV1 = facadeV(upperSpec.index, 1.0 + bayFloors / upperSpec.floors);
-
-                // Left 45-degree angled window quad
+                // Left 45-degree angled window quad (solid wood/trim color with default uv -10.0)
                 pushDetailWallQuad(
                   lx0, by0, lz0, lx0, by1, lz0, flx, by1, flz, flx, by0, flz,
-                  lnx, 0, lnz, bayWallRgb, bayU0, bayV0, bayU1, bayV1
+                  lnx, 0, lnz, trimRgb
                 );
-                // Central projecting front window quad
+                // Central projecting front window quad (solid architectural wall/siding color with default uv -10.0)
                 pushDetailWallQuad(
                   flx, by0, flz, flx, by1, flz, frx, by1, frz, frx, by0, frz,
-                  nx, 0, nz, bayWallRgb, bayU0, bayV0, bayU1, bayV1
+                  nx, 0, nz, bayWallRgb
                 );
-                // Right 45-degree angled window quad
+                // Right 45-degree angled window quad (solid wood/trim color with default uv -10.0)
                 pushDetailWallQuad(
                   frx, by0, frz, frx, by1, frz, rx0, by1, rz0, rx0, by0, rz0,
-                  rnx, 0, rnz, bayWallRgb, bayU0, bayV0, bayU1, bayV1
+                  rnx, 0, rnz, trimRgb
                 );
                 // Molded bottom apron base + decorative top cornice crown cap
                 pushDetailWallBox(x1, by0, z1, tx, tz, nx, nz, bu0 - 0.04, bu1 + 0.04, -0.22, 0.04, 0.02, bayDepth + 0.05, trimRgb, false);

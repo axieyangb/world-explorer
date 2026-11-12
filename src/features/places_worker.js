@@ -1520,11 +1520,13 @@ export function computePlacesPayload(ctx) {
     for (const [a, b] of [[0, 0], [1, 0], [-1, 0], [0.6, 1], [0.6, -1], [-0.6, 1], [-0.6, -1]]) {
       const qx = x + dx * hl * a + nx * hw * b, qz = z + dz * hl * a + nz * hw * b;
       if (Math.abs(qx) > 500 || Math.abs(qz) > 500 || !inWater(qx, qz)) return false;
+      if (getBeijingTerrainElevation(ox + qx, oz + qz) > 0.20) return false;
     }
     for (const s of ships) if (Math.hypot(s[0] - x, s[1] - z) < s[2] + hl + 10) return false;
     return true;
   };
   const addShip = (x, z, dx, dz, big, rng) => {
+    if (getBeijingTerrainElevation(ox + x, oz + z) > 0.20) return;
     const s = big ? 1.0 : 0.45;
     ships.push([x, z, 60 * s]);
     const y = getBeijingTerrainElevation(ox + x, oz + z) + 0.28;

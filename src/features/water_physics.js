@@ -182,10 +182,17 @@ export class WaterPhysics {
   isPointInWater(wx, wz) {
     const app = this.app;
     const [cx, cz] = app.worldToChunk(wx, wz);
-    const chunk = app.loadedChunks.get(`${cx},${cz}`);
+    const chunk = app.loadedChunks ? app.loadedChunks.get(`${cx},${cz}`) : null;
     const ud = chunk && chunk.userData;
-    if (!ud || !ud.waterMask) return false;
-    return maskAt(ud.waterMask, wx - ud.ox, wz - ud.oz);
+    if (ud) {
+      if (ud.waterMask) return maskAt(ud.waterMask, wx - ud.ox, wz - ud.oz);
+      return false; // Loaded land chunk without water
+    }
+    // Fall back to regional water raster when chunk is not yet loaded (e.g. open sea)
+    if (app.maritime && app.maritime.region && app.maritime.region.ready && typeof app.maritime.region.isWater === "function") {
+      return app.maritime.region.isWater(wx, wz);
+    }
+    return false;
   }
 
   getWaterSurfaceY(wx, wz) {
