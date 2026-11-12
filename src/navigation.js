@@ -97,6 +97,7 @@ export class RoadNavigator {
     this._lastReroute = 0;
     this._lastLocalRefine = 0;
     this._lastChunkCount = 0;
+    this.avoid = []; // points FSD found impassable on this trip; drive routes skip road pieces within 7 m of them
   }
 
   init() {}
@@ -112,6 +113,48 @@ export class RoadNavigator {
   get dest() {
     if (!this.activeRoute) return null;
     return { x: this.activeRoute.goalX, z: this.activeRoute.goalZ };
+  }
+
+  /** Where the active route ends: the reachable road point nearest the destination (null while the route is partial). */
+  get routeEnd() {
+    const r = this.activeRoute;
+    if (!r || r.partial || r.straight || !r.points || r.points.length < 2) return null;
+    const p = r.points[r.points.length - 1];
+    return { x: p[0], z: p[2] };
+  }
+
+  /** Marks the route just ahead of the car, and the building blocking it, as impassable for later drive routes. */
+  avoidAhead(px, py, pz) {
+    const wp = this.getLookaheadPoint(px, pz, 10);
+    if (!wp) return false;
+    const col = this.app && this.app.collision;
+    const len = Math.hypot(wp.x - px, wp.z - pz) || 1;
+    let wall = null;
+    for (let d = 2; col && !wall && d <= 24; d += 2) {
+      wall = col.insideAny(px + ((wp.x - px) / len) * d, pz + ((wp.z - pz) / len) * d, py + 0.6);
+    }
+    this.avoid.push({ x: wp.x, y: py, z: wp.z, wall });
+    return true;
+  }
+
+  /** True when road piece s passes within 7 m of an avoided point or through the building that blocked the car there. */
+  _isAvoided(s) {
+    const col = this.app && this.app.collision;
+    const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
+    const l2 = vx * vx + vz * vz;
+    for (const a of this.avoid) {
+      const t = l2 > 1e-6 ? Math.max(0, Math.min(1, ((a.x - s.x1) * vx + (a.z - s.z1) * vz) / l2)) : 0;
+      if (Math.hypot(a.x - (s.x1 + vx * t), a.z - (s.z1 + vz * t)) < 7.0) return true;
+      const b = a.wall;
+      if (!b || !col || s.tunnel || s.bridge) continue;
+      if (Math.max(s.x1, s.x2) < b.minX || Math.min(s.x1, s.x2) > b.maxX || Math.max(s.z1, s.z2) < b.minZ || Math.min(s.z1, s.z2) > b.maxZ) continue;
+      const n = Math.max(1, Math.ceil(Math.sqrt(l2) / 3));
+      for (let i = 0; i <= n; i++) {
+        const x = s.x1 + (vx * i) / n, z = s.z1 + (vz * i) / n;
+        if (x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ && col.insideAny(x, z, a.y + 0.6)) return true;
+      }
+    }
+    return false;
   }
 
   get origin() {
@@ -214,6 +257,7 @@ export class RoadNavigator {
         const s = segs[i];
         if (!s) continue;
         if (mode === 'drive' && WALK_ONLY_CLS.has(s.cls)) continue;
+        if (mode === 'drive' && this.avoid.length && this._isAvoided(s)) continue;
         rawSegs.push(s);
       }
     }

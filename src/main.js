@@ -781,6 +781,16 @@ class WorldExplorerApp {
    * and OpenFreeMap Zoom-14 vector tiles for the new 40km x 40km region.
    */
   async teleportToLocation(lat, lon, displayName = "", streetName = "") {
+    if (this.fsd && this.fsd.active) this.stopFsd(); // the old destination is in the region being left
+    this._teleportHold = (this._teleportHold || 0) + 1; // player physics waits while terrain and chunks are swapped
+    try {
+      return await this._teleportToLocation(lat, lon, displayName, streetName);
+    } finally {
+      this._teleportHold -= 1;
+    }
+  }
+
+  async _teleportToLocation(lat, lon, displayName, streetName) {
     if (this.parkedCars) this.parkedCars.dropFar(0, 0, -1); // [parked-cars] new city origin: none survive
     const numLat = Number(lat);
     const numLon = Number(lon);
@@ -886,6 +896,7 @@ class WorldExplorerApp {
     const startY = this.mode === "helicopter" ? initTerrY + 150.0 : initTerrY + 0.25;
     this.pos.set(targetX, startY, targetZ);
     this.speed = 0;
+    this._resetMotionForTeleport();
     this.yaw = Math.PI * 0.5;
     this.camYaw = this.yaw;
     this.camYawOffset = 0;
@@ -957,6 +968,7 @@ class WorldExplorerApp {
       }
     }
 
+    this._resetMotionForTeleport();
     this._updateCamera(0.016);
     this._updateHud();
     this._updateActiveQuickChip(numLat, numLon);
@@ -1926,6 +1938,7 @@ class WorldExplorerApp {
     this.freeCamPos.set(clampedX, initTerrY + 95, clampedZ + 120);
     this.freeCamYaw = Math.PI;
     this.speed = 0;
+    this._resetMotionForTeleport();
     if (label) {
       this.currentRoadName = label;
     }
@@ -2008,7 +2021,48 @@ class WorldExplorerApp {
     }
     this.heliMesh.position.copy(this.pos);
     this.heliMesh.rotation.set(0, this.yaw, 0);
+    this._resetMotionForTeleport();
     this._updateCamera(0.016);
+  }
+
+  /** A teleport arrives at rest at this.pos: FSD off, no carried fall, boat left behind, airliner moved along. */
+  _resetMotionForTeleport() {
+    if (this.fsd && this.fsd.active) this.stopFsd();
+    if (this.mode === "boat" && this.maritime) {
+      // The target is a place on land, so step off; the boat stays moored where it was.
+      const boat = this.maritime.activeBoat;
+      if (boat && boat.state === "player") { boat.state = "moored"; boat.v = 0; }
+      this.maritime.activeBoat = null;
+      this.maritime.boatSpeed = 0;
+      this.setMode("walk");
+    }
+    this.speed = 0;
+    this.steerAngle = 0;
+    this.driveVelY = 0;
+    this.walkVelY = 0;
+    this.isGrounded = true;
+    this._bailingOutMidAir = false;
+    this._freefallTime = 0;
+    this._freefallVelX = 0;
+    this._freefallVelZ = 0;
+    this._fallPeakY = this.pos.y;
+    const plane = this.mode === "airliner" ? this.airliner : null;
+    if (plane && !plane.dead) {
+      // Like the helicopter, arrive flying level above the target instead of at the aircraft's old position.
+      this.pos.y = this.world.getHeightAt(this.pos.x, this.pos.z) + 160;
+      plane.mesh.position.copy(this.pos);
+      plane.grounded = false;
+      plane.gearDown = false;
+      plane.gearAnim = 0;
+      plane.speed = 115;
+      plane.ias = 110;
+      plane.vertSpeed = 0;
+      plane.pitch = 0.02;
+      plane.roll = 0;
+      plane.throttle = 0.72;
+      plane._syncOrientation();
+      this.camPivot.copy(this.pos);
+    }
   }
 
   _angleDiff(from, to) {
@@ -2028,6 +2082,7 @@ class WorldExplorerApp {
   }
 
   _updatePhysics(dt) {
+    if (this._teleportHold > 0) return; // mid-teleport: the world under the player is being replaced
     this.vfxTime += dt;
     const wrapA = (a) => a - Math.round(a / (Math.PI * 2)) * Math.PI * 2;
     this.yaw = wrapA(this.yaw);
@@ -2214,7 +2269,9 @@ class WorldExplorerApp {
         this.isGrounded = true;
         this._fallPeakY = groundY;
         this._bailingOutMidAir = false;
-        if (fallDrop > 14.0 || prevWalkVelY < -17.0) {
+        // Fatal above a 14 m drop (peak to landing). Height, not landing speed: the speed test used the
+        // previous frame's value, so it depended on frame rate and already fired at about 6 m.
+        if (fallDrop > 14.0) {
           this.avatarMesh.position.copy(this.pos);
           if (this.walkerWeapons) {
             this.walkerWeapons.killPlayer("FELL TO DEATH");
@@ -2403,8 +2460,8 @@ class WorldExplorerApp {
     this.nitroActive = isNitro;
 
     const mouseIdleSec = (performance.now() - this.lastMouseOrbitTime) * 0.001;
-    const nitro = spec.nitroBoost || 1.45;
-    const maxSpd = isNitro ? Math.max(spec.maxSpeed * nitro, 340.3) : spec.maxSpeed;
+    const nitro = spec.nitroMult || 1.45; // each vehicle's own nitro top-speed multiplier
+    const maxSpd = isNitro ? spec.maxSpeed * nitro : spec.maxSpeed;
     const speedRatio = Math.min(1, Math.abs(this.speed) / maxSpd);
 
     if (handbrake) {
@@ -2413,7 +2470,7 @@ class WorldExplorerApp {
       else this.speed -= Math.sign(this.speed) * decel;
     } else if (throttle > 0) {
       const curveFloor = isNitro ? 0.55 : 0.35;
-      const torque = (1.0 - speedRatio * (1.0 - curveFloor)) * spec.accel * (isNitro ? nitro * 1.15 : 1.0);
+      const torque = (1.0 - speedRatio * (1.0 - curveFloor)) * spec.accel * (isNitro ? 1.45 * 1.15 : 1.0); // nitro acceleration boost, same for every vehicle
       this.speed = Math.min(maxSpd, this.speed + torque * dt);
     } else if (throttle < 0) {
       if (this.speed > 1.0) {
@@ -4146,6 +4203,9 @@ class WorldExplorerApp {
       ? Math.hypot(this.navigator.dest.x - this.fsd.destX, this.navigator.dest.z - this.fsd.destZ)
       : Infinity;
     if (!this.navigator.active || dGoal > 8.0) {
+      const now = performance.now(); // routing rebuilds the road graph: retry every 2 s, not every frame
+      if (now - (this.fsd.routeTryAt || 0) < 2000) return;
+      this.fsd.routeTryAt = now;
       this.navigator.routeTo(this.pos, { x: this.fsd.destX, z: this.fsd.destZ }, this.fsd.label || "Destination");
     }
   }
@@ -4236,7 +4296,15 @@ class WorldExplorerApp {
    *   and Auto-Reverse Unstick Recovery
    */
   _applyDriveFsd(dt, spec = VEHICLE_SPECS[this.vehicleIdx]) {
-    const distToDest = Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z);
+    // The trip ends at the destination or, when that is off-road (inside a building, a park),
+    // at the end of the route to it: the nearest reachable road point.
+    const nav = this.navigator;
+    const navDest = nav && nav.dest;
+    const routeEnd = navDest && Math.hypot(navDest.x - this.fsd.destX, navDest.z - this.fsd.destZ) < 8.0 ? nav.routeEnd : null;
+    const distToDest = Math.min(
+      Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z),
+      routeEnd ? Math.hypot(routeEnd.x - this.pos.x, routeEnd.z - this.pos.z) : Infinity
+    );
     if (distToDest < 10.0) {
       this.speed = 0;
       this._onFsdArrived();
@@ -4500,12 +4568,44 @@ class WorldExplorerApp {
         this.fsd.stuckTimer = 0;
         this.fsd.reverseTimer = 1.25;
         this.fsd.reverseSteer = yawErr >= 0 ? -1 : 1;
+        this.fsd.unstickTries = (this.fsd.unstickTries || 0) + 1;
       }
     } else if (this.speed > 1.8) {
       this.fsd.stuckTimer = 0;
     }
 
+    // Progress watchdog: 3 unstick attempts, or 20 s on a road clear of traffic, without getting 15 m away.
+    const f = this.fsd;
+    if (Math.hypot(this.pos.x - f.anchorX, this.pos.z - f.anchorZ) > 15.0) {
+      f.anchorX = this.pos.x;
+      f.anchorZ = this.pos.z;
+      f.noProgressT = 0;
+      f.unstickTries = 0;
+    } else if (minClearAhead >= 22.0) {
+      f.noProgressT = (f.noProgressT || 0) + dt; // queuing behind traffic is not being stuck
+    }
+    if (f.unstickTries >= 3 || f.noProgressT > 20.0) {
+      this._onFsdStuck();
+      return { throttle: 0, steerInput: 0, handbrake: true };
+    }
+
     return { throttle, steerInput, handbrake };
+  }
+
+  /** FSD made no progress: try one detour around the blocked stretch, then hand back control. */
+  _onFsdStuck() {
+    const f = this.fsd;
+    f.noProgressT = 0;
+    f.unstickTries = 0;
+    if (!f.detoured && this.navigator && this.navigator.avoidAhead(this.pos.x, this.pos.y, this.pos.z)) {
+      f.detoured = true;
+      this.navigator.routeTo(this.pos, { x: f.destX, z: f.destZ }, f.label || "Destination");
+      showVehicleToast("FSD rerouting");
+      return;
+    }
+    this.stopFsd();
+    this.speed = 0;
+    showVehicleToast("FSD stopped · road blocked");
   }
 
   setFsdDestination(wx, wz, label = "Destination") {
@@ -4517,6 +4617,12 @@ class WorldExplorerApp {
     this.fsd.label = label || "Destination";
     this.fsd.stuckTimer = 0;
     this.fsd.reverseTimer = 0;
+    this.fsd.anchorX = this.pos.x;
+    this.fsd.anchorZ = this.pos.z;
+    this.fsd.noProgressT = 0;
+    this.fsd.unstickTries = 0;
+    this.fsd.detoured = false;
+    if (this.navigator) this.navigator.avoid = [];
 
     const beacon = this._ensureFsdBeacon();
     const terrY = getBeijingTerrainElevation(cx, cz);
