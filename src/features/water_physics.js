@@ -179,6 +179,8 @@ export class WaterPhysics {
     this.stats = { sinks: 0, respawns: 0 };
   }
 
+  isInWater(wx, wz) { return this.isPointInWater(wx, wz); }
+
   isPointInWater(wx, wz) {
     const app = this.app;
     const [cx, cz] = app.worldToChunk(wx, wz);
@@ -400,6 +402,10 @@ export class WaterPhysics {
       mesh.position.copy(app.pos);
       mesh.rotation.set(0, yaw, 0);
       if (mesh.userData.chassis) mesh.userData.chassis.rotation.z = 0;
+    }
+    if (app.avatarMesh) {
+      app.avatarMesh.position.copy(app.pos);
+      app.avatarMesh.rotation.set(0, yaw, 0);
     }
     this.stats.respawns++;
   }

@@ -1179,6 +1179,7 @@ export class WalkerWeaponsSystem {
     this.aiTanks = [];
     this.aiRagdolls = [];
     this.aiHeli = null;
+    this._inCombatTimer = 0;
 
     this.playerHp = 100;
     this.playerMaxHp = 100;
@@ -1793,6 +1794,7 @@ export class WalkerWeaponsSystem {
   }
 
   fireCurrentWeapon() {
+    this._inCombatTimer = 35.0;
     if (this.fireTimer > 0) return false;
     const w = WALKER_WEAPONS[this.activeWeapon];
     if (!w) return false; // fists
@@ -1925,6 +1927,7 @@ export class WalkerWeaponsSystem {
   }
 
   fireTankCannon() {
+    this._inCombatTimer = 35.0;
     if (this.tankCannonTimer > 0) return;
     const mesh = this.app.vehicleMesh;
     if (!mesh || !mesh.userData || !mesh.userData.isTank) return;
@@ -2157,29 +2160,48 @@ export class WalkerWeaponsSystem {
     this.aiSoldiers.length = 0;
     this.aiTanks.length = 0;
     this.aiHeli = null;
+    this._inCombatTimer = 0;
   }
 
   _updateAiMilitary(dt) {
     const K = this.app.kaiju;
     const kaijuActive = Boolean(K && K.active && K.kaiju && K.kaiju.alive);
-    if (this._aiInBattle && !kaijuActive) this.clearAiSquad(); // battle over: back to a small patrol
+    if (this._aiInBattle && !kaijuActive) this.clearAiSquad(); // battle over: back to peaceful
     this._aiInBattle = kaijuActive;
 
     if (kaijuActive) {
       this._updateAiKaijuBattle(dt, K.kaiju);
-    } else {
+    } else if (this._inCombatTimer > 0) {
+      this._inCombatTimer -= dt;
       this._updateAiNormalPatrol(dt);
+    } else {
+      if (this.aiSoldiers.length > 0 || this.aiTanks.length > 0 || this.aiHeli) {
+        this.clearAiSquad();
+      }
     }
   }
 
   _updateAiNormalPatrol(dt) {
-    const targetCount = 8;
-    while (this.aiSoldiers.length < targetCount) {
-      const angle = (this.aiSoldiers.length / targetCount) * Math.PI * 2;
+    if (this._inCombatTimer <= 0) {
+      this.clearAiSquad();
+      return;
+    }
+    const targetCount = 3;
+    const isWater = (x, z) => {
+      if (this.app.water && typeof this.app.water.isPointInWater === 'function') {
+        if (this.app.water.isPointInWater(x, z)) return true;
+      }
+      return getBeijingTerrainElevation(x, z) <= 0.2;
+    };
+    let attempts = 0;
+    while (this.aiSoldiers.length < targetCount && attempts++ < 30) {
+      const angle = (this.aiSoldiers.length / targetCount) * Math.PI * 2 + Math.random() * 0.4;
       const dist = 18 + (this.aiSoldiers.length % 3) * 6;
       const px = this.app.pos.x + Math.cos(angle) * dist;
       const pz = this.app.pos.z + Math.sin(angle) * dist;
+      if (isWater(px, pz)) continue;
       const py = getBeijingTerrainElevation(px, pz) + 0.12;
+      if (py <= 0.2) continue;
 
       const soldier = {
         mesh: createArmySoldierModel(this.aiSoldiers.length % 4 === 0 ? 'RPG' : 'RIFLE'),

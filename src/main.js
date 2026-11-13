@@ -843,7 +843,39 @@ class WorldExplorerApp {
       this._disposeChunkGroup(group);
       this.chunksRoot.remove(group);
     }
+    while (this.chunksRoot.children.length > 0) {
+      const child = this.chunksRoot.children[0];
+      this._disposeChunkGroup(child);
+      this.chunksRoot.remove(child);
+    }
     this.loadedChunks.clear();
+    this._stagedChunks.length = 0;
+
+    if (this.landmarks && typeof this.landmarks._clear === "function") {
+      this.landmarks._clear();
+    }
+    if (this.traffic && typeof this.traffic._resetAll === "function") {
+      this.traffic._resetAll();
+    }
+    if (this.places) {
+      this.places.currentDistrict = "";
+      this.places.currentDistrictSub = "";
+      this.places.currentPeak = "";
+      this.places.trackedGroups.clear();
+      this.places.lastX = Infinity;
+      this.places.lastZ = Infinity;
+      this.places.trains = [];
+      this.places._runwayPlanes = [];
+      this.places._skyPlanes = [];
+      if (this.places.pools) {
+        for (const pool of Object.values(this.places.pools)) pool.count = 0;
+      }
+      if (this.places.trainPool) this.places.trainPool.count = 0;
+      if (this.places.beacons && this.places.beacons.geometry) this.places.beacons.geometry.setDrawRange(0, 0);
+      if (this.places.labelSprites) {
+        for (const sp of this.places.labelSprites) sp.visible = false;
+      }
+    }
 
     // Clear horizon meshes
     while (this.horizonRoot.children.length > 0) {
@@ -1747,22 +1779,23 @@ class WorldExplorerApp {
 
   async _loadSingleChunk(cx, cz, key, immediate = false) {
     const genId = this.teleportGeneration || 0;
+    const reqKey = `${key}@g${genId}`;
     try {
       const ox = -HALF_WORLD + cx * CHUNK_SIZE + 500;
       const oz = -HALF_WORLD + cz * CHUNK_SIZE + 500;
       if (this.chunkWorker) {
         const payload = await new Promise((resolve) => {
-          this.workerCallbacks.set(key, resolve);
+          this.workerCallbacks.set(reqKey, resolve);
           let slot = this.chunkWorkers[0];
           for (const sl of this.chunkWorkers) if (sl.keys.size < slot.keys.size) slot = sl;
-          slot.keys.add(key);
+          slot.keys.add(reqKey);
           setTimeout(() => {
-            if (this.workerCallbacks.get(key) !== resolve) return; // answered, or cancelled by a teleport
-            this._onChunkWorkerFailed(slot, `no answer for chunk ${key} in ${CHUNK_TIMEOUT_MS / 1000} s`);
+            if (this.workerCallbacks.get(reqKey) !== resolve) return; // answered, or cancelled by a teleport
+            this._onChunkWorkerFailed(slot, `no answer for chunk ${reqKey} in ${CHUNK_TIMEOUT_MS / 1000} s`);
           }, CHUNK_TIMEOUT_MS);
           slot.worker.postMessage({
             type: "buildChunk",
-            key,
+            key: reqKey,
             cx,
             cz,
             ox,
@@ -1781,6 +1814,8 @@ class WorldExplorerApp {
         }
         if (immediate) {
           const group = assembleChunkFromWorkerPayload(payload, this.mats, this.layerVisibility);
+          const old = this.loadedChunks.get(key);
+          if (old) { this._disposeChunkGroup(old); this.chunksRoot.remove(old); }
           this.chunksRoot.add(group);
           this.loadedChunks.set(key, group);
           this._stagedChunks.push(group);
@@ -1795,6 +1830,8 @@ class WorldExplorerApp {
       if (!data || (this.teleportGeneration || 0) !== genId) return;
       if (immediate) {
         const group = buildChunkMeshGroup(cx, cz, ox, oz, data, this.mats, this.layerVisibility, this.worldOrigin);
+        const old = this.loadedChunks.get(key);
+        if (old) { this._disposeChunkGroup(old); this.chunksRoot.remove(old); }
         this.chunksRoot.add(group);
         this.loadedChunks.set(key, group);
         this.horizonCutoutDirty = true;
@@ -3308,6 +3345,19 @@ class WorldExplorerApp {
     if (newMode !== prevMode && newMode !== "walk") this.camYaw = this.yaw;
     if (this.walkerWeapons) this.walkerWeapons.onModeChange(newMode, prevMode);
 
+    // [fix/water-spawn] When switching to Walk or Drive from helicopter / airliner over water, snap to nearest dry road
+    const switchingToGround = (newMode === "walk" || newMode === "drive") && (prevMode === "helicopter" || prevMode === "airliner");
+    if (switchingToGround && !this._bailingOutMidAir) {
+      const inWater = (this.water && (this.water.isPointInWater(this.pos.x, this.pos.z))) ||
+        (getBeijingTerrainElevation(this.pos.x, this.pos.z) <= 0.2);
+      if (inWater && this.water && typeof this.water._respawn === "function") {
+        this.water._respawn();
+        if (this.avatarMesh) { this.avatarMesh.position.copy(this.pos); this.avatarMesh.rotation.set(0, this.yaw, 0); }
+        if (this.vehicleMesh) { this.vehicleMesh.position.copy(this.pos); this.vehicleMesh.rotation.set(0, this.yaw, 0); }
+        if (this.camPivot) this.camPivot.copy(this.pos);
+      }
+    }
+
     this._updateModeAndCamBadges();
 
     if (newMode === "drive") {
@@ -3871,6 +3921,12 @@ class WorldExplorerApp {
   }
 
   setTimeOfDay(preset) {
+    if (this.atmosphere) {
+      const h = preset === "noon" ? 13.5 : preset === "sunset" ? 18.5 : preset === "night" ? 22.0 : 12.0;
+      this.atmosphere.setTime(h);
+      if (preset === "overcast") this.atmosphere.setWeather("cloudy", true);
+      else this.atmosphere.setWeather("clear", true);
+    }
     const presets = {
       noon: {
         labelEn: "DAY",

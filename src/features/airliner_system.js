@@ -1070,19 +1070,29 @@ export class AirlinerSystem {
 
     // 1. Update Multi-Layer 3D Volumetric Cloud Deck around camera / focus position
     if (this.cloudSheets && focusPos) {
-      const sunDir = this.app.atmosphere?.sunDir || this.app.sunDir;
-      const sunElev = sunDir ? sunDir.y : (this.app.sky?.lastState?.sunElevation ?? 0.65);
-      const cloudCover = this.app.atmosphere?.cloud ?? 0.28;
-      for (let i = 0; i < this.cloudSheets.length; i++) {
-        const sheet = this.cloudSheets[i];
-        sheet.position.x = focusPos.x;
-        sheet.position.z = focusPos.z;
-        const u = sheet.material.uniforms;
-        u.uTime.value = now;
-        u.uCenter.value.set(focusPos.x, focusPos.z);
-        u.uSunElev.value = sunElev;
-        u.uCloudCover.value = cloudCover;
-        if (sunDir && u.uSunDir) u.uSunDir.value.copy(sunDir);
+      const isAirlinerMode = this.app.mode === 'airliner';
+      const isClear = this.app.atmosphere && (this.app.atmosphere.weather === 'clear' || (this.app.atmosphere.cloud ?? 0.28) < 0.05);
+      if (!isAirlinerMode || isClear) {
+        if (this.cloudGroup.visible) this.cloudGroup.visible = false;
+      } else {
+        if (!this.cloudGroup.visible) this.cloudGroup.visible = true;
+        const sunDir = this.app.atmosphere?.sunDir || this.app.sunDir;
+        const sunElev = sunDir ? sunDir.y : (this.app.sky?.lastState?.sunElevation ?? 0.65);
+        const cloudCover = this.app.atmosphere?.cloud ?? 0.28;
+        const localGroundY = Math.max(0, this.app.world?.getHeightAt ? this.app.world.getHeightAt(focusPos.x, focusPos.z) : 0);
+        for (let i = 0; i < this.cloudSheets.length; i++) {
+          const sheet = this.cloudSheets[i];
+          sheet.position.x = focusPos.x;
+          sheet.position.z = focusPos.z;
+          const specY = 1580 + i * 240;
+          sheet.position.y = specY + localGroundY;
+          const u = sheet.material.uniforms;
+          u.uTime.value = now;
+          u.uCenter.value.set(focusPos.x, focusPos.z);
+          u.uSunElev.value = sunElev;
+          u.uCloudCover.value = cloudCover;
+          if (sunDir && u.uSunDir) u.uSunDir.value.copy(sunDir);
+        }
       }
     }
 
