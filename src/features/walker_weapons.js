@@ -1464,6 +1464,7 @@ export class WalkerWeaponsSystem {
   // The first press after the window gains focus (`ignore`) never fires a quick click, but a deliberate still
   // hold does start auto fire. Once auto fire runs, moving the mouse aims (orbits) and keeps firing (GTA).
   beginPress(button, x, y, ignore = false) {
+    if (button !== 2) return; // Right-click only fires/punches; left-click is camera orbit/look
     this._press = { button, x, y, t: performance.now(), ignore, moved: false, holding: false };
   }
 
@@ -1479,11 +1480,9 @@ export class WalkerWeaponsSystem {
     this._press = null;
     if (P.holding) { this.isFiring = false; return; }
     if (P.ignore || P.moved || performance.now() - P.t > 600) return;
-    if (button === 0) {
+    if (button === 2) {
       if (this.isArmed()) this.fireCurrentWeapon();
       else if (this.app.triggerPlayerPunch) this.app.triggerPlayerPunch();
-    } else if (button === 2) {
-      this.quickFireRpg();
     }
   }
 
@@ -1494,7 +1493,7 @@ export class WalkerWeaponsSystem {
 
   _updatePress() {
     const P = this._press;
-    if (!P || P.moved || P.holding || P.button !== 0) return;
+    if (!P || P.moved || P.holding || P.button !== 2) return;
     if (!this.isArmed() || this.app.mode !== 'walk') return;
     if (performance.now() - P.t >= (P.ignore ? HOLD_FIRE_MS * 2 : HOLD_FIRE_MS)) {
       P.holding = true;

@@ -108,6 +108,7 @@ import { ControlsHint, KEY, keyCaps } from "./features/controls.js"; // one tabl
 import { ModeMenu } from "./features/mode_menu.js";
 import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjacking
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
+import { getSignalPhase } from "./features/signals.js";
 import { SpaceLaunchSystem } from "./features/space_launch_system.js"; // [feature/space-launch]
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
@@ -115,9 +116,9 @@ const GRID_DIM = 40;
 // Phones get a 3x3 streaming zone: a 5x5 one needs well over a gigabyte, more than mobile browsers allow a tab.
 const TOUCH_UI = isTouchDevice();
 const LOAD_RADIUS = TOUCH_UI || QUALITY.tier === "low" ? 1 : 2; // [ui-mobile] Low also streams 3x3;   // 5x5 chunks = 25 km^2 active streaming zone (3x3 on touch devices)
-// [perf] A chunk unloads once the player is more than this many chunk widths from its centre: half a chunk
-// (500 m) of hysteresis past the load zone. (Was a whole extra ring: up to 7x7 = 49 chunks kept on desktop.)
-const UNLOAD_DIST = LOAD_RADIUS + 1.0;
+// [perf] Distant 3D City Skyline: retain or stream mass-only building hulls in an outer skyline ring (radius 3 on high tier)
+const SKYLINE_RADIUS = QUALITY.tier === "high" && !TOUCH_UI ? 3 : (TOUCH_UI || QUALITY.tier === "low" ? 1 : 2);
+const UNLOAD_DIST = SKYLINE_RADIUS + 0.8;
 // [perf] Building detail per chunk (see computeChunkWorkerPayload): none above this altitude (buildings are
 // hidden above 600 m), full detail for the chunks right around the player, massing only for the rest.
 const BLDG_BUILD_MAX_ALT = 900;
@@ -488,7 +489,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261112_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261113_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -1699,8 +1700,9 @@ class WorldExplorerApp {
 
     const needed = [];
     const activeRadius = waitAll ? waitRadius : LOAD_RADIUS;
-    for (let dx = -activeRadius; dx <= activeRadius; dx++) {
-      for (let dz = -activeRadius; dz <= activeRadius; dz++) {
+    const streamRadius = waitAll ? waitRadius : SKYLINE_RADIUS;
+    for (let dx = -streamRadius; dx <= streamRadius; dx++) {
+      for (let dz = -streamRadius; dz <= streamRadius; dz++) {
         const cx = pcx + dx;
         const cz = pcz + dz;
         if (cx < 0 || cx >= GRID_DIM || cz < 0 || cz >= GRID_DIM) continue;
@@ -3100,16 +3102,14 @@ class WorldExplorerApp {
       this._canvasEngaged = true;
       if (e.pointerType === "touch") {
         // fall through to the popover/panel cleanup below
-      } else if (e.button === 0 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
+      } else if (e.button === 2 && this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
         this._ensureHeli().pressTrigger(e.clientX, e.clientY); // hold to fire the cannon
-      } else if ((e.button === 0 || e.button === 2) && this.mode === "walk" && this.walkerWeapons) {
+      } else if (e.button === 2 && this.mode === "walk" && this.walkerWeapons) {
         // [weapon-pickups] On foot a press attacks only if it stays still (click = shot / punch, hold = auto
         // fire); a drag is camera look. Kaiju Defense's soldier has its own pointer path (kaiju_mode.js).
         if (!(this.kaiju && this.kaiju.active)) this.walkerWeapons.beginPress(e.button, e.clientX, e.clientY, focusClick);
-      } else if (e.button === 0 && this.isDrivingTank() && this.walkerWeapons) {
-        this.walkerWeapons.fireTankCannon();
       } else if (e.button === 2 && this.isDrivingTank() && this.walkerWeapons) {
-        this.walkerWeapons.fireTankRocket();
+        this.walkerWeapons.fireTankCannon();
       }
       const pop = document.getElementById("mode-vehicle-menu");
       if (pop) pop.classList.add("hidden");
@@ -3135,12 +3135,10 @@ class WorldExplorerApp {
 
     this.canvas.addEventListener("pointerup", (e) => {
       if (e.pointerType === "touch") return;
-      const moveDist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
-      if ((e.button === 0 || e.button === 2) && this.mode === "walk") {
-        if (this.walkerWeapons) this.walkerWeapons.endPress(e.button); // [weapon-pickups] click: shot, or punch unarmed
+      if (e.button === 2 && this.mode === "walk") {
+        if (this.walkerWeapons) this.walkerWeapons.endPress(e.button); // [weapon-pickups] right-click: shot, or punch unarmed
       } else if (this.mode === "helicopter" && !(this.kaiju && this.kaiju.active)) {
-        if (e.button === 0) this._ensureHeli().releaseTrigger(); // quick tap = one round
-        else if (e.button === 2 && moveDist < 6) this._ensureHeli().fireRockets();
+        if (e.button === 2) this._ensureHeli().releaseTrigger(); // quick tap = one round
       }
     });
 
@@ -3205,7 +3203,9 @@ class WorldExplorerApp {
         modeLabelEl.textContent = `${prefix} · ${vName.toUpperCase()}`;
       } else if (this.mode === "airliner") {
         const liv = this.airliner ? AIRLINER_LIVERIES[this.airliner.liveryIdx] : null;
-        modeLabelEl.textContent = getLang() === "zh" ? `客机 · ${liv && liv.name ? liv.name : "BOEING 787"}` : `JET · ${liv && liv.name ? liv.name.toUpperCase() : "BOEING 787"}`;
+        const isFighter = liv?.variant === "fighter_jet";
+        const prefix = isFighter ? (getLang() === "zh" ? "战机" : "JET") : (getLang() === "zh" ? "客机" : "JET");
+        modeLabelEl.textContent = `${prefix} · ${liv && liv.name ? (getLang() === "zh" ? liv.nameZh || liv.name : liv.name.toUpperCase()) : "BOEING 787"}`;
       } else if (this.mode === "boat") {
         modeLabelEl.textContent = getLang() === "zh" ? "游艇驾驶" : "BOAT · MARITIME";
       } else if (this.mode === "walk") {
@@ -3255,11 +3255,13 @@ class WorldExplorerApp {
       listEl.appendChild(btn);
     };
     if (this.mode === "airliner") {
-      // Jet mode: the two airliners (they are not in the car list)
+      // Jet mode: selectable airliner and fighter jet options
       const zh = getLang() === "zh";
+      const f22Idx = AIRLINER_LIVERIES.findIndex(l => l.variant === "fighter_jet");
       [
         { label: zh ? "波音 787-9 梦想客机" : "Boeing 787-9 Dreamliner", liveryIdx: 0, meta: "950 km/h" },
         { label: zh ? "空客 A350-1000 宽体客机" : "Airbus A350-1000 XWB", liveryIdx: 1, meta: "945 km/h" },
+        { label: zh ? "F-22 猛禽超音速隐形战机" : "F-22 Raptor Stealth Fighter", liveryIdx: f22Idx >= 0 ? f22Idx : 2, meta: "2,410 km/h" },
       ].forEach((ao) => add(ao.label, ao.meta, Boolean(this.airliner && this.airliner.liveryIdx === ao.liveryIdx), () => {
         if (this.airliner) this.airliner.cycleLivery(ao.liveryIdx);
         this._updateModeAndCamBadges();
@@ -4198,6 +4200,10 @@ class WorldExplorerApp {
     return grp;
   }
 
+  get signals() {
+    return (this.streetFeatures && this.streetFeatures.activeSignals) || [];
+  }
+
   get fsdActive() {
     return Boolean(this.fsd && this.fsd.active);
   }
@@ -4557,11 +4563,49 @@ class WorldExplorerApp {
       this.camYaw += this._angleDiff(this.camYaw, this.yaw) * Math.min(1, 3.5 * dt);
     }
 
-    // Target speed modulation: cornering, upcoming route turn, passing, ACC, and AEB
+    // Target speed modulation: road-class speed limit, traffic signals, cornering, upcoming route turn, passing, ACC, and AEB
+    const roadClass = wp.cls || 'residential';
+    const classLimits = {
+      motorway: 28.0,
+      trunk: 24.0,
+      primary: 18.0,
+      secondary: 14.0,
+      tertiary: 12.0,
+      residential: 9.5,
+      service: 6.5,
+      living_street: 6.0,
+      unclassified: 9.5,
+    };
+    const classSpeedLimit = classLimits[roadClass] || 12.0;
+
     const cornerFactor = Math.max(0.32, 1.0 - Math.abs(yawErr) * 0.72);
     const turnLookFactor = Math.max(0.38, 1.0 - (wp.turnAngle || 0) * 0.52);
     const approachFactor = THREE.MathUtils.clamp(distToDest / 45.0, 0.28, 1.0);
-    let targetFsdSpeed = Math.min(spec.maxSpeed * 0.76, 26.0) * cornerFactor * turnLookFactor * approachFactor;
+    let targetFsdSpeed = Math.min(spec.maxSpeed * 0.76, Math.min(26.0, classSpeedLimit)) * cornerFactor * turnLookFactor * approachFactor;
+
+    // Traffic signal compliance: smoothly brake to stop at stop line on red signal facing intersection
+    const sigs = this.signals;
+    if (sigs && sigs.length > 0) {
+      for (let si = 0; si < sigs.length; si++) {
+        const s = sigs[si];
+        const dx = s.x - this.pos.x, dz = s.z - this.pos.z;
+        const fwd = dx * sinY + dz * cosY;
+        const lat = -dx * cosY + dz * sinY;
+        if (fwd >= 4.0 && fwd <= 20.0 && Math.abs(lat) < 6.5) {
+          const phase = s.phase || getSignalPhase(s.key, undefined, s.axis ? 'ew' : 'ns');
+          if (phase === 'red') {
+            const stopDist = Math.max(0, fwd - 4.5);
+            const redBrakeSpeed = Math.min(targetFsdSpeed, stopDist * 0.95);
+            targetFsdSpeed = Math.min(targetFsdSpeed, redBrakeSpeed);
+            if (stopDist < 1.8) {
+              this.speed = Math.max(0, this.speed - 30.0 * dt);
+              if (this.speed < 0.6) { this.speed = 0; }
+            }
+            break;
+          }
+        }
+      }
+    }
 
     if (Math.abs(bestOffset) > 0.16) {
       // Controlled speed during lane change / overtaking maneuver

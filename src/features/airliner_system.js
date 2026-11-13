@@ -808,8 +808,9 @@ export class AirlinerSystem {
     // 3. Thrust & Aerodynamic Drag -> True Airspeed (TAS) and Indicated Airspeed (IAS)
     // High-bypass turbofans produce up to ~32 m/s^2 effective unloaded acceleration on takeoff roll
     // so rotation speed (62 m/s IAS) is reached smoothly within ~350 m of runway.
+    const isFighter = Boolean(this.mesh && this.mesh.userData && this.mesh.userData.isFighter);
     const ceilingFactor = THREE.MathUtils.clamp(1.0 - Math.max(0, alt - 10800) / (SERVICE_CEILING - 10800), 0.0, 1.0);
-    const maxThrustAccel = 31.0 * engineFactor * (0.45 + 0.55 * Math.pow(sigma, 0.35)) * Math.max(0.15, ceilingFactor);
+    const maxThrustAccel = (isFighter ? 68.0 : 31.0) * engineFactor * (0.45 + 0.55 * Math.pow(sigma, 0.35)) * Math.max(0.15, ceilingFactor);
     const thrustAccel = Math.max(0, this.throttle) * maxThrustAccel;
 
     // Parasitic + induced drag scales with dynamic pressure q ~ sigma * TAS^2
@@ -827,7 +828,7 @@ export class AirlinerSystem {
         // Speedbrakes / spoilers in flight
         this.speed = Math.max(38, this.speed - 14 * dt);
       }
-      this.speed = Math.min(272, Math.max(this.grounded ? -9 : 28, this.speed));
+      this.speed = Math.min(isFighter ? 680 : 272, Math.max(this.grounded ? -9 : 28, this.speed));
     }
 
     this.ias = Math.max(0, this.speed) * sqrtSigma;
@@ -837,7 +838,7 @@ export class AirlinerSystem {
     const asymYaw = (hpRatio < 0.70 && hpRatio >= 0.35) ? -0.14 * this.throttle : 0;
 
     // 4. Ground Taxi vs. Airborne Flight Envelope
-    const VR_IAS = pullUp ? 52.0 : 62.0;   // Rotation / liftoff Indicated Airspeed (m/s)
+    const VR_IAS = isFighter ? (pullUp ? 40.0 : 48.0) : (pullUp ? 52.0 : 62.0);
     const VSTALL_IAS = 48.0;               // Stall Indicated Airspeed (m/s)
 
     if (this.grounded) {
@@ -892,11 +893,11 @@ export class AirlinerSystem {
       const rollInput = fsdActive
         ? THREE.MathUtils.clamp(-fsdYawErr * 1.4, -0.85, 0.85)
         : (steerRight ? 1 : 0) - (steerLeft ? 1 : 0);
-      const maxBank = 0.62; // ~35 deg bank angle limit (normal law protection)
+      const maxBank = isFighter ? 1.28 : 0.62; // ~73 deg bank for fighter, 35 deg for airliner
       if (Math.abs(rollInput) > 0.01) {
-        this.roll = THREE.MathUtils.lerp(this.roll, rollInput * maxBank, Math.min(1, dt * 3.8));
+        this.roll = THREE.MathUtils.lerp(this.roll, rollInput * maxBank, Math.min(1, dt * (isFighter ? 6.5 : 3.8)));
       } else {
-        this.roll = THREE.MathUtils.lerp(this.roll, 0, Math.min(1, dt * 3.0));
+        this.roll = THREE.MathUtils.lerp(this.roll, 0, Math.min(1, dt * (isFighter ? 4.5 : 3.0)));
       }
 
       const directTurn = fsdActive
@@ -904,7 +905,7 @@ export class AirlinerSystem {
         : (steerLeft ? 1 : 0) - (steerRight ? 1 : 0);
       const rudderInput = (yawLeft ? 1 : 0) - (yawRight ? 1 : 0);
       // Coordinated turn rate + direct aileron-yaw coupling so pressing A immediately turns left & D turns right
-      const turnRate = -Math.tan(this.roll) * 0.62 + directTurn * 0.42 + rudderInput * 0.35 + asymYaw;
+      const turnRate = -Math.tan(this.roll) * (isFighter ? 1.15 : 0.62) + directTurn * (isFighter ? 0.75 : 0.42) + rudderInput * (isFighter ? 0.65 : 0.35) + asymYaw;
       this.app.yaw += turnRate * dt;
 
       // Pitch control & Stall / Service Ceiling / Auto-Flare protection
@@ -922,11 +923,11 @@ export class AirlinerSystem {
         // Service ceiling (12,500 m FL410): level off smoothly
         this.pitch = THREE.MathUtils.lerp(this.pitch, 0.0, Math.min(1, dt * 2.5));
       } else if (pitchInput !== 0) {
-        const maxPitchUp = 0.34 * ceilingFactor; // ~19.5 deg max climb pitch
+        const maxPitchUp = (isFighter ? 0.72 : 0.34) * ceilingFactor; // ~41 deg climb pitch for fighter
         // Auto-flare near the ground so descending with S/Down lands smoothly instead of nosediving
-        const maxPitchDown = agl < 40 ? -0.09 : -0.32;
+        const maxPitchDown = agl < 40 ? -0.09 : (isFighter ? -0.55 : -0.32);
         const targetPitch = pitchInput > 0 ? maxPitchUp : maxPitchDown;
-        this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, Math.min(1, dt * 2.6));
+        this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, Math.min(1, dt * (isFighter ? 4.5 : 2.6)));
       } else {
         // Fly-by-wire attitude trim: gently return toward level flight at cruise
         this.pitch = THREE.MathUtils.lerp(this.pitch, 0.018, Math.min(1, dt * 2.2));

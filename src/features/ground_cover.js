@@ -259,9 +259,16 @@ export function chunkGroundSampler(data) {
 }
 
 /** Final terrain colour tweaks shared by chunk and horizon terrain: cliffs on steep untagged/natural slopes. */
-export function groundSlopeTint(rgb, slope, built) {
-  const cliff = smooth(0.85, 1.4, slope) * (1 - built);
-  return cliff > 0 ? lerp3(rgb, CLIFF, cliff) : rgb;
+export function groundSlopeTint(rgb, slope, built, elev = 0) {
+  const cliff = smooth(0.62, 1.4, slope) * (1 - built);
+  let c = cliff > 0 ? lerp3(rgb, CLIFF, cliff) : rgb;
+  if (elev > 1850) {
+    const snowFactor = smooth(1850, 2400, elev) * smooth(1.4, 0.75, slope) * (1 - built * 0.8);
+    if (snowFactor > 0) {
+      c = lerp3(c, [0.93, 0.95, 0.98], Math.min(1.0, snowFactor * 0.92));
+    }
+  }
+  return c;
 }
 
 // ------------------------------------------------------------------------------------------------

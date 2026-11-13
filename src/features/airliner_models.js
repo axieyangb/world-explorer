@@ -5,6 +5,7 @@
 //   3. charAirlinerModel(group) -> scorches airliner materials on destruction
 
 import * as THREE from "../../vendor/three.module.js";
+import { createPlaneModel } from "../entities.js";
 
 export const AIRLINER_LIVERIES = [
   {
@@ -17,6 +18,18 @@ export const AIRLINER_LIVERIES = [
     stripeHex: 0x00a3e0,
     bellyHex: 0xdce3ec,
     engineHex: 0xf4f7fb,
+  },
+
+  {
+    id: "fighter_jet",
+    variant: "fighter_jet",
+    name: "F-22 Raptor Stealth Fighter",
+    nameZh: "F-22 猛禽隐形战机",
+    airline: "Air Superiority",
+    tailHex: 0x4a5568,
+    stripeHex: 0x718096,
+    bellyHex: 0x2d3748,
+    engineHex: 0x1a202c,
   },
   {
     id: "airbus_a350",
@@ -864,6 +877,14 @@ export function createHeroAirlinerModel(liveryOrIdx = 0, scale = 1.35) {
     typeof liveryOrIdx === "object" && liveryOrIdx !== null
       ? liveryOrIdx
       : AIRLINER_LIVERIES[Math.abs(liveryOrIdx | 0) % AIRLINER_LIVERIES.length];
+
+  if (livery && livery.variant === "fighter_jet") {
+    const plane = createPlaneModel("fighter_jet");
+    plane.name = `airliner_${livery.id}`;
+    plane.scale.setScalar(scale * 1.15);
+    plane.userData.isFighter = true;
+    return plane;
+  }
 
   const isA350 = livery.variant === "airbusA350";
 

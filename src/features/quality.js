@@ -17,7 +17,7 @@ const TIERS = {
   //        DPR cap/min    shadow map/dist/cull      traffic, peds, car shadows   prop, places, trees(near/mid/far)          chunk detail distances (m, from the chunk edge)                    min fog   labels
   high: { dprCap: 1.5, dprMin: 0.60, shadowMap: 2048, shadowDist: 1.0, shadowM: 780, traffic: 1.0, peds: 1.0, carShadows: true, props: 1.0, places: 1.0, treeNear: 1.0, treeMid: 1.0, treeFar: 1.0, markingsM: Infinity, wear: true, roadsM: Infinity, buildingsM: Infinity, bldgFineM: 300, landcoverM: Infinity, horizonDetail: true, fogMin: 0, labels: 10 },
   medium: { dprCap: 1.5, dprMin: 0.60, shadowMap: 1536, shadowDist: 0.8, shadowM: 520, traffic: 0.55, peds: 0.7, carShadows: true, props: 0.75, places: 0.7, treeNear: 0.85, treeMid: 0.8, treeFar: 0.8, markingsM: 650, wear: true, roadsM: 1300, buildingsM: Infinity, bldgFineM: 230, landcoverM: 1100, horizonDetail: true, fogMin: 0.00028, labels: 8 },
-  low: { dprCap: 1.25, dprMin: 0.60, shadowMap: 1024, shadowDist: 0.6, shadowM: 0, traffic: 0.18, peds: 0.35, carShadows: false, props: 0.55, places: 0.3, treeNear: 0.7, treeMid: 0.5, treeFar: 0.45, markingsM: 360, wear: false, roadsM: 850, buildingsM: 950, bldgFineM: 160, landcoverM: 650, horizonDetail: false, fogMin: 0.00055, labels: 6 },
+  low: { dprCap: 1.25, dprMin: 0.60, shadowMap: 1024, shadowDist: 0.6, shadowM: 0, traffic: 0.18, peds: 0.35, carShadows: false, props: 0.55, places: 0.3, treeNear: 0.7, treeMid: 0.5, treeFar: 0.45, markingsM: 360, wear: false, roadsM: 850, buildingsM: 1600, bldgFineM: 160, landcoverM: 650, horizonDetail: false, fogMin: 0.00055, labels: 6 },
 };
 const ORDER = ['low', 'medium', 'high'];
 const MODES = ['auto', 'high', 'medium', 'low'];

@@ -312,7 +312,7 @@ export class RoadNavigator {
           const yb = (b.y1 || 0) + ((b.y2 || 0) - (b.y1 || 0)) * tB;
           const nearEndA = tA * la < 3.5 || (1 - tA) * la < 3.5;
           const nearEndB = tB * lb < 3.5 || (1 - tB) * lb < 3.5;
-          if (Boolean(a.bridge) !== Boolean(b.bridge) && Math.abs(ya - yb) > 2.2 && !(nearEndA && nearEndB)) continue;
+          if (Boolean(a.bridge) !== Boolean(b.bridge) || (a.layer || 0) !== (b.layer || 0)) continue;
           if (Boolean(a.tunnel) !== Boolean(b.tunnel) && !(nearEndA || nearEndB)) continue;
           addCut(ia, tA, ix, iz);
           addCut(ib, tB, ix, iz);
@@ -633,7 +633,7 @@ export class RoadNavigator {
             const my = p0[1] + (p1[1] - p0[1]) * frac;
             const mz = p0[2] + dz * frac;
             worldPts.push(pickSafePt(mx, my, mz, 1.0));
-            segFlags.push({ tunnel: Boolean(meta.tunnel), bridge: Boolean(meta.bridge), width: roadW });
+            segFlags.push({ tunnel: Boolean(meta.tunnel), bridge: Boolean(meta.bridge), width: roadW, cls: meta.cls || 'residential' });
           }
         }
 
@@ -697,7 +697,7 @@ export class RoadNavigator {
           worldPts.push(chosen);
         }
         if (i < nP - 1) {
-          segFlags.push({ tunnel: Boolean(meta.tunnel), bridge: Boolean(meta.bridge), width: meta.width || 6.0 });
+          segFlags.push({ tunnel: Boolean(meta.tunnel), bridge: Boolean(meta.bridge), width: meta.width || 6.0, cls: meta.cls || 'residential' });
         }
       }
       this._detourWalkPointsAroundBuildings(worldPts, segFlags);
@@ -866,6 +866,7 @@ export class RoadNavigator {
       tanX,
       tanZ,
       tunnel: Boolean(curSegFlag && curSegFlag.tunnel),
+      cls: (curSegFlag && curSegFlag.cls) || 'residential',
     };
   }
 

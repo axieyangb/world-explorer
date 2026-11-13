@@ -76,11 +76,10 @@ export class KaijuWeapons {
     if (code === "Space") this._cannonKey = false;
   }
   onPointerDown(button) {
-    if (button === 0) this._cannonMouse = true;
-    else if (button === 2) this._fireMissiles();
+    if (button === 2) this._cannonMouse = true;
   }
   onPointerUp(button) {
-    if (button === 0) this._cannonMouse = false;
+    if (button === 2) this._cannonMouse = false;
   }
 
   get tracers() {

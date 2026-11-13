@@ -166,7 +166,7 @@ function patchWater(mat) {
             for (int i = 0; i < 6; i++) {
               float k = w[i].z;
               float ph = dot(w[i].xy, p) * k + t * sqrt(9.8 * k);
-              float hf = (i >= 4) ? fade * fade : fade;
+              float hf = (i >= 4) ? pow(clamp(fade * 1.5 - 0.5, 0.0, 1.0), 3.0) : fade;
               // waves travel along -dir: those running with the wind grow, those against it shrink
               float al = max(0.25, 1.0 + uSeaWind.z * 0.7 * (dot(-w[i].xy, uSeaWind.xy) - 0.25));
               g += w[i].xy * cos(ph) * w[i].w * hf * al;
@@ -268,7 +268,7 @@ function patchWater(mat) {
               float facetDot = max(dot(microNw, Hw), 0.0);
               float sparkle = smoothstep(0.990, 0.9992, facetDot) * (0.38 + 0.62 * smoothstep(0.60, 0.88, atmoNoise(mUv2 * 1.4)));
               float sunVis = smoothstep(0.14, 0.35, uLightLevel) * (1.0 - uRain * 0.85);
-              outgoingLight += sunGlintCol * (specBroad * 0.52 + sparkle * 1.80 * wFade) * sunVis;
+              outgoingLight += sunGlintCol * clamp(specBroad * 0.52 + sparkle * 1.80 * wFade, 0.0, 1.35) * sunVis;
             }
             // [sea-state] whitecaps: wind-streaked patches riding the swell crests, open water only
             if (uWhitecap > 0.001 && wOpen > 0.01) {
@@ -732,7 +732,7 @@ const makeTerrainDetail = (isPark) => `
   vec2 wp = vAtmoWorld.xz;
   float camD = length(vAtmoWorld - cameraPosition);
   float fpw = length(fwidth(wp));
-  float tFade = 1.0 - smoothstep(450.0, 2200.0, camD);
+  float tFade = 1.0 - smoothstep(450.0, 4500.0, camD);
   float ny = abs(vWorldNorm.y);
   float tNat = ${isPark ? "1.0" : "1.0 - smoothstep(0.18, 0.55, clamp(vGroundInfo.x, 0.0, 1.0))"};
   // Steep slopes (abs(vWorldNorm.y) < 0.85): rocky outcrop strata bands & scree cracks
@@ -756,6 +756,17 @@ const makeTerrainDetail = (isPark) => `
     diffuseColor.rgb = mix(diffuseColor.rgb, rockCol, rockMask);
     grRough = mix(grRough, 0.08 - 0.12 * (1.0 - screeCrack), rockMask);
     grRelief += (strata * 0.12 - (1.0 - screeCrack) * 0.15) * rockMask;
+  }
+  // Alpine snow above 1850m elevation on non-vertical slopes
+  if (vAtmoWorld.y > 1850.0 && tFade > 0.0) {
+    float snowElev = smoothstep(1850.0, 2400.0, vAtmoWorld.y);
+    float snowSlope = smoothstep(0.35, 0.72, ny);
+    float snowMask = snowElev * snowSlope * tFade * tNat;
+    if (snowMask > 0.001) {
+      vec3 snowCol = vec3(0.93, 0.95, 0.98) * (0.94 + 0.06 * atmoNoise(wp * 0.08));
+      diffuseColor.rgb = mix(diffuseColor.rgb, snowCol, snowMask * 0.90);
+      grRough = mix(grRough, -0.35, snowMask);
+    }
   }
   // Coastal ground near water level (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2): wind-blown sand ripples + wet-sand shoreline
   if (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2 && tFade > 0.0) {

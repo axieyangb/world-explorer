@@ -31,9 +31,9 @@ const KF = {
     cloudLit: 0xffffff, cloudDark: 0x9aa6b4,
   },
   sunset: {
-    zenith: 0x2f4272, horizon: 0xf08c5b, ground: 0x4a3b36, fog: 0.00016, sunCol: 0xff9a52, sunInt: 1.75,
-    hemiSky: 0xf0c0a4, hemiGround: 0x5a5060, hemiInt: 0.92, ambCol: 0xc0a0a0, ambInt: 0.45,
-    cloudLit: 0xf6b48a, cloudDark: 0x6a5664,
+    zenith: 0x142046, horizon: 0xf89c36, ground: 0x3e322d, fog: 0.00016, sunCol: 0xff9a42, sunInt: 1.75,
+    hemiSky: 0xf8b888, hemiGround: 0x4a4254, hemiInt: 0.92, ambCol: 0xc89880, ambInt: 0.45,
+    cloudLit: 0xffa868, cloudDark: 0x483a54,
   },
   // [night] a real night: dim blue moonlight + sky fill instead of an evenly lit blue-grey day; streets get
   // their light from lamps, shops and headlights (night_lights.js), the horizon from the city glow below
@@ -67,7 +67,7 @@ function litFraction(h) {
 const FOG_GREY = new THREE.Color(0xa9b2ba);
 
 const WEATHER = {
-  clear: { cloud: 0.16, rain: 0, fog: 0 },
+  clear: { cloud: 0.24, rain: 0, fog: 0 },
   cloudy: { cloud: 0.72, rain: 0, fog: 0 },
   rain: { cloud: 0.96, rain: 1, fog: 0.2 },
   fog: { cloud: 0.62, rain: 0, fog: 1 },

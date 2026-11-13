@@ -175,9 +175,9 @@ function sampleTerrainBiomeColorBase(wx, wz, elev, slope, ground) {
   const g = ground ? ground(wx, wz) : null;
   const rgb = g || [GROUND_MEADOW[0], GROUND_MEADOW[1], GROUND_MEADOW[2], 0, 0];
   const built = rgb[3];
+  const asl = elev + ((demState && demState.baseAslM) || 0);
   // Above the treeline (~900 m under the snowline) untagged slopes thin out to alpine turf and scree
   if (demState && Number.isFinite(demState.centerLat) && built < 0.5) {
-    const asl = elev + (demState.baseAslM || 0);
     const line = Math.max(700, Math.min(5000, 5000 - Math.max(0, Math.abs(demState.centerLat) - 20) * 95));
     const alpine = THREE.MathUtils.smoothstep(asl, line - 1100, line - 500) * (1 - built);
     if (alpine > 0) {
@@ -186,7 +186,7 @@ function sampleTerrainBiomeColorBase(wx, wz, elev, slope, ground) {
       rgb[2] += (0.38 - rgb[2]) * alpine * 0.7;
     }
   }
-  const c = groundSlopeTint(rgb, slope, built);
+  const c = groundSlopeTint(rgb, slope, built, asl);
   return [c[0], c[1], c[2], built, rgb[4]];
 }
 

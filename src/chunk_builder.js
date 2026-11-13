@@ -909,6 +909,8 @@ export function createSharedMaterials() {
 
           roughnessFactor = mix(roughnessFactor, mix(0.58, 0.16, glassMask), doorDistFade);
           metalnessFactor = mix(metalnessFactor, mix(0.06, 0.18, glassMask), doorDistFade);
+          float doorContactAo = mix(0.55, 1.0, smoothstep(0.0, 0.65, vDoor));
+          diffuseColor.rgb *= doorContactAo;
 
           if (nightLevel > 0.001 && glassMask > 0.02) {
             float isLobbyOrShop = (
@@ -1153,6 +1155,8 @@ export function createSharedMaterials() {
             glassAlbedo += vec3(1.0, 0.78, 0.48) * nightCityGlint * 0.16 * nightLevel;
           }
           diffuseColor.rgb = mix(baseAlbedo, glassAlbedo, winMask);
+          float wallContactAo = mix(0.55, 1.0, smoothstep(0.0, 0.65, vRep));
+          diffuseColor.rgb *= wallContactAo;
 
           // Screen-space micro-bump normal relief on masonry/mullions + 3D window-frame bevel normal perturbation around glass boundary
           float lum = dot(facadeRgb, vec3(0.299, 0.587, 0.114));
