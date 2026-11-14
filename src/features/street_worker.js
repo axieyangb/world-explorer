@@ -981,7 +981,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats, isP
       const inboundSign = style.left ? 1 : -1;
       const outboundOnly = arm.oneway && arm.forward;
       const inboundOnly = arm.oneway && !arm.forward;
-      const sl = c1 + 0.9;
+      const sl = c1 + 1.8;
       const ys = roadY(arm.id, arm.cls, node.x + ax * sl, node.z + az * sl) + 0.035;
       const isMinorUnsignalizedApproach = !signalized && (
         arm.cls === 'residential' || arm.cls === 'tertiary' || arm.cls === 'unclassified' || arm.cls === 'living_street'

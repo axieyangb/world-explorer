@@ -322,6 +322,7 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
     const a = adj[v];
     for (let j = 0; j < a.length; j += 2) {
       const nb = a[j], c = uv - a[j + 1];
+      if (c - base[nb] > 6.5) continue;
       if (c > up[nb] + 1e-6 && c > base[nb] + 0.02) { up[nb] = c; hUp.push(c, nb); }
     }
   }
@@ -364,9 +365,10 @@ function separateFromRoads(lines, elev, stOf, ox, oz, roadSegments) {
   lines.forEach((l, li) => {
     const I = info[li]; if (!I) return;
     const e = elev[li];
+    const maxE = l.br ? 25.0 : 5.5;
     for (let i = 0; i < e.length; i++) {
       const y = Y[I.v[i]];
-      if (y > I.g[i] + e[i] + 0.01) e[i] = y - I.g[i];
+      if (y > I.g[i] + e[i] + 0.01) e[i] = Math.min(maxE, y - I.g[i]);
       else if (down[I.v[i]] < Infinity && y < I.g[i] + e[i] - 0.01) e[i] = Math.max(0, y - I.g[i]);
     }
   });
@@ -562,7 +564,7 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
       if (!inChunk(mx, mz)) { nextPole = d.ss[i + 1] + 1; nextSleeper = d.ss[i + 1]; continue; }
       const segL = d.ss[i + 1] - d.ss[i];
       if (segL < 0.05) continue;
-      const elevated = d.es[i] > 2 || d.es[i + 1] > 2;
+      const elevated = Boolean(l.br) && (d.es[i] > 1.8 || d.es[i + 1] > 1.8);
 
       if (st) {
         // street running: flush grooved rails on the asphalt
@@ -603,7 +605,7 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
             const px = d.xs[i] + (d.xs[i + 1] - d.xs[i]) * u, pz = d.zs[i] + (d.zs[i + 1] - d.zs[i]) * u;
             const py = ys[i] + (ys[i + 1] - ys[i]) * u;
             const gy = railGroundY(px, pz) - 0.6;
-            if (py - 1.1 - gy > 1.5) {
+            if (py - 1.1 - gy > 1.5 && py - gy < 32.0) {
               const lx = px - ox, lz = pz - oz;
               // Base footing plinth + main column shaft + corbel neck + wide hammerhead pier cap
               sink.box(lx, lz, gy, Math.min(py - 1.55, gy + 1.15), txs[i], tzs[i], 0.95, 1.25, C.deckSide);

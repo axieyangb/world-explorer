@@ -39,7 +39,7 @@ export class ModeMenu {
   sync() {
     if (!this.menu) return;
     const a = this.app;
-    const relevant = (a.mode === 'drive' || a.mode === 'airliner') && !(a.kaiju && a.kaiju.active);
+    const relevant = (a.mode === 'drive' || a.mode === 'airliner' || a.mode === 'boat') && !(a.kaiju && a.kaiju.active);
     this.vehBtn.classList.toggle('hidden', !relevant);
     if (!relevant) this._set(this.vehBtn, this.vehList, false);
     const cur = this.vehList.querySelector('.active span');

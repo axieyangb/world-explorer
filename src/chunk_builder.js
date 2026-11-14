@@ -1761,7 +1761,7 @@ function createWaterMaskChecker(data) {
  * e.g. 北四环西路 main road) so the chunk terrain mesh and park polygons cut open above the sunken road trench,
  * and cross-bridges (e.g. 保福寺桥, 中关村一桥, 中关村二桥) can suppress trench top parapets directly underneath their decks.
  */
-const DEEP_TUNNEL_NAME_RE = /tunnel|隧道|隧|tube|holland|lincoln|midtown|battery|callahan|sumner|ted\s*williams|yerba\s*buena|posey|webster|caldecott|robin\s*williams|devil.?s\s*slide|harbour|harbor|mont\s*blanc|gotthard|seikan|kanmon|aqua.?line|rotherhithe|blackwall|dartford|clyde|mersey|tyne|elbtunnel|ijtunnel|maastunnel/i;
+const DEEP_TUNNEL_NAME_RE = /tunnel|隧道|隧|tube|pudong|浦东|东西通道|holland|lincoln|midtown|battery|callahan|sumner|ted\s*williams|yerba\s*buena|posey|webster|caldecott|robin\s*williams|devil.?s\s*slide|harbour|harbor|mont\s*blanc|gotthard|seikan|kanmon|aqua.?line|rotherhithe|blackwall|dartford|clyde|mersey|tyne|elbtunnel|ijtunnel|maastunnel/i;
 const MINOR_TUNNEL_CLS = new Set(['footway', 'pedestrian', 'steps', 'cycleway', 'path', 'service', 'residential', 'unclassified', 'living_street']);
 
 /**
@@ -1811,7 +1811,7 @@ function normalizeChunkTunnels(roads, roadContext, isPointInWater) {
     }
     wayLen[i] = len;
     const label = `${name || ''} ${ref || ''} ${r[12] || ''}`;
-    if (overWater || (layer || 0) <= -2 || DEEP_TUNNEL_NAME_RE.test(label)) {
+    if (overWater || (layer || 0) <= -1 || DEEP_TUNNEL_NAME_RE.test(label)) {
       wayTrue[i] = 1;
     }
   }
@@ -1830,6 +1830,7 @@ function normalizeChunkTunnels(roads, roadContext, isPointInWater) {
   for (let i = 0; i < n; i++) {
     if (compTrue.has(find(i))) continue;
     const r = all[i];
+    if ((r[9] || 0) < 0) continue; // never unmark underground (layer < 0) ways as surface roads
     r[8] = 0;
     if ((r[9] || 0) < 0) r[9] = 0;
     const flat = r[10];

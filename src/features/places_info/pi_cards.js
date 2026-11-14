@@ -126,6 +126,15 @@ export class InfoCards {
     }
 
     const P = app.pos;
+    const playerSpeed = Math.abs(app.mode === 'airliner' && app.airliner ? app.airliner.speed : (app.speed || 0));
+    // Place cards only appear when player is stationary or moving slowly (< 12 m/s), never in Jet mode or at high speed
+    if (app.mode === 'airliner' || app.mode === 'space' || playerSpeed >= 12.0) {
+      this._spawnX = P.x;
+      this._spawnZ = P.z;
+      this._hide(false);
+      return;
+    }
+
     if (this._spawnX === undefined || this._spawnX === null) {
       this._spawnX = P.x;
       this._spawnZ = P.z;

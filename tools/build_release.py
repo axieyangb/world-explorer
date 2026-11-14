@@ -611,7 +611,6 @@ def build_world_explorer_html():
   print('[1/2] Compressing datasets for World Explorer...', flush=True)
   b64_ov = gz_b64((ROOT / 'data/global_overview.json').read_bytes())
   b64_dem = gz_b64((ROOT / 'data/beijing_dem.json').read_bytes())
-  b64_nav = gz_b64((ROOT / 'data/nav_graph.json').read_bytes())
   b64_lod = gz_b64(pack_lod_soa())
   sd_path = ROOT / 'data/street_detail_sf.json'  # [street-detail] precomputed OSM street nodes for the SF start
   b64_sd = gz_b64(sd_path.read_bytes()) if sd_path.exists() else ''
@@ -649,10 +648,9 @@ await (async function bootstrapWorldExplorer() {
     return new Uint8Array(buf);
   }
 
-  const [ovBytes, demBytes, navBytes, lodSoaBytes, workerBytes] = await Promise.all([
+  const [ovBytes, demBytes, lodSoaBytes, workerBytes] = await Promise.all([
     gunzipBase64ToBytes('b64-overview'),
     gunzipBase64ToBytes('b64-dem'),
-    gunzipBase64ToBytes('b64-nav'),
     gunzipBase64ToBytes('b64-lod-soa'),
     gunzipBase64ToBytes('b64-worker'),
   ]);
@@ -660,7 +658,6 @@ await (async function bootstrapWorldExplorer() {
   const td = new TextDecoder('utf-8');
   const overviewText = td.decode(ovBytes);
   const demText = td.decode(demBytes);
-  const navText = td.decode(navBytes);
 
   try {
     const workerBlob = new Blob([workerBytes], { type: 'application/javascript' });
@@ -734,7 +731,7 @@ await (async function bootstrapWorldExplorer() {
       return new Response(demText, { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     if (url.includes('nav_graph.json')) {
-      return new Response(navText, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     if (url.includes('street_detail_sf.json')) {
       const el = document.getElementById('b64-street-detail');
@@ -766,7 +763,6 @@ await (async function bootstrapWorldExplorer() {
   embedded_payload = f"""
   <script type="application/octet-stream" id="b64-overview">{b64_ov}</script>
   <script type="application/octet-stream" id="b64-dem">{b64_dem}</script>
-  <script type="application/octet-stream" id="b64-nav">{b64_nav}</script>
   <script type="application/octet-stream" id="b64-lod-soa">{b64_lod}</script>
   <script type="application/octet-stream" id="b64-worker">{b64_worker}</script>
   <script type="application/octet-stream" id="b64-street-detail">{b64_sd}</script>

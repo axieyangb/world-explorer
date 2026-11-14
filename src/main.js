@@ -489,7 +489,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261113_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261114_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -2522,13 +2522,18 @@ class WorldExplorerApp {
     const maxSpd = isNitro ? spec.maxSpeed * nitro : spec.maxSpeed;
     const speedRatio = Math.min(1, Math.abs(this.speed) / maxSpd);
 
-    if (handbrake) {
+    if (!this.isGrounded) {
+      // In mid-air, wheels have no ground traction: throttle & brake do not push/stop the car
+      const airDrag = (1.2 + speedRatio * 2.2) * dt;
+      if (Math.abs(this.speed) <= airDrag) this.speed = 0;
+      else this.speed -= Math.sign(this.speed) * airDrag;
+    } else if (handbrake) {
       const decel = spec.brake * 1.45 * dt;
       if (Math.abs(this.speed) <= decel) this.speed = 0;
       else this.speed -= Math.sign(this.speed) * decel;
     } else if (throttle > 0) {
       const curveFloor = isNitro ? 0.55 : 0.35;
-      const torque = (1.0 - speedRatio * (1.0 - curveFloor)) * spec.accel * (isNitro ? 1.45 * 1.15 : 1.0); // nitro acceleration boost, same for every vehicle
+      const torque = (1.0 - speedRatio * (1.0 - curveFloor)) * spec.accel * (isNitro ? 1.45 * 1.15 : 1.0);
       this.speed = Math.min(maxSpd, this.speed + torque * dt);
     } else if (throttle < 0) {
       if (this.speed > 1.0) {
@@ -2577,7 +2582,9 @@ class WorldExplorerApp {
 
     if (absDriveSpd > 0.15) {
       let turnRate = (this.speed / spec.length) * Math.tan(this.steerAngle);
-      if (!isFsdDriving) {
+      if (!this.isGrounded) {
+        turnRate *= 0.10; // no tire steering authority in mid-air
+      } else if (!isFsdDriving) {
         const maxYawRate =
           THREE.MathUtils.lerp(
             1.08,
@@ -2696,15 +2703,40 @@ class WorldExplorerApp {
     // Ensure vehicle center sits on or above the bridge of front/center/rear axles so neither wheels nor bumpers clip into hills;
     // when driving off an elevated bridge deck (pos.y > minSupportY + 0.25), integrate gravitational free-fall (g = 22 m/s^2).
     const minSupportY = Math.max(centerSup.y, (frontSup.y + rearSup.y) * 0.5);
+    const { chassis, wheels, frontSteerPivots } = this.vehicleMesh.userData;
+    const wasAirborne = !this.isGrounded;
     if (this.pos.y <= minSupportY + 0.22 && (this.driveVelY || 0) <= 0) {
+      if (wasAirborne) {
+        const impactVy = Math.abs(this.driveVelY || 0);
+        if (impactVy > 4.5) {
+          if (chassis) chassis.position.y = -Math.min(0.24, (impactVy - 4.0) * 0.022);
+          if (this.nitroFx) this.nitroFx.shake = Math.min(0.8, impactVy * 0.04);
+          if (impactVy > 12.0 && !isTank && this.vehicleDamage) {
+            const dmg = (impactVy - 10.0) * 4.2;
+            this.vehicleDamage.crashPlayer(dmg, 1, "landing");
+          }
+        }
+      }
       this.pos.y = minSupportY;
       this.driveVelY = 0;
+      this.isGrounded = true;
     } else {
+      this.isGrounded = false;
       this.driveVelY = (this.driveVelY || 0) - 22.0 * dt;
       this.pos.y += this.driveVelY * dt;
       if (this.pos.y <= minSupportY) {
+        const impactVy = Math.abs(this.driveVelY || 0);
+        if (impactVy > 4.5) {
+          if (chassis) chassis.position.y = -Math.min(0.24, (impactVy - 4.0) * 0.022);
+          if (this.nitroFx) this.nitroFx.shake = Math.min(0.8, impactVy * 0.04);
+          if (impactVy > 12.0 && !isTank && this.vehicleDamage) {
+            const dmg = (impactVy - 10.0) * 4.2;
+            this.vehicleDamage.crashPlayer(dmg, 1, "landing");
+          }
+        }
         this.pos.y = minSupportY;
         this.driveVelY = 0;
+        this.isGrounded = true;
       }
     }
 
@@ -2730,7 +2762,7 @@ class WorldExplorerApp {
       Math.min(1, 14 * dt)
     );
 
-    const { chassis, wheels, frontSteerPivots } = this.vehicleMesh.userData;
+    if (chassis) chassis.position.y = THREE.MathUtils.lerp(chassis.position.y || 0, 0, Math.min(1, 14 * dt));
     const targetRoll = -this.steerAngle * speedRatio * 0.18;
     chassis.rotation.z = THREE.MathUtils.lerp(chassis.rotation.z, targetRoll, Math.min(1, 12 * dt));
 
@@ -3244,7 +3276,13 @@ class WorldExplorerApp {
         const prefix = isFighter ? (getLang() === "zh" ? "战机" : "JET") : (getLang() === "zh" ? "客机" : "JET");
         modeLabelEl.textContent = `${prefix} · ${liv && liv.name ? (getLang() === "zh" ? liv.nameZh || liv.name : liv.name.toUpperCase()) : "BOEING 787"}`;
       } else if (this.mode === "boat") {
-        modeLabelEl.textContent = getLang() === "zh" ? "游艇驾驶" : "BOAT · MARITIME";
+        const b = this.maritime?.activeBoat;
+        const bType = b?.type || "speedboat";
+        const bName = bType === "yacht" ? (getLang() === "zh" ? "游艇" : "YACHT") :
+                      bType === "sailboat" ? (getLang() === "zh" ? "帆船" : "SAILBOAT") :
+                      bType === "patrol" ? (getLang() === "zh" ? "巡逻艇" : "PATROL") :
+                      (getLang() === "zh" ? "快艇" : "SPEEDBOAT");
+        modeLabelEl.textContent = `${getLang() === "zh" ? "水上驾船" : "BOAT"} · ${bName}`;
       } else if (this.mode === "walk") {
         modeLabelEl.textContent = getLang() === "zh" ? "步行模式" : "WALK";
       } else {
@@ -3291,7 +3329,21 @@ class WorldExplorerApp {
       });
       listEl.appendChild(btn);
     };
-    if (this.mode === "airliner") {
+    if (this.mode === "boat") {
+      const zh = getLang() === "zh";
+      [
+        { label: zh ? "双引擎运动快艇" : "Twin-Engine Speedboat", type: "speedboat", meta: "75 km/h" },
+        { label: zh ? "豪华动力巡航游艇" : "Cabin Cruiser Yacht", type: "yacht", meta: "52 km/h" },
+        { label: zh ? "双桅竞速帆船" : "Ocean Racing Sailboat", type: "sailboat", meta: "38 km/h" },
+        { label: zh ? "海岸警备巡逻艇" : "Coast Guard Patrol Boat", type: "patrol", meta: "68 km/h" },
+      ].forEach((bo) => add(bo.label, bo.meta, Boolean(this.maritime?.activeBoat?.type === bo.type), () => {
+        if (this.maritime) {
+          if (this.maritime.activeBoat) this.maritime.activeBoat.type = bo.type;
+          this.maritime.ensurePlayerBoat();
+        }
+        this._updateModeAndCamBadges();
+      }));
+    } else if (this.mode === "airliner") {
       // Jet mode: selectable airliner and fighter jet options
       const zh = getLang() === "zh";
       const f22Idx = AIRLINER_LIVERIES.findIndex(l => l.variant === "fighter_jet");
@@ -3332,6 +3384,13 @@ class WorldExplorerApp {
   }
 
   setMode(rawMode, keepKaiju = false) {
+    if (rawMode === "space") {
+      if (this.spaceLaunch) {
+        this.spaceLaunch.launchFromSpaceport("spacex_starbase");
+        this._showToast?.(getLang() === "zh" ? "星舰航天基地发射 — 德州博卡奇卡" : "SpaceX Starbase Launch — Boca Chica, TX", 3500);
+      }
+      return;
+    }
     if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
     if (this.kaiju && this.kaiju.active && !keepKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;

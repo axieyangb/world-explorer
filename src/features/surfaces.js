@@ -369,10 +369,10 @@ float rdRough = 0.0;
       float laneLocal = (lat - (lane + 0.5) * 3.3);
       float wheelD = abs(abs(laneLocal) - 0.85);
       float laneMask = smoothstep(0.45, 1.15, edge) * fadeM;
-      float tireTrack = exp(-wheelD * wheelD / 0.10) * (0.82 + 0.36 * atmoNoise(vec2(along * 0.16, lat * 2.2))) * laneMask;
-      float oilBand = exp(-laneLocal * laneLocal / 0.085) * (0.45 + 0.55 * atmoNoise(vec2(along * 0.11, lane * 7.3 + 1.9))) * laneMask;
-      v -= tireTrack * 0.065 + oilBand * 0.095;
-      rdRough -= (tireTrack * 0.08 + oilBand * 0.04) * aMask;
+      float tireTrack = exp(-wheelD * wheelD / 0.28) * (0.45 + 0.35 * atmoNoise(vec2(along * 0.16, lat * 1.5))) * laneMask;
+      float oilBand = exp(-laneLocal * laneLocal / 0.32) * (0.35 + 0.45 * atmoNoise(vec2(along * 0.11, lane * 7.3 + 1.9))) * laneMask;
+      v -= tireTrack * 0.022 + oilBand * 0.028;
+      rdRough -= (tireTrack * 0.03 + oilBand * 0.02) * aMask;
       // utility-cut repair patches, rectangles aligned with the carriageway
       vec2 cs = vec2(9.0, 3.4);
       vec2 cp = vec2(along, lat) / cs, ci = floor(cp), f = fract(cp) * cs;

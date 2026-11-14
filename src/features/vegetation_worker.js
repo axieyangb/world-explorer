@@ -23,6 +23,7 @@ import {
   LC_WETLAND,
   LC_SAND,
   LC_ROCK,
+  LC_ICE,
   LC_WOOD,
   LC_ORCHARD,
   LC_PITCH,
@@ -428,7 +429,8 @@ function sampleFlatCourtElev(obb, ox, oz, yOff) {
     if (g > maxG) maxG = g;
     if (g < minG) minG = g;
   }
-  return { topY: maxG + yOff, botY: minG - 0.38 };
+  const steep = (maxG - minG) > 2.8;
+  return { topY: maxG + yOff, botY: minG - 0.38, steep };
 }
 
 /** Emits a basketball court with painted keys, 3-pt arcs, and 3D hoop stanchions at both ends. */
@@ -1540,7 +1542,8 @@ export function buildWaterParkDetails(surfBuf, propsBuf, obb, topY) {
 /** Emits a sloped concrete gravity dam wall with white spillway water foam band (`LC_DAM`). */
 export function buildDamDetails(surfBuf, propsBuf, outer, obb, ox, oz, yOff) {
   const pat = 7, kind = LC_DAM;
-  const { topY, botY } = sampleFlatCourtElev(obb, ox, oz, yOff);
+  const { topY, botY, steep } = sampleFlatCourtElev(obb, ox, oz, yOff);
+  if (steep) return;
   const hl = Math.max(5.0, Math.min(85.0, obb.hl * 0.94));
   const hw = Math.max(3.0, Math.min(28.0, obb.hw * 0.90));
   const concreteCrest = [0.75, 0.74, 0.71];
@@ -1569,7 +1572,8 @@ export function buildDamDetails(surfBuf, propsBuf, outer, obb, ox, oz, yOff) {
 }
 
 /** Dispatches any `LC_PITCH` sport to its specialized 3D court/field builder. */
-export function dispatchSportCourt(surfBuf, propsBuf, obb, topY, botY, sport, holes) {
+export function dispatchSportCourt(surfBuf, propsBuf, obb, topY, botY, sport, holes, steep = false) {
+  if (steep) return;
   if (sport === 'soccer') {
     buildSoccerPitch(surfBuf, propsBuf, obb, topY);
   } else if (sport === 'american_football') {
@@ -1828,7 +1832,7 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
     const [kind, outer, holes, meta] = polys[p];
     const style = LC_STYLE[kind];
     if (!style || !outer) continue;
-    if (kind <= 4) continue; // [ground] residential/commercial/industrial/institution ground is the terrain's (ground_cover.js)
+    if (kind <= 4 || kind === LC_ROCK || kind === LC_ICE || kind === LC_WOOD || kind === LC_SCRUB || kind === LC_GRASS) continue; // [ground] natural landcover is on the terrain mesh (ground_cover.js)
 
     // 3D Hillside Steps (`LC_STEPS` is a polyline `[x0, z0, x1, z1, ...]`)
     if (kind === LC_STEPS) {
@@ -2061,12 +2065,12 @@ function buildLandcoverAndRichMeshes(polys, ox, oz, isPointInWater, isPointInSun
                 hl: Math.min(13.5, obb.hl * 0.86),
                 hw: Math.min(7.2, (obb.hw / subCourts.length) * 0.86),
               };
-          const { topY, botY } = sampleFlatCourtElev(subObb, ox, oz, yOff);
-          dispatchSportCourt(surfBuf, propsBuf, subObb, topY, botY, sSport, holes);
+          const { topY, botY, steep } = sampleFlatCourtElev(subObb, ox, oz, yOff);
+          dispatchSportCourt(surfBuf, propsBuf, subObb, topY, botY, sSport, holes, steep);
         }
       } else {
-        const { topY, botY } = sampleFlatCourtElev(obb, ox, oz, yOff);
-        dispatchSportCourt(surfBuf, propsBuf, obb, topY, botY, resolvedSport, holes);
+        const { topY, botY, steep } = sampleFlatCourtElev(obb, ox, oz, yOff);
+        dispatchSportCourt(surfBuf, propsBuf, obb, topY, botY, resolvedSport, holes, steep);
       }
     }
   }
