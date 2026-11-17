@@ -735,7 +735,66 @@ class WorldExplorerApp {
     this.placesInfo = new PlacesInfo(this); // places-info
     this.propertyInspector = new PropertyInspector(this); // [feature/property-inspector]
     this.spaceLaunch = new SpaceLaunchSystem(this); // [feature/space-launch]
+    const qGlb = q.get("glb")?.trim();
+    if (qGlb) {
+      this._loadUrlGlbAtLocation(qGlb, qLat, qLon, q.get("name") || "");
+    }
     this._animate();
+  }
+
+  async _loadUrlGlbAtLocation(glbUrl, lat, lon, name = "") {
+    if (!glbUrl || !this.realEstateWorldModel || !this.worldOrigin) return;
+    const targetLat = Number.isFinite(lat) ? lat : this.worldOrigin.centerLat;
+    const targetLon = Number.isFinite(lon) ? lon : this.worldOrigin.centerLon;
+    let profile = this.propertyInspector?.onLocationJump(targetLat, targetLon, name, "", true) || null;
+    if (!profile) {
+      const o = this.worldOrigin;
+      const wx = (targetLon - o.centerLon) * (o.mPerDegLon || 88000);
+      const wz = (o.centerLat - targetLat) * (o.mPerDegLat || 111000);
+      const baseY = Math.max(0, getBeijingTerrainElevation(wx, wz), getChunkTerrainMeshElevation(wx, wz));
+      const half = 16;
+      profile = {
+        isLandmark: false,
+        id: `url_glb_${targetLat.toFixed(4)}_${targetLon.toFixed(4)}`,
+        lat: targetLat,
+        lon: targetLon,
+        cx: wx,
+        cz: wz,
+        baseY,
+        topY: baseY + 24,
+        height: 24,
+        floors: 6,
+        areaM2: 400,
+        titleEn: name || "Custom 3D Location",
+        titleZh: name || "自定义 3D 地点",
+        metaEn: `3D GLB · ${targetLat.toFixed(4)}°, ${targetLon.toFixed(4)}°`,
+        metaZh: `3D 模型 · ${targetLat.toFixed(4)}°, ${targetLon.toFixed(4)}°`,
+        ringPts: [wx - half, wz - half, wx + half, wz - half, wx + half, wz + half, wx - half, wz + half],
+        radius: 65,
+        orbitY: baseY + 42,
+        lookY: baseY + 12,
+      };
+    }
+    try {
+      const resp = await fetch(glbUrl);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status} ${resp.statusText || ""}`.trim());
+      }
+      const buf = await resp.arrayBuffer();
+      const fileName = glbUrl.split("?")[0].split("#")[0].split("/").pop() || "model.glb";
+      await this.realEstateWorldModel.loadParcelGlbOverride(profile, buf, fileName, { baseUrl: glbUrl });
+      if (this.propertyInspector?.selected) {
+        this.propertyInspector._renderCard();
+      }
+      this._showToast?.(getLang() === "zh" ? `已加载 3D 模型: ${fileName}` : `Loaded 3D model: ${fileName}`);
+    } catch (err) {
+      console.error("[WorldExplorer] Failed to load ?glb= URL:", err);
+      this._showToast?.(
+        getLang() === "zh"
+          ? `3D 模型加载失败: ${err?.message || err}`
+          : `GLB load failed: ${err?.message || err}`
+      );
+    }
   }
 
   /**

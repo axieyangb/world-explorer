@@ -841,12 +841,21 @@ export class PropertyInspector {
       if (!file || !this.selected) return;
       const lower = file.name.toLowerCase();
       if (lower.endsWith(".glb") || lower.endsWith(".gltf")) {
-        const buf = await file.arrayBuffer();
-        await this.worldModel.loadParcelGlbOverride(this.selected, buf, file.name);
-        if (this.realData) {
-          this.realData.photoSource = `3D Model · ${file.name}`;
+        try {
+          const buf = await file.arrayBuffer();
+          await this.worldModel.loadParcelGlbOverride(this.selected, buf, file.name);
+          if (this.realData) {
+            this.realData.photoSource = `3D Model · ${file.name}`;
+          }
+          this._renderCard();
+          const zh = getLang() === "zh";
+          this.app?._showToast?.(zh ? `已加载 3D 模型: ${file.name}` : `Loaded 3D model: ${file.name}`);
+        } catch (err) {
+          console.error("[PropertyInspector] GLB load failed:", err);
+          const zh = getLang() === "zh";
+          const detail = err?.message || String(err || "Unknown error");
+          this.app?._showToast?.(zh ? `3D 模型加载失败: ${detail}` : `GLB load failed: ${detail}`);
         }
-        this._renderCard();
       } else {
         const reader = new FileReader();
         reader.onload = async () => {
@@ -1487,8 +1496,10 @@ export class PropertyInspector {
     const orbitY = topY + Math.max(28, height * 0.55);
     const lookY = baseY + height * 0.56;
 
+    const lmItem = this.app?.landmarks?.items?.find((it) => it.L && it.L.id === L.id) || null;
     return {
       isLandmark: true,
+      lmItem,
       id: L.id,
       lat,
       lon,

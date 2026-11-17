@@ -194620,124 +194620,449 @@ function buildPitchedRoofGeometry(ring, eaveY, peakY) {
  * Automatically handles World Labs OpenCV-to-OpenGL coordinate conversion (`scale(1, -1, -1)`)
  * when detected or requested, and fits the model onto the target parcel footprint `(cx, baseY, cz)`.
  */
+function decodeDataUriToUint8Array(uri) {
+  const commaIdx = uri.indexOf(",");
+  if (commaIdx < 0) return null;
+  const header = uri.slice(0, commaIdx);
+  const body = uri.slice(commaIdx + 1);
+  if (/;base64/i.test(header)) {
+    const binStr = atob(body);
+    const out = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) {
+      out[i] = binStr.charCodeAt(i);
+    }
+    return out;
+  }
+  return new TextEncoder().encode(decodeURIComponent(body));
+}
+
+function gltfWrapToThree(wrapVal) {
+  if (wrapVal === 33071) return THREE.ClampToEdgeWrapping;
+  if (wrapVal === 33648) return THREE.MirroredRepeatWrapping;
+  return THREE.RepeatWrapping;
+}
+
 async function parseGlbBufferToGroup(arrayBuffer, options = {}) {
-  const dv = new DataView(arrayBuffer);
+  if (!arrayBuffer) {
+    throw new Error("Empty GLB/GLTF buffer");
+  }
+  const rawBuf = ArrayBuffer.isView(arrayBuffer)
+    ? arrayBuffer.buffer.slice(arrayBuffer.byteOffset, arrayBuffer.byteOffset + arrayBuffer.byteLength)
+    : arrayBuffer;
+  if (rawBuf.byteLength < 4) {
+    throw new Error("Invalid GLB/GLTF file: buffer too small");
+  }
+
+  const dv = new DataView(rawBuf);
   const magic = dv.getUint32(0, true);
   let json = null;
   let binBuffer = null;
 
   if (magic === 0x46546c67) {
-    const totalLen = dv.getUint32(8, true);
+    if (rawBuf.byteLength < 12) {
+      throw new Error("Invalid GLB header");
+    }
+    const totalLen = Math.min(rawBuf.byteLength, dv.getUint32(8, true));
     let offset = 12;
     while (offset + 8 <= totalLen) {
       const chunkLen = dv.getUint32(offset, true);
       const chunkType = dv.getUint32(offset + 4, true);
       offset += 8;
+      const safeEnd = Math.min(rawBuf.byteLength, offset + chunkLen);
       if (chunkType === 0x4e4f534a) {
-        const jsonBytes = new Uint8Array(arrayBuffer, offset, chunkLen);
+        const jsonBytes = new Uint8Array(rawBuf, offset, safeEnd - offset);
         const text = new TextDecoder("utf-8").decode(jsonBytes);
-        json = JSON.parse(text);
+        try {
+          json = JSON.parse(text);
+        } catch (err) {
+          throw new Error("Invalid GLB JSON chunk: " + (err?.message || err));
+        }
       } else if (chunkType === 0x004e4942) {
-        binBuffer = arrayBuffer.slice(offset, offset + chunkLen);
+        binBuffer = rawBuf.slice(offset, safeEnd);
       }
       offset += chunkLen;
     }
   } else {
-    const text = new TextDecoder("utf-8").decode(new Uint8Array(arrayBuffer));
-    json = JSON.parse(text);
+    const text = new TextDecoder("utf-8").decode(new Uint8Array(rawBuf));
+    try {
+      json = JSON.parse(text);
+    } catch (err) {
+      throw new Error("Invalid GLTF JSON: " + (err?.message || err));
+    }
   }
 
-  if (!json || !Array.isArray(json.meshes)) {
+  if (!json || !Array.isArray(json.meshes) || json.meshes.length === 0) {
     throw new Error("Invalid GLB/GLTF structure: no meshes found");
   }
 
-  const group = new THREE.Group();
+  const reqExts = Array.isArray(json.extensionsRequired) ? json.extensionsRequired : [];
+  if (reqExts.includes("KHR_draco_mesh_compression") || reqExts.includes("EXT_meshopt_compression")) {
+    throw new Error("This GLB uses Draco/Meshopt compression—please export an uncompressed .glb");
+  }
+
   const accessors = json.accessors || [];
   const bufferViews = json.bufferViews || [];
   const materials = json.materials || [];
+  const jsonBuffers = Array.isArray(json.buffers) ? json.buffers : [];
 
-  const getAccessorArray = (accIdx) => {
+  const buffersData = new Array(jsonBuffers.length).fill(null);
+  for (let i = 0; i < jsonBuffers.length; i++) {
+    const bDef = jsonBuffers[i] || {};
+    if (i === 0 && binBuffer && !bDef.uri) {
+      buffersData[0] = binBuffer;
+    } else if (typeof bDef.uri === "string" && bDef.uri.startsWith("data:")) {
+      const bytes = decodeDataUriToUint8Array(bDef.uri);
+      if (bytes) buffersData[i] = bytes.buffer;
+    } else if (typeof bDef.uri === "string" && options.baseUrl && typeof fetch === "function") {
+      try {
+        const resp = await fetch(new URL(bDef.uri, options.baseUrl).href);
+        if (resp.ok) buffersData[i] = await resp.arrayBuffer();
+      } catch (_err) {
+        // Leave null; handled cleanly when accessor resolves buffer
+      }
+    } else if (i === 0 && binBuffer) {
+      buffersData[0] = binBuffer;
+    }
+  }
+  if (buffersData.length === 0 && binBuffer) {
+    buffersData[0] = binBuffer;
+  }
+
+  const COMP_INFO = {
+    5120: { Ctor: Int8Array, bytes: 1, read: (view, o) => view.getInt8(o) },
+    5121: { Ctor: Uint8Array, bytes: 1, read: (view, o) => view.getUint8(o) },
+    5122: { Ctor: Int16Array, bytes: 2, read: (view, o) => view.getInt16(o, true) },
+    5123: { Ctor: Uint16Array, bytes: 2, read: (view, o) => view.getUint16(o, true) },
+    5125: { Ctor: Uint32Array, bytes: 4, read: (view, o) => view.getUint32(o, true) },
+    5126: { Ctor: Float32Array, bytes: 4, read: (view, o) => view.getFloat32(o, true) },
+  };
+  const TYPE_COMPS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
+
+  const getAccessorArray = (accIdx, forceNormalized = false) => {
     const acc = accessors[accIdx];
-    if (!acc || !binBuffer) return null;
+    if (!acc || acc.bufferView === undefined) return null;
     const bv = bufferViews[acc.bufferView];
     if (!bv) return null;
-    const byteOffset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-    const numComps =
-      acc.type === "VEC4" ? 4 : acc.type === "VEC3" ? 3 : acc.type === "VEC2" ? 2 : 1;
-    const length = acc.count * numComps;
-
-    switch (acc.componentType) {
-      case 5126:
-        return new Float32Array(binBuffer, byteOffset, length);
-      case 5123:
-        return new Uint16Array(binBuffer, byteOffset, length);
-      case 5125:
-        return new Uint32Array(binBuffer, byteOffset, length);
-      case 5121:
-        return new Uint8Array(binBuffer, byteOffset, length);
-      default:
-        return null;
+    if (bv.extensions?.EXT_meshopt_compression && !bv.extensions.EXT_meshopt_compression.fallback) {
+      throw new Error("This GLB uses Draco/Meshopt compression—please export an uncompressed .glb");
     }
+    const buf = buffersData[bv.buffer ?? 0];
+    if (!buf) return null;
+
+    const info = COMP_INFO[acc.componentType];
+    const numComps = TYPE_COMPS[acc.type] || 1;
+    if (!info || !acc.count) return null;
+
+    const elemBytes = info.bytes;
+    const packedStride = numComps * elemBytes;
+    const byteStride = bv.byteStride && bv.byteStride > packedStride ? bv.byteStride : 0;
+    const byteOffset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+    const totalLen = acc.count * numComps;
+
+    let rawArr;
+    if (byteStride > 0) {
+      if (byteOffset < 0 || byteOffset + (acc.count - 1) * byteStride + packedStride > buf.byteLength) {
+        return null;
+      }
+      const view = new DataView(buf);
+      rawArr = new info.Ctor(totalLen);
+      for (let i = 0; i < acc.count; i++) {
+        const rowOff = byteOffset + i * byteStride;
+        const dstBase = i * numComps;
+        for (let c = 0; c < numComps; c++) {
+          rawArr[dstBase + c] = info.read(view, rowOff + c * elemBytes);
+        }
+      }
+    } else {
+      const byteLength = acc.count * packedStride;
+      if (byteOffset < 0 || byteOffset + byteLength > buf.byteLength) {
+        return null;
+      }
+      if (byteOffset % elemBytes !== 0) {
+        const sliced = buf.slice(byteOffset, byteOffset + byteLength);
+        rawArr = new info.Ctor(sliced, 0, totalLen);
+      } else {
+        rawArr = new info.Ctor(buf, byteOffset, totalLen);
+      }
+    }
+
+    if (acc.normalized || forceNormalized) {
+      if (acc.componentType === 5121) {
+        const out = new Float32Array(totalLen);
+        for (let i = 0; i < totalLen; i++) out[i] = rawArr[i] / 255;
+        return out;
+      }
+      if (acc.componentType === 5123) {
+        const out = new Float32Array(totalLen);
+        for (let i = 0; i < totalLen; i++) out[i] = rawArr[i] / 65535;
+        return out;
+      }
+      if (acc.componentType === 5120) {
+        const out = new Float32Array(totalLen);
+        for (let i = 0; i < totalLen; i++) out[i] = Math.max(rawArr[i] / 127, -1);
+        return out;
+      }
+      if (acc.componentType === 5122) {
+        const out = new Float32Array(totalLen);
+        for (let i = 0; i < totalLen; i++) out[i] = Math.max(rawArr[i] / 32767, -1);
+        return out;
+      }
+    }
+    return rawArr;
   };
 
-  for (const meshDef of json.meshes) {
+  const textureCache = new Map();
+  const getTexture = async (texIdx) => {
+    if (textureCache.has(texIdx)) return textureCache.get(texIdx);
+    const texDef = json.textures?.[texIdx];
+    const imgDef = texDef && texDef.source !== undefined ? json.images?.[texDef.source] : null;
+    if (!imgDef) {
+      textureCache.set(texIdx, null);
+      return null;
+    }
+
+    let tex = null;
+    try {
+      let blob = null;
+      if (imgDef.bufferView !== undefined) {
+        const bv = bufferViews[imgDef.bufferView];
+        const buf = bv ? buffersData[bv.buffer ?? 0] : null;
+        if (bv && buf) {
+          const bytes = new Uint8Array(buf, bv.byteOffset || 0, bv.byteLength);
+          blob = new Blob([bytes], { type: imgDef.mimeType || "image/png" });
+        }
+      } else if (typeof imgDef.uri === "string" && imgDef.uri.startsWith("data:")) {
+        const bytes = decodeDataUriToUint8Array(imgDef.uri);
+        const mimeMatch = /^data:([^;,]+)/i.exec(imgDef.uri);
+        if (bytes) {
+          blob = new Blob([bytes], { type: mimeMatch ? mimeMatch[1] : "image/png" });
+        }
+      } else if (typeof imgDef.uri === "string" && options.baseUrl && typeof fetch === "function") {
+        const resp = await fetch(new URL(imgDef.uri, options.baseUrl).href);
+        if (resp.ok) blob = await resp.blob();
+      }
+
+      if (blob) {
+        let sourceImage = null;
+        if (typeof createImageBitmap === "function") {
+          sourceImage = await createImageBitmap(blob);
+        } else if (typeof Image !== "undefined" && typeof URL !== "undefined" && URL.createObjectURL) {
+          const objUrl = URL.createObjectURL(blob);
+          try {
+            sourceImage = await new Promise((resolve, reject) => {
+              const img = new Image();
+              img.onload = () => resolve(img);
+              img.onerror = reject;
+              img.src = objUrl;
+            });
+          } finally {
+            URL.revokeObjectURL(objUrl);
+          }
+        }
+        if (sourceImage) {
+          tex = new THREE.Texture(sourceImage);
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.flipY = false;
+          const sampler = texDef.sampler !== undefined ? json.samplers?.[texDef.sampler] : null;
+          tex.wrapS = gltfWrapToThree(sampler?.wrapS);
+          tex.wrapT = gltfWrapToThree(sampler?.wrapT);
+          tex.needsUpdate = true;
+        }
+      }
+    } catch (err) {
+      console.warn("[GLB] Embedded texture decode skipped:", err);
+      tex = null;
+    }
+
+    textureCache.set(texIdx, tex);
+    return tex;
+  };
+
+  const materialCache = new Map();
+  const getMaterial = async (matIdx, hasVertexColors) => {
+    const cacheKey = `${matIdx ?? -1}_${hasVertexColors ? 1 : 0}`;
+    if (materialCache.has(cacheKey)) return materialCache.get(cacheKey);
+
+    const matDef = matIdx !== undefined ? materials[matIdx] : null;
+    const pbr = matDef?.pbrMetallicRoughness;
+    const mapTex =
+      pbr?.baseColorTexture?.index !== undefined ? await getTexture(pbr.baseColorTexture.index) : null;
+
+    const baseColor = new THREE.Color(mapTex ? 0xffffff : 0xd8d2c7);
+    if (Array.isArray(pbr?.baseColorFactor)) {
+      baseColor.setRGB(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2]);
+    }
+    const roughness = typeof pbr?.roughnessFactor === "number" ? pbr.roughnessFactor : mapTex ? 0.65 : 0.55;
+    const metalness = typeof pbr?.metallicFactor === "number" ? pbr.metallicFactor : mapTex ? 0.08 : 0.15;
+    const alphaMode = matDef?.alphaMode || "OPAQUE";
+    const factorAlpha =
+      Array.isArray(pbr?.baseColorFactor) && pbr.baseColorFactor.length >= 4 ? pbr.baseColorFactor[3] : 1;
+    const transparent = alphaMode === "BLEND" || factorAlpha < 0.999;
+    const alphaTest =
+      alphaMode === "MASK" ? (typeof matDef?.alphaCutoff === "number" ? matDef.alphaCutoff : 0.5) : 0;
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: baseColor,
+      map: mapTex || null,
+      roughness,
+      metalness,
+      opacity: factorAlpha,
+      transparent,
+      alphaTest,
+      vertexColors: hasVertexColors,
+      side: THREE.DoubleSide,
+    });
+    materialCache.set(cacheKey, mat);
+    return mat;
+  };
+
+  const meshPrimCache = new Array(json.meshes.length);
+  for (let mIdx = 0; mIdx < json.meshes.length; mIdx++) {
+    const meshDef = json.meshes[mIdx];
+    const primSpecs = [];
     for (const prim of meshDef.primitives || []) {
       const attrs = prim.attributes || {};
+      if (prim.extensions?.KHR_draco_mesh_compression && accessors[attrs.POSITION]?.bufferView === undefined) {
+        throw new Error("This GLB uses Draco/Meshopt compression—please export an uncompressed .glb");
+      }
+      if (prim.extensions?.EXT_meshopt_compression && accessors[attrs.POSITION]?.bufferView === undefined) {
+        throw new Error("This GLB uses Draco/Meshopt compression—please export an uncompressed .glb");
+      }
+      if (prim.mode !== undefined && prim.mode !== 4) continue;
       if (attrs.POSITION === undefined) continue;
       const posArr = getAccessorArray(attrs.POSITION);
-      if (!posArr) continue;
+      if (!posArr || posArr.length === 0) continue;
 
       const geom = new THREE.BufferGeometry();
-      geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(posArr), 3));
+      geom.setAttribute(
+        "position",
+        new THREE.BufferAttribute(posArr instanceof Float32Array ? posArr : new Float32Array(posArr), 3)
+      );
 
       if (attrs.NORMAL !== undefined) {
         const normArr = getAccessorArray(attrs.NORMAL);
-        if (normArr) geom.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(normArr), 3));
+        if (normArr) {
+          geom.setAttribute(
+            "normal",
+            new THREE.BufferAttribute(normArr instanceof Float32Array ? normArr : new Float32Array(normArr), 3)
+          );
+        }
       }
       if (attrs.TEXCOORD_0 !== undefined) {
         const uvArr = getAccessorArray(attrs.TEXCOORD_0);
-        if (uvArr) geom.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvArr), 2));
+        if (uvArr) {
+          geom.setAttribute(
+            "uv",
+            new THREE.BufferAttribute(uvArr instanceof Float32Array ? uvArr : new Float32Array(uvArr), 2)
+          );
+        }
       }
       if (attrs.COLOR_0 !== undefined) {
-        const colArr = getAccessorArray(attrs.COLOR_0);
+        const colArr = getAccessorArray(attrs.COLOR_0, true);
         const acc = accessors[attrs.COLOR_0];
         if (colArr && acc) {
           const itemSize = acc.type === "VEC4" ? 4 : 3;
-          geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(colArr), itemSize));
+          geom.setAttribute(
+            "color",
+            new THREE.BufferAttribute(colArr instanceof Float32Array ? colArr : new Float32Array(colArr), itemSize)
+          );
         }
       }
       if (prim.indices !== undefined) {
         const idxArr = getAccessorArray(prim.indices);
-        if (idxArr) geom.setIndex(new THREE.BufferAttribute(idxArr, 1));
+        if (idxArr) {
+          const safeIdx = idxArr instanceof Uint8Array ? new Uint16Array(idxArr) : idxArr;
+          geom.setIndex(new THREE.BufferAttribute(safeIdx, 1));
+        }
       }
       if (!geom.attributes.normal) {
         geom.computeVertexNormals();
       }
       geom.computeBoundingBox();
 
-      let baseColor = new THREE.Color(0xd8d2c7);
-      let roughness = 0.55;
-      let metalness = 0.15;
-      if (prim.material !== undefined && materials[prim.material]) {
-        const pbr = materials[prim.material].pbrMetallicRoughness;
-        if (pbr?.baseColorFactor) {
-          baseColor.setRGB(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2]);
-        }
-        if (typeof pbr?.roughnessFactor === "number") roughness = pbr.roughnessFactor;
-        if (typeof pbr?.metallicFactor === "number") metalness = pbr.metallicFactor;
-      }
+      const mat = await getMaterial(prim.material, Boolean(geom.attributes.color));
+      primSpecs.push({ geom, mat });
+    }
+    meshPrimCache[mIdx] = primSpecs;
+  }
 
-      const mat = new THREE.MeshStandardMaterial({
-        color: baseColor,
-        roughness,
-        metalness,
-        vertexColors: Boolean(geom.attributes.color),
-        side: THREE.DoubleSide,
-      });
+  const group = new THREE.Group();
+  const nodes = Array.isArray(json.nodes) ? json.nodes : [];
+
+  const createMeshInstances = (mIdx, targetParent) => {
+    const specs = meshPrimCache[mIdx] || [];
+    for (const { geom, mat } of specs) {
       const mesh = new THREE.Mesh(geom, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      group.add(mesh);
+      targetParent.add(mesh);
+    }
+  };
+
+  if (nodes.length > 0) {
+    const buildNode = (nodeIdx, visited) => {
+      if (visited.has(nodeIdx)) return null;
+      const nodeDef = nodes[nodeIdx];
+      if (!nodeDef) return null;
+      visited.add(nodeIdx);
+
+      const nodeObj = new THREE.Group();
+      if (nodeDef.name) nodeObj.name = nodeDef.name;
+
+      if (Array.isArray(nodeDef.matrix) && nodeDef.matrix.length === 16) {
+        const mat4 = new THREE.Matrix4().fromArray(nodeDef.matrix);
+        mat4.decompose(nodeObj.position, nodeObj.quaternion, nodeObj.scale);
+      } else {
+        if (Array.isArray(nodeDef.translation) && nodeDef.translation.length >= 3) {
+          nodeObj.position.set(nodeDef.translation[0], nodeDef.translation[1], nodeDef.translation[2]);
+        }
+        if (Array.isArray(nodeDef.rotation) && nodeDef.rotation.length >= 4) {
+          nodeObj.quaternion.set(
+            nodeDef.rotation[0],
+            nodeDef.rotation[1],
+            nodeDef.rotation[2],
+            nodeDef.rotation[3]
+          );
+        }
+        if (Array.isArray(nodeDef.scale) && nodeDef.scale.length >= 3) {
+          nodeObj.scale.set(nodeDef.scale[0], nodeDef.scale[1], nodeDef.scale[2]);
+        }
+      }
+
+      if (nodeDef.mesh !== undefined) {
+        createMeshInstances(nodeDef.mesh, nodeObj);
+      }
+      if (Array.isArray(nodeDef.children)) {
+        for (const childIdx of nodeDef.children) {
+          const childObj = buildNode(childIdx, visited);
+          if (childObj) nodeObj.add(childObj);
+        }
+      }
+      visited.delete(nodeIdx);
+      return nodeObj;
+    };
+
+    const scenes = Array.isArray(json.scenes) ? json.scenes : [];
+    const sceneIdx = typeof json.scene === "number" ? json.scene : 0;
+    const sceneDef = scenes[sceneIdx] || scenes[0];
+    let rootIndices = Array.isArray(sceneDef?.nodes) ? sceneDef.nodes : [];
+    if (rootIndices.length === 0) {
+      const childSet = new Set();
+      for (const n of nodes) {
+        if (Array.isArray(n?.children)) {
+          for (const c of n.children) childSet.add(c);
+        }
+      }
+      rootIndices = nodes.map((_, i) => i).filter((i) => !childSet.has(i));
+    }
+
+    for (const rootIdx of rootIndices) {
+      const rootObj = buildNode(rootIdx, new Set());
+      if (rootObj) group.add(rootObj);
+    }
+  } else {
+    for (let mIdx = 0; mIdx < meshPrimCache.length; mIdx++) {
+      createMeshInstances(mIdx, group);
     }
   }
 
@@ -194746,8 +195071,8 @@ async function parseGlbBufferToGroup(arrayBuffer, options = {}) {
   const isOpenCv = options.openCvCoords || generatorStr.includes("world labs") || generatorStr.includes("marble");
   if (isOpenCv) {
     group.scale.set(1, -1, -1);
-    group.updateMatrixWorld(true);
   }
+  group.updateMatrixWorld(true);
 
   return group;
 }
@@ -194917,21 +195242,63 @@ class RealEstateWorldModel {
     if (!targetProfile || !arrayBuffer) return null;
     const key = this.getParcelKey(targetProfile);
     const rawGroup = await parseGlbBufferToGroup(arrayBuffer, options);
+    rawGroup.updateMatrixWorld(true);
 
+    let meshCount = 0;
+    rawGroup.traverse((obj) => {
+      if (obj.isMesh && obj.geometry?.attributes?.position?.count > 0) {
+        meshCount++;
+      }
+    });
     const box = new THREE.Box3().setFromObject(rawGroup);
+    if (meshCount === 0 || box.isEmpty()) {
+      throw new Error("No renderable 3D mesh found in GLB file");
+    }
+
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
     box.getSize(size);
     box.getCenter(center);
 
-    const targetSpan = Math.max(12, Math.sqrt(targetProfile.areaM2 || 220) * 1.15);
-    const targetH = Math.max(8, targetProfile.height || 18);
+    const lmItem =
+      targetProfile.lmItem ||
+      (targetProfile.isLandmark ? this._findSceneLandmarkEntry(targetProfile) : null);
+
+    let footprintWidth = Math.sqrt(targetProfile.areaM2 || 220);
+    if (Array.isArray(targetProfile.ringPts) && targetProfile.ringPts.length >= 6) {
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (let i = 0; i < targetProfile.ringPts.length; i += 2) {
+        const rx = targetProfile.ringPts[i];
+        const rz = targetProfile.ringPts[i + 1];
+        if (rx < minX) minX = rx;
+        if (rx > maxX) maxX = rx;
+        if (rz < minZ) minZ = rz;
+        if (rz > maxZ) maxZ = rz;
+      }
+      if (Number.isFinite(minX)) {
+        footprintWidth = Math.max(footprintWidth, maxX - minX, maxZ - minZ);
+      }
+    }
+    const bldgHeight = Math.max(
+      4,
+      targetProfile.height ||
+        (Number.isFinite(targetProfile.topY) && Number.isFinite(targetProfile.baseY)
+          ? targetProfile.topY - targetProfile.baseY
+          : 18)
+    );
+    const targetSpan = Math.max(12, Math.sqrt(targetProfile.areaM2 || 220) * 1.15, footprintWidth * 1.06);
+    const targetH = Math.max(8, bldgHeight * 1.04);
     const modelHorizSpan = Math.max(0.01, Math.max(size.x, size.z));
-    const scaleFactor = Math.min(targetSpan / modelHorizSpan, (targetH * 1.25) / Math.max(0.01, size.y));
+    const modelH = Math.max(0.01, size.y);
+    const spanScale = targetSpan / modelHorizSpan;
+    const heightScale = targetH / modelH;
+    const scaleFactor = lmItem?.group
+      ? Math.min(spanScale, (targetH * 1.25) / modelH)
+      : Math.max(spanScale, Math.min(heightScale, spanScale * 2.5));
 
     const wrapper = new THREE.Group();
     wrapper.name = `glb_parcel:${targetProfile.id}`;
-    wrapper.position.set(targetProfile.cx, targetProfile.baseY, targetProfile.cz);
+    wrapper.position.set(targetProfile.cx || 0, targetProfile.baseY || 0, targetProfile.cz || 0);
 
     rawGroup.scale.multiplyScalar(scaleFactor);
     rawGroup.position.set(
@@ -194940,9 +195307,12 @@ class RealEstateWorldModel {
       -center.z * scaleFactor
     );
     wrapper.add(rawGroup);
+    wrapper.updateMatrixWorld(true);
 
     this._mountParcelGroup(key, wrapper, {
       type: "glb3d",
+      isLandmark: Boolean(targetProfile.isLandmark || lmItem),
+      hiddenLandmark: lmItem || null,
       fileName,
       wallHex: "#60a5fa",
       trimHex: "#38bdf8",
@@ -194951,6 +195321,10 @@ class RealEstateWorldModel {
       updatedAt: Date.now(),
     });
 
+    if (lmItem?.group) {
+      lmItem.group.visible = false;
+    }
+
     return this.activeMeshes.get(key)?.meta;
   }
 
@@ -194958,9 +195332,15 @@ class RealEstateWorldModel {
     const key = this.getParcelKey(targetProfile);
     const existing = this.activeMeshes.get(key);
     if (existing) {
+      if (existing.meta?.hiddenLandmark?.group) {
+        existing.meta.hiddenLandmark.group.visible = true;
+      }
       if (existing.meta?.isLandmark || targetProfile?.isLandmark) {
-        const lmItem = this._findSceneLandmarkEntry(targetProfile);
-        if (lmItem) this._restoreLandmarkOriginalMaterial(lmItem);
+        const lmItem = existing.meta?.hiddenLandmark || this._findSceneLandmarkEntry(targetProfile);
+        if (lmItem) {
+          if (lmItem.group) lmItem.group.visible = true;
+          this._restoreLandmarkOriginalMaterial(lmItem);
+        }
       }
       this.rootGroup.remove(existing.group);
       this._disposeGroup(existing.group);
@@ -194976,6 +195356,9 @@ class RealEstateWorldModel {
   _mountParcelGroup(key, group, meta) {
     const prev = this.activeMeshes.get(key);
     if (prev) {
+      if (prev.meta?.hiddenLandmark?.group) {
+        prev.meta.hiddenLandmark.group.visible = true;
+      }
       this.rootGroup.remove(prev.group);
       this._disposeGroup(prev.group);
     }
@@ -195905,12 +196288,21 @@ class PropertyInspector {
       if (!file || !this.selected) return;
       const lower = file.name.toLowerCase();
       if (lower.endsWith(".glb") || lower.endsWith(".gltf")) {
-        const buf = await file.arrayBuffer();
-        await this.worldModel.loadParcelGlbOverride(this.selected, buf, file.name);
-        if (this.realData) {
-          this.realData.photoSource = `3D Model · ${file.name}`;
+        try {
+          const buf = await file.arrayBuffer();
+          await this.worldModel.loadParcelGlbOverride(this.selected, buf, file.name);
+          if (this.realData) {
+            this.realData.photoSource = `3D Model · ${file.name}`;
+          }
+          this._renderCard();
+          const zh = getLang() === "zh";
+          this.app?._showToast?.(zh ? `已加载 3D 模型: ${file.name}` : `Loaded 3D model: ${file.name}`);
+        } catch (err) {
+          console.error("[PropertyInspector] GLB load failed:", err);
+          const zh = getLang() === "zh";
+          const detail = err?.message || String(err || "Unknown error");
+          this.app?._showToast?.(zh ? `3D 模型加载失败: ${detail}` : `GLB load failed: ${detail}`);
         }
-        this._renderCard();
       } else {
         const reader = new FileReader();
         reader.onload = async () => {
@@ -196551,8 +196943,10 @@ class PropertyInspector {
     const orbitY = topY + Math.max(28, height * 0.55);
     const lookY = baseY + height * 0.56;
 
+    const lmItem = this.app?.landmarks?.items?.find((it) => it.L && it.L.id === L.id) || null;
     return {
       isLandmark: true,
+      lmItem,
       id: L.id,
       lat,
       lon,
@@ -200963,7 +201357,66 @@ class WorldExplorerApp {
     this.placesInfo = new PlacesInfo(this); // places-info
     this.propertyInspector = new PropertyInspector(this); // [feature/property-inspector]
     this.spaceLaunch = new SpaceLaunchSystem(this); // [feature/space-launch]
+    const qGlb = q.get("glb")?.trim();
+    if (qGlb) {
+      this._loadUrlGlbAtLocation(qGlb, qLat, qLon, q.get("name") || "");
+    }
     this._animate();
+  }
+
+  async _loadUrlGlbAtLocation(glbUrl, lat, lon, name = "") {
+    if (!glbUrl || !this.realEstateWorldModel || !this.worldOrigin) return;
+    const targetLat = Number.isFinite(lat) ? lat : this.worldOrigin.centerLat;
+    const targetLon = Number.isFinite(lon) ? lon : this.worldOrigin.centerLon;
+    let profile = this.propertyInspector?.onLocationJump(targetLat, targetLon, name, "", true) || null;
+    if (!profile) {
+      const o = this.worldOrigin;
+      const wx = (targetLon - o.centerLon) * (o.mPerDegLon || 88000);
+      const wz = (o.centerLat - targetLat) * (o.mPerDegLat || 111000);
+      const baseY = Math.max(0, getBeijingTerrainElevation(wx, wz), getChunkTerrainMeshElevation(wx, wz));
+      const half = 16;
+      profile = {
+        isLandmark: false,
+        id: `url_glb_${targetLat.toFixed(4)}_${targetLon.toFixed(4)}`,
+        lat: targetLat,
+        lon: targetLon,
+        cx: wx,
+        cz: wz,
+        baseY,
+        topY: baseY + 24,
+        height: 24,
+        floors: 6,
+        areaM2: 400,
+        titleEn: name || "Custom 3D Location",
+        titleZh: name || "自定义 3D 地点",
+        metaEn: `3D GLB · ${targetLat.toFixed(4)}°, ${targetLon.toFixed(4)}°`,
+        metaZh: `3D 模型 · ${targetLat.toFixed(4)}°, ${targetLon.toFixed(4)}°`,
+        ringPts: [wx - half, wz - half, wx + half, wz - half, wx + half, wz + half, wx - half, wz + half],
+        radius: 65,
+        orbitY: baseY + 42,
+        lookY: baseY + 12,
+      };
+    }
+    try {
+      const resp = await fetch(glbUrl);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status} ${resp.statusText || ""}`.trim());
+      }
+      const buf = await resp.arrayBuffer();
+      const fileName = glbUrl.split("?")[0].split("#")[0].split("/").pop() || "model.glb";
+      await this.realEstateWorldModel.loadParcelGlbOverride(profile, buf, fileName, { baseUrl: glbUrl });
+      if (this.propertyInspector?.selected) {
+        this.propertyInspector._renderCard();
+      }
+      this._showToast?.(getLang() === "zh" ? `已加载 3D 模型: ${fileName}` : `Loaded 3D model: ${fileName}`);
+    } catch (err) {
+      console.error("[WorldExplorer] Failed to load ?glb= URL:", err);
+      this._showToast?.(
+        getLang() === "zh"
+          ? `3D 模型加载失败: ${err?.message || err}`
+          : `GLB load failed: ${err?.message || err}`
+      );
+    }
   }
 
   /**
