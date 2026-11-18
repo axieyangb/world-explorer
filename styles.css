@@ -1168,3 +1168,71 @@ body.touch-ui #mode-vehicle-menu kbd { display: none; }
 @media (orientation: portrait) {
   body.touch-ui:has(#mode-vehicle-menu:not(.hidden)) .location-bar { visibility: hidden; }
 }
+
+/* Copy link icon inside location pill */
+.loc-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.loc-copy-btn:hover {
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.1);
+}
+.loc-copy-btn .hud-svg-icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* Audio mute icon button state */
+.dock-pill-icon .audio-icon-off,
+.dock-pill-icon.is-muted .audio-icon-on {
+  display: none;
+}
+.dock-pill-icon.is-muted .audio-icon-off {
+  display: block;
+}
+
+/* Photo mode (P): hide HUD cleanly while keeping #hud-toast visible */
+body.hud-hidden #location-bar,
+body.hud-hidden #hud-dock,
+body.hud-hidden #hud-radar,
+body.hud-hidden #hud-speedometer,
+body.hud-hidden #hud-controls-hint,
+body.hud-hidden #hud-weapon-badge,
+body.hud-hidden #walker-weapon-badge,
+body.hud-hidden #pi-card,
+body.hud-hidden #property-inspector-card,
+body.hud-hidden #keys-panel {
+  display: none !important;
+}
+
+/* Accessibility: clear keyboard focus-visible rings */
+.dock-pill:focus-visible,
+.location-pill:focus-visible,
+.loc-copy-btn:focus-visible,
+.location-input:focus-visible,
+.loc-result-item:focus-visible,
+.loc-fsd-btn:focus-visible,
+.popover-mode-btn:focus-visible,
+.popover-gfx-btn:focus-visible,
+.popover-fold:focus-visible,
+.popover-veh-btn:focus-visible,
+.vehicle-option-btn:focus-visible,
+.hint-more:focus-visible {
+  outline: 2px solid rgba(147, 197, 253, 0.9);
+  outline-offset: 2px;
+}
+.location-input:focus-visible {
+  border-radius: 6px;
+}

@@ -636,9 +636,10 @@ export class NitroFx {
     this.alpha.update(dt, this.vel, cam.position);
 
     // Camera: subtle shake + FOV kick (fovAdd is read by main.js _updateCamera)
+    const reducedMotion = typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
     const lv = this.level, topdown = app.camMode === 'topdown';
     const spdK = Math.min(1, speed / (kind === 'walk' ? 20 : 110));
-    const amp = topdown ? 0 : lv * (kind === 'walk' ? 0.008 : kind === 'heli' ? 0.02 : 0.018 + 0.03 * spdK) + this.kick * 0.05;
+    const amp = (topdown || reducedMotion) ? 0 : lv * (kind === 'walk' ? 0.008 : kind === 'heli' ? 0.02 : 0.018 + 0.03 * spdK) + this.kick * 0.05;
     if (amp > 0.0005) {
       const t = this.time;
       _right.set(1, 0, 0).applyQuaternion(cam.quaternion);
@@ -648,11 +649,11 @@ export class NitroFx {
       cam.position.addScaledVector(_right, sx * amp).addScaledVector(_up, sy * amp);
       cam.rotateZ(Math.sin(t * 23.0) * amp * 0.12);
     }
-    this.fovAdd = (kind === 'walk' ? 3 : 5) * this.kick * this.kick;
+    this.fovAdd = reducedMotion ? 0 : (kind === 'walk' ? 3 : 5) * this.kick * this.kick;
 
-    // Speed lines
+    // Speed lines (suppressed when prefers-reduced-motion: reduce)
     const amt = lv * (topdown ? 0.25 : kind === 'walk' ? 0.55 : kind === 'heli' ? 0.75 : 0.55 + 0.45 * spdK);
-    this.lines.visible = amt > 0.01;
+    this.lines.visible = !reducedMotion && amt > 0.01;
     if (this.lines.visible) {
       const u = this.lines.material.uniforms;
       u.uAmt.value = amt; u.uTime.value = this.time;

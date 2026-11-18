@@ -27,6 +27,24 @@ export class ModeMenu {
       this.sync();
     });
     this.gfxRow.addEventListener('click', () => setTimeout(() => this.sync(), 0));
+    const tourBtn = $('menu-sec-scenic-tour');
+    if (tourBtn) {
+      tourBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        tourBtn.blur();
+        this.menu.classList.add('hidden');
+        this.app.scenicTour?.nextScenicStop?.();
+      });
+    }
+    const runBtn = $('menu-sec-checkpoint-run');
+    if (runBtn) {
+      runBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        runBtn.blur();
+        this.menu.classList.add('hidden');
+        this.app.scenicTour?.toggleChallenge?.();
+      });
+    }
     this.sync();
   }
 

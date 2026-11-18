@@ -282,6 +282,8 @@ MOD_ID_MAP = {
     'src/features/airliner_models.js': '__MOD_airliner_models',
     'src/features/airliner_system.js': '__MOD_airliner_system',
     'src/world_cities.js': '__MOD_world_cities',
+    'src/features/ambient_audio.js': '__MOD_ambient_audio',
+    'src/features/scenic_tour.js': '__MOD_scenic_tour',
     'src/main.js': '__MOD_main',
 }
 

@@ -28,7 +28,6 @@ export const CONTROLS = {
     { id: 'tank_fire', code: ['Space'], label: 'Fire', hint: true, when: 'tank' },
     { id: 'drive_exit', code: ['KeyE'], label: 'Exit', hint: true },
     { id: 'drive_boost', code: ['ShiftLeft'], label: 'Boost' },
-    { id: 'drive_vehicle', code: ['KeyV'], label: 'Vehicle' },
     { id: 'drive_horn', code: ['KeyH'], label: 'Horn' },
   ],
   walk: [
@@ -60,7 +59,7 @@ export const CONTROLS = {
   ],
   // every mode
   any: [
-    { id: 'camera', code: ['KeyV'], label: 'Camera' }, // Shift+V while driving, see keyCaps()
+    { id: 'camera', code: ['KeyV'], label: 'Camera' },
     { id: 'search', code: ['Slash'], label: 'Search' },
     { id: 'map', code: ['KeyM'], label: 'Map' },
     { id: 'fsd', code: ['KeyN'], label: 'Self-drive' },
@@ -70,6 +69,8 @@ export const CONTROLS = {
     { id: 'mode_helicopter', code: ['Digit3'], list: false },
     { id: 'mode_kaiju', code: ['Digit4'], list: false },
     { id: 'vehicle_next', code: ['KeyG'], label: 'Next vehicle', not: 'airliner' }, // G is the gear in a jet
+    { id: 'audio_mute', code: ['KeyU'], label: 'Mute' },
+    { id: 'photo_mode', code: ['KeyP'], label: 'Photo mode' },
     { id: 'fullscreen', code: ['KeyF'], shift: true, label: 'Full screen' },
     { id: 'help', code: ['Slash'], shift: true, show: '?', label: 'Keys', list: false },
   ],
@@ -84,15 +85,13 @@ export const KEY = Object.fromEntries(Object.entries(BY_ID).map(([id, r]) => [id
 const CAP = { Space: 'Space', Slash: '/', ShiftLeft: 'Shift', Tab: 'Tab', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' };
 const cap = (code) => CAP[code] || code.replace(/^Key|^Digit/, '');
 
-/** Text of the key cap for an action, e.g. "Q/E", "X", "Shift+V". */
+/** Text of the key cap for an action, e.g. "Q/E", "X", "Shift+F". */
 export function keyCaps(id, mode = '') {
   const r = BY_ID[id];
   if (!r) return '';
   if (r.show) return r.show;
   const caps = r.code.map(cap).join('/');
-  // V alone changes the vehicle while driving, so the camera moves to Shift+V there (main.js keydown).
-  const shift = r.shift || (id === 'camera' && mode === 'drive');
-  return shift ? `Shift+${caps}` : caps;
+  return r.shift ? `Shift+${caps}` : caps;
 }
 
 function rowsFor(mode, ctx) {
@@ -207,6 +206,7 @@ export class ControlsHint {
     tip('camera-btn', 'Camera', keyCaps('camera', mode));
     tip('fsd-btn', 'Self-drive', keyCaps('fsd'));
     tip('map-btn', 'Map', keyCaps('map'));
+    tip('btn-audio-mute', this.app?._audioMuted ? 'Unmute' : 'Mute', keyCaps('audio_mute'));
     tip('minimap-container', 'Map', keyCaps('map'));
     const modeBtn = document.getElementById('mode-vehicle-btn');
     if (modeBtn) modeBtn.title = t('Mode');

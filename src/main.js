@@ -110,6 +110,8 @@ import { Carjack } from "./features/carjack.js"; // [polish] GTA-style carjackin
 import { PropertyInspector } from "./features/property_inspector.js"; // [feature/property-inspector]
 import { getSignalPhase } from "./features/signals.js";
 import { SpaceLaunchSystem } from "./features/space_launch_system.js"; // [feature/space-launch]
+import { AmbientAudio } from "./features/ambient_audio.js";
+import { ScenicTourAndChallenges } from "./features/scenic_tour.js";
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -141,7 +143,7 @@ const FRAME_STEPS = [
   "streetDetail.update", "vegetation.update", "places.update", "airliner.updateAmbient", "railTransit.update",
   "liveSky.update", "liveWeather.update", "aurora.update", "seaState.update", "satellites.update",
   "reflections.update", "venueRides.update", "poiVenues.update", "placesInfo.update", "landmarks.update",
-  "mapSystem.updateMinimap",
+  "scenicTour.update", "mapSystem.updateMinimap",
 ].map((step) => step.split("."));
 
 // Shown when the WebGL context is lost (GPU reset, driver crash, too many tabs). The scene does not survive
@@ -404,6 +406,11 @@ class WorldExplorerApp {
     this.yaw = Math.PI * 0.5;
     this.speed = 0;
     this.steerAngle = 0;
+    this._driveLatVel = 0;
+    this._driveDriftSlip = 0;
+    if (this.vehicleMesh?.userData?.chassis) this.vehicleMesh.userData.chassis.rotation.y = 0;
+    this._driveLatVel = 0;
+    this._driveDriftSlip = 0;
 
     this.camYaw = this.yaw;
     this.camYawOffset = 0;
@@ -489,7 +496,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261114_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261118_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -691,11 +698,17 @@ class WorldExplorerApp {
     this.navigator.init();
 
     // Default start: flying (Fly mode) over San Francisco's Embarcadero, facing the downtown skyline.
-    // ?lat=..&lon=.. (optional &name=..) in the URL starts there instead.
+    // ?lat=..&lon=..&mode=..&name=.. in the URL starts there instead.
     const q = new URLSearchParams(window.location.search);
     const qLat = parseFloat(q.get("lat"));
     const qLon = parseFloat(q.get("lon"));
-    this.setMode("helicopter");
+    const qModeRaw = (q.get("mode") || "").trim().toLowerCase();
+    const qModeNorm = qModeRaw === "fly" ? "helicopter" : qModeRaw;
+    const validModes = new Set(["walk", "drive", "boat", "helicopter", "airliner", "kaiju"]);
+    const qMode = validModes.has(qModeNorm) ? qModeNorm : "helicopter";
+    const deferredMode = (qMode === "airliner" || qMode === "kaiju") ? qMode : null;
+    this._applyingStartupMode = true;
+    this.setMode(deferredMode ? "helicopter" : qMode);
     window.__loading?.set(45, "Finding your starting point…");
     // Loading screen: the first chunks stream in during the teleport, before the render loop runs,
     // so progress is polled on a timer rather than from _animate.
@@ -707,11 +720,13 @@ class WorldExplorerApp {
     } else {
       const sf = QUICK_WORLD_DESTINATIONS.find((d) => d.id === "sf_embarcadero");
       await this.teleportToLocation(sf.lat, sf.lon, sf.city, sf.street);
-      this.pos.x += 260; // just off the waterfront
-      this.yaw = -Math.PI * 0.5; // facing west over downtown
-      this._ensureHeli().place(this.pos.x, this.pos.y, this.pos.z, this.yaw);
-      this.camYaw = this.yaw;
-      this.camPivot.copy(this.pos);
+      if (this.mode === "helicopter") {
+        this.pos.x += 260; // just off the waterfront
+        this.yaw = -Math.PI * 0.5; // facing west over downtown
+        this._ensureHeli().place(this.pos.x, this.pos.y, this.pos.z, this.yaw);
+        this.camYaw = this.yaw;
+        this.camPivot.copy(this.pos);
+      }
     }
 
     this._startupTeleport = false;
@@ -735,6 +750,29 @@ class WorldExplorerApp {
     this.placesInfo = new PlacesInfo(this); // places-info
     this.propertyInspector = new PropertyInspector(this); // [feature/property-inspector]
     this.spaceLaunch = new SpaceLaunchSystem(this); // [feature/space-launch]
+    this.ambientAudio = new AmbientAudio();
+    this._audioMuted = Boolean(this.ambientAudio.isMuted?.());
+    if (this._audioMuted) {
+      try { getWeaponSfx(this)?.setMuted(true); } catch (_) {}
+    }
+    this._syncAudioMuteBtn();
+    this._inWater = false;
+    this._nearWater = false;
+    this._nearWaterCheckT = 0;
+    const unlockAudio = () => {
+      try { this.ambientAudio?.unlock?.(); } catch (_) {}
+      window.removeEventListener("pointerdown", unlockAudio, true);
+      window.removeEventListener("keydown", unlockAudio, true);
+    };
+    window.addEventListener("pointerdown", unlockAudio, true);
+    window.addEventListener("keydown", unlockAudio, true);
+    this.scenicTour = new ScenicTourAndChallenges(this);
+    this._applyingStartupMode = false;
+    if (deferredMode) {
+      this.setMode(deferredMode);
+    } else {
+      this._syncUrlParams();
+    }
     const qGlb = q.get("glb")?.trim();
     if (qGlb) {
       this._loadUrlGlbAtLocation(qGlb, qLat, qLon, q.get("name") || "");
@@ -1069,13 +1107,8 @@ class WorldExplorerApp {
     this._updateCamera(0.016);
     this._updateHud();
     this._updateActiveQuickChip(numLat, numLon);
-    if (typeof window !== "undefined" && window.history && window.history.replaceState) {
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.set("lat", numLat.toFixed(5));
-        url.searchParams.set("lon", numLon.toFixed(5));
-        window.history.replaceState(null, "", url.toString());
-      } catch (_) {}
+    if (!this._applyingStartupMode) {
+      this._syncUrlParams(numLat, numLon, this.mode, displayName || this.currentCityName);
     }
     if (this.propertyInspector) this.propertyInspector.onLocationJump(numLat, numLon, displayName, streetName);
     return this.worldOrigin;
@@ -2140,6 +2173,12 @@ class WorldExplorerApp {
     this.heliMesh.rotation.set(0, this.yaw, 0);
     this._resetMotionForTeleport();
     this._updateCamera(0.016);
+    if (!this._applyingStartupMode) {
+      const wo = this.worldOrigin;
+      const liveLat = (wo && wo.mPerDegLat) ? (wo.centerLat - this.pos.z / wo.mPerDegLat) : this.currentLat;
+      const liveLon = (wo && wo.mPerDegLon) ? (wo.centerLon + this.pos.x / wo.mPerDegLon) : this.currentLon;
+      this._syncUrlParams(liveLat, liveLon, this.mode, label || this.currentCityName);
+    }
   }
 
   /** A teleport arrives at rest at this.pos: FSD off, no carried fall, boat left behind, airliner moved along. */
@@ -2545,11 +2584,15 @@ class WorldExplorerApp {
     // DRIVE MODE
     if (this.water.updateDrive(dt)) { // fix/water: sinking + respawn sequence, engine input disabled
       this.nitroActive = false;
+      this._driveLatVel = 0;
+      this._driveDriftSlip = 0;
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
       return;
     }
     if (this.vehicleDamage && this.vehicleDamage.updateDrive(dt)) { // [car-explosions] car destroyed -> respawn
       this.nitroActive = false;
+      this._driveLatVel = 0;
+      this._driveDriftSlip = 0;
       return;
     }
     const spec = VEHICLE_SPECS[this.vehicleIdx];
@@ -2576,29 +2619,77 @@ class WorldExplorerApp {
     const isNitro = shiftPressed && throttle > 0 && !(this.poiVenues && this.poiVenues.nitroEmpty); // [venues-poi] nitro tank
     this.nitroActive = isNitro;
 
+    const evalSupportAt = (x, z, refY) => {
+      const meshY = getChunkTerrainMeshElevation(x, z);
+      const demY = getBeijingTerrainElevation(x, z);
+      const baseTerr = Math.max(meshY + 0.08, demY + 0.16);
+      let rSurf = this.sampleRoadSurface(x, refY, z);
+      if (!rSurf && refY > baseTerr + 3.0) {
+        rSurf = this.sampleRoadSurface(x, baseTerr, z);
+      }
+      let bestY = rSurf ? Math.max(rSurf.y, baseTerr) : baseTerr;
+      const shipDeck = this.maritime?.getDeckHeightAt?.(x, z, refY + 1.5);
+      if (shipDeck && Number.isFinite(shipDeck.y) && shipDeck.y > bestY) {
+        bestY = shipDeck.y;
+      }
+      return {
+        y: bestY,
+        surf: rSurf,
+      };
+    };
+
+    const axleHalfSpan = Math.max(1.6, (spec.length || 4.6) * 0.38);
+    const sinY0 = Math.sin(this.yaw);
+    const cosY0 = Math.cos(this.yaw);
+    const fSupPre = evalSupportAt(this.pos.x + sinY0 * axleHalfSpan, this.pos.z + cosY0 * axleHalfSpan, this.pos.y);
+    const rSupPre = evalSupportAt(this.pos.x - sinY0 * axleHalfSpan, this.pos.z - cosY0 * axleHalfSpan, this.pos.y);
+    const slopeDyPre = fSupPre.y - rSupPre.y;
+    const slopeAngle = (this.isGrounded && Math.abs(slopeDyPre) < Math.max(3.4, axleHalfSpan * 2.4))
+      ? Math.atan2(slopeDyPre, axleHalfSpan * 2.0)
+      : 0;
+    const slopeDeg = (Math.abs(slopeAngle) * 180) / Math.PI;
+    const climbingUp = (throttle > 0 && slopeAngle > 0) || (throttle < 0 && slopeAngle < 0);
+    const climbDeg = climbingUp ? slopeDeg : 0;
+    const slopeTraction = climbDeg <= 26 ? 1.0 : climbDeg >= 38 ? 0.0 : 1.0 - (climbDeg - 26) / 12.0;
+
     const mouseIdleSec = (performance.now() - this.lastMouseOrbitTime) * 0.001;
     const nitro = spec.nitroMult || 1.45; // each vehicle's own nitro top-speed multiplier
     const maxSpd = isNitro ? spec.maxSpeed * nitro : spec.maxSpeed;
     const speedRatio = Math.min(1, Math.abs(this.speed) / maxSpd);
+    const drifting = handbrake && this.isGrounded && Math.abs(this.speed) > 10 && Math.abs(steerInput) > 0.1;
+
+    if (this.isGrounded && (Math.abs(this.speed) >= 0.05 || throttle !== 0 || slopeDeg >= 6)) {
+      this.speed -= 9.81 * Math.sin(slopeAngle) * dt;
+    }
 
     if (!this.isGrounded) {
       // In mid-air, wheels have no ground traction: throttle & brake do not push/stop the car
       const airDrag = (1.2 + speedRatio * 2.2) * dt;
       if (Math.abs(this.speed) <= airDrag) this.speed = 0;
       else this.speed -= Math.sign(this.speed) * airDrag;
-    } else if (handbrake) {
+    } else if (handbrake && !drifting) {
       const decel = spec.brake * 1.45 * dt;
       if (Math.abs(this.speed) <= decel) this.speed = 0;
       else this.speed -= Math.sign(this.speed) * decel;
+    } else if (drifting) {
+      const driftScrub = Math.min(spec.brake * 0.22, 8.5) * dt;
+      if (throttle > 0 && slopeTraction > 0) {
+        const maintain = (1.0 - speedRatio * 0.65) * spec.accel * 0.42 * slopeTraction * dt;
+        this.speed = Math.min(maxSpd, this.speed + maintain - Math.sign(this.speed) * driftScrub * 0.5);
+      } else if (Math.abs(this.speed) <= driftScrub) {
+        this.speed = 0;
+      } else {
+        this.speed -= Math.sign(this.speed) * driftScrub;
+      }
     } else if (throttle > 0) {
       const curveFloor = isNitro ? 0.55 : 0.35;
-      const torque = (1.0 - speedRatio * (1.0 - curveFloor)) * spec.accel * (isNitro ? 1.45 * 1.15 : 1.0);
+      const torque = (1.0 - speedRatio * (1.0 - curveFloor)) * spec.accel * (isNitro ? 1.45 * 1.15 : 1.0) * slopeTraction;
       this.speed = Math.min(maxSpd, this.speed + torque * dt);
     } else if (throttle < 0) {
       if (this.speed > 1.0) {
         this.speed = Math.max(0, this.speed - spec.brake * dt);
       } else {
-        this.speed = Math.max(-maxSpd * 0.35, this.speed - spec.accel * 0.7 * dt);
+        this.speed = Math.max(-maxSpd * 0.35, this.speed - spec.accel * 0.7 * slopeTraction * dt);
       }
     } else {
       const drag = (2.8 + speedRatio * 4.5) * dt;
@@ -2639,8 +2730,9 @@ class WorldExplorerApp {
       if (steerInput === 0 && Math.abs(this.steerAngle) < 0.002) this.steerAngle = 0;
     }
 
+    let turnRate = 0;
     if (absDriveSpd > 0.15) {
-      let turnRate = (this.speed / spec.length) * Math.tan(this.steerAngle);
+      turnRate = (this.speed / spec.length) * Math.tan(this.steerAngle);
       if (!this.isGrounded) {
         turnRate *= 0.10; // no tire steering authority in mid-air
       } else if (!isFsdDriving) {
@@ -2649,7 +2741,7 @@ class WorldExplorerApp {
             1.08,
             0.38,
             Math.min(1, Math.max(0, (absDriveSpd - 8.0) / 52.0))
-          ) * (handbrake ? 1.25 : 1.0);
+          ) * (handbrake ? 1.32 : 1.0);
         turnRate = THREE.MathUtils.clamp(turnRate, -maxYawRate, maxYawRate);
       }
       this.yaw += turnRate * dt;
@@ -2667,42 +2759,48 @@ class WorldExplorerApp {
       }
     }
 
-    const evalSupportAt = (x, z, refY) => {
-      const meshY = getChunkTerrainMeshElevation(x, z);
-      const demY = getBeijingTerrainElevation(x, z);
-      const baseTerr = Math.max(meshY + 0.08, demY + 0.16);
-      let rSurf = this.sampleRoadSurface(x, refY, z);
-      if (!rSurf && refY > baseTerr + 3.0) {
-        rSurf = this.sampleRoadSurface(x, baseTerr, z);
+    // 2D lateral slip / drift velocity (normal tires stay planted; Space handbrake at speed drops rear grip)
+    if (this.isGrounded && !isFsdDriving) {
+      if (absDriveSpd > 8.0) {
+        const slipGain = drifting ? 1.25 : 0.85;
+        this._driveLatVel += (-turnRate * this.speed * slipGain) * dt;
       }
-      let bestY = rSurf ? Math.max(rSurf.y, baseTerr) : baseTerr;
-      const shipDeck = this.maritime?.getDeckHeightAt?.(x, z, refY + 1.5);
-      if (shipDeck && Number.isFinite(shipDeck.y) && shipDeck.y > bestY) {
-        bestY = shipDeck.y;
-      }
-      return {
-        y: bestY,
-        surf: rSurf,
-      };
-    };
+      const latGrip = drifting ? 1.85 : 10.5;
+      this._driveLatVel *= Math.exp(-latGrip * dt);
+      const maxLat = Math.max(12.0, absDriveSpd * 0.65);
+      this._driveLatVel = THREE.MathUtils.clamp(this._driveLatVel, -maxLat, maxLat);
+      if (Math.abs(this._driveLatVel) < 0.02 && absDriveSpd < 0.2) this._driveLatVel = 0;
+      this._driveDriftSlip = THREE.MathUtils.clamp(Math.abs(this._driveLatVel) / 10.0, 0, 1);
+    } else if (!this.isGrounded) {
+      this._driveLatVel *= Math.exp(-1.5 * dt);
+      this._driveDriftSlip = 0;
+    } else {
+      this._driveLatVel = 0;
+      this._driveDriftSlip = 0;
+    }
 
     // fix/water: swept collision in <= 0.75 m sub-steps (no tunnelling at 230 km/h+); road/terrain support
     // is sampled every ~4 m as before, and the water check runs before the terrain floor clamp.
-    const totalMove = this.speed * dt;
-    const steps = Math.max(1, Math.min(32, Math.ceil(Math.abs(totalMove) / 0.75)));
-    const supportSteps = Math.max(1, Math.min(6, Math.ceil(Math.abs(totalMove) / 4.0)));
+    const fwdX = Math.sin(this.yaw), fwdZ = Math.cos(this.yaw);
+    const latX = Math.cos(this.yaw), latZ = -Math.sin(this.yaw);
+    const vx = fwdX * this.speed + latX * this._driveLatVel;
+    const vz = fwdZ * this.speed + latZ * this._driveLatVel;
+    const totalMove = Math.hypot(this.speed, this._driveLatVel) * dt;
+    const steps = Math.max(1, Math.min(32, Math.ceil(totalMove / 0.75)));
+    const supportSteps = Math.max(1, Math.min(6, Math.ceil(totalMove / 4.0)));
     const supportEvery = Math.max(1, Math.floor(steps / supportSteps));
     const stepDt = dt / steps;
     const isPlaneSpec = spec.id === "fighter_jet" || spec.id === "propeller_plane" || spec.id === "plane";
     const colRad = Math.max(1.25, (spec.width || 2.1) * 0.55);
     const colSpan = isPlaneSpec ? 11.5 : (spec.length || 4.8);
     for (let s = 0; s < steps; s++) {
-      const nx = this.pos.x + Math.sin(this.yaw) * this.speed * stepDt;
-      const nz = this.pos.z + Math.cos(this.yaw) * this.speed * stepDt;
+      const nx = this.pos.x + vx * stepDt;
+      const nz = this.pos.z + vz * stepDt;
       const col = this.collision.resolveCar(nx, this.pos.y, nz, this.yaw, spec, this.pos.x, this.pos.z);
       this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.x));
       this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
       if (col.hit) {
+        this._driveLatVel *= 0.45;
         const impact = this.collision.applyImpact(col.nx, col.nz);
         if (impact > 0 && !isTank && this.vehicleDamage) this.vehicleDamage.crashPlayer(impact, 1, "wall"); // [crash-damage]
       }
@@ -2713,10 +2811,11 @@ class WorldExplorerApp {
           this.yaw,
           colRad,
           colSpan,
-          { x: Math.sin(this.yaw) * this.speed, y: this.driveVelY || 0, z: Math.cos(this.yaw) * this.speed },
+          { x: vx, y: this.driveVelY || 0, z: vz },
           isPlaneSpec
         );
         if (airHit && airHit.hit) {
+          this._driveLatVel *= 0.45;
           this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.x));
           this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.z));
           const impact = this.collision.applyImpact(airHit.nx, airHit.nz);
@@ -2731,10 +2830,11 @@ class WorldExplorerApp {
           isPlaneSpec ? colSpan * 0.5 : 0,
           this.pos.y + 1.1,
           this.yaw,
-          { x: Math.sin(this.yaw) * this.speed, y: this.driveVelY || 0, z: Math.cos(this.yaw) * this.speed },
+          { x: vx, y: this.driveVelY || 0, z: vz },
           { halfLen: (spec.length || 4.8) * 0.5, halfH: (spec.height || 1.5) * 0.5, applyPosition: true }
         );
         if (shipHit && shipHit.hit && !shipHit.isDeckContact) {
+          this._driveLatVel *= 0.45;
           this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.x));
           this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, this.pos.z));
           const impact = this.collision.applyImpact(shipHit.nx, shipHit.nz);
@@ -2752,7 +2852,6 @@ class WorldExplorerApp {
     this.speed *= this.vegetation.ram(this.pos, this.yaw, this.speed, spec, this.isDrivingTank()); // [tree-damage] knock trees down
     if (this.streetFeatures) this.speed *= this.streetFeatures.collideVehicle(this.pos, this.yaw, this.speed, spec); // [prop-damage]
 
-    const axleHalfSpan = Math.max(1.6, (spec.length || 4.6) * 0.38);
     const sinY = Math.sin(this.yaw);
     const cosY = Math.cos(this.yaw);
     const centerSup = evalSupportAt(this.pos.x, this.pos.z, this.pos.y);
@@ -2763,13 +2862,14 @@ class WorldExplorerApp {
     // when driving off an elevated bridge deck (pos.y > minSupportY + 0.25), integrate gravitational free-fall (g = 22 m/s^2).
     const minSupportY = Math.max(centerSup.y, (frontSup.y + rearSup.y) * 0.5);
     const { chassis, wheels, frontSteerPivots } = this.vehicleMesh.userData;
+    const reducedMotion = this._prefersReducedMotion();
     const wasAirborne = !this.isGrounded;
     if (this.pos.y <= minSupportY + 0.22 && (this.driveVelY || 0) <= 0) {
       if (wasAirborne) {
         const impactVy = Math.abs(this.driveVelY || 0);
         if (impactVy > 4.5) {
           if (chassis) chassis.position.y = -Math.min(0.24, (impactVy - 4.0) * 0.022);
-          if (this.nitroFx) this.nitroFx.shake = Math.min(0.8, impactVy * 0.04);
+          if (this.nitroFx && !reducedMotion) this.nitroFx.shake = Math.min(0.8, impactVy * 0.04);
           if (impactVy > 12.0 && !isTank && this.vehicleDamage) {
             const dmg = (impactVy - 10.0) * 4.2;
             this.vehicleDamage.crashPlayer(dmg, 1, "landing");
@@ -2787,7 +2887,7 @@ class WorldExplorerApp {
         const impactVy = Math.abs(this.driveVelY || 0);
         if (impactVy > 4.5) {
           if (chassis) chassis.position.y = -Math.min(0.24, (impactVy - 4.0) * 0.022);
-          if (this.nitroFx) this.nitroFx.shake = Math.min(0.8, impactVy * 0.04);
+          if (this.nitroFx && !reducedMotion) this.nitroFx.shake = Math.min(0.8, impactVy * 0.04);
           if (impactVy > 12.0 && !isTank && this.vehicleDamage) {
             const dmg = (impactVy - 10.0) * 4.2;
             this.vehicleDamage.crashPlayer(dmg, 1, "landing");
@@ -2821,9 +2921,15 @@ class WorldExplorerApp {
       Math.min(1, 14 * dt)
     );
 
-    if (chassis) chassis.position.y = THREE.MathUtils.lerp(chassis.position.y || 0, 0, Math.min(1, 14 * dt));
-    const targetRoll = -this.steerAngle * speedRatio * 0.18;
-    chassis.rotation.z = THREE.MathUtils.lerp(chassis.rotation.z, targetRoll, Math.min(1, 12 * dt));
+    if (chassis) {
+      chassis.position.y = THREE.MathUtils.lerp(chassis.position.y || 0, 0, Math.min(1, 14 * dt));
+      const targetRoll = -this.steerAngle * speedRatio * 0.18;
+      chassis.rotation.z = THREE.MathUtils.lerp(chassis.rotation.z, targetRoll, Math.min(1, 12 * dt));
+      const targetSlipYaw = (this.isGrounded && absDriveSpd > 2.0)
+        ? THREE.MathUtils.clamp(Math.atan2(-this._driveLatVel, Math.max(6.0, absDriveSpd)) * 0.85, -0.42, 0.42)
+        : 0;
+      chassis.rotation.y = THREE.MathUtils.lerp(chassis.rotation.y || 0, targetSlipYaw, Math.min(1, 10 * dt));
+    }
 
     for (const piv of frontSteerPivots) {
       piv.rotation.y = this.steerAngle;
@@ -2925,7 +3031,7 @@ class WorldExplorerApp {
         lookY,
         this.camPivot.z + Math.cos(viewYaw) * lookAhead
       );
-      if (isHeli && this.heli) this.heli.cameraShake(this.camera, dt);
+      if (isHeli && this.heli && !this._prefersReducedMotion()) this.heli.cameraShake(this.camera, dt);
     }
 
     const absSpd = Math.abs(this.speed);
@@ -3167,12 +3273,8 @@ class WorldExplorerApp {
         }
       } else if (e.code === KEY.mode_kaiju && !e.repeat) {
         this.setMode("kaiju");
-      } else if (e.code === KEY.camera) { // V: vehicle while driving (KEY.drive_vehicle), camera otherwise; Shift+V: camera
-        if (this.mode === "drive" && !e.shiftKey) {
-          this.cycleVehicle();
-        } else {
-          this.cycleCameraMode();
-        }
+      } else if (e.code === KEY.camera && !e.repeat) { // V: cycle camera in all modes
+        this.cycleCameraMode();
       } else if (e.code === KEY.vehicle_next) {
         if (this.mode === "airliner") return;
         if (this.mode !== "drive") this.setMode("drive");
@@ -3181,6 +3283,10 @@ class WorldExplorerApp {
         this.handleVehicleInteract();
       } else if (e.code === KEY.drive_horn) {
         this.triggerHornOrSiren();
+      } else if (e.code === KEY.audio_mute && !e.repeat) {
+        this.toggleAudioMute();
+      } else if (e.code === KEY.photo_mode && !e.repeat) {
+        this.togglePhotoMode();
       } else if (e.code === KEY.map) {
         if (this.mapSystem) this.mapSystem.toggleModal();
       } else if (e.code === "Escape") {
@@ -3450,10 +3556,15 @@ class WorldExplorerApp {
       }
       return;
     }
-    if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); return; } // [kaiju]
+    if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); if (!this._applyingStartupMode) this._syncUrlParams(undefined, undefined, "kaiju"); return; } // [kaiju]
     if (this.kaiju && this.kaiju.active && !keepKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;
-    if (this.mode === "drive" && newMode !== "drive") this._parkCurrentCar(newMode); // [parked-cars] before water.reset()
+    if (this.mode === "drive" && newMode !== "drive") {
+      this._parkCurrentCar(newMode); // [parked-cars] before water.reset()
+      this._driveLatVel = 0;
+      this._driveDriftSlip = 0;
+      if (this.vehicleMesh?.userData?.chassis) this.vehicleMesh.userData.chassis.rotation.y = 0;
+    }
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
     this.mode = newMode;
@@ -3589,6 +3700,7 @@ class WorldExplorerApp {
     }
     if (prevMode === "helicopter" && newMode !== "helicopter" && this.heli) this.heli.onExit();
     this._showControlsHint();
+    if (!this._applyingStartupMode) this._syncUrlParams(undefined, undefined, this.mode);
   }
 
   // [parked-cars] Getting out of the car leaves it parked where it stands (not when it is a wreck or sinking);
@@ -4024,7 +4136,7 @@ class WorldExplorerApp {
       if (this.vehicleMesh && this.vehicleMesh.userData) {
         this.vehicleMesh.userData.sirenActive = this.sirenActive;
       }
-      playVehicleHornOrSiren(spec.id, this.sirenActive);
+      if (!this._audioMuted) playVehicleHornOrSiren(spec.id, this.sirenActive);
       const sub = this.sirenActive
         ? spec.id === "tow_truck"
           ? getLang() === "zh" ? "工程警示灯开启" : "BEACON ON"
@@ -4192,13 +4304,30 @@ class WorldExplorerApp {
     let lastResults = [];
 
     if (locPill && locPanel) {
-      locPill.addEventListener("click", (e) => {
+      const toggleSearch = (e) => {
+        if (e.target && e.target.closest && e.target.closest("#btn-copy-link")) return;
         e.stopPropagation();
         locPanel.classList.toggle("hidden");
         if (!locPanel.classList.contains("hidden") && locInput) {
           locInput.focus();
           locInput.select();
         }
+      };
+      locPill.addEventListener("click", toggleSearch);
+      locPill.addEventListener("keydown", (e) => {
+        if (e.target && e.target.closest && e.target.closest("#btn-copy-link")) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleSearch(e);
+        }
+      });
+    }
+    const copyLinkBtn = document.getElementById("btn-copy-link");
+    if (copyLinkBtn) {
+      copyLinkBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        copyLinkBtn.blur();
+        this._copyShareLink();
       });
     }
 
@@ -4335,12 +4464,127 @@ class WorldExplorerApp {
       camBtn.addEventListener("click", () => this.cycleCameraMode());
     }
 
+    const muteBtn = document.getElementById("btn-audio-mute");
+    if (muteBtn) {
+      muteBtn.addEventListener("click", () => {
+        muteBtn.blur();
+        this.toggleAudioMute();
+      });
+    }
+    this._syncAudioMuteBtn();
+
     const langBtn = document.getElementById("lang-btn");
     if (langBtn) {
       langBtn.addEventListener("click", () => {
         setLang(getLang() === "en" ? "zh" : "en");
+        this._syncAudioMuteBtn();
       });
     }
+  }
+
+  _prefersReducedMotion() {
+    return typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  }
+
+  _showQuietToast(msg, durationMs = 2000) {
+    if (typeof document === "undefined") return;
+    let el = document.getElementById("hud-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "hud-toast";
+      el.className = "hud-toast";
+      el.setAttribute("role", "status");
+      document.body.appendChild(el);
+    }
+    clearTimeout(this._quietToastTimer);
+    if (!msg) {
+      el.classList.remove("show");
+      return;
+    }
+    el.textContent = msg;
+    el.classList.add("show");
+    this._quietToastTimer = setTimeout(() => el.classList.remove("show"), durationMs);
+  }
+
+  _syncUrlParams(lat, lon, mode = this.mode, name = this.currentCityName) {
+    if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
+    try {
+      const url = new URL(window.location.href);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        url.searchParams.set("lat", lat.toFixed(5));
+        url.searchParams.set("lon", lon.toFixed(5));
+      } else if (this.worldOrigin && this.worldOrigin.mPerDegLat) {
+        const liveLat = this.worldOrigin.centerLat - this.pos.z / this.worldOrigin.mPerDegLat;
+        const liveLon = this.worldOrigin.centerLon + this.pos.x / this.worldOrigin.mPerDegLon;
+        url.searchParams.set("lat", liveLat.toFixed(5));
+        url.searchParams.set("lon", liveLon.toFixed(5));
+      }
+      const activeMode = this.kaiju && this.kaiju.active ? "kaiju" : mode;
+      if (activeMode) url.searchParams.set("mode", activeMode);
+      const cleanName = String(name || "").trim();
+      if (cleanName) url.searchParams.set("name", cleanName);
+      else url.searchParams.delete("name");
+      window.history.replaceState(null, "", url.toString());
+    } catch (_) {}
+  }
+
+  async _copyShareLink() {
+    this._syncUrlParams();
+    const href = window.location.href;
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(href);
+        copied = true;
+      }
+    } catch (_) {}
+    if (!copied && typeof document !== "undefined") {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = href;
+        ta.setAttribute("readonly", "");
+        ta.style.cssText = "position:fixed;opacity:0;pointer-events:none;";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (_) {}
+    }
+    if (copied) this._showQuietToast(t("Link copied"), 2000);
+  }
+
+  _syncAudioMuteBtn() {
+    const btn = document.getElementById("btn-audio-mute");
+    if (!btn) return;
+    const muted = Boolean(this._audioMuted);
+    btn.classList.toggle("is-muted", muted);
+    btn.setAttribute("aria-pressed", muted ? "true" : "false");
+    const lbl = `${t(muted ? "Unmute" : "Mute")} [${keyCaps("audio_mute")}]`;
+    btn.title = lbl;
+    btn.setAttribute("aria-label", lbl);
+  }
+
+  toggleAudioMute() {
+    const nextMuted = this.ambientAudio ? this.ambientAudio.toggleMute() : !this._audioMuted;
+    this._audioMuted = Boolean(nextMuted);
+    try { getWeaponSfx(this)?.setMuted(this._audioMuted); } catch (_) {}
+    if (this._audioMuted) {
+      try { stopVehicleSirenAudio(); } catch (_) {}
+      this.sirenActive = false;
+    }
+    this._syncAudioMuteBtn();
+    return this._audioMuted;
+  }
+
+  togglePhotoMode() {
+    if (typeof document === "undefined") return false;
+    const hidden = document.body.classList.toggle("hud-hidden");
+    if (hidden) {
+      this._showQuietToast(t("Photo mode · Press P to exit"), 2000);
+    } else {
+      this._showQuietToast("", 0);
+    }
+    return hidden;
   }
 
   _ensureFsdBeacon() {
@@ -5103,7 +5347,8 @@ class WorldExplorerApp {
       return;
     }
     if (this.nitroFx) this.nitroFx.update(dt); // [nitro-fx] after the camera: shake + world-space boost effects
-    this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
+    if (!this._prefersReducedMotion()) this.collision.applyCameraShake(this.camera, dt); // fix/water: impact shake
+    else this.collision.shake = 0;
     if (this.kaiju) this.kaiju.postCamera(dt, rawDt); // [kaiju]
     // [integration] atmosphere first: daylight/sun/weather are then current for traffic, street, places and shadows
     if (this.atmosphere) this.atmosphere.update(dt); // feature/atmosphere
@@ -5127,6 +5372,7 @@ class WorldExplorerApp {
     if (this.poiVenues) this.poiVenues.update(dt); // [venues-poi]
     if (this.placesInfo) this.placesInfo.update(dt); // places-info
     if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
+    if (this.scenicTour) this.scenicTour.update(dt);
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {
@@ -5138,8 +5384,58 @@ class WorldExplorerApp {
 
     const camTerrY = getBeijingTerrainElevation(this.camera.position.x, this.camera.position.z);
     const camAlt = Math.max(2.0, this.camera.position.y - camTerrY);
-    const targetShadowBounds = THREE.MathUtils.clamp(550 + camAlt * 1.25, 550, 1800) * QUALITY.shadowDist; // [ui-mobile]
-    if (Math.abs(this.currentShadowBounds - targetShadowBounds) > 35) {
+    if (this.ambientAudio) {
+      const playerTerrY = getBeijingTerrainElevation(this.pos.x, this.pos.z);
+      const curAlt = Math.max(0, this.pos.y - playerTerrY);
+      const curSpeed = (this.mode === "airliner" && this.airliner)
+        ? Math.abs(this.airliner.speed || this.speed || 0)
+        : Math.abs(this.speed || 0);
+      const inWater = this.mode === "boat" || Boolean(this.water && (this.water.sink || this.water.isPointInWater(this.pos.x, this.pos.z)));
+      this._inWater = inWater;
+      this._nearWaterCheckT = (this._nearWaterCheckT || 0) - rawDt;
+      if (inWater) {
+        this._nearWater = true;
+      } else if (this._nearWaterCheckT <= 0) {
+        this._nearWaterCheckT = 0.25;
+        let nw = false;
+        if (this.water && typeof this.water.isPointInWater === "function") {
+          const r = 28.0;
+          nw = this.water.isPointInWater(this.pos.x + r, this.pos.z) ||
+            this.water.isPointInWater(this.pos.x - r, this.pos.z) ||
+            this.water.isPointInWater(this.pos.x, this.pos.z + r) ||
+            this.water.isPointInWater(this.pos.x, this.pos.z - r);
+        }
+        this._nearWater = nw;
+      }
+      try {
+        this.ambientAudio.update(rawDt, {
+          mode: this.mode,
+          speed: curSpeed,
+          alt: curAlt,
+          inWater: !!this._inWater,
+          nearWater: !!this._nearWater,
+          driftSlip: this._driveDriftSlip || 0,
+        });
+      } catch (_) {}
+    }
+
+    let baseShadowBounds;
+    if (camAlt <= 25.0) {
+      baseShadowBounds = 165.0;
+    } else if (camAlt < 120.0) {
+      const tLow = (camAlt - 25.0) / 95.0;
+      const sLow = tLow * tLow * (3.0 - 2.0 * tLow);
+      baseShadowBounds = THREE.MathUtils.lerp(165.0, 550.0, sLow);
+    } else {
+      const tHigh = Math.min(1.0, (camAlt - 120.0) / 480.0);
+      baseShadowBounds = THREE.MathUtils.lerp(550.0, 1600.0, tHigh);
+    }
+    const targetShadowBounds = baseShadowBounds * QUALITY.shadowDist; // [ui-mobile]
+    const tBias = THREE.MathUtils.clamp((camAlt - 25.0) / 95.0, 0.0, 1.0);
+    const sBias = tBias * tBias * (3.0 - 2.0 * tBias);
+    this.sunLight.shadow.normalBias = THREE.MathUtils.lerp(0.28, 0.75, sBias);
+    this.sunLight.shadow.bias = THREE.MathUtils.lerp(-0.0004, -0.0005, sBias);
+    if (Math.abs(this.currentShadowBounds - targetShadowBounds) > 6.0) {
       this.currentShadowBounds = targetShadowBounds;
       const sc = this.sunLight.shadow.camera;
       sc.left = -targetShadowBounds;
@@ -5157,13 +5453,14 @@ class WorldExplorerApp {
 
     const rawFocusX = this.camera.position.x + Math.sin(activeYaw) * fwdShift;
     const rawFocusZ = this.camera.position.z + Math.cos(activeYaw) * fwdShift;
-    const snapStep = Math.max(4.0, (this.currentShadowBounds * 2.0) / 1024.0);
-    const focusX = Math.round(rawFocusX / snapStep) * snapStep;
-    const focusZ = Math.round(rawFocusZ / snapStep) * snapStep;
-    if (Math.hypot(focusX - this._lastShadowFocusX, focusZ - this._lastShadowFocusZ) >= 8.0) {
+    const mapSize = this.sunLight.shadow.mapSize.x || 2048;
+    const texelSize = (2.0 * this.currentShadowBounds) / mapSize;
+    const focusX = Math.round(rawFocusX / texelSize) * texelSize;
+    const focusZ = Math.round(rawFocusZ / texelSize) * texelSize;
+    if (focusX !== this._lastShadowFocusX || focusZ !== this._lastShadowFocusZ) {
       this._lastShadowFocusX = focusX;
       this._lastShadowFocusZ = focusZ;
-      const focusY = getBeijingTerrainElevation(focusX, focusZ);
+      const focusY = Math.round(getBeijingTerrainElevation(focusX, focusZ) / texelSize) * texelSize;
       this.sunLight.target.position.set(focusX, focusY, focusZ);
       const sunDist = 2600;
       this.sunLight.position.set(
