@@ -1308,7 +1308,8 @@ const HANZI_PINYIN = {
   "学": "xue", "府": "fu",
   "柳": "liu", "苏": "su", "州": "zhou",
   "土": "tu", "牡": "mu", "丹": "dan",
-  "健": "jian", "翔": "xiang", "慧": "hui", "忠": "zhong"
+  "健": "jian", "翔": "xiang", "慧": "hui", "忠": "zhong",
+  "基": "ji", "厂": "chang", "头": "tou", "社": "she", "区": "qu", "弄": "nong"
 };
 
 let romanizeLossy = false;
@@ -1368,6 +1369,12 @@ function romanizeChineseSpan(str) {
     .replace(/·/g, " · ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function translateCityName(name, lang = currentLang) {
+  if (!name) return lang === "zh" ? "北京" : "Beijing, CN";
+  if (lang === "zh" && name === "Beijing, CN") return "北京";
+  return name;
 }
 
 export function translateRoadName(name, lang = currentLang) {

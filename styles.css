@@ -106,7 +106,7 @@ kbd {
 }
 
 .loc-pill-text {
-  max-width: 340px;
+  max-width: 420px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -577,7 +577,11 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-left: 2px;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 10px;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
   pointer-events: none;
 }
@@ -1017,6 +1021,7 @@ body.touch-ui .hud-radar {
 body.touch-ui .radar-squircle,
 body.touch-ui #minimap-canvas { width: 92px; height: 92px; }
 body.touch-ui .radar-squircle { border-radius: 16px; }
+body.touch-ui .radar-north { top: 10px; font-size: 8.5px; padding: 1px 5px; }
 body.touch-ui .kj-radar { width: 92px; height: 92px; }
 
 body.touch-ui .pi-card { display: none; }
@@ -1033,6 +1038,26 @@ body.touch-ui .hud-speedometer {
 }
 body.touch-ui .speed-value { font-size: 34px; letter-spacing: -1px; }
 body.touch-ui .kj-status { bottom: auto; top: calc(52px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
+
+/* Landscape phones: keep center road & car unobstructed by tucking speedometer under top-right dock. */
+@media (orientation: landscape) and (max-height: 540px) {
+  body.touch-ui .loc-pill-text { max-width: 24vw; }
+  body.touch-ui .hud-speedometer {
+    top: calc(56px + env(safe-area-inset-top, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    left: auto;
+    bottom: auto;
+    transform: none;
+    align-items: flex-end;
+    background: rgba(15, 23, 42, 0.56);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 4px 10px;
+  }
+  body.touch-ui .speed-value { font-size: 26px; }
+}
 
 /* Portrait: the top row can't hold both, so the location pill drops below the dock. */
 @media (orientation: portrait) {

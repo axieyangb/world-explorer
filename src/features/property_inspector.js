@@ -302,7 +302,7 @@ const INSPECTOR_CSS = `
   z-index: 38;
   display: flex;
   flex-direction: column;
-  max-width: min(600px, calc(100vw - 44px));
+  max-width: min(640px, calc(100vw - 44px));
   padding: 8px 11px 8px 13px;
   border-radius: 26px;
   background: rgba(16, 20, 28, 0.82);
@@ -329,13 +329,18 @@ const INSPECTOR_CSS = `
 }
 #property-inspector-card.drawer-open {
   border-radius: 20px;
-  max-width: min(440px, calc(100vw - 32px));
+  max-width: min(460px, calc(100vw - 32px));
 }
 .prop-insp-pill-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   min-width: 0;
+}
+#property-inspector-card.drawer-open .prop-insp-actions {
+  width: 100%;
+  justify-content: flex-end;
 }
 #prop-insp-thumb-btn {
   width: 44px;
@@ -369,8 +374,8 @@ const INSPECTOR_CSS = `
 .prop-insp-text {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  flex: 1 1 auto;
+  min-width: 140px;
+  flex: 1 1 160px;
 }
 .prop-insp-title {
   font-size: 13.5px;
@@ -397,6 +402,30 @@ const INSPECTOR_CSS = `
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+#prop-insp-fsd-btn {
+  appearance: none;
+  background: rgba(56, 189, 248, 0.16);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+}
+#prop-insp-fsd-btn:hover {
+  background: rgba(56, 189, 248, 0.28);
+  border-color: rgba(125, 211, 252, 0.65);
+  color: #e0f2fe;
+}
+#prop-insp-fsd-btn:active {
+  transform: scale(0.97);
 }
 #prop-insp-photo-btn,
 #prop-insp-orbit-btn {

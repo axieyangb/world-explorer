@@ -14,7 +14,7 @@ import { getBeijingTerrainElevation } from '../environment.js';
 const CELL = 2.0;
 const MIN = -502.0;
 const N = 502; // 1004 m / 2 m
-const WATER_Y_OFFSET = 0.28; // matches buildParksAndWater's polygon offset
+const WATER_Y_OFFSET = 0.18; // matches buildParksAndWater's polygon offset
 const DRIVE_EXCLUDE = new Set(['footway', 'steps', 'cycleway', 'path', 'pedestrian', 'track', 'bridleway']);
 
 function setBit(bits, idx) { bits[idx >> 3] |= 1 << (idx & 7); }
@@ -207,19 +207,71 @@ export class WaterPhysics {
     return Boolean(sampleTunnelCorridorAt(this.app, wx, wz, 6.0));
   }
 
-  /** True when the road surface surf (from sampleRoadSurface) physically supports a point above/across water. */
-  _roadSupports(surf, wx, wz, waterY) {
+  /** True when any road surface (including service/residential/unclassified/footway promenades) supports (wx, wz) above water. */
+  _roadSupports(surfOrX, wxOrZ, wzArg, waterYArg) {
+    let surf = surfOrX;
+    let wx = wxOrZ;
+    let wz = wzArg;
+    let waterY = waterYArg;
+    if (typeof surfOrX === "number") {
+      wx = surfOrX;
+      wz = wxOrZ;
+      waterY = this.getWaterSurfaceY(wx, wz);
+      surf = this.app.sampleRoadSurface ? this.app.sampleRoadSurface(wx, waterY, wz) : null;
+    }
     if (this.isInUnderwaterTunnel(wx, wz)) return true;
-    if (!surf || !surf.seg) return false;
-    const s = surf.seg;
-    if (s.bridge || s.tunnel) return true;
-    if (surf.y < waterY - 0.6) return false;
-    const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
-    const len2 = vx * vx + vz * vz;
-    let t = len2 > 1e-6 ? ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2 : 0;
-    t = t < 0 ? 0 : t > 1 ? 1 : t;
-    const d = Math.hypot(wx - (s.x1 + vx * t), wz - (s.z1 + vz * t));
-    return d <= (s.width || 6) * 0.5 + 1.5;
+    const segSupports = (s, segSurfaceY) => {
+      if (!s) return false;
+      if (s.bridge || s.tunnel) return true;
+      if (Number.isFinite(waterY) && segSurfaceY < waterY - 0.6) return false;
+      const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
+      const len2 = vx * vx + vz * vz;
+      let t = len2 > 1e-6 ? ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(wx - (s.x1 + vx * t), wz - (s.z1 + vz * t));
+      return d <= (s.width || 6) * 0.5 + 2.4;
+    };
+    if (surf && surf.seg && segSupports(surf.seg, surf.y)) return true;
+    if (!this.app.loadedChunks || typeof this.app.worldToChunk !== "function") return false;
+    const [cx, cz] = this.app.worldToChunk(wx, wz);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const chunk = this.app.loadedChunks.get(`${cx + dx},${cz + dz}`);
+        const ud = chunk && chunk.userData;
+        const segs = ud && ud.roadSegments;
+        if (!segs) continue;
+        const g = ud.roadGrid;
+        if (g) {
+          const c = Math.floor((wx - g.minX) / g.cell), r = Math.floor((wz - g.minZ) / g.cell);
+          if (c < 0 || r < 0 || c >= g.nx || r >= g.nz) continue;
+          const k = r * g.nx + c;
+          const decks = ud.deckSegments;
+          for (let j = g.start[k], e = g.start[k + 1]; j < e; j++) {
+            const i = g.items[j];
+            const s = i < g.nSegs ? segs[i] : decks[i - g.nSegs];
+            if (!s || s.tunnel) continue;
+            const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
+            const len2 = vx * vx + vz * vz;
+            let t = len2 > 1e-6 ? ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const segY = s.y1 + (s.y2 - s.y1) * t + 0.07;
+            if (segSupports(s, segY)) return true;
+          }
+        } else {
+          for (let i = 0; i < segs.length; i++) {
+            const s = segs[i];
+            if (!s || s.tunnel) continue;
+            const vx = s.x2 - s.x1, vz = s.z2 - s.z1;
+            const len2 = vx * vx + vz * vz;
+            let t = len2 > 1e-6 ? ((wx - s.x1) * vx + (wz - s.z1) * vz) / len2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const segY = s.y1 + (s.y2 - s.y1) * t + 0.07;
+            if (segSupports(s, segY)) return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /** Water under (wx, wz) with no road/bridge deck or underwater tunnel carrying the body at height wy. */

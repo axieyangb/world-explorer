@@ -4,7 +4,7 @@
 // shrinks), second row in portrait (styles.css). Re-fits on resize and whenever the dock changes width
 // (mode / vehicle label, language).
 const GAP = 10; // px between pill and dock
-const MAX_TEXT = 340; // matches .loc-pill-text in styles.css
+const MAX_TEXT = 420; // matches .loc-pill-text in styles.css
 
 export class HudLayout {
   constructor() {
@@ -42,8 +42,9 @@ export class HudLayout {
     const barLeft = parseFloat(getComputedStyle(bar).getPropertyValue('--lb-margin')) || (touch ? 12 : 16);
     const set = (px) => { text.style.maxWidth = `${Math.max(48, Math.floor(px))}px`; };
     if (touch) {
-      // Portrait: own row under the dock; landscape: between the screen edge and the dock.
-      set(portrait ? W - 2 * barLeft - chrome : Math.min(MAX_TEXT, dockLeft - GAP - barLeft - chrome));
+      // Portrait: own row under the dock; landscape: cap pill text at 24vw so dock & bar keep breathing room.
+      const landscapeCap = portrait ? MAX_TEXT : Math.floor(W * 0.24);
+      set(portrait ? W - 2 * barLeft - chrome : Math.min(landscapeCap, dockLeft - GAP - barLeft - chrome));
       return;
     }
     const half = Math.min(W / 2 - barLeft, dockLeft - GAP - W / 2);

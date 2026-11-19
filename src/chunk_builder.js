@@ -2188,7 +2188,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
   };
 
   const SEA_DRAPE_MAX_M = 45.0; // [terrain-roads] allow coastal DEM bleed from nearby bluffs/hills without culling Bay water
-  const seaWaterY = (t) => t; // always drape +0.28m above local DEM so terrain (t - 0.35m) never pokes through water
+  const seaWaterY = (t) => t; // always drape +0.18m above local DEM so terrain (t - 0.35m) never pokes through water and stays below footways
   for (let wIdx = 0; wIdx < (data.water_polys || []).length; wIdx++) {
     const wp = data.water_polys[wIdx];
     const [osmId, , flatOuter, flatHoles] = wp;
@@ -2250,7 +2250,7 @@ function buildParksAndWater(data, ox, oz, targetGroup, mats, isPointInWater, isP
     }
     if (keptSubTris.length === 0) continue;
 
-    const wyOff = isSeaLevelPoly ? 0.28 : 0.28 + ((osmId || wIdx) % 19) * 0.002;
+    const wyOff = isSeaLevelPoly ? 0.18 : 0.18 + ((osmId || wIdx) % 19) * 0.002;
     for (let i = 0; i < keptSubTris.length; i += 6) {
       const ax = keptSubTris[i], az = keptSubTris[i + 1];
       const bx = keptSubTris[i + 2], bz = keptSubTris[i + 3];

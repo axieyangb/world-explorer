@@ -69,6 +69,7 @@ import {
   getVehicleName,
   getBookmarkText,
   translateRoadName,
+  translateCityName,
   applyDomTranslations,
 } from "./i18n.js";
 import {
@@ -112,7 +113,7 @@ import { PropertyInspector } from "./features/property_inspector.js"; // [featur
 import { getSignalPhase } from "./features/signals.js";
 import { SpaceLaunchSystem } from "./features/space_launch_system.js"; // [feature/space-launch]
 import { AmbientAudio } from "./features/ambient_audio.js";
-import { ScenicTourAndChallenges } from "./features/scenic_tour.js";
+import { ScenicTourAndChallenges, SCENIC_STOPS } from "./features/scenic_tour.js";
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -497,7 +498,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r3" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r4" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -911,17 +912,18 @@ class WorldExplorerApp {
       Math.abs(numLat - BEIJING_DEFAULT_ORIGIN.centerLat) < 0.06 &&
       Math.abs(numLon - BEIJING_DEFAULT_ORIGIN.centerLon) < 0.06;
 
+    const resolvedCity = displayName || (isBj ? "Beijing, CN" : (this._nearestKnownCity(numLat, numLon) || "World"));
     if (isBj) {
       this.worldOrigin = {
         ...BEIJING_DEFAULT_ORIGIN,
         isBeijing: true,
-        name: displayName || "Beijing, CN",
+        name: resolvedCity,
       };
     } else {
-      this.worldOrigin = createWorldOrigin(numLat, numLon, displayName || "World");
+      this.worldOrigin = createWorldOrigin(numLat, numLon, resolvedCity);
     }
 
-    this.currentCityName = displayName || this.worldOrigin.name || "World";
+    this.currentCityName = resolvedCity;
     this.currentRoadName = streetName || displayName || "Central Avenue";
     this.currentLayer = 0;
 
@@ -1056,15 +1058,19 @@ class WorldExplorerApp {
     const [cx, cz] = this.worldToChunk(this.pos.x, this.pos.z);
     let bestS = null;
     let bestScore = 300;
+    const isDriveMode = this.mode === "drive";
+    const nonCar = new Set(["footway", "steps", "cycleway", "path", "pedestrian", "track", "bridleway"]);
     for (let dx = -1; dx <= 1; dx++) {
       for (let dz = -1; dz <= 1; dz++) {
         const chunk = this.loadedChunks.get(`${cx + dx},${cz + dz}`);
         if (!chunk || !chunk.userData.roadSegments) continue;
         for (const s of chunk.userData.roadSegments) {
-          if (s.cls === "footway" || s.cls === "steps" || s.cls === "cycleway") continue;
+          if (isDriveMode ? nonCar.has(s.cls) : (s.cls === "footway" || s.cls === "steps" || s.cls === "cycleway")) continue;
+          if (isDriveMode && s.tunnel) continue;
           const mx = (s.x1 + s.x2) * 0.5;
           const mz = (s.z1 + s.z2) * 0.5;
-          const d = Math.hypot(mx - targetX, mz - targetZ);
+          const pen = isDriveMode && (s.cls === "service" || s.cls === "living_street") ? 45 : 0;
+          const d = Math.hypot(mx - targetX, mz - targetZ) + pen;
           if (d < bestScore) {
             bestScore = d;
             bestS = s;
@@ -1095,10 +1101,34 @@ class WorldExplorerApp {
           (bestS.y1 + bestS.y2) * 0.5 + 0.2,
           (bestS.z1 + bestS.z2) * 0.5
         );
+        const roadYaw = Math.atan2(bestS.x2 - bestS.x1, bestS.z2 - bestS.z1);
         const distToTarget = Math.hypot(targetX - this.pos.x, targetZ - this.pos.z);
-        this.yaw = distToTarget > 8.0
-          ? Math.atan2(targetX - this.pos.x, targetZ - this.pos.z)
-          : Math.atan2(bestS.x2 - bestS.x1, bestS.z2 - bestS.z1);
+        if (this.mode === "drive") {
+          const dirScore = (ang) => {
+            let sc = 0;
+            for (const d of [14, 28]) {
+              const px = this.pos.x + Math.sin(ang) * d;
+              const pz = this.pos.z + Math.cos(ang) * d;
+              if (this.sampleRoadSurface(px, this.pos.y, pz)) sc += 2;
+              if (this.water && this.water.isPointInWater(px, pz) && !this.water._roadSupports(px, pz)) sc -= 5;
+            }
+            return sc;
+          };
+          const sA = dirScore(roadYaw);
+          const sB = bestS.oneway ? -Infinity : dirScore(roadYaw + Math.PI);
+          if (!bestS.oneway && sB > sA) {
+            this.yaw = roadYaw + Math.PI;
+          } else if (!bestS.oneway && sA === sB && distToTarget > 8.0) {
+            const toTargetYaw = Math.atan2(targetX - this.pos.x, targetZ - this.pos.z);
+            this.yaw = Math.cos(roadYaw - toTargetYaw) < 0 ? roadYaw + Math.PI : roadYaw;
+          } else {
+            this.yaw = roadYaw;
+          }
+        } else {
+          this.yaw = distToTarget > 8.0
+            ? Math.atan2(targetX - this.pos.x, targetZ - this.pos.z)
+            : roadYaw;
+        }
         this.camYaw = this.yaw;
         this.camPivot.copy(this.pos);
         if (!this.parkedCars.isParked(this.vehicleMesh)) this.vehicleMesh.position.copy(this.pos); // [parked-cars]
@@ -3101,7 +3131,7 @@ class WorldExplorerApp {
     }
     const roadRaw = this.currentRoadName || t("urban_road_fallback");
     const streetText = this._roadDisplayName(roadRaw);
-    const cityText = this.currentCityName || "Beijing, CN";
+    const cityText = translateCityName(this.currentCityName || "Beijing, CN");
 
     const wo = this.worldOrigin;
     const liveLat = (wo && wo.mPerDegLat) ? (wo.centerLat - this.pos.z / wo.mPerDegLat) : (this.currentLat || 0);
@@ -4554,6 +4584,40 @@ class WorldExplorerApp {
     this._quietToastTimer = setTimeout(() => el.classList.remove("show"), durationMs);
   }
 
+  _nearestKnownCity(lat, lon) {
+    const hubs = [
+      { lat: 25.1972, lon: 55.2744, city: "Dubai" },
+      { lat: -33.8688, lon: 151.2093, city: "Sydney" },
+      { lat: 1.2834, lon: 103.8607, city: "Singapore" },
+      { lat: 41.9028, lon: 12.4964, city: "Rome" },
+      { lat: 52.5200, lon: 13.4050, city: "Berlin" },
+      { lat: 43.6532, lon: -79.3832, city: "Toronto" },
+      { lat: 39.9087, lon: 116.3975, city: "Beijing" },
+    ];
+    let bestCity = "";
+    let bestDistKm = 40;
+    const consider = (cLat, cLon, city) => {
+      if (!city || !Number.isFinite(cLat) || !Number.isFinite(cLon)) return;
+      const dLat = (lat - cLat) * 111.32;
+      const dLon = (lon - cLon) * 111.32 * Math.cos(((lat + cLat) * 0.5 * Math.PI) / 180);
+      const km = Math.hypot(dLat, dLon);
+      if (km <= bestDistKm) {
+        bestDistKm = km;
+        bestCity = city;
+      }
+    };
+    for (const d of QUICK_WORLD_DESTINATIONS) {
+      consider(d.lat, d.lon, (d.city || "").split(",")[0].trim());
+    }
+    for (const s of SCENIC_STOPS) {
+      consider(s.lat, s.lon, (s.name || "").split("·")[0].trim());
+    }
+    for (const h of hubs) {
+      consider(h.lat, h.lon, h.city);
+    }
+    return bestCity;
+  }
+
   _syncUrlParams(lat, lon, mode = this.mode, name = this.currentCityName) {
     if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
     try {
@@ -5455,7 +5519,7 @@ class WorldExplorerApp {
       const curSpeed = (this.mode === "airliner" && this.airliner)
         ? Math.abs(this.airliner.speed || this.speed || 0)
         : Math.abs(this.speed || 0);
-      const inWater = this.mode === "boat" || Boolean(this.water && (this.water.sink || this.water.isPointInWater(this.pos.x, this.pos.z)));
+      const inWater = this.mode === "boat" || Boolean(this.water && (this.water.sink || (!this.water._roadSupports(this.pos.x, this.pos.z) && this.water.isPointInWater(this.pos.x, this.pos.z))));
       this._inWater = inWater;
       this._nearWaterCheckT = (this._nearWaterCheckT || 0) - rawDt;
       if (inWater) {

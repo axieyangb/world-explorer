@@ -8,7 +8,7 @@
 // Hooked from src/main.js: `this.places = new PlacesSystem(this.scene)` + `this.places.update(...)` per frame.
 
 import * as THREE from '../../vendor/three.module.js';
-import { getLang } from '../i18n.js';
+import { getLang, translateRoadName } from '../i18n.js';
 import { isNight } from './daylight.js';
 import { QUALITY } from './quality.js'; // [ui-mobile]
 import { buildAirlinerInstancedGeometries } from './airliner_models.js';
@@ -1801,7 +1801,8 @@ export class PlacesSystem {
 
   _applyDistrictHud() {
     if (typeof document === 'undefined') return;
-    const district = this.currentDistrict;
+    const rawDistrict = this.currentDistrict;
+    const district = getLang() === 'en' ? translateRoadName(rawDistrict, 'en') : rawDistrict;
     if (!district) return;
 
     const pillEl = document.getElementById('location-pill-text') || document.getElementById('location-label');

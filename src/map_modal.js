@@ -1281,8 +1281,11 @@ export class MapSystem {
     this._drawPlayer(ctx, S / 2, S / 2, 0, 0.85);
 
     if (this.northEl) {
-      const nx = Math.round(S / 2 + Math.sin(rot) * 70);
-      const ny = Math.round(S / 2 - Math.cos(rot) * 70);
+      const boxW = this.minimapCanvas.clientWidth || S;
+      const half = boxW * 0.5;
+      const radius = Math.max(24, half - 15);
+      const nx = Math.round(half + Math.sin(rot) * radius);
+      const ny = Math.round(half - Math.cos(rot) * radius);
       if (!this._northPos || this._northPos[0] !== nx || this._northPos[1] !== ny) {
         this._northPos = [nx, ny];
         this.northEl.style.left = `${nx}px`;
