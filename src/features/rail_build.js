@@ -419,6 +419,11 @@ const C = {
   pole: [0.22, 0.24, 0.24], wire: [0.10, 0.10, 0.10],
   portal: [0.52, 0.51, 0.48], portalDark: [0.03, 0.03, 0.04],
   tower: [0.45, 0.47, 0.50], station: [0.62, 0.60, 0.56], cable: [0.08, 0.08, 0.08],
+  platDeck: [0.64, 0.63, 0.60], platCoping: [0.76, 0.75, 0.72], platFascia: [0.34, 0.34, 0.33],
+  tactileYellow: [0.95, 0.78, 0.10], steelDark: [0.22, 0.25, 0.28],
+  canopyDeck: [0.72, 0.74, 0.76], canopyGlass: [0.42, 0.62, 0.78], ledWarm: [0.98, 0.94, 0.80],
+  timber: [0.55, 0.37, 0.20], signBlue: [0.12, 0.32, 0.62], signFace: [0.92, 0.94, 0.96],
+  stairStep: [0.48, 0.48, 0.47],
 };
 
 class GeoSink {
@@ -498,6 +503,7 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
   const elev = computeElevations(lines);
   const roadAt = makeRoadLookup(roadSegments);
   const sink = new GeoSink();
+  const stationTracks = [];
   let sleeperBudget = 1800;
 
   // endpoints of tunnels (for portals) and of ground pieces
@@ -550,6 +556,11 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
       const L = Math.hypot(tx, tz) || 1;
       tx /= L; tz /= L;
       txs[i] = tx; tzs[i] = tz; nxs[i] = -tz; nzs[i] = tx;
+    }
+    if (!st && !l.svc && (l.k === 'rail' || l.k === 'subway' || l.k === 'light_rail' || l.k === 'monorail')) {
+      const lxs = new Float32Array(m), lzs = new Float32Array(m);
+      for (let i = 0; i < m; i++) { lxs[i] = d.xs[i] - ox; lzs[i] = d.zs[i] - oz; }
+      stationTracks.push({ k: l.k, br: Boolean(l.br), xs: lxs, zs: lzs, ys, es: d.es, ss: d.ss });
     }
     const P = (i, o, dy) => [d.xs[i] - ox + nxs[i] * o, ys[i] + dy, d.zs[i] - oz + nzs[i] * o];
     const strip = (i, o1, dy1, o2, dy2, rgb) => sink.quad(P(i, o1, dy1), P(i + 1, o1, dy1), P(i + 1, o2, dy2), P(i, o2, dy2), rgb);
@@ -695,6 +706,8 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
     }
   }
 
+  buildStationPlatforms(sink, rail.stops, stationTracks, tunnelEnds, ox, oz, inChunk);
+
   for (const s of rail.stops || []) out.stops.push([s[0] + ox, s[1] + oz, s[2], s[3]]);
 
   const mesh = sink.toMesh(mats.facilityMat);
@@ -739,5 +752,514 @@ function buildAerial(sink, wp, e, ox, oz, inChunk) {
       sink.box(x, z, g, ys[i] + 0.4, tx, tz, 0.6, 0.6, C.tower);
       sink.box(x, z, ys[i] + 0.1, ys[i] + 0.5, tx, tz, 0.3, 2.8, C.tower);
     }
+  }
+}
+
+// ---------------------------------------------------------------- railway station platforms & canopies
+
+function emitPrismST(sink, cx, cz, tx, tz, nx, nz, s0, s1, n0, n1, y0a, y1a, y0b, y1b, rgb, rgbTop = rgb, emitBottom = false) {
+  let sA = s0, sB = s1, y0A = y0a, y1A = y1a, y0B = y0b, y1B = y1b;
+  if (sA > sB) {
+    sA = s1; sB = s0;
+    y0A = y0b; y1A = y1b; y0B = y0a; y1B = y1a;
+  }
+  const nA = Math.min(n0, n1), nB = Math.max(n0, n1);
+  if (sB - sA < 1e-4 || nB - nA < 1e-4) return;
+  if (Math.max(y1A - y0A, y1B - y0B) < 1e-4) return;
+  const P = (s, n, y) => [cx + tx * s + nx * n, y, cz + tz * s + nz * n];
+  const lo00 = P(sA, nA, y0A), lo10 = P(sB, nA, y0B), lo11 = P(sB, nB, y0B), lo01 = P(sA, nB, y0A);
+  const hi00 = P(sA, nA, y1A), hi10 = P(sB, nA, y1B), hi11 = P(sB, nB, y1B), hi01 = P(sA, nB, y0A + (y1A - y0A));
+  sink.quad(hi00, hi01, hi11, hi10, rgbTop);
+  if (emitBottom) sink.quad(lo00, lo10, lo11, lo01, rgb);
+  sink.quad(lo10, lo00, hi00, hi10, rgb);
+  sink.quad(lo01, lo11, hi11, hi01, rgb);
+  sink.quad(lo00, lo01, hi01, hi00, rgb);
+  sink.quad(lo11, lo10, hi10, hi11, rgb);
+}
+
+function emitSlopedPanelST(sink, cx, cz, tx, tz, nx, nz, s0, s1, n0, y0a, y0b, n1, y1a, y1b, th, rgb) {
+  let sA = s0, sB = s1, ya0 = y0a, yb0 = y0b, ya1 = y1a, yb1 = y1b;
+  if (sA > sB) {
+    sA = s1; sB = s0;
+    ya0 = y0b; yb0 = y0a; ya1 = y1b; yb1 = y1a;
+  }
+  let nA = n0, nB = n1;
+  if (nA > nB) {
+    nA = n1; nB = n0;
+    const tA = ya0, tB = yb0;
+    ya0 = ya1; yb0 = yb1; ya1 = tA; yb1 = tB;
+  }
+  if (sB - sA < 1e-4 || nB - nA < 1e-4 || th < 1e-4) return;
+  const P = (s, n, y) => [cx + tx * s + nx * n, y, cz + tz * s + nz * n];
+  const b00 = P(sA, nA, ya0), b10 = P(sB, nA, yb0), b11 = P(sB, nB, yb1), b01 = P(sA, nB, ya1);
+  const t00 = P(sA, nA, ya0 + th), t10 = P(sB, nA, yb0 + th), t11 = P(sB, nB, yb1 + th), t01 = P(sA, nB, ya1 + th);
+  sink.quad(t00, t01, t11, t10, rgb);
+  sink.quad(b00, b10, b11, b01, rgb);
+  sink.quad(b10, b00, t00, t10, rgb);
+  sink.quad(b01, b11, t11, t01, rgb);
+  sink.quad(b00, b01, t01, t00, rgb);
+  sink.quad(b11, b10, t10, t11, rgb);
+}
+
+function emitBeam3D(sink, a, b, hw, hh, rgb) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  const L = Math.hypot(dx, dy, dz);
+  if (L < 1e-4 || !Number.isFinite(L)) return;
+  const fx = dx / L, fy = dy / L, fz = dz / L;
+  // pick reference up vector not parallel to beam axis
+  const rx = Math.abs(fy) > 0.94 ? 1 : 0, ry = Math.abs(fy) > 0.94 ? 0 : 1, rz = 0;
+  let ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
+  const uL = Math.hypot(ux, uy, uz) || 1;
+  ux /= uL; uy /= uL; uz /= uL;
+  const vx = fy * uz - fz * uy, vy = fz * ux - fx * uz, vz = fx * uy - fy * ux;
+  const C0 = (p, su, sv) => [p[0] + ux * su * hw + vx * sv * hh, p[1] + uy * su * hw + vy * sv * hh, p[2] + uz * su * hw + vz * sv * hh];
+  const a0 = C0(a, -1, -1), a1 = C0(a, 1, -1), a2 = C0(a, 1, 1), a3 = C0(a, -1, 1);
+  const b0 = C0(b, -1, -1), b1 = C0(b, 1, -1), b2 = C0(b, 1, 1), b3 = C0(b, -1, 1);
+  sink.quad(a0, a1, b1, b0, rgb);
+  sink.quad(a1, a2, b2, b1, rgb);
+  sink.quad(a2, a3, b3, b2, rgb);
+  sink.quad(a3, a0, b0, b3, rgb);
+  sink.quad(a0, a3, a2, a1, rgb);
+  sink.quad(b0, b1, b2, b3, rgb);
+}
+
+function sampleElevationProfile(samples, s) {
+  if (s <= samples[0].s) return samples[0].y;
+  const last = samples[samples.length - 1];
+  if (s >= last.s) return last.y;
+  for (let i = 0; i < samples.length - 1; i++) {
+    const a = samples[i], b = samples[i + 1];
+    if (s <= b.s) {
+      const span = b.s - a.s;
+      const u = span > 1e-5 ? (s - a.s) / span : 0;
+      return a.y + (b.y - a.y) * u;
+    }
+  }
+  return last.y;
+}
+
+function traceStationSpan(stationTracks, best, tx, tz, nx, nz, trackY, tunnelEnds) {
+  const MAX_HALF = 32.0;
+  const walkDir = (walkSign) => {
+    const wtx = tx * walkSign, wtz = tz * walkSign;
+    const pts = [];
+    let curTr = best.tr;
+    let segDir = walkSign;
+    let prevX = best.px, prevZ = best.pz, prevY = trackY;
+    let idx = walkSign > 0 ? best.i + 1 : best.i;
+    let limitS = 0;
+    const visited = new Set([curTr]);
+
+    for (let guard = 0; guard < 128; guard++) {
+      if (idx < 0 || idx >= curTr.xs.length) {
+        const endIdx = idx < 0 ? 0 : curTr.xs.length - 1;
+        const ex = curTr.xs[endIdx], ez = curTr.zs[endIdx];
+        if (tunnelEnds.has(ekey(ex, ez))) {
+          limitS = Math.max(0, limitS - 2.0);
+          break;
+        }
+        // chain across OSM way splits at matching endpoints
+        let nextTr = null, nextIdx = -1, nextDir = 1;
+        for (const cand of stationTracks) {
+          if (visited.has(cand)) continue;
+          const m = cand.xs.length;
+          if (m < 2) continue;
+          if (Math.hypot(cand.xs[0] - ex, cand.zs[0] - ez) < 0.6) {
+            const dx = cand.xs[1] - cand.xs[0], dz = cand.zs[1] - cand.zs[0];
+            const L = Math.hypot(dx, dz) || 1;
+            if ((dx * wtx + dz * wtz) / L > 0.94) { nextTr = cand; nextIdx = 1; nextDir = 1; break; }
+          } else if (Math.hypot(cand.xs[m - 1] - ex, cand.zs[m - 1] - ez) < 0.6) {
+            const dx = cand.xs[m - 2] - cand.xs[m - 1], dz = cand.zs[m - 2] - cand.zs[m - 1];
+            const L = Math.hypot(dx, dz) || 1;
+            if ((dx * wtx + dz * wtz) / L > 0.94) { nextTr = cand; nextIdx = m - 2; nextDir = -1; break; }
+          }
+        }
+        if (!nextTr) break;
+        visited.add(nextTr);
+        curTr = nextTr;
+        idx = nextIdx;
+        segDir = nextDir;
+      }
+
+      const vx = curTr.xs[idx], vz = curTr.zs[idx], vy = curTr.ys[idx];
+      const segDx = vx - prevX, segDz = vz - prevZ;
+      const segDist = Math.hypot(segDx, segDz);
+      if (segDist > 0.05) {
+        const dot = (segDx * wtx + segDz * wtz) / segDist;
+        const slope = Math.abs(vy - prevY) / segDist;
+        const sProj = (vx - best.px) * wtx + (vz - best.pz) * wtz;
+        const nOff = Math.abs((vx - best.px) * nx + (vz - best.pz) * nz);
+        if (dot < 0.95 || slope > 0.14 || nOff > 1.25 || Math.abs(vy - trackY) > 3.0) {
+          break;
+        }
+        if (sProj >= MAX_HALF) {
+          const prevS = (prevX - best.px) * wtx + (prevZ - best.pz) * wtz;
+          const denom = sProj - prevS;
+          const u = denom > 1e-4 ? (MAX_HALF - prevS) / denom : 1;
+          const yLim = prevY + (vy - prevY) * Math.max(0, Math.min(1, u));
+          pts.push({ s: MAX_HALF, y: yLim });
+          limitS = MAX_HALF;
+          break;
+        }
+        if (sProj > limitS) {
+          limitS = sProj;
+          pts.push({ s: sProj, y: vy });
+        }
+      }
+      prevX = vx; prevZ = vz; prevY = vy;
+      idx += segDir;
+    }
+    return { limitS, pts };
+  };
+
+  const fwd = walkDir(1);
+  const bwd = walkDir(-1);
+  const samples = [];
+  for (let i = bwd.pts.length - 1; i >= 0; i--) samples.push({ s: -bwd.pts[i].s, y: bwd.pts[i].y });
+  samples.push({ s: 0, y: trackY });
+  for (let i = 0; i < fwd.pts.length; i++) samples.push(fwd.pts[i]);
+  return { sMin: -bwd.limitS, sMax: fwd.limitS, samples };
+}
+
+function findCorridorTrackExtent(stationTracks, cx, cz, tx, tz, nx, nz, trackY) {
+  const offs = [0];
+  for (const tr of stationTracks) {
+    for (let i = 0; i < tr.xs.length - 1; i++) {
+      const ax = tr.xs[i], az = tr.zs[i], bx = tr.xs[i + 1], bz = tr.zs[i + 1];
+      const dx = bx - ax, dz = bz - az;
+      const segL = Math.hypot(dx, dz);
+      if (segL < 0.05) continue;
+      const dot = Math.abs((dx * tx + dz * tz) / segL);
+      if (dot < 0.90) continue;
+      // project station center (cx, cz) onto segment
+      const u = ((cx - ax) * dx + (cz - az) * dz) / (segL * segL);
+      if (u < -0.5 || u > 1.5) continue;
+      const uc = u < 0 ? 0 : u > 1 ? 1 : u;
+      const qx = ax + dx * uc, qz = az + dz * uc;
+      const sOff = Math.abs((qx - cx) * tx + (qz - cz) * tz);
+      if (sOff > 8.0) continue;
+      const qy = tr.ys[i] + (tr.ys[i + 1] - tr.ys[i]) * uc;
+      if (Math.abs(qy - trackY) > 2.2) continue;
+      const nOff = (qx - cx) * nx + (qz - cz) * nz;
+      if (Math.abs(nOff) > 1.5 && Math.abs(nOff) < 12.5) offs.push(nOff);
+    }
+  }
+  offs.sort((a, b) => a - b);
+  let minN = 0, maxN = 0;
+  for (let pass = 0; pass < 4; pass++) {
+    for (const o of offs) {
+      if (o < minN && minN - o <= 6.2) minN = o;
+      if (o > maxN && o - maxN <= 6.2) maxN = o;
+    }
+  }
+  return { minTrackN: minN, maxTrackN: maxN };
+}
+
+function emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, sMin, sMax, yAt, elevated) {
+  const nInner = nMid - side * 1.9;
+  const nOuter = nMid + side * 1.9;
+  const copingInner = nInner - side * 0.06;
+  const copingOuter = nInner + side * 0.34;
+  const tactA = nInner + side * 0.16;
+  const tactB = nInner + side * 0.44;
+  const fasciaInner = nInner + side * 0.08;
+
+  let minGroundY = Infinity, minTrackY = Infinity;
+  for (const sSample of [sMin, (sMin + sMax) * 0.5, sMax]) {
+    const ty = yAt(sSample);
+    if (ty < minTrackY) minTrackY = ty;
+    for (const nSample of [nInner, nOuter]) {
+      const wx = cx + ox + tx * sSample + nx * nSample;
+      const wz = cz + oz + tz * sSample + nz * nSample;
+      const gy = railGroundY(wx, wz);
+      if (gy < minGroundY) minGroundY = gy;
+    }
+  }
+  const bottomY = Math.min(minTrackY, minGroundY) - 0.8;
+  const useViaductPiers = elevated && (minTrackY - minGroundY > 2.5);
+
+  const totalL = sMax - sMin;
+  const segs = Math.max(1, Math.ceil(totalL / 8.0));
+  for (let i = 0; i < segs; i++) {
+    const sA = sMin + (totalL * i) / segs;
+    const sB = sMin + (totalL * (i + 1)) / segs;
+    const yA = yAt(sA), yB = yAt(sB);
+    const topA = yA + 1.05, topB = yB + 1.05;
+
+    // Main concrete platform slab + crisp overhanging track-side coping + tactile yellow safety strip
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, copingOuter, nOuter, topA - 0.18, topA, topB - 0.18, topB, C.platFascia, C.platDeck, true);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, copingInner, copingOuter, topA - 0.18, topA, topB - 0.18, topB, C.platCoping, C.platCoping, true);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, tactA, tactB, topA, topA + 0.015, topB, topB + 0.015, C.tactileYellow, C.tactileYellow);
+
+    // Grounded dark concrete fascia (or elevated soffit fascia on tall viaducts)
+    const fasBotA = useViaductPiers ? yA - 1.10 : bottomY;
+    const fasBotB = useViaductPiers ? yB - 1.10 : bottomY;
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, fasciaInner, nOuter, fasBotA, topA - 0.18, fasBotB, topB - 0.18, C.platFascia, C.platFascia, useViaductPiers);
+  }
+
+  if (useViaductPiers) {
+    const pierCount = Math.max(2, Math.floor(totalL / 16) + 1);
+    for (let k = 0; k < pierCount; k++) {
+      const sPier = pierCount === 1 ? 0 : sMin + 4.0 + ((totalL - 8.0) * k) / (pierCount - 1);
+      const yP = yAt(sPier);
+      const wx = cx + ox + tx * sPier + nx * nMid;
+      const wz = cz + oz + tz * sPier + nz * nMid;
+      const pierBot = Math.min(bottomY, railGroundY(wx, wz) - 0.8);
+      // Cross-beam tying platform soffit to viaduct box girder + grounded pier column & footing
+      const tieInner = nMid - side * 2.45;
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sPier - 0.45, sPier + 0.45, tieInner, nMid + side * 1.4, yP - 1.12, yP - 0.40, yP - 1.12, yP - 0.40, C.deckSide, C.deckSide, true);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sPier - 0.55, sPier + 0.55, nMid - 0.65, nMid + 0.65, pierBot, yP - 1.10, pierBot, yP - 1.10, C.pier, C.pier);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sPier - 0.85, sPier + 0.85, nMid - 0.95, nMid + 0.95, pierBot, pierBot + 1.0, pierBot, pierBot + 1.0, C.deckSide, C.deckSide);
+    }
+  }
+
+  // End safety guardrails at both platform ends
+  for (const sEnd of [sMin + 0.14, sMax - 0.14]) {
+    const topEnd = yAt(sEnd) + 1.05;
+    for (const f of [0.15, 0.5, 0.85]) {
+      const nPost = nInner + (nOuter - nInner) * f;
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sEnd - 0.04, sEnd + 0.04, nPost - 0.04, nPost + 0.04, topEnd, topEnd + 0.96, topEnd, topEnd + 0.96, C.steelDark);
+    }
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sEnd - 0.04, sEnd + 0.04, nInner + side * 0.35, nOuter - side * 0.25, topEnd + 0.88, topEnd + 0.96, topEnd + 0.88, topEnd + 0.96, C.steelDark);
+  }
+}
+
+function emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass) {
+  const numBays = Math.max(2, Math.round((canopyHalf * 2) / 8));
+  const P = (s, n, y) => [cx + tx * s + nx * n, y, cz + tz * s + nz * n];
+
+  // Y-frame support columns every 8 m
+  for (let k = 0; k <= numBays; k++) {
+    const sCol = -canopyHalf + k * 8;
+    if (hasOverpass && Math.abs(sCol) < 0.5) continue;
+    const deckY = yAt(sCol) + 1.05;
+    const forkY = deckY + 2.48;
+    const eaveY = deckY + 3.60;
+
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sCol - 0.21, sCol + 0.21, nMid - 0.21, nMid + 0.21, deckY, deckY + 0.26, deckY, deckY + 0.26, C.platFascia);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sCol - 0.13, sCol + 0.13, nMid - 0.13, nMid + 0.13, deckY + 0.24, forkY + 0.08, deckY + 0.24, forkY + 0.08, C.steelDark);
+    emitBeam3D(sink, P(sCol, nMid, forkY), P(sCol, nMid - 1.44, eaveY), 0.085, 0.085, C.steelDark);
+    emitBeam3D(sink, P(sCol, nMid, forkY), P(sCol, nMid + 1.44, eaveY), 0.085, 0.085, C.steelDark);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sCol - 0.10, sCol + 0.10, nMid - 1.72, nMid + 1.72, eaveY - 0.06, eaveY + 0.08, eaveY - 0.06, eaveY + 0.08, C.steelDark, C.steelDark, true);
+  }
+
+  // Canopy roof split into 4 m sub-bays for transverse rafters + slope following
+  const subBays = numBays * 2;
+  for (let b = 0; b < subBays; b++) {
+    const sA = -canopyHalf + b * 4;
+    const sB = sA + 4;
+    const eaveA = yAt(sA) + 1.05 + 3.60;
+    const eaveB = yAt(sB) + 1.05 + 3.60;
+
+    // Central dark steel ridge spine
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, nMid - 0.16, nMid + 0.16, eaveA + 0.28, eaveA + 0.44, eaveB + 0.28, eaveB + 0.44, C.steelDark, C.steelDark, true);
+
+    // Twin sloped blue-tinted glass skylight strips + outer aluminum canopy wings + edge fascia/gutters
+    for (const sgn of [-1, 1]) {
+      emitSlopedPanelST(sink, cx, cz, tx, tz, nx, nz, sA, sB, nMid + sgn * 0.16, eaveA + 0.36, eaveB + 0.36, nMid + sgn * 1.18, eaveA + 0.16, eaveB + 0.16, 0.055, C.canopyGlass);
+      emitSlopedPanelST(sink, cx, cz, tx, tz, nx, nz, sA, sB, nMid + sgn * 1.18, eaveA + 0.16, eaveB + 0.16, nMid + sgn * 1.80, eaveA + 0.02, eaveB + 0.02, 0.075, C.canopyDeck);
+      // Edge fascia trim + longitudinal dark structural purlins
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, nMid + sgn * 1.74, nMid + sgn * 1.82, eaveA - 0.08, eaveA + 0.11, eaveB - 0.08, eaveB + 0.11, C.steelDark, C.steelDark, true);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, nMid + sgn * 0.66, nMid + sgn * 0.74, eaveA + 0.21, eaveA + 0.28, eaveB + 0.21, eaveB + 0.28, C.steelDark, C.steelDark, true);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA, sB, nMid + sgn * 1.15, nMid + sgn * 1.23, eaveA + 0.10, eaveA + 0.18, eaveB + 0.10, eaveB + 0.18, C.steelDark, C.steelDark, true);
+      // Warm white under-canopy LED light bar strips
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sA + 0.12, sB - 0.12, nMid + sgn * 0.84, nMid + sgn * 0.98, eaveA + 0.09, eaveA + 0.14, eaveB + 0.09, eaveB + 0.14, C.ledWarm, C.ledWarm, true);
+    }
+
+    // Intermediate transverse rafter at sub-bay midpoint (every 4 m)
+    const sRaf = sB;
+    if (b < subBays - 1 && (!hasOverpass || Math.abs(sRaf) > 1.0)) {
+      const eaveR = yAt(sRaf) + 1.05 + 3.60;
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sRaf - 0.06, sRaf + 0.06, nMid - 1.72, nMid + 1.72, eaveR + 0.01, eaveR + 0.12, eaveR + 0.01, eaveR + 0.12, C.steelDark, C.steelDark, true);
+    }
+  }
+}
+
+function emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass) {
+  const numBays = Math.max(2, Math.round((canopyHalf * 2) / 8));
+  const inStairZone = (s) => hasOverpass && s > -2.5 && s < 11.4;
+
+  // Waiting benches (steel frame + warm timber slats) & glass windbreak shelter panels
+  for (let b = 0; b < numBays; b++) {
+    const sBay = -canopyHalf + 4 + b * 8;
+    for (const sBench of [sBay - 1.9, sBay + 1.9]) {
+      if (inStairZone(sBench)) continue;
+      const deckY = yAt(sBench) + 1.05;
+      const nB = nMid + side * 0.65;
+      for (const sLeg of [sBench - 0.95, sBench + 0.95]) {
+        emitPrismST(sink, cx, cz, tx, tz, nx, nz, sLeg - 0.05, sLeg + 0.05, nB - 0.28, nB + 0.28, deckY, deckY + 0.45, deckY, deckY + 0.45, C.steelDark);
+      }
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sBench - 1.15, sBench + 1.15, nB - 0.28, nB + 0.26, deckY + 0.43, deckY + 0.50, deckY + 0.43, deckY + 0.50, C.timber, C.timber, true);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sBench - 1.15, sBench + 1.15, nB + side * 0.19, nB + side * 0.27, deckY + 0.54, deckY + 0.90, deckY + 0.54, deckY + 0.90, C.timber);
+    }
+
+    if (b % 2 === 0 && !inStairZone(sBay)) {
+      const deckY = yAt(sBay) + 1.05;
+      const nW = nMid + side * 1.48;
+      // Glass windbreak shelter panel
+      for (const sPost of [sBay - 1.6, sBay, sBay + 1.6]) {
+        emitPrismST(sink, cx, cz, tx, tz, nx, nz, sPost - 0.05, sPost + 0.05, nW - 0.06, nW + 0.06, deckY, deckY + 2.12, deckY, deckY + 2.12, C.steelDark);
+      }
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sBay - 1.62, sBay + 1.62, nW - 0.05, nW + 0.05, deckY + 2.04, deckY + 2.14, deckY + 2.04, deckY + 2.14, C.steelDark);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sBay - 1.62, sBay + 1.62, nW - 0.05, nW + 0.05, deckY + 0.18, deckY + 0.26, deckY + 0.18, deckY + 0.26, C.steelDark);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sBay - 1.56, sBay + 1.56, nW - 0.03, nW + 0.03, deckY + 0.26, deckY + 2.04, deckY + 0.26, deckY + 2.04, C.canopyGlass);
+    }
+  }
+
+  // Blue/white overhead departure signboards suspended under the canopy
+  const signPositions = canopyHalf >= 20 ? [-14, 14] : [-canopyHalf * 0.5, canopyHalf * 0.5];
+  for (const sSign of signPositions) {
+    if (hasOverpass && Math.abs(sSign) < 2.5) continue;
+    const deckY = yAt(sSign) + 1.05;
+    const nS = nMid - side * 0.35;
+    for (const sRod of [sSign - 0.72, sSign + 0.72]) {
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sRod - 0.03, sRod + 0.03, nS - 0.03, nS + 0.03, deckY + 3.04, deckY + 3.68, deckY + 3.04, deckY + 3.68, C.steelDark);
+    }
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sSign - 0.96, sSign + 0.96, nS - 0.08, nS + 0.08, deckY + 2.52, deckY + 3.06, deckY + 2.52, deckY + 3.06, C.signBlue);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sSign - 0.88, sSign + 0.88, nS - 0.095, nS + 0.095, deckY + 2.58, deckY + 2.92, deckY + 2.58, deckY + 2.92, C.signFace);
+  }
+}
+
+function emitStationOverpass(sink, cx, cz, tx, tz, nx, nz, leftMid, rightMid, yAt) {
+  const trackY0 = yAt(0);
+  const floorY = trackY0 + 5.6;
+  const roofY = floorY + 2.82;
+  const spanLeft = leftMid - 1.35;
+  const spanRight = rightMid + 1.35;
+  const P = (s, n, y) => [cx + tx * s + nx * n, y, cz + tz * s + nz * n];
+
+  // Bridge deck slab + dark steel side box girders
+  emitPrismST(sink, cx, cz, tx, tz, nx, nz, -1.72, 1.72, spanLeft, spanRight, floorY - 0.38, floorY, floorY - 0.38, floorY, C.steelDark, C.platDeck, true);
+
+  // Glazed concourse side walls + vertical mullions
+  for (const sWall of [-1.64, 1.64]) {
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sWall - 0.07, sWall + 0.07, spanLeft, spanRight, floorY, floorY + 0.42, floorY, floorY + 0.42, C.steelDark);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sWall - 0.04, sWall + 0.04, spanLeft, spanRight, floorY + 0.42, roofY - 0.22, floorY + 0.42, roofY - 0.22, C.canopyGlass);
+    emitPrismST(sink, cx, cz, tx, tz, nx, nz, sWall - 0.08, sWall + 0.08, spanLeft, spanRight, roofY - 0.22, roofY, roofY - 0.22, roofY, C.steelDark);
+  }
+  const mullionCount = Math.max(4, Math.round((spanRight - spanLeft) / 1.9));
+  for (let m = 0; m <= mullionCount; m++) {
+    const nM = spanLeft + ((spanRight - spanLeft) * m) / mullionCount;
+    for (const sWall of [-1.64, 1.64]) {
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sWall - 0.07, sWall + 0.07, nM - 0.06, nM + 0.06, floorY + 0.40, roofY - 0.20, floorY + 0.40, roofY - 0.20, C.steelDark);
+    }
+  }
+
+  // Covered concourse roof with central glass skylight strip
+  emitSlopedPanelST(sink, cx, cz, tx, tz, nx, nz, -1.86, -0.55, spanLeft - 0.15, roofY, roofY + 0.22, spanRight + 0.15, roofY, roofY + 0.22, 0.08, C.canopyDeck);
+  emitSlopedPanelST(sink, cx, cz, tx, tz, nx, nz, -0.55, 0.55, spanLeft - 0.15, roofY + 0.22, roofY + 0.22, spanRight + 0.15, roofY + 0.22, roofY + 0.22, 0.07, C.canopyGlass);
+  emitSlopedPanelST(sink, cx, cz, tx, tz, nx, nz, 0.55, 1.86, spanLeft - 0.15, roofY + 0.22, roofY, spanRight + 0.15, roofY + 0.22, roofY, 0.08, C.canopyDeck);
+
+  // Support portal columns & access stairways down to both platforms
+  for (const [side, nMid] of [[-1, leftMid], [1, rightMid]]) {
+    const deckY0 = yAt(0) + 1.05;
+    for (const sCol of [-1.60, 1.60]) {
+      for (const nCol of [nMid - 1.32, nMid + 1.32]) {
+        emitPrismST(sink, cx, cz, tx, tz, nx, nz, sCol - 0.15, sCol + 0.15, nCol - 0.15, nCol + 0.15, deckY0, roofY, deckY0, roofY, C.steelDark);
+      }
+    }
+    const nStair0 = nMid + side * 0.05;
+    const nStair1 = nMid + side * 1.45;
+    const nLo = Math.min(nStair0, nStair1), nHi = Math.max(nStair0, nStair1);
+    const sTop = 1.72, sBot = 10.52;
+    const deckBotY = yAt(sBot) + 1.05;
+    const steps = 14;
+    for (let stIdx = 0; stIdx < steps; stIdx++) {
+      const f0 = stIdx / steps, f1 = (stIdx + 1) / steps;
+      const sa = sTop + (sBot - sTop) * f0;
+      const sb = sTop + (sBot - sTop) * f1;
+      const stepTop = floorY + (deckBotY - floorY) * f0;
+      const stepBot = Math.max(deckBotY, stepTop - 0.42);
+      emitPrismST(sink, cx, cz, tx, tz, nx, nz, sa, sb, nLo + 0.06, nHi - 0.06, stepBot, stepTop, stepBot, stepTop, C.stairStep, C.platCoping, true);
+    }
+    // Stair stringer beams + elevated handrails
+    for (const nEdge of [nLo + 0.04, nHi - 0.04]) {
+      emitBeam3D(sink, P(sTop, nEdge, floorY - 0.18), P(sBot, nEdge, deckBotY + 0.08), 0.08, 0.16, C.steelDark);
+      emitBeam3D(sink, P(sTop, nEdge, floorY + 0.96), P(sBot, nEdge, deckBotY + 0.96), 0.045, 0.045, C.steelDark);
+      for (let b = 0; b <= 4; b++) {
+        const f = b / 4;
+        const sPost = sTop + (sBot - sTop) * f;
+        const yPost = floorY + (deckBotY - floorY) * f;
+        emitPrismST(sink, cx, cz, tx, tz, nx, nz, sPost - 0.035, sPost + 0.035, nEdge - 0.035, nEdge + 0.035, yPost, yPost + 0.96, yPost, yPost + 0.96, C.steelDark);
+      }
+    }
+  }
+}
+
+function buildStationPlatforms(sink, stops, stationTracks, tunnelEnds, ox, oz, inChunk) {
+  if (!stops || !stops.length || !stationTracks.length) return;
+  const candidates = stops
+    .filter((s) => s && s[2] === 1 && Number.isFinite(s[0]) && Number.isFinite(s[1]) && inChunk(s[0], s[1]))
+    .sort((a, b) => (b[3] ? 1 : 0) - (a[3] ? 1 : 0));
+
+  const placed = [];
+  const SNAP_R2 = 35 * 35;
+  const DEDUP_R2 = 85 * 85;
+
+  for (const s of candidates) {
+    const sx = s[0], sz = s[1];
+    let best = null, bestD2 = SNAP_R2;
+    for (const tr of stationTracks) {
+      for (let i = 0; i < tr.xs.length - 1; i++) {
+        const ax = tr.xs[i], az = tr.zs[i], bx = tr.xs[i + 1], bz = tr.zs[i + 1];
+        const dx = bx - ax, dz = bz - az;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 0.0025) continue;
+        let u = ((sx - ax) * dx + (sz - az) * dz) / l2;
+        u = u < 0 ? 0 : u > 1 ? 1 : u;
+        const px = ax + dx * u, pz = az + dz * u;
+        const d2 = (sx - px) * (sx - px) + (sz - pz) * (sz - pz);
+        if (d2 <= bestD2) {
+          bestD2 = d2;
+          best = { tr, i, u, px, pz, dx, dz, l2 };
+        }
+      }
+    }
+    if (!best) continue;
+
+    const segL = Math.sqrt(best.l2);
+    const tx = best.dx / segL, tz = best.dz / segL;
+    const nx = -tz, nz = tx;
+    const { tr, i, u } = best;
+    const slope = Math.abs(tr.ys[i + 1] - tr.ys[i]) / segL;
+    const trackY = tr.ys[i] + (tr.ys[i + 1] - tr.ys[i]) * u;
+    if (slope > 0.14 || !Number.isFinite(trackY)) continue;
+
+    let dup = false;
+    for (const p0 of placed) {
+      const dxp = best.px - p0.x, dzp = best.pz - p0.z;
+      if (dxp * dxp + dzp * dzp < DEDUP_R2) { dup = true; break; }
+    }
+    if (dup) continue;
+
+    const span = traceStationSpan(stationTracks, best, tx, tz, nx, nz, trackY, tunnelEnds);
+    const totalLen = span.sMax - span.sMin;
+    if (totalLen < 16.0) continue;
+
+    const midS = (span.sMin + span.sMax) * 0.5;
+    const cx = best.px + tx * midS, cz = best.pz + tz * midS;
+    const halfLen = totalLen * 0.5;
+    const yAt = (sLocal) => sampleElevationProfile(span.samples, sLocal + midS);
+
+    const elevated = tr.br && (tr.es[i] > 1.8 || tr.es[i + 1] > 1.8);
+    const trackHalfW = elevated ? 2.55 : 2.2;
+    const { minTrackN, maxTrackN } = findCorridorTrackExtent(stationTracks, cx, cz, tx, tz, nx, nz, yAt(0));
+    const leftMid = minTrackN - (trackHalfW + 2.3);
+    const rightMid = maxTrackN + (trackHalfW + 2.3);
+
+    const numBays = Math.max(2, Math.min(6, Math.floor((totalLen - 2) / 8)));
+    const canopyHalf = numBays * 4;
+    const hasOverpass = tr.k === 'rail' && numBays >= 4 && totalLen >= 36;
+
+    for (const [side, nMid] of [[-1, leftMid], [1, rightMid]]) {
+      emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, -halfLen, halfLen, yAt, elevated);
+      emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass);
+      emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass);
+    }
+    if (hasOverpass) {
+      emitStationOverpass(sink, cx, cz, tx, tz, nx, nz, leftMid, rightMid, yAt);
+    }
+
+    placed.push({ x: best.px, z: best.pz });
   }
 }

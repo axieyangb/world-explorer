@@ -498,7 +498,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r4" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r5" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {

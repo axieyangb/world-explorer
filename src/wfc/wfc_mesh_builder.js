@@ -16,6 +16,7 @@ import {
 import { EXTRA_FACADES, PAINT_PALETTES } from '../features/facade_styles.js'; // [roofs]
 import { planRoof, roofRise, emitRoof } from '../features/roofs.js'; // [roofs]
 import { classifyFamousBuilding } from '../features/company_building_styles.js';
+import { resolveSpecialSiteType, emitSpecialSiteArchitecture } from '../features/special_sites.js';
 
 /**
  * Pushes a 3D oriented box in local wall coordinates:
@@ -918,12 +919,17 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   const btype = String(bldgInfo.btype || '').toLowerCase();
   const name = String(bldgInfo.name || '').toLowerCase();
   const rawStyle = String(bldgInfo.style || '').toLowerCase();
+  const specialType =
+    !bldgInfo.isPart && (!Number.isFinite(bldgInfo.area) || bldgInfo.area >= 220)
+      ? resolveSpecialSiteType(btype, bldgInfo.name || '', bldgInfo.area ?? null)
+      : null;
 
   const famousInfo = classifyFamousBuilding(bldgInfo.name || '', btype, h, 24);
   const techMatch = name.match(TECH_CAMPUS_RE);
-  const isTechCampus = Boolean(techMatch) || Boolean(famousInfo && famousInfo.archFeatures.skyGardenAtrium);
+  const isTechCampus = !specialType && (Boolean(techMatch) || Boolean(famousInfo && famousInfo.archFeatures.skyGardenAtrium));
   const techBrand = techMatch ? techMatch[1].toLowerCase() : (famousInfo ? famousInfo.brandName.toLowerCase() : null);
   const isCivicBuilding =
+    !specialType &&
     !isTechCampus &&
     (Boolean(famousInfo && famousInfo.archFeatures.colonnadePortico) ||
       btype === 'government' || btype === 'civic' || btype === 'public' || CIVIC_GOV_RE.test(name));
@@ -932,7 +938,7 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   // that build them. Churches, temples and shrines are "civic" for facade purposes but get their own roofs, and an
   // East Asian, Gulf or Mediterranean-village public building gets neither. The dome needs a real seat of government.
   const classicalRegion = !bldgInfo.arch || !(EAST_ASIA_ARCH[bldgInfo.arch] || bldgInfo.arch === 'mideast' || bldgInfo.arch === 'med');
-  const civicOrnament = isCivicBuilding && classicalRegion && !(famousInfo && famousInfo.category === 'sacred_historic');
+  const civicOrnament = !specialType && isCivicBuilding && classicalRegion && !(famousInfo && famousInfo.category === 'sacred_historic');
   const civicDome = civicOrnament && (btype === 'government' || CIVIC_DOME_RE.test(name));
 
   let maxSpan = Number(bldgInfo.span) || 0;
@@ -961,7 +967,23 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
   let pool;
   const archPool = !famousInfo && !isTechCampus && !isCivicBuilding && !isOfficeOrCommercial && bldgInfo.arch && !(btype === 'parking' || btype === 'garages' || btype === 'industrial' || btype === 'warehouse' || (btype === 'retail' && h <= 10.5))
     ? archFacadePool(bldgInfo.arch, h, btype) : null; // [roofs]
-  if (famousInfo && famousInfo.facadeLayers && famousInfo.facadeLayers.length > 0) {
+  if (specialType === 'airport_terminal') {
+    pool = [41, 0, 2, 1];
+  } else if (specialType === 'airport_hangar') {
+    pool = [23, 23, 36];
+  } else if (specialType === 'train_station') {
+    pool = (region === 'nyc' || region === 'paris' || region === 'london' || region === 'us' || region === 'eu')
+      ? [39, 7, 4, 2]
+      : [41, 2, 4, 13];
+  } else if (specialType === 'ferry_terminal') {
+    pool = [0, 2, 38, 13];
+  } else if (specialType === 'hospital') {
+    pool = [13, 4, 20, 1];
+  } else if (specialType === 'museum') {
+    pool = [39, 7, 4, 35];
+  } else if (specialType === 'mall') {
+    pool = [2, 38, 0, 34, 4];
+  } else if (famousInfo && famousInfo.facadeLayers && famousInfo.facadeLayers.length > 0) {
     pool = famousInfo.facadeLayers;
   } else if (isTechCampus) {
     pool = (techBrand === 'apple' || techBrand === 'nvidia') ? [1, 13, 41, 0, 2, 38] : [0, 2, 38, 41, 1, 13];
@@ -1141,6 +1163,30 @@ export function selectFacadeForBuilding(bldgInfo, seed, region = 'beijing') {
       wallSecondary[0] = 0.82; wallSecondary[1] = 0.84; wallSecondary[2] = 0.86;
     } else {
       parapetAccent = [0.18, 0.62, 0.88];
+    }
+  } else if (specialType && !osmRgb) {
+    parapetAccent = null;
+    if (specialType === 'airport_terminal') {
+      wallTint[0] = 0.92; wallTint[1] = 0.96; wallTint[2] = 1.03;
+      wallSecondary[0] = 0.24; wallSecondary[1] = 0.28; wallSecondary[2] = 0.34;
+      roofDeck[0] = 0.68; roofDeck[1] = 0.72; roofDeck[2] = 0.76;
+    } else if (specialType === 'airport_hangar') {
+      wallTint[0] = 0.90; wallTint[1] = 0.93; wallTint[2] = 0.97;
+      wallSecondary[0] = 0.32; wallSecondary[1] = 0.35; wallSecondary[2] = 0.40;
+      roofDeck[0] = 0.56; roofDeck[1] = 0.59; roofDeck[2] = 0.63;
+    } else if (specialType === 'ferry_terminal') {
+      wallTint[0] = 0.95; wallTint[1] = 0.99; wallTint[2] = 1.04;
+      wallSecondary[0] = 0.76; wallSecondary[1] = 0.80; wallSecondary[2] = 0.84;
+    } else if (specialType === 'hospital') {
+      wallTint[0] = 1.00; wallTint[1] = 1.01; wallTint[2] = 1.03;
+      wallSecondary[0] = 0.84; wallSecondary[1] = 0.86; wallSecondary[2] = 0.89;
+      roofDeck[0] = 0.74; roofDeck[1] = 0.76; roofDeck[2] = 0.78;
+    } else if (specialType === 'museum') {
+      wallTint[0] = 1.01; wallTint[1] = 0.98; wallTint[2] = 0.92;
+      wallSecondary[0] = 0.78; wallSecondary[1] = 0.74; wallSecondary[2] = 0.66;
+    } else if (specialType === 'mall') {
+      wallTint[0] = 0.97; wallTint[1] = 0.96; wallTint[2] = 0.94;
+      wallSecondary[0] = 0.66; wallSecondary[1] = 0.64; wallSecondary[2] = 0.61;
     }
   } else if (isCivicBuilding && !osmRgb) {
     wallTint[0] = 1.02; wallTint[1] = 1.00; wallTint[2] = 0.95;
@@ -1395,6 +1441,29 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
       ((Number(id) || 0) * 83492791)) >>>
     0;
 
+  const ccwOuter = ensureCCWFlatXZ(flatOuter);
+  let outerMinX = Infinity, outerMaxX = -Infinity, outerMinZ = Infinity, outerMaxZ = -Infinity;
+  let outerArea2 = 0.0;
+  for (let i = 0; i < ccwOuter.length; i += 2) {
+    const x = ccwOuter[i], z = ccwOuter[i + 1];
+    const nxPt = ccwOuter[(i + 2) % ccwOuter.length], nzPt = ccwOuter[(i + 3) % ccwOuter.length];
+    if (x < outerMinX) outerMinX = x;
+    if (x > outerMaxX) outerMaxX = x;
+    if (z < outerMinZ) outerMinZ = z;
+    if (z > outerMaxZ) outerMaxZ = z;
+    outerArea2 += x * nzPt - nxPt * z;
+  }
+  const outerMinSpan = Math.min(outerMaxX - outerMinX, outerMaxZ - outerMinZ);
+  const outerFootArea = Math.abs(outerArea2) * 0.5;
+
+  const specialType =
+    !isPart &&
+    (rawMinH || 0) <= 0.5 &&
+    outerFootArea >= 220.0 &&
+    !(bldgInfo.isLandmark || bldgInfo.matchedLm)
+      ? resolveSpecialSiteType(btype, name, outerFootArea)
+      : null;
+
   const styleInfo = resolveBeijingStyle24({
     id,
     name,
@@ -1408,7 +1477,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
   });
   const styleId = styleInfo.id;
   const arch = BEIJING_ARCHETYPES[styleInfo.archetypeId] || BEIJING_ARCHETYPES.modern_curtain_tower;
-  const facadeSel = selectFacadeForBuilding(bldgInfo, seed, region);
+  const facadeSel = selectFacadeForBuilding({ ...bldgInfo, area: outerFootArea }, seed, region);
   const upperSpec = facadeSel.spec;
   // Choose brick storefront (17) only for brick/terracotta masonry; glass storefront (22) for limestone/concrete/curtain/modern
   const isBrickMasonry =
@@ -1417,9 +1486,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     upperSpec.id === 'london_georgian_brick';
   const retailSpec = FACADE_CATALOG[isBrickMasonry ? 17 : 22];
 
-  const ccwOuter = ensureCCWFlatXZ(flatOuter);
-  // [roofs] pitched / mansard roof plan (null = the flat deck + parapet below; tech campuses & civic buildings keep flat / domed roof)
-  const roofPlan = (archRegion && !facadeSel.isTechCampus && !facadeSel.civicOrnament)
+  // [roofs] pitched / mansard roof plan (null = the flat deck + parapet below; tech campuses, civic & special sites own their roofs)
+  const roofPlan = (!specialType && archRegion && !facadeSel.isTechCampus && !facadeSel.civicOrnament)
     ? planRoof({ flatOuter: ccwOuter, hasHoles: (flatHoles || []).some((h) => h.length >= 6), rawH, btype, region: archRegion, seed,
       flav: bldgInfo.flav, isPart, minH: rawMinH, osm: bldgInfo.osmRoof || null, facadeId: upperSpec.id })
     : null;
@@ -1434,20 +1502,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
 
   // Use clean 1-3 tier architectural setbacks for mid-rise and high-rise buildings (totalSpan >= 18m with sufficient footprint)
   let tiers;
-  let outerMinX = Infinity, outerMaxX = -Infinity, outerMinZ = Infinity, outerMaxZ = -Infinity;
-  let outerArea2 = 0.0;
-  for (let i = 0; i < ccwOuter.length; i += 2) {
-    const x = ccwOuter[i], z = ccwOuter[i + 1];
-    const nxPt = ccwOuter[(i + 2) % ccwOuter.length], nzPt = ccwOuter[(i + 3) % ccwOuter.length];
-    if (x < outerMinX) outerMinX = x;
-    if (x > outerMaxX) outerMaxX = x;
-    if (z < outerMinZ) outerMinZ = z;
-    if (z > outerMaxZ) outerMaxZ = z;
-    outerArea2 += x * nzPt - nxPt * z;
-  }
-  const outerMinSpan = Math.min(outerMaxX - outerMinX, outerMaxZ - outerMinZ);
-  const outerFootArea = Math.abs(outerArea2) * 0.5;
   if (
+    !specialType &&
     !roofPlan &&
     !isPart &&
     (rawMinH || 0) <= 0.5 &&
@@ -1562,7 +1618,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     const tierSpan = tier.y1 - tier.y0;
     if (tierSpan < 0.4) continue;
 
-    const parapetH = roofPlan ? (roofPlan.shape === 'mansard' ? 0.45 : 0.0) : isTopTier ? Math.min(0.85, Math.max(0.35, tierSpan * 0.04)) : 0.42; // [roofs]
+    const noParapetSpecial = specialType === 'airport_terminal' || specialType === 'airport_hangar' || specialType === 'train_station' || specialType === 'ferry_terminal';
+    const parapetH = noParapetSpecial ? 0.0 : roofPlan ? (roofPlan.shape === 'mansard' ? 0.45 : 0.0) : isTopTier ? Math.min(0.85, Math.max(0.35, tierSpan * 0.04)) : 0.42; // [roofs]
     const shaftY1 = Math.max(tier.y0 + 0.2, tier.y1 - parapetH);
     const shaftSpan = shaftY1 - tier.y0;
 
@@ -1931,7 +1988,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         }
 
         // 1d. Near-LOD 3D Facade Articulation: Inter-story Cornice String Courses, Balconies & Split-AC Units
-        if (!isHole && !upperSpec.isCurtainWall && totalSpan >= 9.0 && totalSpan <= 42.0 && len >= 5.2 && upperFloors >= 2) {
+        if (!specialType && !isHole && !upperSpec.isCurtainWall && totalSpan >= 9.0 && totalSpan <= 42.0 && len >= 5.2 && upperFloors >= 2) {
           const floorH = upperSpan / upperFloors;
           const ledgeCol = [
             Math.min(1, pCol[0] * dirShade * 0.96),
@@ -2210,7 +2267,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             archRegion === 'nyc' ||
             archRegion === 'sf' ||
             archRegion === 'med');
-        if (!isHole && isTopTier && isClassicalOrMasonry && totalSpan >= 8.5 && totalSpan <= 58.0 && len >= 4.0) {
+        if (!specialType && !isHole && isTopTier && isClassicalOrMasonry && totalSpan >= 8.5 && totalSpan <= 58.0 && len >= 4.0) {
           const corbelCol = [Math.min(1, pr * 0.94), Math.min(1, pg * 0.93), Math.min(1, pb * 0.90)];
           const overhangCol = [Math.min(1, pr * 1.07), Math.min(1, pg * 1.06), Math.min(1, pb * 1.04)];
           // Projecting molded crown cornice shelf
@@ -2286,6 +2343,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             ? archRegion === 'nyc' || archRegion === 'us' || archRegion === 'sf'
             : region === 'nyc' || region === 'us');
         if (
+          !specialType &&
           !isHole &&
           tIdx === 0 &&
           isBrickOrLoftRes &&
@@ -2347,7 +2405,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             (!archRegion && (region === 'paris' || region === 'europe')) ||
             archRegion === 'paris' ||
             archRegion === 'med');
-        if (!isHole && isHaussmannOrEuro && totalSpan >= 10.5 && totalSpan <= 44.0 && len >= 5.5 && upperFloors >= 3) {
+        if (!specialType && !isHole && isHaussmannOrEuro && totalSpan >= 10.5 && totalSpan <= 44.0 && len >= 5.5 && upperFloors >= 3) {
           const floorH = upperSpan / upperFloors;
           const wroughtIronCol = [0.14 * dirShade, 0.15 * dirShade, 0.17 * dirShade];
           const stoneMoldingCol = [Math.min(1, pCol[0] * dirShade * 1.05), Math.min(1, pCol[1] * dirShade * 1.04), Math.min(1, pCol[2] * dirShade * 1.02)];
@@ -2374,6 +2432,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             }
           }
         } else if (
+          !specialType &&
           !isHole &&
           (btype === 'apartments' || btype === 'residential' || btype === 'hotel' || upperSpec.index === 14 || upperSpec.index === 20) &&
           totalSpan >= 28.0 &&
@@ -2465,7 +2524,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           facadeSel.civicOrnament ||
           (upperSpec.index === 7 && totalSpan >= 18.0 && (seed % 4 === 0) && (archRegion ? archRegion === 'nyc' || archRegion === 'us' : region === 'nyc' || region === 'us'));
         // A portico is an entrance to a substantial front: two storeys of column at most, a third of the front wide
-        if (!isHole && tIdx === 0 && wantPortico && entranceMap && entranceMap.has(i) && len >= 16.0 && edgeSpan >= 8.0) {
+        if (!specialType && !isHole && tIdx === 0 && wantPortico && entranceMap && entranceMap.has(i) && len >= 16.0 && edgeSpan >= 8.0) {
           const portW = Math.min(12.0, Math.max(6.4, len * 0.34));
           const pu0 = (len - portW) * 0.5;
           const pu1 = pu0 + portW;
@@ -2501,7 +2560,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
 
         // Corporate / Tech / Finance / Media / Hotel HQ Double-Height Glass Atrium & Cantilevered Entrance Marquee
         const fArch = facadeSel.famousInfo ? facadeSel.famousInfo.archFeatures : null;
-        if (!isHole && tIdx === 0 && fArch && fArch.glassAtriumMarquee && entranceMap && entranceMap.has(i) && len >= 10.0 && edgeSpan >= 6.5) {
+        if (!specialType && !isHole && tIdx === 0 && fArch && fArch.glassAtriumMarquee && entranceMap && entranceMap.has(i) && len >= 10.0 && edgeSpan >= 6.5) {
           const marqW = Math.min(13.0, Math.max(6.2, len * 0.38));
           const mu0 = (len - marqW) * 0.5;
           const mu1 = mu0 + marqW;
@@ -2587,7 +2646,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
       if (uv) {
         // rMat = 8 procedural flat-roof coordinates centered at (500, 500) in building-local meters; only a tall
         // tower's top deck is centered at (500, 2500), which is where the shader paints its helipad marking
-        const rV0 = isTopTier && totalSpan >= 60.0 && maxX - minX >= 16.0 && maxZ - minZ >= 16.0 ? 2500.0 : 500.0;
+        const rV0 = !specialType && isTopTier && totalSpan >= 60.0 && maxX - minX >= 16.0 && maxZ - minZ >= 16.0 ? 2500.0 : 500.0;
         uv.push(
           8500.0 + (pa.x - rCx), -20.0 - (rV0 + (pa.y - rCz)),
           8500.0 + (pc.x - rCx), -20.0 - (rV0 + (pc.y - rCz)),
@@ -2599,7 +2658,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     // 4. Worker-Built 3D Rooftop Greebles (routed into near-LOD roofDetail sink)
     const spanX = maxX - minX;
     const spanZ = maxZ - minZ;
-    if (isTopTier && holes.length === 0 && totalSpan >= 4.2 && spanX >= 9.0 && spanZ >= 9.0) {
+    if (!specialType && isTopTier && holes.length === 0 && totalSpan >= 4.2 && spanX >= 9.0 && spanZ >= 9.0) {
       const inOuter = (px, pz) => {
         let inside = false;
         const r = tier.flatOuter;
@@ -2972,6 +3031,41 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   }
 
+  const topTier = tiers[tiers.length - 1];
+  let specialMeta = null;
+  if (specialType) {
+    const yRoofBase = topTier ? topTier.y1 : topY;
+    specialMeta = emitSpecialSiteArchitecture({
+      btype: specialType,
+      name,
+      ccwOuter,
+      holes: flatHoles || [],
+      cx: (outerMinX + outerMaxX) * 0.5,
+      cz: (outerMinZ + outerMaxZ) * 0.5,
+      minX: outerMinX,
+      maxX: outerMaxX,
+      minZ: outerMinZ,
+      maxZ: outerMaxZ,
+      spanX: outerMaxX - outerMinX,
+      spanZ: outerMaxZ - outerMinZ,
+      area: outerFootArea,
+      surfY,
+      yBase: surfY,
+      yTop: yRoofBase,
+      totalH: Math.max(3.2, yRoofBase - surfY),
+      pos,
+      norm,
+      col,
+      uv,
+      triEntity,
+      entityIdx,
+      detailSink,
+      pushBox: pushWorldBox,
+      pushWallQuad,
+      region,
+    });
+  }
+
   if (uv) {
     const targetUvLen = (pos.length / 3) * 2;
     while (uv.length < targetUvLen) {
@@ -2979,7 +3073,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     }
   }
 
-  const topTier = tiers[tiers.length - 1];
+  const baseTopY = roofDone ? Math.max(topTier.y1, roofDone.ridgeY) : topTier ? topTier.y1 : topY;
   return {
     styleId,
     arch,
@@ -2989,9 +3083,10 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     doorIndex: primaryDoorIdx,
     topRoofFlat: topTier ? topTier.flatOuter : ccwOuter,
     topRoofHoles: topTier ? (topTier.flatHoles || []) : (flatHoles || []),
-    topRoofY: roofDone ? Math.max(topTier.y1, roofDone.ridgeY) : topTier ? topTier.y1 : topY,
+    topRoofY: specialMeta && Number.isFinite(specialMeta.topRoofY) ? Math.max(baseTopY, specialMeta.topRoofY) : baseTopY,
     roofShape: roofDone ? roofDone.shape : null, // [roofs]
     eaveY: roofDone ? topTier.y1 : null, // [roofs]
+    specialType,
   };
 }
 

@@ -53,6 +53,7 @@ MOD_ID_MAP = {
     'src/features/roofs.js': '__MOD_roofs',  # [roofs]
     'src/features/roofs_chunk.js': '__MOD_roofs_chunk',  # [roofs]
     'src/features/facade_styles.js': '__MOD_facade_styles',  # [roofs]
+    'src/features/special_sites.js': '__MOD_special_sites',
     'src/features/places_extract.js': '__MOD_places_extract',
     'src/features/signals.js': '__MOD_signals',
     'src/features/traffic_graph.js': '__MOD_traffic_graph',

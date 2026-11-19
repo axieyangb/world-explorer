@@ -979,7 +979,8 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     if (c === "town_hall" || s === "town_hall" || s === "courthouse" || s === "embassy" || s === "government" || s === "community_centre") return { btype: "government", priority: 96 - rPenalty };
     // (the tiles' "library" class also carries book shops: only the library subclass is a civic building)
     if (c === "library" && s && s !== "library") return { btype: "retail", priority: 58 - rPenalty };
-    if (c === "museum" || c === "library" || s === "museum" || s === "library" || s === "art_gallery" || s === "theatre" || s === "arts_centre") return { btype: "civic", priority: 92 - rPenalty };
+    if (c === "museum" || s === "museum" || s === "art_gallery") return { btype: "museum", priority: 92 - rPenalty };
+    if (c === "library" || s === "library" || s === "theatre" || s === "arts_centre") return { btype: "civic", priority: 92 - rPenalty };
     if (c === "police" || c === "fire_station" || c === "post" || s === "police" || s === "fire_station" || s === "post_office") return { btype: "public", priority: 90 - rPenalty };
     if (c === "place_of_worship" || s === "place_of_worship" || s === "church" || s === "cathedral" || s === "temple" || s === "mosque" || s === "shrine") {
       // (the tiles give a place of worship's religion as its subclass, so a Buddhist temple or Shinto shrine is not a "church")
@@ -990,11 +991,15 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     if (c === "stadium" || s === "stadium" || s === "sports_centre" || s === "arena" || c === "Ice_rink" || c === "swimming_pool") {
       return { btype: c === "stadium" || s === "stadium" ? "stadium" : "sports_centre", priority: 92 - rPenalty };
     }
-    if (c === "railway" || s === "station" || s === "subway" || s === "bus_station" || s === "ferry_terminal") return { btype: "train_station", priority: 90 - rPenalty };
+    if (s === "ferry_terminal" || c === "ferry_terminal") return { btype: "ferry_terminal", priority: 90 - rPenalty };
+    if (c === "railway" || s === "station" || s === "subway" || s === "bus_station") return { btype: "train_station", priority: 90 - rPenalty };
+    if (c === "hangar" || s === "hangar") return { btype: "airport_hangar", priority: 93 - rPenalty };
+    if (c === "aeroway" || c === "aerodrome" || s === "terminal" || s === "aerodrome" || s === "airport_terminal") return { btype: "airport_terminal", priority: 95 - rPenalty };
     if (c === "lodging" || s === "hotel" || s === "motel" || s === "hostel" || s === "guest_house") return { btype: "hotel", priority: 88 - rPenalty };
     if (c === "attraction" || c === "castle" || c === "monument" || c === "memorial" || c === "historic") return { btype: "civic", priority: 86 - rPenalty };
     if (c === "office" || s === "office" || s === "company" || s === "financial" || c === "bank" || s === "bank") return { btype: "office", priority: 78 - rPenalty };
-    if (s === "supermarket" || c === "supermarket" || s === "department_store" || s === "mall" || s === "marketplace") {
+    if (c === "mall" || s === "mall" || c === "department_store" || s === "department_store") return { btype: "mall", priority: 78 - rPenalty };
+    if (s === "supermarket" || c === "supermarket" || s === "marketplace") {
       return { btype: s === "supermarket" || c === "supermarket" ? "supermarket" : "commercial", priority: 76 - rPenalty };
     }
     if (c === "parking" || s === "parking") return { btype: "parking", priority: 72 - rPenalty };
@@ -1053,8 +1058,99 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
     }
   }
 
+  // 3b. Collect aeroway aprons, gates, aerodrome zones, and aerodrome_label points for airport building tagging
+  const aeroAprons = [];
+  const aeroGates = [];
+  const aeroZones = [];
+  const aeroLabels = [];
+  for (const t of tiles) {
+    for (const f of t.aerodrome_label || []) {
+      if (f.type !== 1) continue;
+      for (const pt of f.geom || []) {
+        const [lx, lz] = toLocalXZ(pt[0], pt[1]);
+        if (lx >= -900 && lx <= 900 && lz >= -900 && lz <= 900) {
+          aeroLabels.push({ lx, lz });
+        }
+      }
+    }
+    for (const f of t.aeroway || []) {
+      const cls = String(f.tags.class || "").toLowerCase();
+      if (cls === "gate" && (f.type === 1 || f.type === 3)) {
+        const gPts = f.type === 1 ? f.geom : (f.geom[0] && f.geom[0].outer ? [f.geom[0].outer[0]] : []);
+        for (const pt of gPts) {
+          const [lx, lz] = toLocalXZ(pt[0], pt[1]);
+          if (lx >= -600 && lx <= 600 && lz >= -600 && lz <= 600) {
+            aeroGates.push({ lx, lz });
+          }
+        }
+      } else if ((cls === "apron" || cls === "aerodrome") && f.type === 3) {
+        for (const poly of f.geom || []) {
+          const outer = poly.outer;
+          if (!outer || outer.length < 3) continue;
+          let aMinX = Infinity, aMaxX = -Infinity, aMinZ = Infinity, aMaxZ = -Infinity;
+          const flat = [];
+          for (let i = 0; i < outer.length; i++) {
+            const [lx, lz] = toLocalXZ(outer[i][0], outer[i][1]);
+            flat.push(lx, lz);
+            if (lx < aMinX) aMinX = lx;
+            if (lx > aMaxX) aMaxX = lx;
+            if (lz < aMinZ) aMinZ = lz;
+            if (lz > aMaxZ) aMaxZ = lz;
+          }
+          if (aMaxX < -650 || aMinX > 650 || aMaxZ < -650 || aMinZ > 650) continue;
+          const targetArr = cls === "apron" ? aeroAprons : aeroZones;
+          targetArr.push({ minX: aMinX, maxX: aMaxX, minZ: aMinZ, maxZ: aMaxZ, flat });
+        }
+      }
+    }
+  }
+  const flatRingAreaXZ = (flat) => {
+    let a2 = 0.0;
+    for (let i = 0; i < flat.length; i += 2) {
+      const x1 = flat[i], z1 = flat[i + 1];
+      const x2 = flat[(i + 2) % flat.length], z2 = flat[(i + 3) % flat.length];
+      a2 += x1 * z2 - x2 * z1;
+    }
+    return Math.abs(a2) * 0.5;
+  };
+  const distBuildingToPoly = (bFlat, bMinX, bMaxX, bMinZ, bMaxZ, bCx, bCz, pObj, maxDist) => {
+    if (bMaxX < pObj.minX - maxDist || bMinX > pObj.maxX + maxDist || bMaxZ < pObj.minZ - maxDist || bMinZ > pObj.maxZ + maxDist) {
+      return Infinity;
+    }
+    if (pointInFlatRingXZ(bCx, bCz, pObj.flat)) return 0.0;
+    let minD = pointToFlatRingDistXZ(bCx, bCz, pObj.flat);
+    if (minD <= maxDist) return minD;
+    for (let i = 0; i < bFlat.length; i += 2) {
+      const vx = bFlat[i], vz = bFlat[i + 1];
+      if (pointInFlatRingXZ(vx, vz, pObj.flat)) return 0.0;
+      const d = pointToFlatRingDistXZ(vx, vz, pObj.flat);
+      if (d < minD) {
+        minD = d;
+        if (minD <= maxDist) return minD;
+      }
+    }
+    for (let i = 0; i < pObj.flat.length; i += 2) {
+      const vx = pObj.flat[i], vz = pObj.flat[i + 1];
+      if (vx < bMinX - maxDist || vx > bMaxX + maxDist || vz < bMinZ - maxDist || vz > bMaxZ + maxDist) continue;
+      if (pointInFlatRingXZ(vx, vz, bFlat)) return 0.0;
+      const d = pointToFlatRingDistXZ(vx, vz, bFlat);
+      if (d < minD) {
+        minD = d;
+        if (minD <= maxDist) return minD;
+      }
+    }
+    return minD;
+  };
+  const AIRPORT_TERM_NAME_RE = /\b(terminal|concourse|airport|aeroport|flughafen)\b|航站楼|机场|空港/i;
+  const AIRPORT_HANGAR_NAME_RE = /\b(hangar)\b|机库/i;
+  const AIRPORT_EXCLUDE_RE = /\b(hotel|inn|suites|motel|parking|garage|marriott|hilton|hyatt|sheraton|holiday inn|car rental|rental car|fire\s+station|firehouse|police)\b/i;
+  const TRAIN_STATION_NAME_RE = /\b(station|central station|grand central|penn station|union station|gare|bahnhof|shinjuku|tokyo station)\b|火车站|高铁站|火车南站|火车东站|火车北站|站房/i;
+  const TRAIN_STATION_EXCLUDE_RE = /\b(fire|police|power|gas|petrol|fuel|service|substation|pumping|radio|tv|television|broadcast|weather|ranger|coast guard|lifeguard|ambulance|charging)\s+station\b|消防站|派出所|变电站|加油站|充电站|广播站|气象站/i;
+  const GENERIC_SPECIAL_SRC_BTYPES = new Set(["yes", "commercial", "industrial", "transportation", "public"]);
+
   // 4. Extract 3D Buildings from `building` layer
   const buildings = [];
+  const extractedBldgBounds = [];
   const seenBldgKeys = new Set();
   let bldgIdSeq = (cx * 40 + cz) * 50000 + 1;
 
@@ -1128,6 +1224,7 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
         if (approxArea < 16.0 && rawH < 12.0) continue;
         let bName = f.tags["name:en"] || f.tags.name_en || f.tags.name || "";
         let btype = f.tags.class || f.tags.building || "yes";
+        const rawSrcBtype = String(btype || "yes").toLowerCase();
         let hasMatchedPoi = false;
 
         // Spatially bind POI points and `housenumber` addresses inside or within 14m of building footprint
@@ -1203,6 +1300,93 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
           }
         }
 
+        const polyArea = flatRingAreaXZ(flatOuter);
+        if (btype === "terminal") btype = "airport_terminal";
+        else if (btype === "hangar") btype = "airport_hangar";
+        else if (btype === "art_gallery") btype = "museum";
+        else if (btype === "department_store") btype = "mall";
+
+        const isGenericBtype = GENERIC_SPECIAL_SRC_BTYPES.has(btype);
+        const canReclaimAirportFromPoi = GENERIC_SPECIAL_SRC_BTYPES.has(rawSrcBtype) &&
+          (btype === "train_station" || btype === "museum" || btype === "mall" || btype === "retail" || btype === "office");
+        if (isGenericBtype || canReclaimAirportFromPoi) {
+          let nearGate = false;
+          let gateWithin90 = false;
+          if (aeroGates.length > 0) {
+            for (let gIdx = 0; gIdx < aeroGates.length; gIdx++) {
+              const g = aeroGates[gIdx];
+              if (g.lx < minX - 90.0 || g.lx > maxX + 90.0 || g.lz < minZ - 90.0 || g.lz > maxZ + 90.0) continue;
+              const inside = pointInFlatRingXZ(g.lx, g.lz, flatOuter);
+              const gd = inside ? 0.0 : pointToFlatRingDistXZ(g.lx, g.lz, flatOuter);
+              if (gd <= 45.0) { nearGate = true; gateWithin90 = true; break; }
+              if (gd <= 90.0) gateWithin90 = true;
+            }
+          }
+          let apronDist = Infinity;
+          if (isGenericBtype) {
+            for (let aIdx = 0; aIdx < aeroAprons.length; aIdx++) {
+              const d = distBuildingToPoly(flatOuter, minX, maxX, minZ, maxZ, bcx, bcz, aeroAprons[aIdx], 65.0);
+              if (d < apronDist) {
+                apronDist = d;
+                if (apronDist <= 0.1) break;
+              }
+            }
+          }
+          let inAeroZone = false;
+          if (isGenericBtype) {
+            for (let zIdx = 0; zIdx < aeroZones.length; zIdx++) {
+              const z = aeroZones[zIdx];
+              if (bcx >= z.minX && bcx <= z.maxX && bcz >= z.minZ && bcz <= z.maxZ && pointInFlatRingXZ(bcx, bcz, z.flat)) {
+                inAeroZone = true;
+                break;
+              }
+            }
+            if (!inAeroZone && aeroLabels.length > 0 && (btype === "transportation" || btype === "public")) {
+              for (let lIdx = 0; lIdx < aeroLabels.length; lIdx++) {
+                const al = aeroLabels[lIdx];
+                if (Math.hypot(bcx - al.lx, bcz - al.lz) <= 280.0) { inAeroZone = true; break; }
+              }
+            }
+          }
+
+          if (bName && AIRPORT_HANGAR_NAME_RE.test(bName)) {
+            btype = "airport_hangar";
+          } else if (
+            (bName && AIRPORT_TERM_NAME_RE.test(bName) && !AIRPORT_EXCLUDE_RE.test(bName)) ||
+            (nearGate && !AIRPORT_EXCLUDE_RE.test(bName || ""))
+          ) {
+            btype = "airport_terminal";
+          } else if (
+            isGenericBtype &&
+            apronDist <= 65.0 &&
+            !gateWithin90 &&
+            btype !== "transportation" &&
+            btype !== "public" &&
+            (btype === "industrial" || (apronDist <= 38.0 && polyArea >= 450 && polyArea <= 6500 && rawH <= 22.0))
+          ) {
+            btype = "airport_hangar";
+          } else if (isGenericBtype && polyArea >= 800 && (apronDist <= 65.0 || inAeroZone) && !AIRPORT_EXCLUDE_RE.test(bName || "")) {
+            btype = "airport_terminal";
+          }
+        }
+
+        if (
+          btype !== "airport_terminal" &&
+          btype !== "airport_hangar" &&
+          btype !== "ferry_terminal" &&
+          btype !== "hospital" &&
+          btype !== "museum" &&
+          btype !== "fire_station" &&
+          btype !== "police" &&
+          bName &&
+          polyArea >= 400 &&
+          TRAIN_STATION_NAME_RE.test(bName) &&
+          !TRAIN_STATION_EXCLUDE_RE.test(bName)
+        ) {
+          btype = "train_station";
+        }
+
+        extractedBldgBounds.push({ minX, maxX, minZ, maxZ, cx: bcx, cz: bcz, flat: flatOuter });
         const bId = f.id || bldgIdSeq++;
         buildings.push({
           score: rawH * Math.sqrt(Math.max(16.0, approxArea)) + (bName ? 500 : 0) + (hasMatchedPoi ? 2500 : 0),
@@ -1215,6 +1399,83 @@ export async function fetchGlobalChunkData(cx, cz, worldOrigin) {
             Math.round(rawMinH * 10) / 10,
             levels,
             styleKey,
+            "flat",
+            f.tags.colour || null,
+            null,
+            flatOuter,
+            flatHoles,
+          ],
+        });
+      }
+    }
+  }
+
+  // 4b. Fallback: emit un-extruded aeroway=terminal / aeroway=hangar polygons when no t.building centroid overlaps them
+  for (const t of tiles) {
+    for (const f of t.aeroway || []) {
+      if (f.type !== 3) continue;
+      const cls = String(f.tags.class || "").toLowerCase();
+      if (cls !== "terminal" && cls !== "hangar") continue;
+      for (const poly of f.geom || []) {
+        const outer = poly.outer;
+        if (!outer || outer.length < 3) continue;
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        const flatOuter = [];
+        for (let i = 0; i < outer.length; i++) {
+          const [lx, lz] = toLocalXZ(outer[i][0], outer[i][1]);
+          flatOuter.push(Math.round(lx * 10) / 10, Math.round(lz * 10) / 10);
+          if (lx < minX) minX = lx;
+          if (lx > maxX) maxX = lx;
+          if (lz < minZ) minZ = lz;
+          if (lz > maxZ) maxZ = lz;
+        }
+        const bcx = (minX + maxX) * 0.5;
+        const bcz = (minZ + maxZ) * 0.5;
+        if (bcx < -500.0 || bcx >= 500.0 || bcz < -500.0 || bcz >= 500.0) continue;
+        const dedupKey = `${Math.round((ox + bcx) * 0.5)},${Math.round((oz + bcz) * 0.5)},0`;
+        if (seenBldgKeys.has(dedupKey)) continue;
+        let overlaps = false;
+        for (let bIdx = 0; bIdx < extractedBldgBounds.length; bIdx++) {
+          const eb = extractedBldgBounds[bIdx];
+          if (
+            (bcx >= eb.minX - 6.0 && bcx <= eb.maxX + 6.0 && bcz >= eb.minZ - 6.0 && bcz <= eb.maxZ + 6.0 &&
+              (pointInFlatRingXZ(bcx, bcz, eb.flat) || pointToFlatRingDistXZ(bcx, bcz, eb.flat) <= 6.0)) ||
+            (eb.cx >= minX && eb.cx <= maxX && eb.cz >= minZ && eb.cz <= maxZ && pointInFlatRingXZ(eb.cx, eb.cz, flatOuter))
+          ) {
+            overlaps = true;
+            break;
+          }
+        }
+        if (overlaps) continue;
+        seenBldgKeys.add(dedupKey);
+        const flatHoles = [];
+        for (const hRing of poly.holes || []) {
+          if (hRing.length < 3) continue;
+          const fh = [];
+          for (let i = 0; i < hRing.length; i++) {
+            const [lx, lz] = toLocalXZ(hRing[i][0], hRing[i][1]);
+            fh.push(Math.round(lx * 10) / 10, Math.round(lz * 10) / 10);
+          }
+          flatHoles.push(fh);
+        }
+        const spanW = maxX - minX, spanD = maxZ - minZ;
+        const approxArea = spanW * spanD;
+        if (approxArea < 60.0) continue;
+        const rawH = Number(f.tags.render_height) > 3 ? Number(f.tags.render_height) : (cls === "terminal" ? 16.0 : 13.0);
+        const bName = f.tags["name:en"] || f.tags.name_en || f.tags.name || "";
+        const btype = cls === "terminal" ? "airport_terminal" : "airport_hangar";
+        const bId = f.id || bldgIdSeq++;
+        buildings.push({
+          score: rawH * Math.sqrt(Math.max(16.0, approxArea)) + 3000,
+          tuple: [
+            bId,
+            bName,
+            btype,
+            0,
+            Math.round(rawH * 10) / 10,
+            0,
+            cls === "terminal" ? 4 : 3,
+            STYLE_24_KEYS[0],
             "flat",
             f.tags.colour || null,
             null,
