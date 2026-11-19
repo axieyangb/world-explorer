@@ -525,7 +525,7 @@ export class Maritime {
       return this.activeBoat;
     }
     const px = this.app.pos.x, pz = this.app.pos.z;
-    const cand = this.findNearestBoardable(px, pz, 400);
+    const cand = this.findNearestBoardable(px, pz, 120);
     if (cand) {
       const v = cand.v;
       this.activeBoat = v;
@@ -539,12 +539,44 @@ export class Maritime {
       return v;
     }
     let bx = px, bz = pz;
-    if (this.region && typeof this.region.snap === 'function') {
-      const cid = this.region.mainComponent ? this.region.mainComponent() : -1;
-      const cell = this.region.snap(px, pz, 1, cid, 80);
-      if (cell >= 0 && typeof this.region.cellCenter === 'function') {
-        const cc = this.region.cellCenter(cell);
-        if (cc) { bx = cc[0]; bz = cc[1]; }
+    if (this.region) {
+      const clearWater = (tx, tz) => (
+        this.region.isWater(tx, tz) &&
+        this.region.isWater(tx + 25, tz) && this.region.isWater(tx - 25, tz) &&
+        this.region.isWater(tx, tz + 25) && this.region.isWater(tx, tz - 25)
+      );
+      const nw = typeof this.region.nearestWater === 'function' ? this.region.nearestWater(px, pz, 2400) : null;
+      if (nw) {
+        const [wx, wz] = nw;
+        const dx = wx - px, dz = wz - pz;
+        const d = Math.hypot(dx, dz);
+        let placed = false;
+        if (d < 1 && typeof this.region.distAt === 'function' && this.region.distAt(px, pz) >= 1 && clearWater(px, pz)) {
+          bx = px; bz = pz; placed = true;
+        } else if (d > 1) {
+          const ux = dx / d, uz = dz / d;
+          for (const off of [95, 115, 80, 130]) {
+            const tx = wx + ux * off, tz = wz + uz * off;
+            if (clearWater(tx, tz)) { bx = tx; bz = tz; placed = true; break; }
+          }
+        }
+        if (!placed) {
+          outer: for (const r of [95, 115, 80, 135]) {
+            for (let a = 0; a < 16; a++) {
+              const ang = (a / 16) * Math.PI * 2;
+              const tx = wx + Math.cos(ang) * r, tz = wz + Math.sin(ang) * r;
+              if (clearWater(tx, tz)) { bx = tx; bz = tz; placed = true; break outer; }
+            }
+          }
+        }
+        if (!placed) { bx = wx; bz = wz; }
+      } else if (typeof this.region.snap === 'function') {
+        const cid = this.region.mainComponent ? this.region.mainComponent() : -1;
+        const cell = this.region.snap(px, pz, 1, cid, 80);
+        if (cell >= 0 && typeof this.region.cellCenter === 'function') {
+          const cc = this.region.cellCenter(cell);
+          if (cc) { bx = cc[0]; bz = cc[1]; }
+        }
       }
     }
     const v = this._vessel('speedboat', 'sail');

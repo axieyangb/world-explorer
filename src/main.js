@@ -496,7 +496,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261118_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -2969,7 +2969,7 @@ class WorldExplorerApp {
       const rawBaseDist = isAirliner
         ? this.camMode === "street" ? 42.0 : 68.0
         : isBoat
-          ? this.camMode === "street" ? 12.0 : 22.0
+          ? this.camMode === "street" ? 12.0 : 24.5
           : isHeli
             ? this.camMode === "street" ? 12.5 : 18.5
             : inFreefallCam
@@ -2985,7 +2985,7 @@ class WorldExplorerApp {
       const pivotH = isAirliner
         ? 6.8
         : isBoat
-          ? 2.8
+          ? 3.3
           : isHeli
             ? 2.45
             : inFreefallCam
@@ -3025,7 +3025,7 @@ class WorldExplorerApp {
 
       this.camera.position.set(camX, camY, camZ);
       const lookAhead = isAirliner ? 6.0 : isBoat ? 8.5 : isHeli ? 10.5 : inFreefallCam ? 0.35 : isWalk ? 4.5 : isBus ? 9.0 : 6.5;
-      const lookY = isAirliner ? (this.camPivot.y + 4.8) : (this.camPivot.y + pivotH);
+      const lookY = isAirliner ? (this.camPivot.y + 4.8) : isBoat ? (this.camPivot.y + 2.1) : (this.camPivot.y + pivotH);
       this.camera.lookAt(
         this.camPivot.x + Math.sin(viewYaw) * lookAhead,
         lookY,
@@ -3043,16 +3043,27 @@ class WorldExplorerApp {
 
     const camTerrY = getBeijingTerrainElevation(this.camera.position.x, this.camera.position.z);
     const camAlt = Math.max(1.0, this.camera.position.y - camTerrY);
-    const maxSafeNear =
-      this.camMode === "topdown"
-        ? 42.0
-        : Math.max(1.2, Math.min(4.0, activeOrbitDist * 0.22));
-    let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, 1.5, maxSafeNear);
-    if (this.mode === "walk" && this.camMode !== "topdown") targetNear = Math.min(targetNear, 0.45);
-    if (this.camMode !== "topdown" && activeOrbitDist < 5.0) targetNear = Math.max(0.25, Math.min(targetNear, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
+    let maxSafeNear;
+    if (this.camMode === "topdown") {
+      maxSafeNear = Math.min(42.0, Math.max(1.5, this.topDownHeight * 0.4));
+    } else if (this.mode === "walk") {
+      maxSafeNear = Math.min(0.45, Math.max(0.25, activeOrbitDist * 0.22));
+    } else if (this.mode === "airliner") {
+      const modeCap = this.camMode === "street" ? 0.8 : 6.0;
+      maxSafeNear = Math.min(modeCap, Math.max(0.25, activeOrbitDist * 0.12));
+    } else if (this.mode === "helicopter") {
+      maxSafeNear = Math.min(2.5, Math.max(0.25, activeOrbitDist * 0.18));
+    } else {
+      maxSafeNear = Math.max(0.25, Math.min(4.0, activeOrbitDist * 0.22));
+    }
+    if (this.camMode !== "topdown" && activeOrbitDist < 5.0) {
+      maxSafeNear = Math.min(maxSafeNear, Math.max(0.25, activeOrbitDist * 0.3)); // [cam-collision] arm pulled in by a wall: keep the player in view
+    }
+    let targetNear = THREE.MathUtils.clamp(camAlt * 0.045, Math.min(1.5, maxSafeNear), maxSafeNear);
     if (camAlt > 400.0) {
       targetNear = Math.max(targetNear, Math.min(80.0, camAlt * 0.012));
     }
+    targetNear = Math.min(maxSafeNear, targetNear);
     const targetFar = Math.max(36000, Math.min(138000, this.camera.position.y * 16.0 + 42000));
     if (Math.abs(this.camera.near - targetNear) > 0.10 || Math.abs(this.camera.fov - targetFov) > 0.15 || Math.abs(this.camera.far - targetFar) > 250) {
       this.camera.near = targetNear;
@@ -3079,12 +3090,13 @@ class WorldExplorerApp {
     if (fsdBtn && fsdLbl) {
       const fsdOn = Boolean(this.fsd && this.fsd.active);
       fsdBtn.classList.toggle("active", fsdOn);
+      const fsdTag = t("fsd_btn");
       if (fsdOn) {
         const d = Math.round(Math.hypot(this.fsd.destX - this.pos.x, this.fsd.destZ - this.pos.z));
         const distTxt = d >= 1000 ? `${(d / 1000).toFixed(1)}km` : `${d}m`;
-        fsdLbl.textContent = `FSD · ${distTxt}`;
+        fsdLbl.textContent = `${fsdTag} · ${distTxt}`;
       } else {
-        fsdLbl.textContent = "FSD";
+        fsdLbl.textContent = fsdTag;
       }
     }
     const roadRaw = this.currentRoadName || t("urban_road_fallback");
@@ -3124,8 +3136,11 @@ class WorldExplorerApp {
       : Math.abs(this.speed);
     const kmh = Math.round(absSpd * 3.6);
     const kts = Math.round(absSpd * 1.94384);
+    const isBoatHud = this.mode === "boat";
     const speedValEl = document.getElementById("speed-value");
-    if (speedValEl) speedValEl.textContent = String(kmh);
+    if (speedValEl) speedValEl.textContent = String(isBoatHud ? kts : kmh);
+    const speedUnitEl = document.getElementById("speed-unit");
+    if (speedUnitEl) speedUnitEl.textContent = isBoatHud ? "KTS" : "KM/H";
 
     const gearBadgeEl = document.getElementById("speed-gear-badge");
     if (gearBadgeEl) {
@@ -3146,7 +3161,7 @@ class WorldExplorerApp {
           gearBadgeEl.textContent = `ALT ${altAslM}m (${altFt}ft) · ${kts}KT`;
         }
       } else if (this.mode === "boat") {
-        gearBadgeEl.textContent = `KTS ${kts}`;
+        gearBadgeEl.textContent = getLang() === "zh" ? "航海" : "MARINE";
       } else if (this.mode === "helicopter") {
         if (this.heliLanded) {
           gearBadgeEl.textContent = getLang() === "zh" ? "已降落" : "LANDED";
@@ -3531,9 +3546,15 @@ class WorldExplorerApp {
     if (this.modeMenu) this.modeMenu.sync();
   }
 
+  _currentVehicleLabel() {
+    const spec = VEHICLE_SPECS[this.vehicleIdx];
+    return spec ? getVehicleName(spec.id, spec.name) : t("mode_drive");
+  }
+
   _refreshLocalizedUi() {
-    this._updateModeAndCamBadges();
     if (this.quality) this.quality.syncMenu(); // [ui-mobile]
+    this._updateModeAndCamBadges();
+    if (this.modeMenu) this.modeMenu.sync();
     this._showControlsHint();
     this._renderQuickDestinationChips();
     const searchInput = document.getElementById("location-input");
@@ -4152,7 +4173,13 @@ class WorldExplorerApp {
 
   setTimeOfDay(preset) {
     if (this.atmosphere) {
-      const h = preset === "noon" ? 13.5 : preset === "sunset" ? 18.5 : preset === "night" ? 22.0 : 12.0;
+      const h = preset === "noon"
+        ? (this.atmosphere.presetHour?.("noon") ?? 12.5)
+        : preset === "sunset"
+          ? (this.atmosphere.presetHour?.("dusk") ?? 17.2)
+          : preset === "night"
+            ? (this.atmosphere.presetHour?.("night") ?? 22.0)
+            : 12.0;
       this.atmosphere.setTime(h);
       if (preset === "overcast") this.atmosphere.setWeather("cloudy", true);
       else this.atmosphere.setWeather("clear", true);
@@ -4261,7 +4288,7 @@ class WorldExplorerApp {
         preset === "night" ? 1.25 : preset === "sunset" ? 0.36 : 0.0;
     }
     if (this.playerLight) {
-      this.playerLight.intensity = preset === "night" ? 14.0 : preset === "sunset" ? 4.5 : 0.0;
+      this.playerLight.intensity = preset === "night" ? 4.5 : preset === "sunset" ? 3.0 : 0.0;
       this.playerLight.distance = 65;
     }
 
@@ -5204,7 +5231,15 @@ class WorldExplorerApp {
       const su = this.horizonSkirtMesh.material?.uniforms;
       if (su) {
         if (su.uCamPos) su.uCamPos.value.copy(this.camera.position);
-        if (su.uHorizonColor) su.uHorizonColor.value.copy(SURFACE_UNIFORMS.uSkyHorizon.value);
+        if (su.uHorizonColor) {
+          const hazeCol = this.skyDome?.uniforms?.uHazeColor?.value;
+          if (hazeCol && (this.skyDome?.uniforms?.uHaze?.value ?? 0) > 0) {
+            su.uHorizonColor.value.copy(hazeCol);
+          } else {
+            su.uHorizonColor.value.copy(SURFACE_UNIFORMS.uSkyHorizon.value).convertLinearToSRGB();
+          }
+        }
+        if (su.uFogDensity) su.uFogDensity.value = this.scene.fog?.density ?? 0.00011;
         if (su.uSunIntensity) su.uSunIntensity.value = SURFACE_UNIFORMS.uLightLevel.value;
         if (su.uOceanFactor) {
           let waterChunks = 0;
@@ -5379,7 +5414,16 @@ class WorldExplorerApp {
       this.skyDome.mesh.position.copy(this.camera.position);
     }
     if (this.playerLight) {
-      this.playerLight.position.set(this.pos.x, this.pos.y + 5.5, this.pos.z);
+      const camDx = this.camera.position.x - this.pos.x;
+      const camDz = this.camera.position.z - this.pos.z;
+      const camLen = Math.hypot(camDx, camDz) || 1;
+      const fwdX = camDx / camLen;
+      const fwdZ = camDz / camLen;
+      this.playerLight.position.set(
+        this.pos.x + fwdX * 3.5 - fwdZ * 2.5,
+        this.pos.y + 7.5,
+        this.pos.z + fwdZ * 3.5 + fwdX * 2.5
+      );
     }
 
     const camTerrY = getBeijingTerrainElevation(this.camera.position.x, this.camera.position.z);

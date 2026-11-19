@@ -1634,9 +1634,9 @@ export class PlacesSystem {
     this.labelSprites = [];
     this.labelTex = new Map();
     for (let i = 0; i < LABEL_MAX; i++) {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, opacity: 0, fog: false }));
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false, opacity: 0, fog: false }));
       sp.visible = false;
-      sp.renderOrder = 10;
+      sp.renderOrder = 20;
       sp.userData = { key: '', target: 0, opacity: 0, kind: 0 };
       this.root.add(sp);
       this.labelSprites.push(sp);
@@ -2420,6 +2420,21 @@ export class PlacesSystem {
     const vh = (typeof window !== 'undefined' && window.innerHeight) || 850;
     const v = this._projV || (this._projV = new THREE.Vector3());
     const rects = [];
+    const candKeys = new Set(chosen.map((c) => `${c.kind}:${c.text}@${Math.round(c.L[0])},${Math.round(c.L[2])}`));
+    // Reserve boxes for active fading-out sprites so new labels never appear on top of them mid-fade.
+    for (const sp of this.labelSprites) {
+      const u = sp.userData;
+      if (!sp.visible || u.opacity <= 0.08) continue;
+      if (u.target === 1 && candKeys.has(u.key)) continue;
+      v.copy(sp.position).project(cam);
+      if (v.z > 1 || v.z < -1) continue;
+      const d = sp.position.distanceTo(camPos);
+      const isGeo = (u.kind || 0) >= 3;
+      const aspect = u.aspect || 4;
+      const hpx = labelPx(isGeo, d, aspect);
+      const x = (v.x * 0.5 + 0.5) * vw, y = (0.5 - v.y * 0.5) * vh;
+      rects.push({ x0: x - (hpx * aspect) / 2 - 4, x1: x + (hpx * aspect) / 2 + 4, y0: y - hpx / 2 - 3, y1: y + hpx / 2 + 3 });
+    }
     const order = [...chosen.filter((c) => c.kind < 3), ...chosen.filter((c) => c.kind >= 3)]; // street labels win
     chosen.length = 0;
     for (const c of order) {
@@ -2427,7 +2442,8 @@ export class PlacesSystem {
       if (v.z > 1 || v.z < -1) continue; // behind the camera
       const d = Math.hypot(c.L[0] - camPos.x, c.L[1] - camPos.y, c.L[2] - camPos.z);
       const isGeo = c.kind >= 3;
-      const aspect = Math.min(560, c.text.length * 15 + 32) / 46;
+      const cached = this.labelTex.get(`${c.kind}:${c.text}`);
+      const aspect = cached ? cached.aspect : Math.min(560, c.text.length * 16 + 32) / 46;
       const hpx = labelPx(isGeo, d, aspect);
       const x = (v.x * 0.5 + 0.5) * vw, y = (0.5 - v.y * 0.5) * vh;
       const r = { x0: x - (hpx * aspect) / 2 - 4, x1: x + (hpx * aspect) / 2 + 4, y0: y - hpx / 2 - 3, y1: y + hpx / 2 + 3 };
@@ -2447,7 +2463,8 @@ export class PlacesSystem {
       const near = isGeo ? LABEL_GEO_NEAR : LABEL_NEAR;
       const distFade = Math.max(0, Math.min(1, (far - d) / (far - near)));
       const goal = u.target * distFade;
-      u.opacity += (goal - u.opacity) * Math.min(1, dt * 4);
+      const fadeRate = u.target === 0 ? 12 : 4;
+      u.opacity += (goal - u.opacity) * Math.min(1, dt * fadeRate);
       sp.material.opacity = u.opacity;
       // [ui-mobile] On-screen size, not world size: a fixed pixel range by distance (never screen-filling up
       // close), labels you stand next to fade out (the shop sign itself is readable then).

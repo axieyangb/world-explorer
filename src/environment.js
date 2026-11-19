@@ -571,15 +571,17 @@ export function createHorizonSkirtMesh(skyUniforms) {
   const skirtGeo = new THREE.RingGeometry(14000, 120000, 96, 12);
   skirtGeo.rotateX(-Math.PI * 0.5);
   const uniforms = {
-    uHorizonColor: skyUniforms?.uHorizonColor || { value: new THREE.Color(0xbfd8ec) },
+    uHorizonColor: { value: (skyUniforms?.uHazeColor?.value || skyUniforms?.uHorizonColor?.value || new THREE.Color(0xbfd8ec)).clone() },
     uZenithColor: skyUniforms?.uZenithColor || { value: new THREE.Color(0x2b6cb0) },
     uSunIntensity: skyUniforms?.uSunIntensity || { value: 1.0 },
+    uFogDensity: { value: 0.00011 },
     uCamPos: { value: new THREE.Vector3() },
     uOceanFactor: skyUniforms?.uOceanFactor || { value: 0.0 }, // [Item 11] 0.0 = continental land/haze, 1.0 = ocean
   };
   const skirtMat = new THREE.ShaderMaterial({
     uniforms,
-    depthWrite: true,
+    transparent: true,
+    depthWrite: false,
     vertexShader: `
       varying vec3 vWorldPos;
       void main() {
@@ -592,6 +594,7 @@ export function createHorizonSkirtMesh(skyUniforms) {
       uniform vec3 uHorizonColor;
       uniform vec3 uZenithColor;
       uniform float uSunIntensity;
+      uniform float uFogDensity;
       uniform vec3 uCamPos;
       uniform float uOceanFactor;
       varying vec3 vWorldPos;
@@ -631,11 +634,17 @@ export function createHorizonSkirtMesh(skyUniforms) {
         vec3 oceanWater = mix(oceanDeep, oceanShallow, smoothstep(0.35, 0.72, macro));
 
         vec3 groundSurface = mix(baseLand, oceanWater, clamp(uOceanFactor, 0.0, 1.0));
+        groundSurface = pow(max(groundSurface, vec3(0.0)), vec3(1.0 / 2.2));
 
-        // Aerial perspective atmospheric scatter toward horizon
-        float hazeT = smoothstep(6000.0, 28000.0, radialDist);
-        vec3 col = mix(groundSurface, uHorizonColor, clamp(0.55 + hazeT * 0.45, 0.0, 1.0));
-        gl_FragColor = vec4(col, 1.0);
+        // Match scene FogExp2 at 14 km inner ring and blend smoothly into sky haze across 12..95 km.
+        float dist3D = length(vWorldPos - uCamPos);
+        float fd = uFogDensity * dist3D;
+        float fogF = 1.0 - exp(-(fd * fd));
+        float radialFade = smoothstep(12000.0, 95000.0, radialDist);
+        float hazeT = clamp(max(fogF * 0.92, radialFade), 0.0, 1.0);
+        vec3 col = mix(groundSurface, uHorizonColor, hazeT);
+        float outerAlpha = 1.0 - smoothstep(88000.0, 118000.0, radialDist);
+        gl_FragColor = vec4(col, outerAlpha);
       }
     `,
   });

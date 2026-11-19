@@ -1,3 +1,5 @@
+import { getVehicleName, onLanguageChange, t } from '../i18n.js';
+
 // Mode menu, one step at a time: the modes first; the vehicle (or aircraft) list and the graphics choices
 // each open on click. Picking anything closes the menu (main.js).
 export class ModeMenu {
@@ -24,6 +26,7 @@ export class ModeMenu {
     modeBtn.addEventListener('click', () => {
       this._set(this.vehBtn, this.vehList, false);
       this._set(this.gfxBtn, this.gfxRow, false);
+      this.app._renderVehiclePopoverList?.();
       this.sync();
     });
     this.gfxRow.addEventListener('click', () => setTimeout(() => this.sync(), 0));
@@ -45,6 +48,10 @@ export class ModeMenu {
         this.app.scenicTour?.toggleChallenge?.();
       });
     }
+    onLanguageChange(() => {
+      this.app._renderVehiclePopoverList?.();
+      this.sync();
+    });
     this.sync();
   }
 
@@ -61,7 +68,15 @@ export class ModeMenu {
     this.vehBtn.classList.toggle('hidden', !relevant);
     if (!relevant) this._set(this.vehBtn, this.vehList, false);
     const cur = this.vehList.querySelector('.active span');
-    if (this.vehNow && cur) this.vehNow.textContent = cur.textContent;
+    if (this.vehNow) {
+      if (cur) {
+        this.vehNow.textContent = cur.textContent;
+      } else if (a.mode === 'drive' && typeof a._currentVehicleLabel === 'function') {
+        this.vehNow.textContent = a._currentVehicleLabel();
+      } else if (a.mode === 'drive') {
+        this.vehNow.textContent = getVehicleName('supercar', t('mode_drive'));
+      }
+    }
     const gfx = this.gfxRow.querySelector('.active');
     if (this.gfxNow && gfx) this.gfxNow.textContent = gfx.textContent;
   }

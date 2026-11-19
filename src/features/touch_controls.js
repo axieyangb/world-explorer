@@ -77,7 +77,7 @@ const LAYOUTS = {
   ],
 };
 // Arc geometry (CSS px): primary diameter, secondary diameter, arc radius, altitude column offset.
-const PRI = 62, SEC = 44, ARC = 86, COL_X = 148, COL_GAP = 10;
+const PRI = 62, SEC = 44, ARC = 82, COL_X = 162, COL_GAP = 10;
 
 const CSS = `
 body.touch-ui { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
@@ -89,6 +89,9 @@ body.touch-ui canvas#webgl-canvas { touch-action: none; }
 .tc-stick-zone {
   position: absolute; left: 0; bottom: 0; width: 46%; max-width: 420px;
   height: calc(100% - 156px - env(safe-area-inset-top, 0px)); pointer-events: auto; touch-action: none;
+}
+@media (max-width: 520px) {
+  .tc-stick-zone { width: 40%; }
 }
 .tc-stick {
   position: absolute; left: calc(26px + env(safe-area-inset-left, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px));

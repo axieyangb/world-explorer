@@ -959,11 +959,11 @@ body.space-launch-active .keys-panel { display: none; }
 }
 
 .hud-speedometer {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* ============================================================================
@@ -1155,12 +1155,31 @@ body.touch-ui #walker-weapon-badge {
 #mode-vehicle-btn { max-width: 100%; }
 #mode-vehicle-label { min-width: 0; flex-shrink: 1; }
 @media (max-width: 520px) {
+  body.touch-ui #fullscreen-btn { display: none; }
+  body.touch-ui .hud-dock,
+  .hud-dock {
+    right: calc(8px + env(safe-area-inset-right, 0px));
+    gap: 4px;
+  }
+  body.touch-ui .dock-pill,
+  .dock-pill { padding: 0 8px; }
+  body.touch-ui .dock-pill-icon,
+  .dock-pill-icon { width: 32px; padding: 0; }
+  #mode-vehicle-btn { min-width: 96px; }
   #mode-vehicle-menu {
     position: fixed;
     top: calc(50px + env(safe-area-inset-top, 0px));
+    left: calc(8px + env(safe-area-inset-left, 0px));
     right: calc(8px + env(safe-area-inset-right, 0px));
-    left: auto;
-    max-width: calc(100vw - 16px);
+    width: auto;
+    max-width: none;
+  }
+  body.touch-ui .hud-speedometer {
+    background: rgba(15, 23, 42, 0.52);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 6px 10px;
+    border-radius: 12px;
   }
 }
 /* Touch: no key caps in the menu; in portrait the location pill (second row) makes way for the open menu. */

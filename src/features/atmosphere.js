@@ -38,8 +38,8 @@ const KF = {
   // [night] a real night: dim blue moonlight + sky fill instead of an evenly lit blue-grey day; streets get
   // their light from lamps, shops and headlights (night_lights.js), the horizon from the city glow below
   night: {
-    zenith: 0x040a1a, horizon: 0x15233f, ground: 0x0e1420, fog: 0.00013, sunCol: 0x8aa6e8, sunInt: 0.42,
-    hemiSky: 0x3e5a96, hemiGround: 0x1c2232, hemiInt: 0.62, ambCol: 0x3a4c76, ambInt: 0.34,
+    zenith: 0x040a1a, horizon: 0x15233f, ground: 0x0e1420, fog: 0.00013, sunCol: 0x8aa6e8, sunInt: 0.48,
+    hemiSky: 0x4b6aa8, hemiGround: 0x2c364c, hemiInt: 0.85, ambCol: 0x4b608c, ambInt: 0.52,
     cloudLit: 0x3a4660, cloudDark: 0x1c2333,
   },
   overcast: {
@@ -439,7 +439,7 @@ class AtmosphereSystem {
     const lodU = app.skylineInstanced?.material?.userData?.lodNightUniforms;
     if (lodU) lodU.uLodNightEmissive.value = 1.25 * dark2;
     if (app.playerLight) {
-      app.playerLight.intensity = 4.0 * dark2; // [night] was 14: it flood-lit the whole street; headlights / lamps do that now
+      app.playerLight.intensity = 4.5 * dark2; // [night] was 14: it flood-lit the whole street; headlights / lamps do that now
       app.playerLight.distance = 65;
     }
 
