@@ -799,17 +799,24 @@ export class Maritime {
     }
   }
 
-  /** Disembark from the active boat back onto the nearest pier or shoreline. */
-  exitToWalk() {
+  /** Release control of the active boat without changing the current mode. */
+  exitBoat() {
     const v = this.activeBoat;
     this.activeBoat = null;
     this.boatSpeed = 0;
+    if (v && v.state === 'player') {
+      v.state = 'moored';
+      v.v = 0;
+    }
+    return v;
+  }
+
+  /** Disembark from the active boat back onto the nearest pier or shoreline. */
+  exitToWalk() {
+    const v = this.exitBoat();
     let ex = this.app.pos.x, ez = this.app.pos.z, ey = this.app.pos.y;
+    let onPier = false;
     if (v) {
-      if (v.state === 'player') {
-        v.state = 'moored';
-        v.v = 0;
-      }
       // Check loaded chunks for the nearest pier deck segment or dry land within 32 m
       let bestPier = null, bestD = 34;
       if (this.app.loadedChunks) {
@@ -827,6 +834,7 @@ export class Maritime {
       }
       if (bestPier) {
         ex = bestPier.x; ey = bestPier.y; ez = bestPier.z;
+        onPier = true;
       } else {
         const spec = VESSEL_TYPES[v.type] || { beam: 4 };
         ex = v.x + Math.cos(v.yaw) * (spec.beam * 0.6 + 3.0);
@@ -836,7 +844,12 @@ export class Maritime {
     }
     this.app.pos.set(ex, ey, ez);
     this.app.walkVelY = 0;
-    this.app.setMode('walk');
+    this._exitingToPier = onPier;
+    try {
+      this.app.setMode('walk');
+    } finally {
+      this._exitingToPier = false;
+    }
   }
 
   /** Helicopter hook: nearest vessel hit along a ray (distance or Infinity). */

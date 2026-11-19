@@ -369,6 +369,26 @@ export class WaterPhysics {
         }
       }
     }
+    if (!best && app.loadedChunks) {
+      for (const chunk of app.loadedChunks.values()) {
+        const segs = chunk && chunk.userData.roadSegments;
+        if (!segs) continue;
+        for (let i = 0; i < segs.length; i++) {
+          const sg = segs[i];
+          if (sg.tunnel || sg.bridge || DRIVE_EXCLUDE.has(sg.cls)) continue;
+          const vx = sg.x2 - sg.x1, vz = sg.z2 - sg.z1;
+          const len2 = vx * vx + vz * vz;
+          if (len2 < 4) continue;
+          let t = ((ref.x - sg.x1) * vx + (ref.z - sg.z1) * vz) / len2;
+          t = t < 0.1 ? 0.1 : t > 0.9 ? 0.9 : t;
+          const px = sg.x1 + vx * t, pz = sg.z1 + vz * t;
+          if (this.isPointInWater(px, pz) || getBeijingTerrainElevation(px, pz) <= 0.25) continue;
+          if (app.collision && app.collision.insideAny(px, pz, Infinity)) continue;
+          const d = Math.hypot(px - ref.x, pz - ref.z);
+          if (d < bestScore) { bestScore = d; best = { sg, t, px, pz, vx, vz }; }
+        }
+      }
+    }
     app.speed = 0;
     app.steerAngle = 0;
     if (!best) {

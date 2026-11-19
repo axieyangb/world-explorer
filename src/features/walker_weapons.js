@@ -4,7 +4,7 @@ import { getWeaponSfx } from './weapon_sfx.js';
 import { getBeijingTerrainElevation } from '../environment.js';
 import { createVehicleModel, createHelicopterModel } from '../entities.js';
 import { createWeaponModel } from './weapon_models.js'; // [weapon-pickups]
-import { t as tr } from '../i18n.js'; // [weapon-pickups]
+import { t as tr, getLang } from '../i18n.js'; // [weapon-pickups]
 import { startRagdoll, stepRagdoll } from './ped_ragdoll.js'; // [polish] connected soldier ragdoll
 
 const HALF_PI = Math.PI * 0.5;
@@ -1272,7 +1272,7 @@ export class WalkerWeaponsSystem {
   // pickup hint. Rebuilt only when its text changes.
   _updateWeaponBadge() {
     if (!this.weaponBadgeEl) return;
-    const zh = this.app.getLang ? this.app.getLang() === 'zh' : false;
+    const zh = getLang() === 'zh';
     let key, html;
     if (!this.isArmed()) {
       key = `F|${zh}|${this._hint}`;
@@ -1293,6 +1293,11 @@ export class WalkerWeaponsSystem {
     if (key === this._badgeKey) return;
     this._badgeKey = key;
     this.weaponBadgeEl.innerHTML = html;
+  }
+
+  /** Refresh the localized weapon HUD pill. */
+  refreshHud() {
+    this._updateWeaponBadge();
   }
 
   /** [weapon-pickups] Second line in the weapon pill (nearest pickup); '' clears it. */
@@ -1350,7 +1355,7 @@ export class WalkerWeaponsSystem {
    * when it cannot be taken (ammo with no gun to load, or reserves already full).
    */
   collectPickup(kind) {
-    const zh = this.app.getLang ? this.app.getLang() === 'zh' : false;
+    const zh = getLang() === 'zh';
     const nm = (id) => (zh ? WALKER_WEAPONS[id].nameZh : WALKER_WEAPONS[id].name);
     if (kind === 'AMMO') {
       const parts = [];
@@ -2956,6 +2961,7 @@ export class WalkerWeaponsSystem {
     }
     if (this.weaponBadgeEl) {
       this.weaponBadgeEl.style.display = newMode === 'walk' ? 'block' : 'none';
+      if (newMode === 'walk') this._updateWeaponBadge();
     }
     this.isFiring = false;
     this._press = null;

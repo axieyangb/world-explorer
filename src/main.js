@@ -496,7 +496,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r2" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -2186,10 +2186,7 @@ class WorldExplorerApp {
     if (this.fsd && this.fsd.active) this.stopFsd();
     if (this.mode === "boat" && this.maritime) {
       // The target is a place on land, so step off; the boat stays moored where it was.
-      const boat = this.maritime.activeBoat;
-      if (boat && boat.state === "player") { boat.state = "moored"; boat.v = 0; }
-      this.maritime.activeBoat = null;
-      this.maritime.boatSpeed = 0;
+      this.maritime.exitBoat();
       this.setMode("walk");
     }
     this.speed = 0;
@@ -3567,6 +3564,7 @@ class WorldExplorerApp {
     if (this.mapSystem) {
       this.mapSystem.renderWorldMap();
     }
+    this.walkerWeapons?.refreshHud?.();
   }
 
   setMode(rawMode, keepKaiju = false) {
@@ -3586,6 +3584,9 @@ class WorldExplorerApp {
       this._driveDriftSlip = 0;
       if (this.vehicleMesh?.userData?.chassis) this.vehicleMesh.userData.chassis.rotation.y = 0;
     }
+    if (this.mode === "boat" && newMode !== "boat") {
+      this.maritime?.exitBoat?.();
+    }
     if (this.water) this.water.reset(); // fix/water
     const prevMode = this.mode;
     this.mode = newMode;
@@ -3595,11 +3596,11 @@ class WorldExplorerApp {
     if (newMode !== prevMode && newMode !== "walk") this.camYaw = this.yaw;
     if (this.walkerWeapons) this.walkerWeapons.onModeChange(newMode, prevMode);
 
-    // [fix/water-spawn] When switching to Walk or Drive from helicopter / airliner over water, snap to nearest dry road
-    const switchingToGround = (newMode === "walk" || newMode === "drive") && (prevMode === "helicopter" || prevMode === "airliner");
-    if (switchingToGround && !this._bailingOutMidAir) {
-      const inWater = (this.water && (this.water.isPointInWater(this.pos.x, this.pos.z))) ||
-        (getBeijingTerrainElevation(this.pos.x, this.pos.z) <= 0.2);
+    // [fix/water-spawn] When switching to Walk or Drive from helicopter / airliner / boat over water, snap to nearest dry road
+    const switchingToGround = (newMode === "walk" || newMode === "drive") && (prevMode === "helicopter" || prevMode === "airliner" || prevMode === "boat");
+    if (switchingToGround && !this._bailingOutMidAir && !(prevMode === "boat" && this.maritime?._exitingToPier)) {
+      const inWater = (this.water && (this.water.isInWater(this.pos.x, this.pos.z))) ||
+        (getBeijingTerrainElevation(this.pos.x, this.pos.z) <= 0.25);
       if (inWater && this.water && typeof this.water._respawn === "function") {
         this.water._respawn();
         if (this.avatarMesh) { this.avatarMesh.position.copy(this.pos); this.avatarMesh.rotation.set(0, this.yaw, 0); }
