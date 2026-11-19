@@ -516,7 +516,10 @@ export class LiveSky {
       ctx.fill();
       ctx.restore();
       if (full && ac.cs) {
-        ctx.fillStyle = 'rgba(20,26,34,0.75)';
+        ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.lineWidth = 2.5;
+        ctx.strokeText(ac.cs, sx + sz + 3, sy + 0.5);
+        ctx.fillStyle = 'rgba(241, 245, 249, 0.92)';
         ctx.fillText(ac.cs, sx + sz + 3, sy + 0.5);
       }
     }

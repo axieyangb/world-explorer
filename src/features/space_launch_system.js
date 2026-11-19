@@ -2075,6 +2075,10 @@ export class SpaceLaunchSystem {
     return SPACEPORT_BY_ID.get(id) || null;
   }
 
+  isActive() {
+    return this.phase !== "idle" || Boolean(this._pendingLaunch);
+  }
+
   isControllingCamera() {
     return this.phase !== "idle";
   }
@@ -2209,13 +2213,23 @@ export class SpaceLaunchSystem {
   async launchFromSpaceport(spaceportId) {
     const sp = SPACEPORT_BY_ID.get(spaceportId) || SPACEPORTS[0];
     if (!sp) return false;
+    this._pendingLaunch = true;
 
-    // If not currently near this spaceport's world origin, teleport there first so the pad is loaded
-    let found = this.findActiveWorldSpaceport();
-    if (!found || found.spaceport.id !== sp.id) {
-      await this.app.teleportToLocation(sp.lat, sp.lon, sp.nameEn, sp.vehicleEn);
-      found = this.findActiveWorldSpaceport();
+    try {
+      // If not currently near this spaceport's world origin, teleport there first so the pad is loaded
+      let found = this.findActiveWorldSpaceport();
+      if (!found || found.spaceport.id !== sp.id) {
+        await this.app.teleportToLocation(sp.lat, sp.lon, sp.nameEn, sp.vehicleEn);
+        if (!this._pendingLaunch) return false;
+        found = this.findActiveWorldSpaceport();
+      }
+      return this._beginLaunchSequence(sp, found);
+    } finally {
+      this._pendingLaunch = false;
     }
+  }
+
+  _beginLaunchSequence(sp, found) {
 
     if (this.app.propertyInspector) {
       this.app.propertyInspector.dismiss();
@@ -2261,6 +2275,7 @@ export class SpaceLaunchSystem {
 
     this.hudEl.classList.add("active");
     if (typeof document !== "undefined") document.body.classList.add("space-launch-active");
+    this.app?._updateModeAndCamBadges?.();
     this._updateHudDom();
     return true;
   }
@@ -2565,7 +2580,47 @@ export class SpaceLaunchSystem {
     this.app.teleportToLocation(target.lat, target.lon, target.label, "");
   }
 
-  _setGroundWorldVisible(vis) {
+  abortToGround() {
+    this._pendingLaunch = false;
+    const active = this.phase !== "idle" || (typeof document !== "undefined" && document.body.classList.contains("space-launch-active"));
+    if (!active) return false;
+    this.audio.stop();
+    this.phase = "idle";
+    this.altitudeKm = 0;
+    this.velocityKmh = 0;
+    this.missionTime = 0;
+    this.reentryTarget = null;
+    this._draggingOrbit = false;
+    this.focusTargetId = "ship";
+
+    if (this.orbitalGroup) this.orbitalGroup.visible = false;
+    if (this.delugeGroup) this.delugeGroup.visible = false;
+    if (this.rocketStack && this.rocketStack.root) {
+      if (this.rocketStack.upperStage && this.rocketStack.upperStage.parent !== this.rocketStack.root) {
+        this.rocketStack.root.add(this.rocketStack.upperStage);
+      }
+      this.app.scene.remove(this.rocketStack.root);
+      this.rocketStack = null;
+    }
+
+    this._setGroundWorldVisible(true, { skipSetMode: true });
+    if (this.app?.camera) {
+      this.app.camera.far = 18000;
+      this.app.camera.up.set(0, 1, 0);
+      this.app.camera.updateProjectionMatrix();
+    }
+
+    if (this.hudEl) this.hudEl.classList.remove("active");
+    if (typeof document !== "undefined") document.body.classList.remove("space-launch-active");
+    this.app?._updateModeAndCamBadges?.();
+    return true;
+  }
+
+  exit() {
+    return this.abortToGround();
+  }
+
+  _setGroundWorldVisible(vis, opts = {}) {
     const app = this.app;
     if (app.chunksRoot) app.chunksRoot.visible = vis;
     if (app.horizonRoot) app.horizonRoot.visible = vis;
@@ -2577,7 +2632,7 @@ export class SpaceLaunchSystem {
       if (app.vehicleMesh) app.vehicleMesh.visible = false;
       if (app.avatarMesh) app.avatarMesh.visible = false;
       if (app.heliMesh) app.heliMesh.visible = false;
-    } else {
+    } else if (!opts.skipSetMode && this.phase === "idle") {
       app.setMode(app.mode || "helicopter");
     }
   }
@@ -3029,9 +3084,9 @@ export class SpaceLaunchSystem {
           <div class="soh-chips" id="soh-focus-chips">
             <button type="button" class="soh-chip active" data-focus="ship">🚀 My Spacecraft</button>
             <button type="button" class="soh-chip" data-focus="iss">🛰️ ISS (Live 25544)</button>
-            <button type="button" class="soh-chip" data-focus="tiangong">🏮 Tiangong 天宫 (Live)</button>
+            <button type="button" class="soh-chip" data-focus="tiangong">🏮 Tiangong (Live)</button>
             <button type="button" class="soh-chip" data-focus="hubble">🔭 Hubble HST</button>
-            <button type="button" class="soh-chip" data-focus="beidou_3m">🧭 BeiDou 北斗</button>
+            <button type="button" class="soh-chip" data-focus="beidou_3m">🧭 BeiDou</button>
           </div>
           <button type="button" class="soh-land-btn" id="soh-land-btn">🌍 Land Below (Esc)</button>
         </div>
@@ -3102,9 +3157,28 @@ export class SpaceLaunchSystem {
     this.altEl.textContent = `${this.altitudeKm.toFixed(1)} km`;
     this.velEl.textContent = `${Math.round(this.velocityKmh).toLocaleString()} km/h`;
 
+    const chipLabels = zh
+      ? {
+          ship: "🚀 我的飞船",
+          iss: "🛰️ 国际空间站 (实时 25544)",
+          tiangong: "🏮 天宫 (实时)",
+          hubble: "🔭 哈勃 HST",
+          beidou_3m: "🧭 北斗",
+        }
+      : {
+          ship: "🚀 My Spacecraft",
+          iss: "🛰️ ISS (Live 25544)",
+          tiangong: "🏮 Tiangong (Live)",
+          hubble: "🔭 Hubble HST",
+          beidou_3m: "🧭 BeiDou",
+        };
     this.hudEl.querySelectorAll(".soh-chip").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.focus === this.focusTargetId);
+      const f = btn.dataset.focus;
+      if (chipLabels[f]) btn.textContent = chipLabels[f];
+      btn.classList.toggle("active", f === this.focusTargetId);
     });
+    const landBtn = this.hudEl.querySelector("#soh-land-btn");
+    if (landBtn) landBtn.textContent = zh ? "🌍 降落下方 (Esc)" : "🌍 Land Below (Esc)";
 
     const astro = this.lastAstState;
     const crewNames = this.astronauts

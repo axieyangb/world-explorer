@@ -1851,6 +1851,89 @@ export async function horizonGroundFor(overview, worldOrigin) {
 /**
  * Geocodes any global address, landmark, city, or "lat, lon" coordinate string.
  */
+function _searchCleanStr(str) {
+  return String(str || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function _searchCoreLabel(item, rawName) {
+  const raw = String(rawName || "").trim();
+  if (!raw) return "";
+  const segments = raw
+    .split(/\s*[·•]\s*|\s+-\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const cityWords = new Set(
+    [item?.city, item?.cityZh]
+      .filter(Boolean)
+      .flatMap((c) => _searchCleanStr(c).split(" "))
+      .filter((w) => w.length >= 2 || /[\u4e00-\u9fff]/.test(w))
+  );
+  let core = segments[0] || raw;
+  if (segments.length > 1) {
+    const firstTokens = _searchCleanStr(segments[0]).split(" ").filter(Boolean);
+    const firstIsCity = firstTokens.length > 0 && firstTokens.every((tok) => cityWords.has(tok));
+    if (firstIsCity) {
+      core = segments.slice(1).join(" ");
+    }
+  } else if (core.includes(",")) {
+    core = core.split(",")[0].trim();
+  }
+  return _searchCleanStr(core);
+}
+
+function _searchKeys(item) {
+  const keys = new Set();
+  for (const cand of [item?.name, item?.nameZh, item?.street]) {
+    const k = _searchCoreLabel(item, cand);
+    if (k) keys.add(k);
+  }
+  return keys;
+}
+
+export function dedupeSearchResults(items) {
+  const out = [];
+  const meta = [];
+  for (const it of items || []) {
+    if (!it) continue;
+    const lat = Number(it.lat);
+    const lon = Number(it.lon);
+    const hasCoord = Number.isFinite(lat) && Number.isFinite(lon);
+    const keys = _searchKeys(it);
+    let dup = false;
+    for (let i = 0; i < out.length; i++) {
+      const prev = out[i];
+      const prevLat = Number(prev.lat);
+      const prevLon = Number(prev.lon);
+      if (hasCoord && Number.isFinite(prevLat) && Number.isFinite(prevLon)) {
+        if (Math.abs(lat - prevLat) > 0.012 || Math.abs(lon - prevLon) > 0.012) continue;
+        if (Math.hypot(lat - prevLat, lon - prevLon) > 0.014) continue;
+        for (const k of keys) {
+          if (meta[i].has(k)) {
+            dup = true;
+            break;
+          }
+        }
+        if (dup) break;
+      } else {
+        const nameA = _searchCleanStr(it.name);
+        const nameB = _searchCleanStr(prev.name);
+        if (nameA && nameA === nameB) {
+          dup = true;
+          break;
+        }
+      }
+    }
+    if (dup) continue;
+    out.push(it);
+    meta.push(keys);
+  }
+  return out;
+}
+
 export async function searchAddress(query) {
   const q = (query || "").trim();
   if (!q) return QUICK_WORLD_DESTINATIONS;
@@ -1928,7 +2011,7 @@ export async function searchAddress(query) {
           lon,
         });
       }
-      if (results.length > 0) return results.slice(0, 7);
+      if (results.length > 0) return dedupeSearchResults(results).slice(0, 7);
     }
   } catch {
     // Fallback to Nominatim below
@@ -1957,13 +2040,13 @@ export async function searchAddress(query) {
           lon,
         });
       }
-      if (results.length > 0) return results.slice(0, 7);
+      if (results.length > 0) return dedupeSearchResults(results).slice(0, 7);
     }
   } catch {
     // Ignore network error
   }
 
-  return localMatches;
+  return dedupeSearchResults(localMatches).slice(0, 7);
 }
 
 export const BEIJING_DEFAULT_ORIGIN = computeWorldOrigin(39.9087, 116.3975, "Beijing", "Chang\x27an Ave");

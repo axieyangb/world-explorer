@@ -165,6 +165,8 @@ class AtmosphereSystem {
     installSurfaceShaders(app.mats);
     this.nightLights = initNightLights(app); // [night] lamp / shop / headlight pools on the ground
     this._glowCol = new THREE.Color();
+    this._spaceZenith = new THREE.Color(0x010308);
+    this._spaceHorizon = new THREE.Color(0x0a1c3a);
 
     this._buildUi();
     this.update(0);
@@ -331,8 +333,15 @@ class AtmosphereSystem {
     const nightW = 1 - smooth(-0.16, -0.03, s);
     const setW = Math.max(0, 1 - dayW - nightW);
     const ovc = smooth(0.3, 0.95, this.cloud);
-    const rain = this.rain;
-    const fog = this.fog;
+    const spaceLaunchActive = Boolean(app.spaceLaunch && (app.spaceLaunch.isActive?.() || app.spaceLaunch.isControllingCamera?.()));
+    const camAltM = app.camera ? Math.max(0, app.camera.position.y) : 0;
+    const spaceAltM = spaceLaunchActive ? Math.max(0, (app.spaceLaunch.altitudeKm || 0) * 1000) : 0;
+    const effectiveAltM = Math.max(camAltM, spaceAltM);
+    const rainAltFade = (spaceLaunchActive && effectiveAltM > 1500) ? 0 : (1 - smooth(2500, 4000, effectiveAltM));
+    const fogAltFade = spaceLaunchActive ? (1 - smooth(1500, 4500, effectiveAltM)) : (1 - smooth(2500, 6000, effectiveAltM));
+    const spaceStrat = spaceLaunchActive ? smooth(5000, 65000, effectiveAltM) : 0;
+    const rain = this.rain * rainAltFade;
+    const fog = this.fog * fogAltFade;
 
     // Blend colors: time keyframes, then weather
     const c = this._c;
@@ -378,6 +387,7 @@ class AtmosphereSystem {
     let fogDensity = lerp(blendNum('fog'), KF.overcast.fog, dayishOvc);
     fogDensity = Math.max(fogDensity, 0.00042 * rain);
     fogDensity = lerp(fogDensity, 0.0021, fog);
+    fogDensity *= fogAltFade;
 
     const skyGlow = setW * (1 - 0.8 * ovc) * (1 - fog) * 0.65;
     // Aerial perspective / distance fog tint: smoothly blends horizon color with warm golden-hour Rayleigh-Mie
@@ -420,7 +430,7 @@ class AtmosphereSystem {
       app.scene.fog.color.copy(fogCol);
       app.scene.fog.density = fogDensity;
     }
-    if (app.scene.background && app.scene.background.isColor) app.scene.background.copy(fogCol);
+    if (app.scene.background && app.scene.background.isColor && !(spaceLaunchActive && effectiveAltM > 1500)) app.scene.background.copy(fogCol);
     app.renderer.toneMappingExposure = 1.12 + 0.06 * setW + 0.06 * dayishOvc;
 
     // Night emissives follow darkness smoothly (zero-allocation cached list)
@@ -463,8 +473,14 @@ class AtmosphereSystem {
     u.uCloudDark.value.copy(c.cloudDark);
     u.uFogMix.value = Math.min(1, fog * 0.9 + rain * 0.35);
     // sky shader writes raw (no tone map / sRGB), so hand it the display-space fog color to match fogged terrain
-    u.uFogColor.value.copy(fogCol).convertLinearToSRGB().multiplyScalar(0.9);
-    u.uHazeColor.value.copy(fogCol).convertLinearToSRGB(); // [ground] = what the fog paints on the far terrain
+    if (spaceStrat > 0.001) {
+      u.uZenithColor.value.lerp(this._spaceZenith, spaceStrat);
+      u.uHorizonColor.value.lerp(this._spaceHorizon, spaceStrat * 0.9);
+      u.uCloudCover.value *= 1 - spaceStrat;
+      u.uStars.value = Math.max(u.uStars.value, spaceStrat * 0.95);
+    }
+    u.uFogColor.value.copy(fogCol).convertLinearToSRGB().multiplyScalar(0.9 * (1 - spaceStrat));
+    u.uHazeColor.value.copy(fogCol).convertLinearToSRGB().multiplyScalar(1 - spaceStrat); // [ground] = what the fog paints on the far terrain
     u.uHaze.value = 1.0;
     u.uTime.value = this.time;
 
@@ -490,6 +506,7 @@ class AtmosphereSystem {
       rf.uniforms.uOpacity.value = 0.55 * rain;
       rf.uniforms.uColor.value.copy(c.hemiSky).multiplyScalar(0.3 + 0.75 * this.daylight);
     }
+    else rf.uniforms.uOpacity.value = 0;
 
     // Shadow/key light direction: hand to main.js' throttled shadow block. Re-aim at most every
     // 0.5 s and only once the direction moved > ~0.15 deg (or instantly when it jumps a lot).
@@ -511,6 +528,10 @@ class AtmosphereSystem {
       this.labelTimer = 0.5;
       this._refreshLabel();
     }
+  }
+
+  closeMenu() {
+    if (this.popEl) this.popEl.classList.add('hidden');
   }
 
   _t(key) {

@@ -144,19 +144,20 @@ export class ControlsHint {
     setInterval(() => this._tick(), 400);
   }
 
-  _ctx() {
+  _ctx(modeOverride) {
     const a = this.app;
+    const mode = modeOverride || a.mode;
     return {
-      mode: a.mode,
-      tank: a.mode === 'drive' && typeof a.isDrivingTank === 'function' && a.isDrivingTank(),
-      armed: a.mode === 'walk' && Boolean(a.walkerWeapons && a.walkerWeapons.isArmed()),
+      mode,
+      tank: mode === 'drive' && typeof a.isDrivingTank === 'function' && a.isDrivingTank(),
+      armed: mode === 'walk' && Boolean(a.walkerWeapons && a.walkerWeapons.isArmed()),
     };
   }
 
   /** Draw the hint for the current mode and show it in full again. */
-  show() {
+  show(modeOverride) {
     if (!this.bar) return;
-    const ctx = this._ctx();
+    const ctx = this._ctx(modeOverride);
     this._sig = `${ctx.mode}|${ctx.tank}|${ctx.armed}|${getLang()}`;
     this.items.innerHTML = rowsFor(ctx.mode, ctx)
       .filter((r) => r.hint)

@@ -79,6 +79,7 @@ import {
   setTileCacheLimit,
   buildGlobalOverviewFromTiles,
   searchAddress,
+  dedupeSearchResults,
 } from "./global_tiles.js";
 
 // Smooth directional shadow frustum edge fade
@@ -496,7 +497,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r2" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r3" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -773,6 +774,8 @@ class WorldExplorerApp {
     } else {
       this._syncUrlParams();
     }
+    this._updateModeAndCamBadges();
+    this._showControlsHint(this.mode);
     const qGlb = q.get("glb")?.trim();
     if (qGlb) {
       this._loadUrlGlbAtLocation(qGlb, qLat, qLon, q.get("name") || "");
@@ -3189,7 +3192,6 @@ class WorldExplorerApp {
   }
 
   _bindInputs() {
-    this._showControlsHint();
 
     window.addEventListener("keydown", (e) => {
       if (document.activeElement && document.activeElement.tagName === "INPUT") {
@@ -3307,6 +3309,9 @@ class WorldExplorerApp {
         }
         const pop = document.getElementById("mode-vehicle-menu");
         if (pop) pop.classList.add("hidden");
+        this.atmosphere?.closeMenu?.();
+        const atmoMenu = document.getElementById("atmo-menu");
+        if (atmoMenu) atmoMenu.classList.add("hidden");
         const panel = document.getElementById("location-search-panel");
         if (panel) panel.classList.add("hidden");
       }
@@ -3420,9 +3425,9 @@ class WorldExplorerApp {
     });
   }
 
-  _showControlsHint() {
+  _showControlsHint(mode = this.mode) {
     if (!this.controlsHint) this.controlsHint = new ControlsHint(this);
-    this.controlsHint.show();
+    this.controlsHint.show(mode);
   }
 
   // Helicopter exit key: on the ground it leaves at once; in the air it asks for a second press within
@@ -3440,9 +3445,15 @@ class WorldExplorerApp {
   }
 
   _updateModeAndCamBadges() {
+    const inSpace = Boolean(this.spaceLaunch && (this.spaceLaunch.isActive?.() || this.spaceLaunch.isControllingCamera?.()));
+    const inKaiju = Boolean(this.kaiju && this.kaiju.active);
     const modeLabelEl = document.getElementById("mode-vehicle-label");
     if (modeLabelEl) {
-      if (this.mode === "drive") {
+      if (inSpace) {
+        modeLabelEl.textContent = getLang() === "zh" ? "航天" : "SPACE";
+      } else if (inKaiju) {
+        modeLabelEl.textContent = t("kaiju_badge"); // [kaiju]
+      } else if (this.mode === "drive") {
         const spec = VEHICLE_SPECS[this.vehicleIdx];
         const vName = spec ? getVehicleName(spec.id, spec.name) : "Drive";
         const prefix = getLang() === "zh" ? "驾驶" : "DRIVE";
@@ -3465,11 +3476,11 @@ class WorldExplorerApp {
       } else {
         modeLabelEl.textContent = getLang() === "zh" ? "直升机巡航" : "HELICOPTER";
       }
-      if (this.kaiju && this.kaiju.active) modeLabelEl.textContent = t("kaiju_badge"); // [kaiju]
     }
 
     document.querySelectorAll(".popover-mode-btn").forEach((btn) => {
-      btn.classList.toggle("active", this.kaiju && this.kaiju.active ? btn.dataset.mode === "kaiju" : btn.dataset.mode === this.mode); // [kaiju]
+      const activeMode = inSpace ? "space" : inKaiju ? "kaiju" : this.mode;
+      btn.classList.toggle("active", btn.dataset.mode === activeMode);
     });
 
     this._renderVehiclePopoverList();
@@ -3569,14 +3580,23 @@ class WorldExplorerApp {
 
   setMode(rawMode, keepKaiju = false) {
     if (rawMode === "space") {
+      if (this.kaiju && this.kaiju.active) this.kaiju.exit();
       if (this.spaceLaunch) {
         this.spaceLaunch.launchFromSpaceport("spacex_starbase");
+        this._updateModeAndCamBadges();
         this._showToast?.(getLang() === "zh" ? "星舰航天基地发射 — 德州博卡奇卡" : "SpaceX Starbase Launch — Boca Chica, TX", 3500);
       }
       return;
     }
+    const wasSpaceLaunch = Boolean(
+      this.spaceLaunch && (this.spaceLaunch.isActive?.() || this.spaceLaunch.isControllingCamera?.())
+    );
+    if (wasSpaceLaunch) {
+      this.spaceLaunch.abortToGround?.();
+    }
     if (rawMode === "kaiju") { if (this.kaiju && !this.kaiju.active) this.kaiju.enter(); if (!this._applyingStartupMode) this._syncUrlParams(undefined, undefined, "kaiju"); return; } // [kaiju]
-    if (this.kaiju && this.kaiju.active && !keepKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
+    const wasKaiju = Boolean(this.kaiju && this.kaiju.active && !keepKaiju);
+    if (wasKaiju) this.kaiju.exit(); // [kaiju] any other mode leaves Kaiju Defense
     const newMode = rawMode === "freecam" || rawMode === "fly" ? "helicopter" : rawMode;
     if (this.mode === "drive" && newMode !== "drive") {
       this._parkCurrentCar(newMode); // [parked-cars] before water.reset()
@@ -3596,8 +3616,14 @@ class WorldExplorerApp {
     if (newMode !== prevMode && newMode !== "walk") this.camYaw = this.yaw;
     if (this.walkerWeapons) this.walkerWeapons.onModeChange(newMode, prevMode);
 
-    // [fix/water-spawn] When switching to Walk or Drive from helicopter / airliner / boat over water, snap to nearest dry road
-    const switchingToGround = (newMode === "walk" || newMode === "drive") && (prevMode === "helicopter" || prevMode === "airliner" || prevMode === "boat");
+    if ((wasKaiju || wasSpaceLaunch) && (newMode === "walk" || newMode === "drive")) {
+      this._bailingOutMidAir = false;
+      this.walkVelY = 0;
+      this.isGrounded = true;
+    }
+
+    // [fix/water-spawn] When switching to Walk or Drive from helicopter / airliner / boat / kaiju / space over water, snap to nearest dry road
+    const switchingToGround = (newMode === "walk" || newMode === "drive") && (prevMode === "helicopter" || prevMode === "airliner" || prevMode === "boat" || wasKaiju || wasSpaceLaunch);
     if (switchingToGround && !this._bailingOutMidAir && !(prevMode === "boat" && this.maritime?._exitingToPier)) {
       const inWater = (this.water && (this.water.isInWater(this.pos.x, this.pos.z))) ||
         (getBeijingTerrainElevation(this.pos.x, this.pos.z) <= 0.25);
@@ -3617,7 +3643,8 @@ class WorldExplorerApp {
       this.parkedHeli = null;
       if (prevMode !== "drive") this._placeCarForDrive(prevMode); // [parked-cars] get in / spawn on a road lane
       this.vehicleMesh.visible = true;
-      const surf = this.sampleRoadSurface(this.pos.x, this.pos.y, this.pos.z);
+      const sampleY = (wasKaiju || wasSpaceLaunch) ? getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.5 : this.pos.y;
+      const surf = this.sampleRoadSurface(this.pos.x, sampleY, this.pos.z);
       if (surf) this.pos.y = surf.y;
       else this.pos.y = getBeijingTerrainElevation(this.pos.x, this.pos.z) + 0.22;
       this.vehicleMesh.position.copy(this.pos);
@@ -3649,7 +3676,7 @@ class WorldExplorerApp {
       const roofY = this.getRoofSupportAt(this.pos.x, this.pos.y + 0.5, this.pos.z);
       const baseGroundY = surf ? Math.max(surf.y, minTerrY) : minTerrY;
       const groundSupportY = Math.max(baseGroundY, roofY + 0.12);
-      const isMidAirBailout = Boolean(
+      const isMidAirBailout = !wasKaiju && !wasSpaceLaunch && Boolean(
         this._bailingOutMidAir ||
         ((prevMode === "airliner" || prevMode === "helicopter") && this.pos.y > groundSupportY + 10.0)
       );
@@ -3721,7 +3748,7 @@ class WorldExplorerApp {
       this.camPivot.copy(this.pos);
     }
     if (prevMode === "helicopter" && newMode !== "helicopter" && this.heli) this.heli.onExit();
-    this._showControlsHint();
+    this._showControlsHint(this.mode);
     if (!this._applyingStartupMode) this._syncUrlParams(undefined, undefined, this.mode);
   }
 
@@ -4367,14 +4394,7 @@ class WorldExplorerApp {
 
     const locDropdown = document.getElementById("location-dropdown");
     const renderSearchResults = (items, hasQueried = false) => {
-      const seen = new Set();
-      const uniqueItems = [];
-      for (const it of items || []) {
-        const k = `${it.name?.trim() || ""}|${(it.lat || 0).toFixed(4)}|${(it.lon || 0).toFixed(4)}`;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        uniqueItems.push(it);
-      }
+      const uniqueItems = dedupeSearchResults(items || []).slice(0, 7);
       lastResults = uniqueItems;
       if (!resultsSec || !resultsEl) return;
       if (uniqueItems.length === 0) {
@@ -4434,7 +4454,7 @@ class WorldExplorerApp {
         debounceTimer = setTimeout(async () => {
           const lmMatches = this.propertyInspector ? this.propertyInspector.searchLandmarks(q) : [];
           const addrResults = await searchAddress(q);
-          renderSearchResults([...lmMatches, ...(addrResults || [])].slice(0, 7), true);
+          renderSearchResults([...lmMatches, ...(addrResults || [])], true);
         }, 200);
       });
 
