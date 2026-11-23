@@ -558,9 +558,11 @@ class AtmosphereSystem {
         .join('')}</div>`;
     pop.innerHTML =
       `<div class="popover-label" data-atmo="time"></div>${row(['now', 'dawn', 'noon', 'dusk', 'night'], 'atmo-time')}` +
-      `<div class="popover-label" data-atmo="weather"></div>${row(WEATHER_ORDER, 'atmo-weather')}`;
+      `<div class="popover-label" data-atmo="weather"></div>${row(WEATHER_ORDER, 'atmo-weather')}` +
+      `<div class="popover-tide hidden" id="atmo-tide-row" style="font-size:11px;color:var(--text-muted);padding-top:5px;border-top:1px solid rgba(255,255,255,0.08);font-variant-numeric:tabular-nums;"></div>`;
     wrap.appendChild(pop);
     this.popEl = pop;
+    this.tideEl = pop.querySelector('#atmo-tide-row');
 
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -600,6 +602,26 @@ class AtmosphereSystem {
       for (const b of this.popEl.querySelectorAll('[data-atmo-time]')) {
         const on = b.dataset.atmoTime === 'now' && this.realtime;
         if (b.classList.contains('active') !== on) b.classList.toggle('active', on);
+      }
+    }
+    if (this.tideEl) {
+      const sea = this.app.seaState;
+      const showTide = Boolean(sea && sea.isCoastal && sea.tideSource && sea.tideSource !== 'none');
+      this.tideEl.classList.toggle('hidden', !showTide);
+      if (showTide) {
+        const rawH = Number.isFinite(sea.tideHeightM) ? sea.tideHeightM : 0;
+        const h = Math.abs(rawH) < 0.05 ? 0 : rawH;
+        const val = `${h >= 0 ? '+' : ''}${h.toFixed(1)}m`;
+        const isZh = getLang() === 'zh';
+        const tr = sea.tideTrend || 'slack';
+        const trTxt = isZh
+          ? (tr === 'rising' ? '涨潮' : tr === 'falling' ? '落潮' : '平潮')
+          : (tr === 'rising' ? '↑' : tr === 'falling' ? '↓' : '—');
+        const srcTxt = isZh
+          ? (sea.tideSource === 'live' ? '实时' : '推算')
+          : (sea.tideSource === 'live' ? 'Live' : 'Est.');
+        const tideTxt = isZh ? `潮汐 ${val} ${trTxt} · ${srcTxt}` : `Tide ${val} ${trTxt} · ${srcTxt}`;
+        if (this.tideEl.textContent !== tideTxt) this.tideEl.textContent = tideTxt;
       }
     }
     if (!this.labelEl) return;

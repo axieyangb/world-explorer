@@ -10,9 +10,10 @@
 import * as THREE from '../../../vendor/three.module.js';
 import { fetchDecodedMvtTile, latLonToTileXY } from '../../global_tiles.js';
 import { getBeijingTerrainElevation } from '../../environment.js';
+import { SURFACE_UNIFORMS } from '../surfaces.js';
 import { llToWorld, worldToLl, tileBoxWorld, clipRing, clipLine, ringArea, pointInRing } from './geo.js';
 
-const DECK_ABOVE_WATER = 1.3;  // m, deck top above the water surface
+const DECK_ABOVE_WATER = 1.85; // m, deck top above mean water surface (stays dry at high tide)
 const SLAB = 0.7;              // m, deck thickness
 const LINE_PIER_W = 4.0;       // m, width for pier ways mapped as lines
 const PILE_STEP = 6.0;         // m, perimeter piling spacing
@@ -164,8 +165,9 @@ function mats() {
     };
 
     pileMat = new THREE.MeshStandardMaterial({ color: 0x3b332b, roughness: 0.94, metalness: 0.0 });
-    pileMat.customProgramCacheKey = () => 'pier-pile-tidal-v3';
+    pileMat.customProgramCacheKey = () => 'pier-pile-tidal-v4';
     pileMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTideOffset = SURFACE_UNIFORMS.uTideOffset;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vPierWorld;')
         .replace(
@@ -178,7 +180,7 @@ function mats() {
           vPierWorld = (modelMatrix * pierPileWp).xyz;`
         );
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', `#include <common>\nvarying vec3 vPierWorld;\n${PIER_NOISE_GLSL}`)
+        .replace('#include <common>', `#include <common>\nuniform float uTideOffset;\nvarying vec3 vPierWorld;\n${PIER_NOISE_GLSL}`)
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -188,23 +190,28 @@ function mats() {
             // Vertical creosote timber grain + iron hoop bands near top
             float vGrain = pierNoise(vec2((vPierWorld.x + vPierWorld.z) * 14.0, wY * 2.4));
             diffuseColor.rgb *= 0.86 + 0.28 * vGrain;
-            // Tidal line + greenish-brown barnacle/algae encrustation band (worldY < 1.35m)
-            if (wY < 1.35) {
+            // Dynamic wet splash band + anchored intertidal barnacle/algae zone
+            float wetLim = 1.35 + max(0.0, uTideOffset);
+            if (wY < wetLim) {
               float nWave = (pierNoise(vPierWorld.xz * 3.2) - 0.5) * 0.16;
               float tideH = wY + nWave;
-              // Dark wet tidal zone up to ~1.25m
-              pileWet = 1.0 - smoothstep(0.85, 1.25, tideH);
+              // Glossy dark wet splash zone moves dynamically with uTideOffset
+              pileWet = 1.0 - smoothstep(0.85 + uTideOffset, 1.25 + uTideOffset, tideH);
               diffuseColor.rgb *= mix(1.0, 0.50, pileWet);
-              // Greenish-brown marine algae band (tideH < 0.95m)
-              float algaeMask = (1.0 - smoothstep(0.55, 0.95, tideH)) * smoothstep(-0.2, 0.25, tideH);
-              float algaeTex = pierNoise(vec2((vPierWorld.x - vPierWorld.z) * 8.0, wY * 7.5));
-              vec3 algaeCol = mix(vec3(0.14, 0.25, 0.10), vec3(0.25, 0.34, 0.15), algaeTex);
-              diffuseColor.rgb = mix(diffuseColor.rgb, algaeCol, algaeMask * 0.78);
-              // Crusty barnacle & mussel band (tideH < 0.58m)
-              float barnMask = 1.0 - smoothstep(0.20, 0.58, tideH);
-              float barnSpec = smoothstep(0.48, 0.78, pierNoise(vec2((vPierWorld.x + vPierWorld.z) * 26.0, wY * 28.0)));
-              vec3 barnCol = mix(vec3(0.17, 0.16, 0.14), vec3(0.50, 0.47, 0.40), barnSpec);
-              diffuseColor.rgb = mix(diffuseColor.rgb, barnCol, barnMask * 0.88);
+              // Greenish-brown marine algae band anchored to intertidal zone (tideH < 0.95m)
+              if (tideH < 1.05) {
+                float algaeMask = (1.0 - smoothstep(0.55, 0.95, tideH)) * smoothstep(-0.2, 0.25, tideH);
+                float algaeTex = pierNoise(vec2((vPierWorld.x - vPierWorld.z) * 8.0, wY * 7.5));
+                vec3 algaeCol = mix(vec3(0.14, 0.25, 0.10), vec3(0.25, 0.34, 0.15), algaeTex);
+                diffuseColor.rgb = mix(diffuseColor.rgb, algaeCol, algaeMask * 0.78);
+              }
+              // Crusty barnacle & mussel band anchored to lower intertidal zone (tideH < 0.58m)
+              if (tideH < 0.68) {
+                float barnMask = 1.0 - smoothstep(0.20, 0.58, tideH);
+                float barnSpec = smoothstep(0.48, 0.78, pierNoise(vec2((vPierWorld.x + vPierWorld.z) * 26.0, wY * 28.0)));
+                vec3 barnCol = mix(vec3(0.17, 0.16, 0.14), vec3(0.50, 0.47, 0.40), barnSpec);
+                diffuseColor.rgb = mix(diffuseColor.rgb, barnCol, barnMask * 0.88);
+              }
             }
           }`
         )
@@ -577,7 +584,7 @@ export async function buildChunkPiers(app, group) {
 
   const water = app.water;
   const inWater = (x, z) => (water ? water.isPointInWater(x, z) : false);
-  const waterY = (x, z) => (water ? water.getWaterSurfaceY(x, z) : getBeijingTerrainElevation(x, z) + 0.28);
+  const waterY = (x, z) => (water ? (water.getMeanWaterSurfaceY ? water.getMeanWaterSurfaceY(x, z) : water.getWaterSurfaceY(x, z)) : getBeijingTerrainElevation(x, z) + 0.28);
   const deckYAt = (x, z) => Math.max(waterY(x, z) + DECK_ABOVE_WATER, getBeijingTerrainElevation(x, z) + 0.15);
 
   const ox = ud.ox, oz = ud.oz;

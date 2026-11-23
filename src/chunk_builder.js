@@ -1513,7 +1513,7 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
         isPointInSunkenTrench = createSunkenTrenchChecker(data.roads || []);
 
         // 0. 3D Heightfield Terrain Mesh for this 1km x 1km chunk (with open-trench cutouts for sunken roads)
-        subGroups.terrain.add(buildChunkTerrainMesh(ox, oz, mats.terrainMat, isPointInSunkenTrench, null, (groundSampler = chunkGroundSampler(data)))); // [roofs] sampler kept // [ground] land-use ground colour
+        subGroups.terrain.add(buildChunkTerrainMesh(ox, oz, mats.terrainMat, isPointInSunkenTrench, null, (groundSampler = chunkGroundSampler(data)), isPointInWater.inPoly || isPointInWater)); // [roofs] sampler kept // [ground] land-use ground colour
 
         // 1. Parks & Landuse Plazas + Water Bodies (conforming to 3D terrain)
         buildParksAndWater(data, ox, oz, subGroups.terrain, mats, isPointInWater, isPointInSunkenTrench);
@@ -1701,7 +1701,7 @@ function createWaterMaskChecker(data) {
     lines.push({ minX: minX - hw, maxX: maxX + hw, minZ: minZ - hw, maxZ: maxZ + hw, hw, flat });
   }
 
-  const isSinglePointInWater = (lx, lz) => {
+  const isSinglePointInPoly = (lx, lz) => {
     for (let h = 0; h < allIslandHoles.length; h++) {
       const hr = allIslandHoles[h];
       if (lx < hr.minX || lx > hr.maxX || lz < hr.minZ || lz > hr.maxZ) continue;
@@ -1721,6 +1721,15 @@ function createWaterMaskChecker(data) {
         if (!inHole) return true;
       }
     }
+    return false;
+  };
+  const isSinglePointInWater = (lx, lz) => {
+    if (isSinglePointInPoly(lx, lz)) return true;
+    for (let h = 0; h < allIslandHoles.length; h++) {
+      const hr = allIslandHoles[h];
+      if (lx < hr.minX || lx > hr.maxX || lz < hr.minZ || lz > hr.maxZ) continue;
+      if (pointInRing2D(lx, lz, hr.ring)) return false;
+    }
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       if (lx < l.minX || lx > l.maxX || lz < l.minZ || lz > l.maxZ) continue;
@@ -1739,7 +1748,7 @@ function createWaterMaskChecker(data) {
     return false;
   };
 
-  return (lx, lz, margin = 0) => {
+  const checker = (lx, lz, margin = 0) => {
     if (isSinglePointInWater(lx, lz)) return true;
     if (margin > 0) {
       if (isSinglePointInWater(lx + margin, lz)) return true;
@@ -1754,6 +1763,8 @@ function createWaterMaskChecker(data) {
     }
     return false;
   };
+  checker.inPoly = isSinglePointInPoly;
+  return checker;
 }
 
 /**

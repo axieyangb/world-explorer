@@ -32,6 +32,7 @@ export const SURFACE_UNIFORMS = {
   uSeaWind: { value: new THREE.Vector3(0.94, 0.34, 0.3) },
   uSwell: { value: new THREE.Vector4(0.94, 0.34, 0.06, 0.03) },
   uWhitecap: { value: 0 },
+  uTideOffset: { value: 0.0 },
   uPaving: { value: 0 }, // [street-props] 0 = concrete flags, 1 = block pavers (set from the street region)
   uChunkCenter: { value: new THREE.Vector2(0, 0) },
   uChunkFadeInner: { value: 850.0 },
@@ -140,8 +141,15 @@ function patchWater(mat) {
       bindUniforms(shader);
       addWorldPosVarying(shader);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec2 vShoreUv;')
-        .replace('#include <project_vertex>', '#include <project_vertex>\nvShoreUv = uv;');
+        .replace('#include <common>', '#include <common>\nuniform float uTideOffset;\nvarying vec2 vShoreUv;')
+        .replace(
+          '#include <project_vertex>',
+          `float tideWorldY = (modelMatrix * vec4(transformed, 1.0)).y;
+          float isSeaTide = (1.0 - smoothstep(1.4, 2.8, tideWorldY)) * (1.0 - step(0.01, abs(uv.x)));
+          transformed.y += uTideOffset * isSeaTide;
+          #include <project_vertex>
+          vShoreUv = uv;`
+        );
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
@@ -768,10 +776,13 @@ const makeTerrainDetail = (isPark) => `
       grRough = mix(grRough, -0.35, snowMask);
     }
   }
-  // Coastal ground near water level (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2): wind-blown sand ripples + wet-sand shoreline
-  if (vAtmoWorld.y > -0.5 && vAtmoWorld.y < 3.2 && tFade > 0.0) {
+  // Coastal ground near water level: wind-blown sand ripples + dynamic intertidal wet-sand shoreline
+  if (vAtmoWorld.y > -1.8 && vAtmoWorld.y < 4.0 && tFade > 0.0) {
+    float wetLo = uTideOffset - 0.2;
+    float wetHi = max(0.0, uTideOffset) + 1.1;
     float isWaterVertex = smoothstep(0.02, 0.08, diffuseColor.b - max(diffuseColor.r, diffuseColor.g * 0.92));
-    float coastElev = smoothstep(-0.5, 0.05, vAtmoWorld.y) * (1.0 - smoothstep(1.5, 3.2, vAtmoWorld.y));
+    float coastElev = smoothstep(min(-0.5, wetLo - 0.4), min(0.05, wetLo), vAtmoWorld.y)
+                    * (1.0 - smoothstep(max(1.5, wetHi + 0.3), max(3.2, wetHi + 1.4), vAtmoWorld.y));
     float flatMask = smoothstep(0.72, 0.93, ny);
     float coastMask = coastElev * flatMask * tFade * tNat * (1.0 - isWaterVertex) * ${isPark ? "0.35" : "1.0"};
     if (coastMask > 0.001) {
@@ -780,7 +791,8 @@ const makeTerrainDetail = (isPark) => `
       float sandGrain = (atmoNoise(wp * 18.0) - 0.5) * 0.12 * clamp(1.0 - fpw * 20.0, 0.0, 1.0);
       vec3 drySand = vec3(0.76, 0.70, 0.58) * (0.94 + 0.10 * atmoNoise(wp * 0.15)) * (1.0 + (sandRipple - 0.5) * 0.09 + sandGrain);
       float wetWave = (atmoNoise(wp * 0.25) - 0.5) * 0.22;
-      float wetSandMask = (1.0 - smoothstep(0.15, 0.85, vAtmoWorld.y + wetWave)) * smoothstep(-0.5, -0.05, vAtmoWorld.y);
+      float wetSandMask = (1.0 - smoothstep(wetHi - 0.55, wetHi, vAtmoWorld.y + wetWave))
+                        * smoothstep(wetLo - 0.35, wetLo, vAtmoWorld.y);
       vec3 wetSand = drySand * vec3(0.50, 0.48, 0.45);
       vec3 sandCol = mix(drySand, wetSand, wetSandMask);
       diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, coastMask * 0.85);
@@ -795,12 +807,15 @@ function patchTerrain(mat, isPark = false) {
   chainCompile(
     mat,
     (shader) => {
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>\n${makeTerrainDetail(isPark)}`
-      );
+      shader.uniforms.uTideOffset = SURFACE_UNIFORMS.uTideOffset;
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uTideOffset;')
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>\n${makeTerrainDetail(isPark)}`
+        );
     },
-    isPark ? '-terrain-detail-park-1' : '-terrain-detail-1'
+    isPark ? '-terrain-detail-park-2' : '-terrain-detail-2'
   );
 }
 

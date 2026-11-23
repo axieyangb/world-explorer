@@ -193,7 +193,7 @@ function sampleTerrainBiomeColorBase(wx, wz, elev, slope, ground) {
 /**
  * Computes raw TypedArray buffers for a 1km x 1km 3D heightfield terrain mesh (usable in Web Worker).
  */
-export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null, chunkGround = null) {
+export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null, chunkGround = null, isPointInSeaPoly = null) {
   // [ground] chunk-local land-use sampler -> world sampler; uv carries (built, flavour) for patchUrbanGround
   const ground = chunkGround ? (wx, wz) => chunkGround(wx - ox, wz - oz) : null;
   const segs = 24;
@@ -211,8 +211,10 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null, ch
       const lx = -500.0 + ix * step;
       const wx = ox + lx;
       const wz = oz + lz;
-      // Sit 0.35m below base elevation so parks (+0.10m), water (+0.22m), and roads (+0.32m..0.95m) never Z-fight
-      const h = getBeijingTerrainElevation(wx, wz) - 0.35;
+      // Sit 0.35m below base elevation on land; depress sea-level waterbed to -1.6m so low tide (-1.15m) stays above seabed
+      const rawElev = getBeijingTerrainElevation(wx, wz);
+      const inSeaBed = isPointInSeaPoly && rawElev <= 1.2 && isPointInSeaPoly(lx, lz);
+      const h = inSeaBed ? rawElev - 1.6 : rawElev - 0.35;
       row.push(h);
     }
     gridH.push(row);
@@ -233,7 +235,7 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null, ch
       const slope = Math.hypot(hR - hL, hU - hD) / (2.0 * step);
 
       pos.push(lx, h, lz);
-      const rgb = sampleTerrainBiomeColor(wx, wz, h + 0.25, slope, ground);
+      const rgb = sampleTerrainBiomeColor(wx, wz, getBeijingTerrainElevation(wx, wz) - 0.10, slope, ground);
       col.push(rgb[0], rgb[1], rgb[2]);
       uv.push(rgb[3] || 0, rgb[4] || 0); // [ground]
     }
@@ -340,8 +342,8 @@ export function buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench = null, ch
 /**
  * Builds a 1km x 1km 3D heightfield terrain mesh for a single chunk (cx, cz) from real DEM data.
  */
-export function buildChunkTerrainMesh(ox, oz, terrainMat, isPointInSunkenTrench = null, precomputedArrays = null, chunkGround = null) {
-  const arrs = precomputedArrays || buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench, chunkGround);
+export function buildChunkTerrainMesh(ox, oz, terrainMat, isPointInSunkenTrench = null, precomputedArrays = null, chunkGround = null, isPointInSeaPoly = null) {
+  const arrs = precomputedArrays || buildChunkTerrainArrays(ox, oz, isPointInSunkenTrench, chunkGround, isPointInSeaPoly);
   const geom = new THREE.BufferGeometry();
   geom.setIndex(new THREE.BufferAttribute(arrs.indices, 1));
   geom.setAttribute('position', new THREE.BufferAttribute(arrs.positions, 3));
@@ -400,7 +402,7 @@ export function buildGlobalHorizonTerrain(terrainMat) {
       const edgeDist = Math.max(Math.abs(wx), Math.abs(wz));
       const edgeT = THREE.MathUtils.smoothstep(edgeDist, half - 3500.0, half);
       const rawElev = getBeijingTerrainElevation(wx, wz);
-      const baseOff = isCoastal && rawElev <= 0.12 ? -0.75 : -0.35;
+      const baseOff = isCoastal && rawElev <= 0.12 ? -1.6 : -0.35;
       const rawH = rawElev + baseOff;
       const h = THREE.MathUtils.lerp(rawH, -0.75, edgeT);
       const hL = getBeijingTerrainElevation(Math.max(-half, wx - 40.0), wz);

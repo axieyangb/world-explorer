@@ -19,7 +19,7 @@ const REFRESH_S = 1200;
 const DEG = Math.PI / 180;
 const G = 9.81;
 const MARINE_URL = 'https://marine-api.open-meteo.com/v1/marine';
-const FIELDS = 'wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period,wind_wave_height';
+const FIELDS = 'wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period,wind_wave_height,sea_level_height_msl';
 // Lookup ring (degrees): centre first, then ~9 km, then ~25 km; the first non-null cell wins.
 const RING = [[0, 0], [0.08, 0], [-0.08, 0], [0, 0.1], [0, -0.1], [0.22, 0], [-0.22, 0], [0, 0.28], [0, -0.28]];
 
@@ -76,8 +76,16 @@ export class SeaState {
     this.waveHeight = this.cur.hs; // public: significant wave height (m), eased
     this.motion = 1; // public: bob/roll multiplier for floating things (1 = previous fixed look)
     this.applied = { chop: 0, windAlign: 0, swellK: 0, swellSlope: 0, whitecap: 0, roughness: 0 };
+    this.isCoastal = false;
+    this.tideSource = 'none';
+    this.tideHourly = null;
+    this.tideLiveCurrent = null;
+    this.tideHeightM = 0;
+    this.tideOffset = 0;
+    this.tideTrend = 'slack';
+    this._tideOverride = null;
     if (this.preset) this._setTarget(PRESETS[this.preset], null);
-    window.__SEA__ = { state: () => this.state(), refresh: () => this._fetch() };
+    window.__SEA__ = { state: () => this.state(), refresh: () => this._fetch(), setTideOverride: (m) => this.setTideOverride(m) };
   }
 
   _latLon() {
@@ -101,15 +109,42 @@ export class SeaState {
     const lats = RING.map((d) => (ll[0] + d[0]).toFixed(3)).join(',');
     const lons = RING.map((d) => (ll[1] + d[1]).toFixed(3)).join(',');
     try {
-      const r = await fetch(`${MARINE_URL}?latitude=${lats}&longitude=${lons}&current=${FIELDS}`, { cache: 'no-store' });
+      const r = await fetch(
+        `${MARINE_URL}?latitude=${lats}&longitude=${lons}&current=${FIELDS}&hourly=sea_level_height_msl&forecast_days=2&timezone=auto`,
+        { cache: 'no-store' }
+      );
       const j = r.ok ? await r.json() : null;
       if (j && gen === this._gen) {
         const list = Array.isArray(j) ? j : [j];
         let sea = null;
-        for (const e of list) if ((sea = seaFromMarine(e && e.current))) break;
+        let hit = null;
+        for (const e of list) {
+          if ((sea = seaFromMarine(e && e.current))) {
+            hit = e;
+            break;
+          }
+        }
         this.marine = sea;
         this.at = new Date().toISOString();
         this.source = sea ? 'marine' : 'wind';
+        if (hit) {
+          this.isCoastal = true;
+          const rawHourly = hit.hourly && Array.isArray(hit.hourly.sea_level_height_msl) ? hit.hourly.sea_level_height_msl : [];
+          const hourly = [];
+          for (let i = 0; i < Math.min(rawHourly.length, 48); i++) {
+            const hv = num(rawHourly[i]);
+            if (hv != null) hourly.push({ hour: i, height: hv });
+          }
+          const curTide = num(hit.current && hit.current.sea_level_height_msl);
+          this.tideHourly = hourly.length >= 24 ? hourly : null;
+          this.tideLiveCurrent = curTide;
+          this.tideSource = (this.tideHourly || curTide != null) ? 'live' : 'harmonic';
+        } else {
+          this.isCoastal = false;
+          this.tideHourly = null;
+          this.tideLiveCurrent = null;
+          this.tideSource = 'none';
+        }
       }
     } catch {
       // offline / blocked: keep whatever sea we have
@@ -138,6 +173,12 @@ export class SeaState {
       this._gen = app.teleportGeneration || 0;
       this.timer = 1.5;
       if (!this.preset) { this.marine = null; this.source = 'default'; }
+      this.isCoastal = false;
+      this.tideSource = 'none';
+      this.tideHourly = null;
+      this.tideLiveCurrent = null;
+      this.tideHeightM = 0;
+      this.tideTrend = 'slack';
     }
     this.timer -= dt;
     if (this.timer <= 0 && !app.isTeleporting) {
@@ -180,6 +221,93 @@ export class SeaState {
     U.uWhitecap.value = a.whitecap;
     const wm = app.mats && app.mats.waterMat;
     if (wm) wm.roughness = a.roughness;
+
+    this._updateTide(dt);
+  }
+
+  setTideOverride(metersOrNull) {
+    this._tideOverride = metersOrNull == null ? null : Number(metersOrNull);
+    if (this._tideOverride != null && !Number.isFinite(this._tideOverride)) this._tideOverride = null;
+  }
+
+  _sampleHourlyTide(hour) {
+    const arr = this.tideHourly;
+    if (!arr || !arr.length) return 0;
+    const hh = ((hour % 24) + 24) % 24;
+    const h0 = Math.floor(hh);
+    const h1 = h0 + 1;
+    const frac = hh - h0;
+    let v0 = null;
+    let v1 = null;
+    let wrap0 = null;
+    for (let i = 0; i < arr.length; i++) {
+      const entry = arr[i];
+      if (entry.hour === 0) wrap0 = entry.height;
+      if (entry.hour === h0) v0 = entry.height;
+      if (entry.hour === h1) v1 = entry.height;
+    }
+    if (v1 == null) v1 = wrap0 ?? v0 ?? 0;
+    if (v0 == null) v0 = v1;
+    const mu = (1 - Math.cos(frac * Math.PI)) * 0.5;
+    return v0 + (v1 - v0) * mu;
+  }
+
+  _harmonicTide(hour) {
+    const ll = this._latLon();
+    const lonRad = ll ? ll[1] * DEG : 0;
+    const latRad = ll ? ll[0] * DEG : 0;
+    const phase = lonRad * 2.0 + latRad * 0.5;
+    const t = Math.floor(Date.now() / 86400000) * 24 + hour;
+    return (
+      0.72 * Math.sin((2 * Math.PI * t) / 12.4206 + phase) +
+      0.24 * Math.sin((2 * Math.PI * t) / 12.0 + phase * 0.7) +
+      0.18 * Math.sin((2 * Math.PI * t) / 23.9345 + lonRad)
+    );
+  }
+
+  _updateTide(dt) {
+    const app = this.app;
+    const atmo = app.atmosphere;
+    const now = new Date();
+    const nowLocalHour = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+    const isRealtime = atmo ? (atmo.realtime !== false && !atmo.manualTime) : true;
+    let h = atmo && Number.isFinite(atmo.hour) ? atmo.hour : nowLocalHour;
+    if (isRealtime && atmo && atmo.targetHour == null && Number.isFinite(atmo.utcOffsetH)) {
+      const utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
+      h = (((utcH + atmo.utcOffsetH) % 24) + 24) % 24;
+    }
+
+    let targetOffset = 0;
+    if (this._tideOverride != null) {
+      this.tideHeightM = this._tideOverride;
+      this.tideTrend = this._tideOverride > 0.05 ? 'rising' : (this._tideOverride < -0.05 ? 'falling' : 'slack');
+      targetOffset = clamp(this._tideOverride, -1.15, 1.25);
+    } else if (!this.isCoastal) {
+      this.tideHeightM = 0;
+      this.tideTrend = 'slack';
+      targetOffset = 0;
+    } else if (this.tideSource === 'live' && this.tideHourly && this.tideHourly.length >= 24) {
+      const val = this._sampleHourlyTide(h);
+      const delta = this._sampleHourlyTide(h + 0.5) - this._sampleHourlyTide(h - 0.5);
+      this.tideHeightM = val;
+      this.tideTrend = delta > 0.02 ? 'rising' : (delta < -0.02 ? 'falling' : 'slack');
+      targetOffset = clamp(val, -1.15, 1.25);
+    } else if (this.tideSource === 'live' && this.tideLiveCurrent != null) {
+      this.tideHeightM = this.tideLiveCurrent;
+      this.tideTrend = 'slack';
+      targetOffset = clamp(this.tideLiveCurrent, -1.15, 1.25);
+    } else {
+      const val = this._harmonicTide(h);
+      const delta = this._harmonicTide(h + 0.5) - this._harmonicTide(h - 0.5);
+      this.tideHeightM = val;
+      this.tideTrend = delta > 0.02 ? 'rising' : (delta < -0.02 ? 'falling' : 'slack');
+      targetOffset = clamp(val, -1.15, 1.25);
+    }
+
+    const tideDamp = dt > 0 ? (1 - Math.exp(-dt * 2.5)) : 1;
+    this.tideOffset += (targetOffset - this.tideOffset) * tideDamp;
+    if (Math.abs(this.tideOffset) < 1e-4 && targetOffset === 0) this.tideOffset = 0;
+    SURFACE_UNIFORMS.uTideOffset.value = this.tideOffset;
   }
 
   state() {
@@ -190,6 +318,8 @@ export class SeaState {
       source: this.source, preset: this.preset, at: this.at, marine: this.marine,
       waveHeight: r2(c.hs), swellHeight: r2(c.swellH), period: r2(c.period), windWaveHeight: r2(c.windWaveH),
       wind: r2(c.wind), swellFromDeg: Math.round((toDeg + 180) % 360), motion: r2(this.motion),
+      isCoastal: this.isCoastal, tideSource: this.tideSource, tideHeightM: r2(this.tideHeightM),
+      tideOffset: r2(this.tideOffset), tideTrend: this.tideTrend,
       applied: Object.fromEntries(Object.entries(this.applied).map(([k, v]) => [k, Number(v.toFixed(4))])),
     };
   }

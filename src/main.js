@@ -498,7 +498,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261119_r5" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261123_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -5330,9 +5330,10 @@ class WorldExplorerApp {
           let waterChunks = 0;
           for (const grp of this.loadedChunks.values()) {
             const mask = grp.userData?.waterMask;
-            if (mask && mask.bytes) {
-              for (let i = 0; i < mask.bytes.length; i += 16) {
-                if (mask.bytes[i] !== 0) { waterChunks++; break; }
+            const maskBits = mask && (mask.bits || mask.bytes);
+            if (maskBits) {
+              for (let i = 0; i < maskBits.length; i += 16) {
+                if (maskBits[i] !== 0) { waterChunks++; break; }
               }
             }
           }
@@ -5340,6 +5341,8 @@ class WorldExplorerApp {
           su.uOceanFactor.value = THREE.MathUtils.clamp((waterRatio - 0.22) / 0.28, 0.0, 1.0);
         }
       }
+      const oceanFactor = su?.uOceanFactor?.value ?? 0;
+      this.horizonSkirtMesh.position.y = -0.65 + (this.seaState?.tideOffset || 0) * oceanFactor;
     }
     if (this.skylineInstanced) {
       this.skylineInstanced.visible = camAlt <= 620;

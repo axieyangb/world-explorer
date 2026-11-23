@@ -197,8 +197,19 @@ export class WaterPhysics {
     return false;
   }
 
-  getWaterSurfaceY(wx, wz) {
+  getMeanWaterSurfaceY(wx, wz) {
     return getBeijingTerrainElevation(wx, wz) + WATER_Y_OFFSET;
+  }
+
+  getWaterSurfaceY(wx, wz) {
+    const baseY = getBeijingTerrainElevation(wx, wz) + WATER_Y_OFFSET;
+    const tide = this.app?.seaState?.tideOffset || 0;
+    if (tide !== 0 && baseY < 2.8) {
+      const t = Math.max(0, Math.min(1, (baseY - 1.4) / 1.4));
+      const seaW = 1 - t * t * (3 - 2 * t);
+      return baseY + tide * seaW;
+    }
+    return baseY;
   }
 
   /** True when the road surface `surf` (from sampleRoadSurface) physically supports a point above water. */
