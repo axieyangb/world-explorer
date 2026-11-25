@@ -1311,6 +1311,29 @@ const SIGN_TYPE_CFG = {
 
 const HEAD_CULL = 450;
 const PAVER_REGIONS = new Set(['eu', 'jp', 'cn', 'kr', 'intl']); // [street-props] block pavers; us / uk / au: concrete flags
+const WALKER_CELL = 8;
+// Physical 3D walker colliders per prop kind: radial cylinder ({ r, h }) or oriented footprint ({ hx, hz, h })
+const WALKER_PROP_CFG = {
+  hydrant: { r: 0.32, h: 0.95 },
+  lampArm: { r: 0.24, h: 6.0 },
+  lampCobra: { r: 0.24, h: 6.0 },
+  lampDouble: { r: 0.26, h: 6.0 },
+  lampPost: { r: 0.24, h: 4.5 },
+  tlPole: { r: 0.24, h: 6.8 },
+  gantryLeg: { r: 0.38, h: 6.8 },
+  bladePost: { r: 0.20, h: 3.2 },
+  bollard: { r: 0.20, h: 0.95 },
+  bin: { r: 0.36, h: 1.05 },
+  bench: { hx: 0.34, hz: 0.96, h: 0.95 },
+  busStop: { hx: 0.78, hz: 2.30, h: 2.60 },
+  signStop: { r: 0.20, h: 3.2 },
+  signSpeed35: { r: 0.20, h: 3.2 },
+  signSpeed25: { r: 0.20, h: 3.2 },
+  signSpeed50: { r: 0.20, h: 3.2 },
+  signSpeed60: { r: 0.20, h: 3.2 },
+  signWarnPed: { r: 0.20, h: 3.2 },
+  signWarnCurve: { r: 0.20, h: 3.2 },
+};
 
 const HALO_VS = `
 uniform float uSize;
@@ -1624,6 +1647,7 @@ export class StreetFeatures {
     this.activeSignals = [];
     this.damage = new PropDamage(); // [prop-damage] knocked-over props (persist across refreshes)
     this._hitList = []; // [prop-damage] damageable props near the camera, rebuilt each refresh
+    this._walkerCells = new Map(); // 8 m spatial grid of solid ground props for walker collision
     this.lastRefresh = { x: Infinity, z: Infinity, sig: '', vis: true };
     this.stats = { instances: 0, signals: 0, heads: 0, gantries: 0, blades: 0, refreshMs: 0 };
     this._col = { green: new THREE.Color(0.15, 1.0, 0.45), yellow: new THREE.Color(1.0, 0.72, 0.05), red: new THREE.Color(1.0, 0.12, 0.08) };
@@ -1717,6 +1741,8 @@ export class StreetFeatures {
     const dmgList = this.damage.list, hitList = this._hitList; // [prop-damage]
     for (const e of dmgList) e.slots.length = 0;
     hitList.length = 0;
+    const wCells = this._walkerCells;
+    wCells.clear();
 
     // [feature/street-detail] real OSM furniture as a pseudo chunk (world coords) + suppression of nearby procedural duplicates
     const sd = this.streetDetail && this.streetDetail.st ? this.streetDetail : null;
@@ -1754,8 +1780,17 @@ export class StreetFeatures {
           if (d2 > r2) continue;
           if (supG && supG.near(x, z)) continue; // [feature/street-detail]
           const dmg = dmgList.length ? this.damage.find(type, x, z) : null; // [prop-damage]
-          if (!dmg && d2 < 8100 && (PROP_DAMAGE_CFG[type] || type === 'tlArm' || type === 'tlHeadV' || type === 'tlHeadH')) {
-            hitList.push({ type, x, y: arr[i + 1], z, rot: arr[i + 3], sx: arr[i + 4] });
+          if (!dmg && d2 < 8100) {
+            if (PROP_DAMAGE_CFG[type] || type === 'tlArm' || type === 'tlHeadV' || type === 'tlHeadH') {
+              hitList.push({ type, x, y: arr[i + 1], z, rot: arr[i + 3], sx: arr[i + 4] });
+            }
+            const wCfg = WALKER_PROP_CFG[type];
+            if (wCfg) {
+              const wk = (Math.floor(x / WALKER_CELL) + 8192) * 16384 + (Math.floor(z / WALKER_CELL) + 8192);
+              let bucket = wCells.get(wk);
+              if (!bucket) wCells.set(wk, (bucket = []));
+              bucket.push({ type, x, y: arr[i + 1], z, rot: arr[i + 3], cfg: wCfg });
+            }
           }
           if (d2 < near2 && counts[nearKey] < nearCap) { // [street-props]
             const k = counts[nearKey]++;
@@ -2067,6 +2102,71 @@ export class StreetFeatures {
       if (this._knock(p, (sy + cy * side) * dir, (cy - sy * side) * dir)) keep *= c[4];
     }
     return keep;
+  }
+
+  /**
+   * 3D physical collision for walkers/pedestrians against upright street furniture in the 3x3 spatial cells
+   * around (pos.x, pos.z). Respects prop height so jumpers can clear low hydrants/bollards.
+   */
+  collideWalker(pos, playerRadius = 0.36) {
+    if (!pos || !this._walkerCells.size) return false;
+    const cx = Math.floor(pos.x / WALKER_CELL);
+    const cz = Math.floor(pos.z / WALKER_CELL);
+    const hasDmg = this.damage && this.damage.list.length > 0;
+    let hit = false;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const list = this._walkerCells.get((cx + dx + 8192) * 16384 + (cz + dz + 8192));
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          const p = list[i];
+          if (hasDmg && this.damage.find(p.type, p.x, p.z)) continue;
+          const cfg = p.cfg;
+          if (pos.y >= p.y + cfg.h - 0.12 || pos.y + 1.75 <= p.y) continue;
+          if (cfg.r) {
+            const ox = pos.x - p.x;
+            const oz = pos.z - p.z;
+            const minDist = playerRadius + cfg.r;
+            const d2 = ox * ox + oz * oz;
+            if (d2 < minDist * minDist) {
+              const d = Math.sqrt(d2);
+              if (d > 1e-5) {
+                pos.x = p.x + (ox / d) * minDist;
+                pos.z = p.z + (oz / d) * minDist;
+              } else {
+                pos.x = p.x + minDist;
+              }
+              hit = true;
+            }
+          } else {
+            const c = Math.cos(p.rot), s = Math.sin(p.rot);
+            const wx = pos.x - p.x, wz = pos.z - p.z;
+            let lx = wx * c - wz * s;
+            let lz = wx * s + wz * c;
+            const hx = cfg.hx, hz = cfg.hz;
+            const clx = Math.max(-hx, Math.min(hx, lx));
+            const clz = Math.max(-hz, Math.min(hz, lz));
+            const dlx = lx - clx, dlz = lz - clz;
+            const d2 = dlx * dlx + dlz * dlz;
+            if (d2 >= playerRadius * playerRadius) continue;
+            if (d2 > 1e-8) {
+              const d = Math.sqrt(d2);
+              lx = clx + (dlx / d) * playerRadius;
+              lz = clz + (dlz / d) * playerRadius;
+            } else {
+              const penX = hx - Math.abs(lx);
+              const penZ = hz - Math.abs(lz);
+              if (penX < penZ) lx = (lx >= 0 ? 1 : -1) * (hx + playerRadius);
+              else lz = (lz >= 0 ? 1 : -1) * (hz + playerRadius);
+            }
+            pos.x = p.x + lx * c + lz * s;
+            pos.z = p.z - lx * s + lz * c;
+            hit = true;
+          }
+        }
+      }
+    }
+    return hit;
   }
 
   debugStats() {

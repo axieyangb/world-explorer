@@ -1598,6 +1598,26 @@ const KINDS = {
   radarDome: [160, 1800, 'std', true],
 };
 
+const PLACE_CELL = 12;
+const SOLID_PLACE_CFG = {
+  realBusStop: { hx: 2.25, hz: 0.95, h: 2.70 },
+  bikeRack: { hx: 1.30, hz: 0.75, h: 0.95 },
+  motoBay: { hx: 1.40, hz: 1.05, h: 1.10 },
+  recyclingBank: { hx: 1.45, hz: 0.58, h: 1.50 },
+  postBox: { r: 0.42, h: 1.45 },
+  parcelLocker: { hx: 1.45, hz: 0.42, h: 2.25 },
+  toiletKiosk: { r: 1.42, h: 2.95 },
+  waterFountain: { r: 0.38, h: 1.45 },
+  phoneBooth: { hx: 0.54, hz: 0.54, h: 2.60 },
+  streetAtm: { hx: 0.48, hz: 0.40, h: 2.55 },
+  infoBoard: { hx: 1.15, hz: 0.40, h: 2.45 },
+  policeCruiser: { hx: 0.98, hz: 2.34, h: 1.50 },
+  fireTruck: { hx: 1.25, hz: 3.95, h: 2.85 },
+  ambulance: { hx: 1.10, hz: 2.90, h: 2.40 },
+  foodTruck: { hx: 1.20, hz: 3.10, h: 2.60 },
+  ferryCanopy: { hx: 4.90, hz: 3.00, h: 4.50 },
+};
+
 const LABEL_MAX = 14;
 const LABEL_FAR = 110;
 const LABEL_NEAR = 72;
@@ -1696,6 +1716,7 @@ export class PlacesSystem {
     this._runwayPlanes = [];
     this._skyPlanes = [];
     this._planes = [];
+    this._colliderCells = new Map();
     this.hiddenPlanes = new Set();
     this._initSkyPlanes({ x: 0, y: 0, z: 0 });
   }
@@ -1752,6 +1773,103 @@ export class PlacesSystem {
     mesh.receiveShadow = true;
     this.root.add(mesh);
     return mesh;
+  }
+
+  _pushCircleOutProp(pos, radius, entityH, p) {
+    const cfg = p.cfg;
+    const h = cfg.h * p.sy;
+    if (pos.y >= p.y + h - 0.12 || pos.y + entityH <= p.y) return false;
+    if (cfg.r) {
+      const r = cfg.r * Math.max(p.sx, p.sz);
+      const ox = pos.x - p.x;
+      const oz = pos.z - p.z;
+      const minDist = radius + r;
+      const d2 = ox * ox + oz * oz;
+      if (d2 >= minDist * minDist) return false;
+      const d = Math.sqrt(d2);
+      if (d > 1e-5) {
+        pos.x = p.x + (ox / d) * minDist;
+        pos.z = p.z + (oz / d) * minDist;
+      } else {
+        pos.x = p.x + minDist;
+      }
+      return true;
+    }
+    const c = Math.cos(p.rot), s = Math.sin(p.rot);
+    const wx = pos.x - p.x, wz = pos.z - p.z;
+    let lx = wx * c - wz * s;
+    let lz = wx * s + wz * c;
+    const hx = cfg.hx * p.sx, hz = cfg.hz * p.sz;
+    const clx = Math.max(-hx, Math.min(hx, lx));
+    const clz = Math.max(-hz, Math.min(hz, lz));
+    const dlx = lx - clx, dlz = lz - clz;
+    const d2 = dlx * dlx + dlz * dlz;
+    if (d2 >= radius * radius) return false;
+    if (d2 > 1e-8) {
+      const d = Math.sqrt(d2);
+      lx = clx + (dlx / d) * radius;
+      lz = clz + (dlz / d) * radius;
+    } else {
+      const penX = hx - Math.abs(lx);
+      const penZ = hz - Math.abs(lz);
+      if (penX < penZ) lx = (lx >= 0 ? 1 : -1) * (hx + radius);
+      else lz = (lz >= 0 ? 1 : -1) * (hz + radius);
+    }
+    pos.x = p.x + lx * c + lz * s;
+    pos.z = p.z - lx * s + lz * c;
+    return true;
+  }
+
+  /** 3D physical blocking collision for walkers/pedestrians against solid street props. */
+  collideWalker(pos, playerRadius = 0.36) {
+    if (!pos || !this._colliderCells.size) return false;
+    const cx = Math.floor(pos.x / PLACE_CELL);
+    const cz = Math.floor(pos.z / PLACE_CELL);
+    let hit = false;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const list = this._colliderCells.get((cx + dx + 8192) * 16384 + (cz + dz + 8192));
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          if (this._pushCircleOutProp(pos, playerRadius, 1.75, list[i])) hit = true;
+        }
+      }
+    }
+    return hit;
+  }
+
+  /** Physical collision for player vehicles against solid street props (kiosks, booths, shelters, emergency vehicles). */
+  collideVehicle(pos, yaw, speed, spec) {
+    if (!pos || !this._colliderCells.size) return 1;
+    const hw = ((spec && spec.width) || 2.0) * 0.5;
+    const hl = ((spec && spec.length) || 4.6) * 0.5;
+    const vh = (spec && spec.height) || 1.6;
+    const off = Math.max(0, hl - hw);
+    const offs = off > 0.25 ? [off, 0, -off] : [0];
+    const sy = Math.sin(yaw), cy = Math.cos(yaw);
+    const tmp = this._vehTmp || (this._vehTmp = { x: 0, y: 0, z: 0 });
+    let hit = false;
+    const cx = Math.floor(pos.x / PLACE_CELL);
+    const cz = Math.floor(pos.z / PLACE_CELL);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const list = this._colliderCells.get((cx + dx + 8192) * 16384 + (cz + dz + 8192));
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          const p = list[i];
+          for (let k = 0; k < offs.length; k++) {
+            const ox = sy * offs[k], oz = cy * offs[k];
+            tmp.x = pos.x + ox; tmp.y = pos.y; tmp.z = pos.z + oz;
+            if (this._pushCircleOutProp(tmp, hw, vh, p)) {
+              pos.x = tmp.x - ox;
+              pos.z = tmp.z - oz;
+              hit = true;
+            }
+          }
+        }
+      }
+    }
+    return hit && Math.abs(speed) > 0.5 ? 0.35 : 1;
   }
 
   /** Total instances currently drawn (debug/perf). */
@@ -1876,6 +1994,7 @@ export class PlacesSystem {
     const counts = {};
     for (const k of Object.keys(this.pools)) counts[k] = 0;
     this._planes = [];
+    this._colliderCells.clear();
     let nBeacon = 0;
     const bArr = this.beaconGeom.attributes.position.array;
     const bCap = bArr.length / 3;
@@ -1938,6 +2057,13 @@ export class PlacesSystem {
           mArr[o + 4] = 0; mArr[o + 5] = sy; mArr[o + 6] = 0; mArr[o + 7] = 0;
           mArr[o + 8] = s * sz; mArr[o + 9] = 0; mArr[o + 10] = c * sz; mArr[o + 11] = 0;
           mArr[o + 12] = a[i]; mArr[o + 13] = a[i + 1]; mArr[o + 14] = a[i + 2]; mArr[o + 15] = 1;
+          const solidCfg = SOLID_PLACE_CFG[kind];
+          if (solidCfg && d2 <= 220 * 220) {
+            const pk = (Math.floor(a[i] / PLACE_CELL) + 8192) * 16384 + (Math.floor(a[i + 2] / PLACE_CELL) + 8192);
+            let bucket = this._colliderCells.get(pk);
+            if (!bucket) this._colliderCells.set(pk, (bucket = []));
+            bucket.push({ x: a[i], y: a[i + 1], z: a[i + 2], rot: a[i + 3], sx, sy, sz, cfg: solidCfg });
+          }
           const rgb = a[i + 7] | 0;
           cArr[n * 3] = ((rgb >> 16) & 255) / 255;
           cArr[n * 3 + 1] = ((rgb >> 8) & 255) / 255;

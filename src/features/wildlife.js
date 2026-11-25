@@ -418,6 +418,11 @@ export class WildlifeSystem {
     this._time = 0;
     this._waterSpots = [];
     this._treeSpots = [];
+    this._parkTreeSpots = [];
+    this._greenSpots = [];
+    this._raycaster = new THREE.Raycaster();
+    this._rayOrigin = new THREE.Vector3();
+    this._rayDown = new THREE.Vector3(0, -1, 0);
     this._spotsRefreshT = 0;
     this._lastChunkCount = 0;
     this._byKind = {};
@@ -439,6 +444,8 @@ export class WildlifeSystem {
     this.animals.length = 0;
     this._waterSpots.length = 0;
     this._treeSpots.length = 0;
+    this._parkTreeSpots.length = 0;
+    this._greenSpots.length = 0;
     this._spotsRefreshT = 0;
     this._lastChunkCount = 0;
     this._fetchLat = NaN;
@@ -642,6 +649,83 @@ export class WildlifeSystem {
     return null;
   }
 
+  _isAnyRoad(x, z, gy, pad = 1.1) {
+    const surf = this.app.sampleRoadSurface ? this.app.sampleRoadSurface(x, gy + 0.5, z) : null;
+    if (!surf) return false;
+    const s = surf.seg;
+    if (!s) return true; // deck / pier
+    const vx = s.x2 - s.x1;
+    const vz = s.z2 - s.z1;
+    const len2 = vx * vx + vz * vz;
+    let t = len2 > 1e-6 ? ((x - s.x1) * vx + (z - s.z1) * vz) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const d = Math.hypot(x - (s.x1 + vx * t), z - (s.z1 + vz * t));
+    return d < (s.width || 5) * 0.5 + pad;
+  }
+
+  _sampleGroundSurfaceKind(x, z, gy) {
+    const chunks = this.app.loadedChunks;
+    if (!chunks || chunks.size === 0) return 'unknown';
+    let targetChunk = null;
+    for (const ch of chunks.values()) {
+      if (Math.abs(x - ch.position.x) <= 500 && Math.abs(z - ch.position.z) <= 500) {
+        targetChunk = ch;
+        break;
+      }
+    }
+    const tg = targetChunk && targetChunk.userData && targetChunk.userData.subGroups && targetChunk.userData.subGroups.terrain;
+    if (!tg || !tg.children || tg.children.length === 0) return 'unknown';
+    const meshes = [];
+    for (let i = 0; i < tg.children.length; i++) {
+      const m = tg.children[i];
+      if (m.isMesh && m.material && m.material.vertexColors && m.geometry && m.geometry.attributes && m.geometry.attributes.position) {
+        meshes.push(m);
+      }
+    }
+    if (meshes.length === 0) return 'unknown';
+    this._rayOrigin.set(x, gy + 30, z);
+    this._raycaster.set(this._rayOrigin, this._rayDown);
+    this._raycaster.far = 80;
+    const hits = this._raycaster.intersectObjects(meshes, false);
+    if (!hits || hits.length === 0) return 'unknown';
+    const hit = hits[0];
+    const mat = hit.object.material;
+    if (mat.polygonOffsetFactor === 2) return 'park';
+    const face = hit.face;
+    const col = hit.object.geometry.attributes.color;
+    const r = col && face ? col.getX(face.a) : 0;
+    const g = col && face ? col.getY(face.a) : 0;
+    const b = col && face ? col.getZ(face.a) : 0;
+    if (mat.name === 'landcoverMat') {
+      return (g > r * 1.10 && g > b * 1.18) ? 'green' : 'urban';
+    }
+    if (mat.polygonOffsetFactor === 4) {
+      const uv = hit.object.geometry.attributes.uv;
+      const built = uv && face ? uv.getX(face.a) : 1;
+      if (built > 0.22) return 'urban';
+      return (g > r * 1.04 && g > b * 1.10) ? 'green' : 'urban';
+    }
+    return 'unknown';
+  }
+
+  _isGreenGroundAt(x, z, gy) {
+    if (this._isWater(x, z)) return false;
+    if (this._isBuilding(x, z, gy, 1.2)) return false;
+    if (this._isAnyRoad(x, z, gy, 1.2)) return false;
+    const k = this._sampleGroundSurfaceKind(x, z, gy);
+    return k === 'park' || k === 'green';
+  }
+
+  _isNearTree(x, z, maxDist = 12) {
+    const maxD2 = maxDist * maxDist;
+    for (let i = 0; i < this._treeSpots.length; i += 2) {
+      const dx = x - this._treeSpots[i];
+      const dz = z - this._treeSpots[i + 1];
+      if (dx * dx + dz * dz <= maxD2) return true;
+    }
+    return false;
+  }
+
   _isValidGroundSpot(x, z, margin = 0.85) {
     if (this._isWater(x, z)) return false;
     const gy = this._groundY(x, z);
@@ -656,12 +740,16 @@ export class WildlifeSystem {
     if (!chunks || chunks.size === 0) return;
 
     this._treeSpots.length = 0;
+    this._parkTreeSpots.length = 0;
     const maxR2 = SPAWN_MAX_R * SPAWN_MAX_R;
     for (const chunk of chunks.values()) {
       const v = chunk.userData && chunk.userData.vegInstances;
       if (!v || !v.count || !v.inst) continue;
-      const step = Math.max(1, Math.floor(v.count / 45));
-      for (let i = 0; i < v.count && this._treeSpots.length < 220; i += step) {
+      const streetCount = v.streetCount || 0;
+      const spArr = v.species;
+      const step = Math.max(1, Math.floor(v.count / 70));
+      for (let i = 0; i < v.count && this._treeSpots.length < 260; i += step) {
+        if (spArr && spArr[i] === 4) continue; // skip low bushes for tree spots
         const o = i * INST_STRIDE;
         const tx = v.inst[o];
         const tz = v.inst[o + 2];
@@ -671,6 +759,44 @@ export class WildlifeSystem {
         if (d2 > 64 && d2 < maxR2) {
           this._treeSpots.push(tx, tz);
         }
+      }
+      if (v.count > streetCount) {
+        const pStep = Math.max(1, Math.floor((v.count - streetCount) / 48));
+        for (let i = streetCount; i < v.count && this._parkTreeSpots.length < 180; i += pStep) {
+          const o = i * INST_STRIDE;
+          const tx = v.inst[o];
+          const tz = v.inst[o + 2];
+          const dx = tx - p.x;
+          const dz = tz - p.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 64 && d2 < maxR2) {
+            this._parkTreeSpots.push(tx, tz);
+          }
+        }
+      }
+    }
+
+    // Build validated park/forest/meadow spots (never downtown concrete or roadways)
+    this._greenSpots.length = 0;
+    for (let i = 0; i < 40 && this._greenSpots.length < 48 && this._parkTreeSpots.length >= 2; i++) {
+      const idx = Math.floor(Math.random() * (this._parkTreeSpots.length >> 1)) * 2;
+      const gx = this._parkTreeSpots[idx] + randRange(-9, 9);
+      const gz = this._parkTreeSpots[idx + 1] + randRange(-9, 9);
+      const d = Math.hypot(gx - p.x, gz - p.z);
+      if (d < SPAWN_MIN_R || d > SPAWN_MAX_R) continue;
+      const gy = this._isValidGroundSpot(gx, gz, 1.15);
+      if (gy !== false && this._isGreenGroundAt(gx, gz, gy)) {
+        this._greenSpots.push(gx, gz);
+      }
+    }
+    for (let i = 0; i < 42 && this._greenSpots.length < 48; i++) {
+      const r = randRange(SPAWN_MIN_R, SPAWN_MAX_R);
+      const a = Math.random() * Math.PI * 2;
+      const gx = p.x + Math.cos(a) * r;
+      const gz = p.z + Math.sin(a) * r;
+      const gy = this._isValidGroundSpot(gx, gz, 1.15);
+      if (gy !== false && this._isGreenGroundAt(gx, gz, gy)) {
+        this._greenSpots.push(gx, gz);
       }
     }
 
@@ -691,16 +817,20 @@ export class WildlifeSystem {
 
   // --------------------------------------------------------------------------- Spawning & Recycling
 
-  _pickKind(hasWater) {
+  _pickKind(hasWater, hasGreen, hasTrees) {
     let total = 0;
     for (const k of WILDLIFE_KINDS) {
       if (k === 'duck' && !hasWater) continue;
+      if ((k === 'fox' || k === 'deer') && !hasGreen) continue;
+      if (k === 'squirrel' && !hasGreen && !hasTrees) continue;
       total += this.weights[k] || 0;
     }
-    if (total <= 1e-9) return 'sparrow';
+    if (total <= 1e-9) return Math.random() < 0.55 ? 'pigeon' : 'sparrow';
     let r = Math.random() * total;
     for (const k of WILDLIFE_KINDS) {
       if (k === 'duck' && !hasWater) continue;
+      if ((k === 'fox' || k === 'deer') && !hasGreen) continue;
+      if (k === 'squirrel' && !hasGreen && !hasTrees) continue;
       r -= this.weights[k] || 0;
       if (r <= 0) return k;
     }
@@ -791,9 +921,55 @@ export class WildlifeSystem {
     return animal;
   }
 
+  _findGreenSpawn(minR = SPAWN_MIN_R, maxR = SPAWN_MAX_R) {
+    const p = this.app.pos;
+    if (this._greenSpots.length >= 2) {
+      for (let t = 0; t < 10; t++) {
+        const idx = Math.floor(Math.random() * (this._greenSpots.length >> 1)) * 2;
+        const gx = this._greenSpots[idx] + randRange(-5, 5);
+        const gz = this._greenSpots[idx + 1] + randRange(-5, 5);
+        const d = Math.hypot(gx - p.x, gz - p.z);
+        if (d < minR || d > maxR) continue;
+        const gy = this._isValidGroundSpot(gx, gz, 1.15);
+        if (gy !== false && this._isGreenGroundAt(gx, gz, gy)) return { x: gx, y: gy, z: gz };
+      }
+      // Fallback: pick any validated cached green spot without radius tightening
+      const idx = Math.floor(Math.random() * (this._greenSpots.length >> 1)) * 2;
+      const gx = this._greenSpots[idx];
+      const gz = this._greenSpots[idx + 1];
+      const gy = this._isValidGroundSpot(gx, gz, 1.15);
+      if (gy !== false && this._isGreenGroundAt(gx, gz, gy)) return { x: gx, y: gy, z: gz };
+    }
+    return null;
+  }
+
+  _findSquirrelSpawn(minR = SPAWN_MIN_R, maxR = SPAWN_MAX_R) {
+    const green = this._findGreenSpawn(minR, maxR);
+    if (green) return green;
+    const p = this.app.pos;
+    if (this._treeSpots.length >= 2) {
+      for (let t = 0; t < 10; t++) {
+        const idx = Math.floor(Math.random() * (this._treeSpots.length >> 1)) * 2;
+        const tx = this._treeSpots[idx] + randRange(-8, 8);
+        const tz = this._treeSpots[idx + 1] + randRange(-8, 8);
+        const d = Math.hypot(tx - p.x, tz - p.z);
+        if (d < minR || d > maxR) continue;
+        const gy = this._isValidGroundSpot(tx, tz, 0.9);
+        if (gy === false || this._isAnyRoad(tx, tz, gy, 1.2)) continue;
+        const surfKind = this._sampleGroundSurfaceKind(tx, tz, gy);
+        if (surfKind === 'park' || surfKind === 'green' || (surfKind !== 'urban' && this._isNearTree(tx, tz, 12))) {
+          return { x: tx, y: gy, z: tz };
+        }
+      }
+    }
+    return null;
+  }
+
   _spawnOne(preferClose = false) {
     const hasWater = this._waterSpots.length >= 2;
-    let kind = this._pickKind(hasWater);
+    const hasGreen = this._greenSpots.length >= 2;
+    const hasTrees = this._treeSpots.length >= 2;
+    let kind = this._pickKind(hasWater, hasGreen, hasTrees);
     const p = this.app.pos;
     const minR = preferClose ? 12 : 28;
     const maxR = preferClose ? 95 : SPAWN_MAX_R;
@@ -806,6 +982,14 @@ export class WildlifeSystem {
       pos = this._findWaterSpawn();
       if (!pos) kind = 'sparrow';
       else state = 'water';
+    }
+
+    if (kind === 'fox' || kind === 'deer') {
+      pos = this._findGreenSpawn(minR, maxR);
+      if (!pos) kind = Math.random() < 0.5 ? 'pigeon' : 'sparrow';
+    } else if (kind === 'squirrel') {
+      pos = this._findSquirrelSpawn(minR, maxR);
+      if (!pos) kind = Math.random() < 0.5 ? 'pigeon' : 'sparrow';
     }
 
     if (kind === 'seagull') {
@@ -838,8 +1022,8 @@ export class WildlifeSystem {
       const y = Math.max(gy + alt, ceil != null ? ceil + 10 : -Infinity);
       pos = { x: cx, y, z: cz };
       state = 'air';
-    } else if (kind !== 'duck') {
-      const preferTree = kind === 'squirrel' || kind === 'sparrow' || kind === 'deer' || kind === 'fox';
+    } else if (kind !== 'duck' && !pos) {
+      const preferTree = kind === 'sparrow';
       pos = this._findGroundSpawn(preferTree, minR, maxR);
       if (!pos && (kind === 'sparrow' || kind === 'pigeon')) {
         const a = Math.random() * Math.PI * 2;
@@ -937,18 +1121,28 @@ export class WildlifeSystem {
       const a = this.animals[i];
       if (a.state === 'ground') {
         const margin = a.kind === 'deer' ? 1.15 : 0.9;
-        if (this._isValidGroundSpot(a.x, a.z, margin) === false) {
+        const validBase = this._isValidGroundSpot(a.x, a.z, margin);
+        const validHabitat = validBase !== false && (
+          (a.kind !== 'fox' && a.kind !== 'deer') || this._isGreenGroundAt(a.x, a.z, validBase)
+        );
+        if (!validHabitat) {
           if (a.kind === 'sparrow' || a.kind === 'pigeon') {
             a.state = 'air';
             a.timer = randRange(3.5, 6.5);
             a.speed = a.kind === 'pigeon' ? 9.0 : 7.8;
             a.targetAlt = randRange(8, 18);
           } else {
-            const safe = this._findGroundSpawn(true, 12, 160);
+            const safe = (a.kind === 'fox' || a.kind === 'deer')
+              ? this._findGreenSpawn(12, 180)
+              : a.kind === 'squirrel'
+                ? this._findSquirrelSpawn(12, 160)
+                : this._findGroundSpawn(true, 12, 160);
             if (safe) {
               a.x = safe.x;
               a.y = safe.y;
               a.z = safe.z;
+              a.anchorX = safe.x;
+              a.anchorZ = safe.z;
               a._groundY = safe.y;
               a.model.root.position.set(a.x, a.y, a.z);
             } else {
@@ -1195,36 +1389,42 @@ export class WildlifeSystem {
     }
 
     const margin = k === 'deer' ? 1.15 : 0.9;
+    const isWild = k === 'fox' || k === 'deer';
     if (a.speed > 0.05) {
       const nx = a.x + Math.sin(a.heading) * a.speed * dt;
       const nz = a.z + Math.cos(a.heading) * a.speed * dt;
       const gy = this._isValidGroundSpot(nx, nz, margin);
-      if (gy !== false) {
+      let ok = gy !== false;
+      if (ok && isWild) {
+        if (this._isAnyRoad(nx, nz, gy, 1.4)) ok = false;
+        else if (doGridCheck && !this._isGreenGroundAt(nx, nz, gy)) ok = false;
+      } else if (ok && k === 'squirrel' && this._isAnyRoad(nx, nz, gy, 1.0)) {
+        ok = false;
+      }
+      if (ok) {
         a.x = nx;
         a.z = nz;
         a._groundY = gy;
       } else {
-        if (this._isValidGroundSpot(a.x, a.z, margin) === false) {
-          const safe = this._findGroundSpawn(true, 12, 160);
-          if (safe) {
-            a.x = safe.x;
-            a.y = safe.y;
-            a.z = safe.z;
-            a._groundY = safe.y;
-          }
-        }
-        a.heading = wrapAngle(a.heading + Math.PI * 0.72 + randRange(-0.5, 0.5));
+        const homeAngle = Math.atan2(a.anchorX - a.x, a.anchorZ - a.z);
+        const distHome = Math.hypot(a.anchorX - a.x, a.anchorZ - a.z);
+        a.heading = distHome > 2.5
+          ? wrapAngle(homeAngle + randRange(-0.45, 0.45))
+          : wrapAngle(a.heading + Math.PI * 0.72 + randRange(-0.5, 0.5));
       }
     } else if (doGridCheck) {
       const curY = this._isValidGroundSpot(a.x, a.z, margin);
-      if (curY !== false) {
+      const ok = curY !== false && (!isWild || this._isGreenGroundAt(a.x, a.z, curY));
+      if (ok) {
         a._groundY = curY;
       } else {
-        const safe = this._findGroundSpawn(true, 12, 160);
+        const safe = isWild ? this._findGreenSpawn(12, 180) : this._findSquirrelSpawn(12, 160);
         if (safe) {
           a.x = safe.x;
           a.y = safe.y;
           a.z = safe.z;
+          a.anchorX = safe.x;
+          a.anchorZ = safe.z;
           a._groundY = safe.y;
         }
       }

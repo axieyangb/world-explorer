@@ -40,7 +40,7 @@ const WAIST_Y = 1.0, NECK_Y = 1.56; // chest and head pivots
 // Geometry helpers (indexed BufferGeometry, position + normal only, so parts can be merged per material).
 
 // Closes a stack of rings (each `m` points) into a tube with pole caps, outward winding, smooth normals.
-function tubeFromRings(rings, m, centers, caps = true) {
+function tubeFromRings(rings, m, centers, caps = true, withUv = false) {
   const n = rings.length;
   const pos = new Float32Array((n * m + 2) * 3);
   for (let i = 0; i < n; i++) pos.set(rings[i], i * m * 3);
@@ -60,6 +60,20 @@ function tubeFromRings(rings, m, centers, caps = true) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  if (withUv) {
+    const uv = new Float32Array((n * m + 2) * 2);
+    for (let i = 0; i < n; i++) {
+      const v = n > 1 ? i / (n - 1) : 0;
+      for (let j = 0; j < m; j++) {
+        const k = (i * m + j) * 2;
+        uv[k] = Math.abs((j / m) * 2 - 1);
+        uv[k + 1] = v;
+      }
+    }
+    uv[ia * 2] = 0.5; uv[ia * 2 + 1] = 0;
+    uv[ib * 2] = 0.5; uv[ib * 2 + 1] = 1;
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  }
   g.setIndex(idx);
   g.computeVertexNormals();
   // Winding check on a mid ring: normals must point away from the ring centre.
@@ -84,7 +98,7 @@ function se(th, p) {
 }
 
 // Loft along Y: at(t) -> { x, y, z, rx, rf, rb, p }. rf is the +Z (front) half-depth, rb the back.
-function loftY(n, m, at, caps = true) {
+function loftY(n, m, at, caps = true, withUv = false) {
   const rings = [], centers = [];
   for (let i = 0; i <= n; i++) {
     const r = at(i / n), ring = new Float32Array(m * 3);
@@ -96,7 +110,7 @@ function loftY(n, m, at, caps = true) {
     }
     rings.push(ring); centers.push([r.x, r.y, r.z]);
   }
-  return tubeFromRings(rings, m, centers, caps);
+  return tubeFromRings(rings, m, centers, caps, withUv);
 }
 
 // Loft along Z (feet): at(t) -> { x, y, z, rx, rt, rb, p }; rt is the top half-height, rb the bottom.
@@ -116,7 +130,7 @@ function loftZ(n, m, at) {
 }
 
 // Profile loft: keys = [[y, rx, rf, rb], ...] from top to bottom (any order), optional x / z / p.
-function limb(keys, { x = 0, z = 0, p = 2, n = 22, m = 20, zKeys = null } = {}) {
+function limb(keys, { x = 0, z = 0, p = 2, n = 22, m = 20, zKeys = null, uv = false } = {}) {
   const ys = keys.map((k) => k[0]);
   const y0 = Math.min(...ys), y1 = Math.max(...ys);
   const sorted = [...keys].sort((a, b) => a[0] - b[0]);
@@ -127,7 +141,7 @@ function limb(keys, { x = 0, z = 0, p = 2, n = 22, m = 20, zKeys = null } = {}) 
   return loftY(n, m, (t) => {
     const y = y0 + (y1 - y0) * t;
     return { x, y, z: fz(y), rx: fx(y), rf: ff(y), rb: fb(y), p };
-  });
+  }, true, uv);
 }
 
 // Rounded box: a subdivided box whose vertices are pushed onto a radius-r shell around an inner box.
@@ -167,7 +181,7 @@ function wrapY(g, rx, rz) {
 }
 
 // Sweeps a rounded rectangle (half sizes rw x rh) along a Catmull-Rom path; rh lies along hint(p).
-function sweep(points, rw, rh, hint, { n = 24, m = 12, p = 4 } = {}) {
+function sweep(points, rw, rh, hint, { n = 24, m = 12, p = 4, rAt = null, uv = false } = {}) {
   const path = new THREE.CatmullRomCurve3(points.map((q) => new THREE.Vector3(...q)), false, 'centripetal');
   const rings = [], centers = [];
   const P = new THREE.Vector3(), T = new THREE.Vector3(), B = new THREE.Vector3(), N = new THREE.Vector3();
@@ -175,17 +189,20 @@ function sweep(points, rw, rh, hint, { n = 24, m = 12, p = 4 } = {}) {
     const t = i / n;
     path.getPointAt(t, P); path.getTangentAt(t, T);
     B.copy(hint(P)); B.addScaledVector(T, -B.dot(T)).normalize();
+    if (B.lengthSq() < 1e-8) B.set(0, 1, 0).addScaledVector(T, -T.y).normalize();
     N.crossVectors(T, B).normalize();
+    const sc = rAt ? rAt(t) : 1;
+    const w0 = rw * sc, h0 = rh * sc;
     const ring = new Float32Array(m * 3);
     for (let j = 0; j < m; j++) {
       const [u, w] = se((j / m) * Math.PI * 2, p);
-      ring[j * 3] = P.x + N.x * rw * u + B.x * rh * w;
-      ring[j * 3 + 1] = P.y + N.y * rw * u + B.y * rh * w;
-      ring[j * 3 + 2] = P.z + N.z * rw * u + B.z * rh * w;
+      ring[j * 3] = P.x + N.x * w0 * u + B.x * h0 * w;
+      ring[j * 3 + 1] = P.y + N.y * w0 * u + B.y * h0 * w;
+      ring[j * 3 + 2] = P.z + N.z * w0 * u + B.z * h0 * w;
     }
     rings.push(ring); centers.push([P.x, P.y, P.z]);
   }
-  return tubeFromRings(rings, m, centers);
+  return tubeFromRings(rings, m, centers, true, uv);
 }
 
 function capsule(a, b, r) {
@@ -198,10 +215,10 @@ function capsule(a, b, r) {
   return g;
 }
 
-function ellipsoid(rx, ry, rz, ws = 16, hs = 12) {
+function ellipsoid(rx, ry, rz, ws = 16, hs = 12, keepUv = false) {
   const g = new THREE.SphereGeometry(1, ws, hs);
   g.scale(rx, ry, rz);
-  g.deleteAttribute('uv');
+  if (!keepUv) g.deleteAttribute('uv');
   return g;
 }
 
@@ -217,12 +234,15 @@ function merge(geos) {
   for (const g of geos) { nv += g.attributes.position.count; ni += g.index.count; }
   const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), idx = new Uint32Array(ni);
   const hasCol = geos.some((g) => g.attributes.color);
+  const hasUv = geos.some((g) => g.attributes.uv);
   const col = hasCol ? new Float32Array(nv * 3).fill(1) : null;
+  const uv = hasUv ? new Float32Array(nv * 2).fill(0.5) : null;
   let ov = 0, oi = 0;
   for (const g of geos) {
     pos.set(g.attributes.position.array, ov * 3);
     nrm.set(g.attributes.normal.array, ov * 3);
     if (col && g.attributes.color) col.set(g.attributes.color.array, ov * 3);
+    if (uv && g.attributes.uv) uv.set(g.attributes.uv.array, ov * 2);
     const src = g.index.array;
     for (let i = 0; i < src.length; i++) idx[oi + i] = src[i] + ov;
     ov += g.attributes.position.count; oi += src.length;
@@ -232,6 +252,7 @@ function merge(geos) {
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   if (col) out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (uv) out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   out.setIndex(new THREE.BufferAttribute(idx, 1));
   return out;
 }
@@ -260,6 +281,175 @@ class Parts {
   }
 }
 
+const FACE_TEX_CACHE = new Map();
+let HAIR_TEX_CACHE = null;
+let IRIS_TEX_CACHE = null;
+
+function headUvOf(x, y) {
+  const ux = Math.max(-0.98, Math.min(0.98, x / HEAD_R[0]));
+  const uy = Math.max(-0.98, Math.min(0.98, y / HEAD_R[1]));
+  const uz = Math.sqrt(Math.max(0.01, 1 - ux * ux - uy * uy));
+  const u = 0.5 + Math.atan2(ux, uz) / (2 * Math.PI);
+  const v = 1 - Math.acos(Math.max(-1, Math.min(1, uy))) / Math.PI;
+  return [u, v];
+}
+
+// Cached procedural skin/face shading CanvasTexture: warm subsurface cheek/nose blush,
+// subtle eye-socket / under-nose / jawline AO, and gentle skin micro-variation.
+function getFaceTexture(skinHex, female, facial) {
+  if (typeof document === 'undefined') return null;
+  const lum = new THREE.Color(skinHex).getHSL({ h: 0, s: 0, l: 0 }).l;
+  const bucket = lum < 0.32 ? 'dark' : lum < 0.55 ? 'mid' : 'light';
+  const key = `${bucket}_${female ? 1 : 0}_${facial === 'none' ? 0 : 1}`;
+  if (FACE_TEX_CACHE.has(key)) return FACE_TEX_CACHE.get(key);
+
+  const S = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, S, S);
+
+  const dot = (hx, hy, rad, r, g, b, a) => {
+    const [u, v] = headUvOf(hx, hy);
+    const cx = u * S, cy = (1 - v) * S, R = rad * S;
+    const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+    gr.addColorStop(0, `rgba(${r},${g},${b},${a})`);
+    gr.addColorStop(0.55, `rgba(${r},${g},${b},${a * 0.42})`);
+    gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const blushA = (female ? 0.38 : 0.22) * (bucket === 'dark' ? 0.55 : 1);
+  // Warm subsurface cheek blush and nose-bridge warmth
+  dot(-0.040, -0.017, 0.068, 244, 146, 134, blushA);
+  dot(0.040, -0.017, 0.068, 244, 146, 134, blushA);
+  dot(0, -0.018, 0.038, 248, 178, 162, blushA * 0.72);
+  dot(0, -0.090, 0.036, 248, 186, 172, blushA * 0.45);
+  // Subtle ear warmth
+  dot(-0.072, -0.004, 0.042, 245, 168, 152, blushA * 0.55);
+  dot(0.072, -0.004, 0.042, 245, 168, 152, blushA * 0.55);
+
+  // Soft ambient occlusion in eye sockets, upper lid crease, under nose, mouth corners, and chin groove
+  dot(-0.030, 0.010, 0.042, 165, 128, 114, 0.28);
+  dot(0.030, 0.010, 0.042, 165, 128, 114, 0.28);
+  dot(-0.030, 0.018, 0.025, 135, 98, 86, 0.26);
+  dot(0.030, 0.018, 0.025, 135, 98, 86, 0.26);
+  dot(0, -0.031, 0.026, 155, 118, 106, 0.30);
+  dot(-0.009, -0.029, 0.012, 118, 82, 74, 0.32);
+  dot(0.009, -0.029, 0.012, 118, 82, 74, 0.32);
+  dot(0, -0.054, 0.030, 146, 98, 94, 0.24);
+  dot(-0.017, -0.053, 0.013, 132, 92, 86, 0.25);
+  dot(0.017, -0.053, 0.013, 132, 92, 86, 0.25);
+  dot(0, -0.070, 0.032, 168, 132, 120, 0.22);
+
+  // Subtle under-jawline and neck-transition shadow
+  const jawGrad = ctx.createLinearGradient(0, S * 0.66, 0, S);
+  jawGrad.addColorStop(0, 'rgba(176,144,132,0)');
+  jawGrad.addColorStop(0.6, 'rgba(176,144,132,0.16)');
+  jawGrad.addColorStop(1, 'rgba(154,122,110,0.28)');
+  ctx.fillStyle = jawGrad;
+  ctx.fillRect(0, S * 0.66, S, S * 0.34);
+
+  // Fine organic skin micro-variation
+  const img = ctx.getImageData(0, 0, S, S);
+  const data = img.data;
+  const rand = rng(0x9e3779b9);
+  for (let i = 0; i < data.length; i += 4) {
+    const n = (rand() - 0.5) * 7;
+    data[i] = Math.max(0, Math.min(255, data[i] + n));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + n * 0.95));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + n * 0.9));
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  FACE_TEX_CACHE.set(key, tex);
+  return tex;
+}
+
+// Cached directional hair-strand CanvasTexture (neutral multiplicative strands + subtle crown sheen).
+function getHairTexture() {
+  if (typeof document === 'undefined') return null;
+  if (HAIR_TEX_CACHE) return HAIR_TEX_CACHE;
+  const S = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#dcdcdc';
+  ctx.fillRect(0, 0, S, S);
+
+  const rand = rng(0x517cc1b7);
+  for (let i = 0; i < 900; i++) {
+    const x = rand() * S;
+    const shade = Math.floor(194 + rand() * 58);
+    ctx.strokeStyle = `rgba(${shade},${shade},${shade},0.45)`;
+    ctx.lineWidth = 0.7 + rand() * 1.3;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    const sway = (rand() - 0.5) * 10;
+    ctx.bezierCurveTo(x + sway, S * 0.33, x - sway, S * 0.66, x + (rand() - 0.5) * 6, S);
+    ctx.stroke();
+  }
+  const sheen = ctx.createLinearGradient(0, S * 0.12, 0, S * 0.55);
+  sheen.addColorStop(0, 'rgba(255,255,255,0)');
+  sheen.addColorStop(0.5, 'rgba(255,255,255,0.16)');
+  sheen.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(0, S * 0.12, S, S * 0.43);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  HAIR_TEX_CACHE = tex;
+  return tex;
+}
+
+// Cached radial iris CanvasTexture with dark limbal ring and fibrous radial depth.
+function getIrisTexture() {
+  if (typeof document === 'undefined') return null;
+  if (IRIS_TEX_CACHE) return IRIS_TEX_CACHE;
+  const S = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  const cx = S / 2, cy = S / 2, R = S * 0.48;
+  const base = ctx.createRadialGradient(cx, cy, R * 0.25, cx, cy, R);
+  base.addColorStop(0, '#ffffff');
+  base.addColorStop(0.65, '#f2f2f2');
+  base.addColorStop(0.88, '#969696');
+  base.addColorStop(1, '#4c4c4c');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, S, S);
+
+  const rand = rng(0x27d4eb2f);
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * Math.PI * 2 + (rand() - 0.5) * 0.05;
+    const shade = Math.floor(170 + rand() * 85);
+    ctx.strokeStyle = `rgba(${shade},${shade},${shade},0.45)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * R * 0.25, cy + Math.sin(a) * R * 0.25);
+    ctx.lineTo(cx + Math.cos(a) * R * 0.9, cy + Math.sin(a) * R * 0.9);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  IRIS_TEX_CACHE = tex;
+  return tex;
+}
+
 function makeSoldierMaterials() {
   const std = (color, roughness, metalness = 0, extra = {}) =>
     new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
@@ -267,9 +457,11 @@ function makeSoldierMaterials() {
     color: 0x6a4a16, roughness: 0.06, metalness: 0.55, clearcoat: 1, clearcoatRoughness: 0.04,
   });
   lens.userData.envProbe = true;
+  const skinCol = new THREE.Color(0xc89270);
   return {
-    skin: std(0xffffff, 0.62, 0, { vertexColors: true }),
+    skin: std(0xffffff, 0.62, 0, { vertexColors: true, map: getFaceTexture(0xc89270, false, 'stubble') }),
     skinFlat: std(0xc89270, 0.62),
+    skinShade: std(skinCol.clone().multiplyScalar(0.84), 0.68),
     shirt: std(0x56603f, 0.9),       // olive combat shirt
     pants: std(0x4c5238, 0.88),      // olive drab fatigue trousers
     vest: std(0x3b4430, 0.86),       // plate carrier
@@ -281,9 +473,14 @@ function makeSoldierMaterials() {
     sole: std(0x161615, 0.9),
     helmet: std(0x4b5440, 0.62, 0.05),
     metal: std(0x2c2e2c, 0.4, 0.7),
-    eyeWhite: std(0xe6e1d8, 0.35),
-    iris: std(0x33241a, 0.3),
-    dark: std(0x1a1310, 0.85),       // brows, mouth line
+    eyeWhite: std(0xf7f5f0, 0.24),
+    iris: std(0x33241a, 0.18, 0, { map: getIrisTexture() }),
+    pupil: std(0x0b0b0d, 0.10),
+    catchlight: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    lash: std(0x16100d, 0.72),
+    lip: std(skinCol.clone().lerp(new THREE.Color(0xa05a52), 0.34), 0.50),
+    dark: std(0x281d16, 0.80),       // brows, mouth line
+    hair: std(0x3b2c21, 0.55, 0, { map: getHairTexture() }),
     lens,
   };
 }
@@ -370,12 +567,18 @@ function makeMaterials(L) {
   const skin = new THREE.Color(L.skin);
   const brow = new THREE.Color(L.hairColor).multiplyScalar(0.7);
   const legs = L.tights ? std(0x1d191a, 0.62) : null;
+  const lipCol = skin.clone().lerp(new THREE.Color(L.female ? 0xb44c56 : 0xa05a52), L.female ? 0.50 : 0.34);
   return {
-    skin: std(0xffffff, 0.6, 0, { vertexColors: true }),
+    skin: std(0xffffff, 0.62, 0, { vertexColors: true, map: getFaceTexture(L.skin, L.female, L.facial) }),
     skinFlat: std(skin, 0.62),
-    eyeWhite: std(0xe6e1d8, 0.35),
-    iris: std(L.eyes, 0.3),
-    dark: std(brow, 0.85),
+    skinShade: std(skin.clone().multiplyScalar(0.84), 0.68),
+    eyeWhite: std(0xf7f5f0, 0.24),
+    iris: std(L.eyes, 0.18, 0, { map: getIrisTexture() }),
+    pupil: std(0x0b0b0d, 0.10),
+    catchlight: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    lash: std(new THREE.Color(L.hairColor).multiplyScalar(0.28), 0.72),
+    lip: std(lipCol, 0.48),
+    dark: std(brow, 0.80),
     top: std(L.topColor, L.leather ? 0.42 : L.top === 'jacket' ? 0.8 : 0.9, 0, { side: L.top === 'jacket' ? THREE.DoubleSide : THREE.FrontSide, shadowSide: THREE.BackSide }),
     topRib: std(new THREE.Color(L.topColor).multiplyScalar(0.88), 0.95),
     inner: std(L.innerColor, 0.9),
@@ -385,7 +588,7 @@ function makeMaterials(L) {
     shoe: std(L.shoeColor, L.shoes === 'dress' ? 0.32 : L.shoes === 'boot' ? 0.7 : 0.62),
     sole: std(L.shoes === 'sneaker' ? 0xf0efe9 : 0x191817, 0.85),
     lace: std(L.shoes === 'sneaker' && L.shoeColor === 0xf2f2f0 ? 0xdedcd6 : 0xe8e6e0, 0.9),
-    hair: std(L.hairColor, 0.55),
+    hair: std(L.hairColor, 0.55, 0, { map: getHairTexture() }),
     cap: std(L.capColor, 0.85),
     bag: std(L.bagColor, 0.72),
     strap: std(new THREE.Color(L.bagColor).multiplyScalar(0.6), 0.8),
@@ -419,8 +622,12 @@ const FACE_PROFILE = curve([
 // Deformed head surface point for a unit-sphere direction (ux, uy, uz).
 function headPoint(ux, uy, uz) {
   let x = ux * HEAD_R[0], y = uy * HEAD_R[1], z = uz * HEAD_R[2];
-  if (uz < 0) z *= 1 + 0.12 * smooth(-0.6, 0.4, uy);              // occiput
-  if (uy < 0) {                                                    // jaw and chin taper
+  if (uz < 0) z *= 1 + 0.13 * smooth(-0.6, 0.45, uy);             // fuller rounded cranium / occiput
+  if (uy > 0.1) {                                                  // subtle parietal crown fullness
+    const c = smooth(0.1, 0.75, uy) * (1 - smooth(0.75, 1, uy));
+    x *= 1 + 0.04 * c;
+  }
+  if (uy < 0) {                                                    // tapered jawline and softly rounded chin
     const j = smooth(0, 1, -uy);
     x *= 1 - HP.jaw * j * j;
     if (uz < 0) z *= 1 - 0.25 * j;                                 // the skull narrows into the nape
@@ -434,17 +641,17 @@ function headPoint(ux, uy, uz) {
   const front = smooth(0.25, 0.7, uz);
   const ax = Math.abs(x);
   let dz = 0;
-  dz -= 0.0075 * gauss(ax, y, EYE.x, EYE.y, 0.012, 0.009);         // eye sockets
-  dz += HP.brow * gauss(ax, y, 0.028, 0.03, 0.02, 0.007);           // brow ridge
-  dz += 0.005 * gauss(ax, y, 0.047, -0.014, 0.014, 0.014);          // cheekbones
-  dz += HP.lips * gauss(x, y, 0, -0.054, 0.016, 0.009);             // lips
-  dz -= 0.002 * gauss(x, y, 0, -0.071, 0.02, 0.005);                // groove under the lower lip
-  dz += 0.004 * gauss(x, y, 0, -0.09, 0.018, 0.01);                 // chin
-  const t = (0.016 - y) / 0.05;                                     // nose: bridge (t = 0) to tip (t = 1)
-  let a = 0.005 + 0.021 * Math.max(0, Math.min(1, t)) ** 1.4;
-  if (t > 1) a *= Math.exp(-(((t - 1) / 0.12) ** 2));
-  if (t < 0) a *= Math.exp(-((t / 0.35) ** 2));
-  const sx = 0.0055 + 0.0075 * Math.max(0, Math.min(1, t));
+  dz -= 0.0085 * gauss(ax, y, EYE.x, EYE.y, 0.0125, 0.0095);       // natural eye-socket indentation
+  dz += HP.brow * gauss(ax, y, 0.028, 0.029, 0.02, 0.0075);        // gentle brow ridge
+  dz += 0.0055 * gauss(ax, y, 0.044, -0.013, 0.015, 0.014);        // subtle cheekbone fullness
+  dz += HP.lips * 0.72 * gauss(x, y, 0, -0.054, 0.016, 0.009);     // underlying mouth/lip support
+  dz -= 0.0024 * gauss(x, y, 0, -0.070, 0.018, 0.0055);            // groove under the lower lip
+  dz += 0.0045 * gauss(x, y, 0, -0.089, 0.017, 0.010);             // softly rounded chin
+  const t = (0.016 - y) / 0.046;                                   // nose: bridge (t = 0) to tip (t = 1)
+  let a = 0.0045 + 0.0185 * Math.max(0, Math.min(1, t)) ** 1.35;
+  if (t > 1) a *= Math.exp(-(((t - 1) / 0.14) ** 2));
+  if (t < 0) a *= Math.exp(-((t / 0.36) ** 2));
+  const sx = 0.0052 + 0.0072 * Math.max(0, Math.min(1, t));
   dz += a * Math.exp(-((x / sx) ** 2) / 2);
   return [x, y, z + dz * front];
 }
@@ -469,26 +676,26 @@ const hairline = (ux, uz) => (uz > 0
 const hairW = (ux, uy, uz, drop = 0) => smooth(-0.03, 0.05, uy - hairline(ux, uz) + drop);
 
 function buildHeadGeometry(L) {
-  const g = new THREE.SphereGeometry(1, 96, 64);
-  g.deleteAttribute('uv');
+  // phiStart = -PI/2 aligns u=0.5 dead center at +Z (face) and puts the UV seam at the back (-Z).
+  const g = new THREE.SphereGeometry(1, 96, 64, -Math.PI / 2);
   const pos = g.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const skin = new THREE.Color(L.skin), hair = new THREE.Color(L.hairColor);
   const stub = skin.clone().lerp(hair, 0.45).multiplyScalar(0.85);
-  const lip = skin.clone().lerp(new THREE.Color(L.female ? 0xa8424e : 0x9a5a50), L.female ? 0.55 : 0.4);
+  const lipHint = skin.clone().lerp(new THREE.Color(L.female ? 0xb44c56 : 0xa05a52), 0.35);
   const c = new THREE.Color();
-  const scalpCol = { short: 1, buzz: 1, curly: 1, afro: 1, bob: 0.6, long: 0.6, ponytail: 0.8, bun: 0.8 }[L.hair] || 0;
+  const scalpCol = { short: 0.85, buzz: 0.95, curly: 0.85, afro: 0.85, bob: 0.45, long: 0.45, ponytail: 0.72, bun: 0.72 }[L.hair] || 0;
   const stubW = L.facial === 'stubble' ? 0.38 : L.facial === 'beard' ? 0.5 : 0;
   for (let i = 0; i < pos.count; i++) {
     const ux = pos.getX(i), uy = pos.getY(i), uz = pos.getZ(i);
     const [x, y, z] = headPoint(ux, uy, uz);
     pos.setXYZ(i, x, y, z);
-    // Vertex colours: hair tint on the scalp under the hair shell, stubble on the jaw, lips.
+    // Vertex colours: soft scalp tint under the hair shell, stubble on the jaw, subtle lip base blend.
     c.copy(skin);
-    c.lerp(hair, scalpCol * hairW(ux, uy, uz, 0.04));
-    if (L.hair === 'bald') c.lerp(skin.clone().multiplyScalar(0.92), smooth(0.4, 0.9, uy));
+    c.lerp(hair, scalpCol * hairW(ux, uy, uz, 0.02));
+    if (L.hair === 'bald') c.lerp(skin.clone().multiplyScalar(0.94), smooth(0.4, 0.9, uy));
     c.lerp(stub, smooth(-0.2, -0.5, uy) * smooth(-0.3, 0.2, uz) * stubW);
-    c.lerp(lip, 0.8 * gauss(x, y, 0, -0.055, 0.014, 0.0065) * smooth(0.5, 0.8, uz));
+    c.lerp(lipHint, 0.32 * gauss(x, y, 0, -0.054, 0.015, 0.0065) * smooth(0.55, 0.82, uz));
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -502,29 +709,103 @@ function buildHead(P, M, parent, L) {
   head.scale.setScalar(HEAD_SCALE * (L.female ? 0.97 : 1));
   parent.add(head);
   P.add(head, M.skin, buildHeadGeometry(L));
+
   for (const s of [-1, 1]) {
-    // Eyes sit in the sockets: white, iris, and a skin lid over the top.
-    const ex = s * EYE.x, ey = EYE.y, ez = headAt(ex, ey)[2] - 0.0095;
-    P.add(head, M.eyeWhite, place(ellipsoid(0.0118, 0.0118, 0.0118, 14, 10), ex, ey, ez));
-    P.add(head, M.iris, place(ellipsoid(0.0056, 0.0056, 0.003, 12, 8), ex, ey, ez + 0.0106));
-    const lid = new THREE.SphereGeometry(0.0127, 14, 6, 0, Math.PI * 2, 0, Math.PI * 0.42);
+    // 1. Expressive multi-layered eyes seated gently inside eye sockets
+    const ex = s * EYE.x, ey = EYE.y, ez = headAt(ex, ey)[2] - 0.0092;
+    P.add(head, M.eyeWhite, place(ellipsoid(0.0116, 0.0114, 0.0114, 18, 14), ex, ey, ez));
+    P.add(head, M.iris, place(ellipsoid(0.0056, 0.0056, 0.0028, 16, 10, true), ex, ey, ez + 0.0102));
+    P.add(head, M.pupil, place(ellipsoid(0.0028, 0.0028, 0.0018, 12, 8), ex, ey, ez + 0.0116));
+    // Crisp tiny white specular catchlight offset slightly up-right on both eyes
+    P.add(head, M.catchlight, place(ellipsoid(0.00115, 0.00115, 0.0009, 8, 6), ex + 0.0020, ey + 0.0021, ez + 0.0124));
+
+    // Curved upper eyelid + dark lash rim hugging the top of each eye
+    const lid = new THREE.SphereGeometry(0.0124, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.44);
     lid.deleteAttribute('uv');
-    P.add(head, M.skinFlat, place(lid, ex, ey + 0.0005, ez, 0.8, 0, 0));
-    // Brows follow the brow ridge (thinner and arched for the female face).
-    const bz = headAt(s * 0.03, 0.027)[2];
-    P.add(head, M.dark, place(rbox(0.032, L.female ? 0.0038 : 0.0055, 0.006, 0.0018, 4), s * 0.03, L.female ? 0.029 : 0.027, bz - 0.0005, -0.2, s * 0.3, -s * (L.female ? 0.2 : 0.1)));
-    // Ears.
-    P.add(head, M.skinFlat, place(ellipsoid(0.01, 0.028, 0.019, 12, 10), s * 0.072, -0.004, -0.012, 0, s * 0.3, s * 0.08));
-    P.add(head, M.skinFlat, place(ellipsoid(0.006, 0.02, 0.012, 10, 8), s * 0.076, -0.004, -0.012, 0, s * 0.3, s * 0.08));
+    P.add(head, M.skinFlat, place(lid, ex, ey + 0.0006, ez, 0.62, 0, -s * 0.06));
+    const lashPts = [];
+    for (let k = 0; k <= 6; k++) {
+      const a = Math.PI * (0.10 + 0.80 * (k / 6));
+      lashPts.push([
+        ex + Math.cos(a) * 0.0114,
+        ey + Math.sin(a) * 0.0074 + 0.0010,
+        ez + Math.sin(a) * 0.0038 + 0.0080,
+      ]);
+    }
+    P.add(head, M.lash, sweep(lashPts, 0.0010, 0.0012, () => new THREE.Vector3(0, 0, 1), {
+      n: 12, m: 8, p: 2, rAt: (t) => 0.65 + 0.55 * Math.sin(t * Math.PI),
+    }));
+
+    // 2. Naturally arched, tapered 3D eyebrows following the brow ridge
+    const browPts = [];
+    for (let k = 0; k <= 5; k++) {
+      const t = k / 5;
+      const bx = s * (0.0135 + t * 0.0345);
+      const arch = Math.sin(t * Math.PI * 0.84);
+      const by = 0.0242 + (L.female ? 0.0066 : 0.0044) * arch - t * 0.0018;
+      const bz = headAt(bx, by)[2] + 0.0010;
+      browPts.push([bx, by, bz]);
+    }
+    P.add(head, M.dark, sweep(browPts, L.female ? 0.0020 : 0.0028, L.female ? 0.0014 : 0.0020, () => new THREE.Vector3(0, 0, 1), {
+      n: 14, m: 8, p: 2, rAt: (t) => (1.05 - 0.58 * t * t) * Math.sin(Math.min(1, t * 5.0) * Math.PI * 0.5),
+    }));
+
+    // 3. Sculpted ears (outer helix rim + inner concha recess + earlobe) aligned between brow and nose tip
+    const earX = s * 0.0715, earY = -0.002, earZ = -0.012;
+    P.add(head, M.skinFlat, place(ellipsoid(0.0078, 0.0235, 0.0155, 12, 10), earX, earY, earZ, 0, s * 0.28, s * 0.06));
+    P.add(head, M.skinShade, place(ellipsoid(0.0052, 0.0155, 0.0098, 10, 8), earX + s * 0.0032, earY - 0.001, earZ + 0.0015, 0, s * 0.28, s * 0.06));
+    const helixPts = [
+      [earX - s * 0.001, earY + 0.012, earZ + 0.008],
+      [earX + s * 0.003, earY + 0.022, earZ + 0.001],
+      [earX + s * 0.005, earY + 0.016, earZ - 0.012],
+      [earX + s * 0.005, earY - 0.002, earZ - 0.015],
+      [earX + s * 0.003, earY - 0.018, earZ - 0.009],
+      [earX + s * 0.001, earY - 0.023, earZ + 0.001],
+    ];
+    P.add(head, M.skinFlat, sweep(helixPts, 0.0034, 0.0030, () => new THREE.Vector3(s, 0, 0), {
+      n: 14, m: 8, p: 2, rAt: (t) => 0.72 + 0.35 * Math.sin(t * Math.PI),
+    }));
+    // Soft nose alar wings + subtle nostril shadow recess
+    const az = headAt(s * 0.008, -0.0255)[2];
+    P.add(head, M.skinFlat, place(ellipsoid(0.0052, 0.0046, 0.0056, 10, 8), s * 0.0072, -0.0258, az - 0.0028));
+    P.add(head, M.skinShade, place(ellipsoid(0.0024, 0.0014, 0.0022, 6, 5), s * 0.0048, -0.0292, az - 0.0024));
   }
+
+  // Softly blended nasal tip
+  const ntz = headAt(0, -0.0255)[2];
+  P.add(head, M.skinFlat, place(ellipsoid(0.0066, 0.0058, 0.0062, 12, 8), 0, -0.0245, ntz - 0.0020));
+
+  // 4. Sculpted natural upper lip (subtle Cupid's bow) + fuller lower lip cushion
+  const upperPts = [];
+  const lowerPts = [];
+  for (let k = 0; k <= 6; k++) {
+    const t = k / 6;
+    const lx = (t - 0.5) * 0.032;
+    const ax = Math.abs(lx);
+    const bow = Math.exp(-(((ax - 0.0055) / 0.0045) ** 2)) * 0.0014 - Math.exp(-((ax / 0.003) ** 2)) * 0.0005;
+    const uy = -0.0508 + bow - (ax / 0.016) ** 2 * 0.0018;
+    const ly = -0.0562 + (ax / 0.015) ** 2 * 0.0028;
+    upperPts.push([lx, uy, headAt(lx, uy)[2] + 0.0005]);
+    if (k >= 1 && k <= 5) {
+      const lxw = (t - 0.5) * 0.027;
+      lowerPts.push([lxw, ly, headAt(lxw, ly)[2] + 0.0004]);
+    }
+  }
+  P.add(head, M.lip, sweep(upperPts, 0.0024, 0.0022, () => new THREE.Vector3(0, 0, 1), {
+    n: 14, m: 8, p: 2, rAt: (t) => 0.45 + 0.72 * Math.sin(t * Math.PI),
+  }));
+  P.add(head, M.lip, sweep(lowerPts, 0.0030, 0.0028, () => new THREE.Vector3(0, 0, 1), {
+    n: 12, m: 8, p: 2, rAt: (t) => 0.52 + 0.68 * Math.sin(t * Math.PI),
+  }));
+
   return head;
 }
 
 // Hair/cap shell over the head surface: inside the mask it stands `thick` off the skin, outside it sinks
 // just under it, so the visible edge is the smooth curve where the two surfaces cross.
-function headShell(mask, thick, ws = 64, hs = 44) {
-  const g = new THREE.SphereGeometry(1, ws, hs);
-  g.deleteAttribute('uv');
+function headShell(mask, thick, ws = 64, hs = 44, keepUv = true) {
+  const g = new THREE.SphereGeometry(1, ws, hs, -Math.PI / 2);
+  if (!keepUv) g.deleteAttribute('uv');
   const pos = g.attributes.position, w = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const ux = pos.getX(i), uy = pos.getY(i), uz = pos.getZ(i);
@@ -543,6 +824,12 @@ function headShell(mask, thick, ws = 64, hs = 44) {
 
 const bumps = (ux, uy, uz, f) => Math.sin(ux * f + 1.3) * Math.sin(uy * f * 0.9 + 0.4) * Math.sin(uz * f * 1.1 + 2.1);
 
+function hairLock(pts, rw, rh, hint = (p) => p) {
+  return sweep(pts, rw, rh, hint, {
+    n: 12, m: 8, p: 2.2, uv: true, rAt: (t) => Math.sin(Math.min(1, t * 4.5) * Math.PI * 0.5) * (1 - 0.65 * t * t),
+  });
+}
+
 function buildHair(P, M, head, L) {
   const style = L.hair;
   if (style === 'bald') return;
@@ -550,24 +837,45 @@ function buildHair(P, M, head, L) {
   // Side curtains for bob/long hair: down the back and sides to the jaw, keeping the face clear.
   const curtain = (ux, uy, uz) => Math.max(hairW(ux, uy, uz),
     smooth(-0.66, -0.55, uy) * (1 - smooth(0.25, 0.5, uz) * smooth(0.45, 0.75, 1 - Math.abs(ux))) * smooth(0.45, 0.2, uz) * smooth(-0.1, 0.3, uy + 0.65));
-  if (style === 'short') P.add(head, M.hair, headShell(hairW, (ux, uy, uz) => 0.007 + 0.013 * crown(ux, uy) + 0.004 * smooth(0.5, 0.9, uz) * smooth(0.4, 0.7, uy)));
-  else if (style === 'buzz') P.add(head, M.hair, headShell(hairW, () => 0.0025, 48, 32));
-  else if (style === 'curly') P.add(head, M.hair, headShell((ux, uy, uz) => hairW(ux, uy, uz, 0.05), (ux, uy, uz) => 0.014 + 0.012 * crown(ux, uy) + 0.006 * bumps(ux, uy, uz, 22)));
-  else if (style === 'afro') P.add(head, M.hair, headShell((ux, uy, uz) => hairW(ux, uy, uz, 0.06), (ux, uy, uz) => 0.03 + 0.03 * crown(ux, uy) + 0.007 * bumps(ux, uy, uz, 18)));
-  else if (style === 'bob' || style === 'long') {
-    // Fringe falls over the forehead; volume grows towards the ends.
+
+  if (style === 'short') {
+    P.add(head, M.hair, headShell(hairW, (ux, uy, uz) => 0.007 + 0.013 * crown(ux, uy) + 0.003 * Math.sin(ux * 10 + uz * 4) * smooth(0.2, 0.85, uy)));
+    // Swept front forelock / bangs + tapered temple sideburns so hair frames the forehead naturally
+    P.add(head, M.hair, hairLock([[0.022, 0.092, 0.055], [-0.008, 0.088, 0.072], [-0.036, 0.072, 0.076], [-0.054, 0.055, 0.064]], 0.022, 0.011));
+    P.add(head, M.hair, hairLock([[0.036, 0.085, 0.058], [0.015, 0.075, 0.075], [-0.008, 0.062, 0.080]], 0.016, 0.008));
+    for (const s of [-1, 1]) {
+      P.add(head, M.hair, hairLock([[s * 0.064, 0.048, 0.034], [s * 0.069, 0.024, 0.022], [s * 0.069, -0.002, 0.010]], 0.008, 0.0045));
+    }
+  } else if (style === 'buzz') {
+    P.add(head, M.hair, headShell(hairW, () => 0.0025, 48, 32));
+  } else if (style === 'curly') {
+    P.add(head, M.hair, headShell((ux, uy, uz) => hairW(ux, uy, uz, 0.05), (ux, uy, uz) => 0.014 + 0.012 * crown(ux, uy) + 0.006 * bumps(ux, uy, uz, 22)));
+    for (const [cx, cy, cz, r] of [[-0.032, 0.074, 0.072, 0.018], [0.002, 0.080, 0.076, 0.020], [0.034, 0.072, 0.071, 0.018], [-0.062, 0.042, 0.046, 0.016], [0.062, 0.042, 0.046, 0.016]]) {
+      P.add(head, M.hair, place(ellipsoid(r, r * 0.85, r * 0.9, 10, 8, true), cx, cy, cz));
+    }
+  } else if (style === 'afro') {
+    P.add(head, M.hair, headShell((ux, uy, uz) => hairW(ux, uy, uz, 0.06), (ux, uy, uz) => 0.03 + 0.03 * crown(ux, uy) + 0.007 * bumps(ux, uy, uz, 18)));
+  } else if (style === 'bob' || style === 'long') {
     P.add(head, M.hair, headShell((ux, uy, uz) => Math.max(curtain(ux, uy, uz), smooth(0.2, 0.32, uy) * smooth(0.5, 0.2, Math.abs(ux)) * smooth(0.5, 0.7, uz)),
-      (ux, uy, uz) => 0.01 + 0.008 * crown(ux, uy) + 0.016 * smooth(0.2, -0.6, uy)));
+      (ux, uy, uz) => 0.01 + 0.008 * crown(ux, uy) + 0.015 * smooth(0.2, -0.6, uy)));
+    // Parted curtain bangs + side framing locks sweeping around temples and cheeks
+    for (const s of [-1, 1]) {
+      P.add(head, M.hair, hairLock([[s * 0.008, 0.088, 0.064], [s * 0.034, 0.074, 0.074], [s * 0.058, 0.046, 0.064], [s * 0.072, 0.004, 0.042]], 0.018, 0.009));
+      P.add(head, M.hair, hairLock([[s * 0.068, 0.046, 0.040], [s * 0.078, -0.015, 0.032], [s * 0.076, -0.078, 0.020]], 0.015, 0.010));
+    }
     if (style === 'long') {
-      // Drape down the back to the shoulder blades.
+      // Drape down the back to the shoulder blades with hair-strand UVs.
       P.add(head, M.hair, limb([
         [0.02, 0.07, 0.03, 0.03], [-0.04, 0.085, 0.04, 0.05], [-0.12, 0.09, 0.035, 0.05], [-0.22, 0.085, 0.025, 0.04],
         [-0.3, 0.07, 0.018, 0.026], [-0.34, 0.04, 0.01, 0.012],
-      ], { n: 16, m: 18, zKeys: [[-0.34, -0.1], [-0.2, -0.095], [-0.06, -0.085], [0.02, -0.07]] }));
+      ], { n: 16, m: 18, zKeys: [[-0.34, -0.1], [-0.2, -0.095], [-0.06, -0.085], [0.02, -0.07]], uv: true }));
     }
   } else {
-    // Pulled-back hair (ponytail/bun): a tight shell.
+    // Pulled-back hair (ponytail/bun) with soft temple framing wisps
     P.add(head, M.hair, headShell(hairW, (ux, uy) => 0.005 + 0.007 * crown(ux, uy)));
+    for (const s of [-1, 1]) {
+      P.add(head, M.hair, hairLock([[s * 0.058, 0.055, 0.042], [s * 0.068, 0.022, 0.030], [s * 0.066, -0.012, 0.022]], 0.006, 0.004));
+    }
     if (style === 'ponytail') {
       const tie = new THREE.TorusGeometry(0.016, 0.006, 6, 14);
       tie.deleteAttribute('uv');
@@ -575,17 +883,17 @@ function buildHair(P, M, head, L) {
       P.add(head, M.hair, limb([
         [0.04, 0.012, 0.012, 0.012], [0.02, 0.022, 0.022, 0.022], [-0.06, 0.03, 0.028, 0.028], [-0.16, 0.026, 0.022, 0.022],
         [-0.24, 0.014, 0.012, 0.012], [-0.27, 0.005, 0.005, 0.005],
-      ], { n: 16, m: 12, zKeys: [[-0.27, -0.13], [-0.16, -0.148], [-0.06, -0.142], [0.02, -0.118], [0.04, -0.105]] }));
+      ], { n: 16, m: 12, zKeys: [[-0.27, -0.13], [-0.16, -0.148], [-0.06, -0.142], [0.02, -0.118], [0.04, -0.105]], uv: true }));
     } else {
-      P.add(head, M.hair, place(ellipsoid(0.04, 0.036, 0.038, 16, 12), 0, 0.08, -0.07));
-      P.add(head, M.hair, place(ellipsoid(0.03, 0.03, 0.03, 12, 8), 0.0, 0.06, -0.085));
+      P.add(head, M.hair, place(ellipsoid(0.04, 0.036, 0.038, 16, 12, true), 0, 0.08, -0.07));
+      P.add(head, M.hair, place(ellipsoid(0.03, 0.03, 0.03, 12, 8, true), 0.0, 0.06, -0.085));
     }
   }
 }
 
 function buildCap(P, M, head) {
   // Crown panels over the skull, a stiff curved brim and the top button.
-  P.add(head, M.cap, headShell((ux, uy, uz) => smooth(0.0, 0.08, uy - 0.22 - 0.22 * uz), (ux, uy) => 0.03 + 0.004 * uy, 48, 32));
+  P.add(head, M.cap, headShell((ux, uy, uz) => smooth(0.0, 0.08, uy - 0.22 - 0.22 * uz), (ux, uy) => 0.03 + 0.004 * uy, 48, 32, false));
   P.add(head, M.cap, loftZ(10, 18, (t) => {
     const z = 0.075 + 0.09 * t;
     return { x: 0, y: 0.04 - 0.012 * t * t, z, rx: 0.078 - 0.03 * t * t, rt: 0.0035, rb: 0.0035, p: 2.6 };

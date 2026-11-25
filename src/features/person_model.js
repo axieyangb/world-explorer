@@ -164,18 +164,25 @@ const gauss = (x, y, cx, cy, sx, sy) => Math.exp(-(((x - cx) / sx) ** 2 + ((y - 
 // Head surface for a unit-sphere direction (head-local, centre of the skull).
 function headPoint(ux, uy, uz) {
   let x = ux * HEAD_R[0], y = uy * HEAD_R[1], z = uz * HEAD_R[2];
-  if (uz < 0) z *= 1 + 0.1 * smooth(-0.5, 0.4, uy);                 // occiput
-  if (uy < 0) {                                                     // jaw and chin taper
+  if (uz < 0) z *= 1 + 0.12 * smooth(-0.5, 0.45, uy);               // fuller rounded cranium / occiput
+  if (uy > 0.1) {                                                   // subtle parietal crown fullness
+    const c = smooth(0.1, 0.75, uy) * (1 - smooth(0.75, 1, uy));
+    x *= 1 + 0.035 * c;
+  }
+  if (uy < 0) {                                                     // tapered jawline and softly rounded chin
     const j = smooth(0, 1, -uy);
-    x *= 1 - 0.32 * j * j;
+    x *= 1 - 0.34 * j * j;
     z *= uz < 0 ? 1 - 0.3 * j : 1 - 0.08 * j;
   }
-  if (uz > 0) z *= 1 - 0.12 * smooth(0.3, 1, Math.abs(ux));         // flatter cheeks
-  const f = smooth(0.4, 0.8, uz);
-  z += f * (0.016 * gauss(x, y, 0, -0.004, 0.009, 0.022)            // nose
-    + 0.006 * gauss(Math.abs(x), y, 0.03, 0.032, 0.022, 0.008)       // brow ridge
-    - 0.006 * gauss(Math.abs(x), y, 0.032, 0.012, 0.012, 0.009)      // eye sockets
-    + 0.004 * gauss(x, y, 0, -0.088, 0.02, 0.01));                    // chin
+  if (uz > 0) z *= 1 - 0.12 * smooth(0.32, 1, Math.abs(ux));        // flatter side cheeks
+  const f = smooth(0.35, 0.8, uz);
+  const ax = Math.abs(x);
+  z += f * (0.016 * gauss(x, y, 0, -0.004, 0.009, 0.022)            // nose bridge support
+    + 0.0062 * gauss(ax, y, 0.030, 0.033, 0.021, 0.008)             // gentle brow ridge
+    - 0.0074 * gauss(ax, y, 0.031, 0.014, 0.0125, 0.0095)           // natural eye-socket indentation
+    + 0.0048 * gauss(ax, y, 0.044, -0.013, 0.015, 0.013)            // subtle cheekbone fullness
+    - 0.0020 * gauss(x, y, 0, -0.068, 0.017, 0.0055)                // mentolabial groove
+    + 0.0045 * gauss(x, y, 0, -0.088, 0.018, 0.010));               // softly rounded chin
   return [x, y, z];
 }
 
@@ -215,6 +222,47 @@ function compact(g) {
   out.setIndex(idx);
   return out;
 }
+// Builds a smooth tapered 3D tube along an arbitrary list of [x, y, z, rx, ry] points.
+function featTube(pts, m = 7, caps = true) {
+  const n = pts.length, pos = [], idx = [];
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
+    const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(n - 1, i + 1)];
+    let tx = next[0] - prev[0], ty = next[1] - prev[1], tz = next[2] - prev[2];
+    const tl = Math.hypot(tx, ty, tz) || 1;
+    tx /= tl; ty /= tl; tz /= tl;
+    let ux = 0, uy = 1, uz = 0;
+    if (Math.abs(ty) > 0.9) { ux = 1; uy = 0; }
+    let nx = ty * uz - tz * uy, ny = tz * ux - tx * uz, nz = tx * uy - ty * ux;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    nx /= nl; ny /= nl; nz /= nl;
+    const bx = ty * nz - tz * ny, by = tz * nx - tx * nz, bz = tx * ny - ty * nx;
+    const rx = p[3], ry = p[4] ?? rx;
+    for (let j = 0; j < m; j++) {
+      const th = (j / m) * Math.PI * 2, c = Math.cos(th), s = Math.sin(th);
+      pos.push(p[0] + nx * rx * c + bx * ry * s, p[1] + ny * rx * c + by * ry * s, p[2] + nz * rx * c + bz * ry * s);
+    }
+  }
+  const ia = n * m, ib = ia + 1;
+  pos.push(pts[0][0], pts[0][1], pts[0][2], pts[n - 1][0], pts[n - 1][1], pts[n - 1][2]);
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < m; j++) {
+      const a = i * m + j, b = i * m + ((j + 1) % m), c = a + m, d = b + m;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  if (caps) {
+    for (let j = 0; j < m; j++) {
+      idx.push(ia, (j + 1) % m, j);
+      idx.push(ib, (n - 1) * m + j, (n - 1) * m + ((j + 1) % m));
+    }
+  }
+  return finish(pos, idx, (i) => {
+    const p = pts[Math.min(n - 1, Math.floor(i / m))];
+    return [p[0], p[1], p[2]];
+  });
+}
+
 const headZ = (x, y) => {
   // front surface z at head-local (x, y): iterate the sphere direction
   let ux = x / HEAD_R[0], uy = y / HEAD_R[1], q = null;
@@ -248,53 +296,124 @@ export function personParts({ indexed = false, lod = 0 } = {}) {
   const tube = (keys, o) => tubeGeo(far && keys.length > 4 ? keys.filter((k, i) => i === 0 || i === keys.length - 1 || i % 2 === 1) : keys, o);
   const FAR_SKIP = new Set([OPT.BEARD, OPT.GLASSES, OPT.BUN, OPT.ZIPPER, OPT.VNECK, OPT.PHONE]);
 
-  // ---- head ----
-  add(headSurface(far ? 12 : 16, far ? 9 : 13, null), PART.STATIC, J.HEAD, MAT.SKIN);
+  // ---- head (24x18 sculpted cranium, jawline, chin, cheekbones & sockets) ----
+  add(headSurface(far ? 12 : 24, far ? 9 : 18, null), PART.STATIC, J.HEAD, MAT.SKIN);
   const [hx, hy, hz] = HEAD_C;
-  // Sculpted 3D nose bridge, tip & nostrils
+  // Sculpted 3D nose bridge, rounded tip & subtle alar wings
   if (!far) {
     const nz0 = headZ(0, -0.004);
     add(tube([
-      [hy + 0.018, 0.007, 0.006, 0.004, 0, nz0 - 0.004],
-      [hy - 0.004, 0.009, 0.012, 0.006, 0, nz0 + 0.002],
-      [hy - 0.018, 0.011, 0.011, 0.006, 0, nz0 + 0.004],
-      [hy - 0.025, 0.006, 0.005, 0.004, 0, nz0 - 0.001],
-    ], { m: 7, sub: 1, x: hx, off: hz }), PART.STATIC, J.HEAD, MAT.SKIN);
+      [hy + 0.018, 0.0065, 0.0055, 0.004, 0, nz0 - 0.004],
+      [hy - 0.004, 0.0085, 0.011, 0.006, 0, nz0 + 0.0015],
+      [hy - 0.018, 0.010, 0.0105, 0.006, 0, nz0 + 0.0035],
+      [hy - 0.024, 0.0058, 0.005, 0.004, 0, nz0 - 0.001],
+    ], { m: 8, sub: 1, x: hx, off: hz }), PART.STATIC, J.HEAD, MAT.SKIN);
     for (const s of [-1, 1]) {
-      add(prim(ellip(0.006, 0.005, 0.006, 5, 4), hx + s * 0.008, hy - 0.020, hz + nz0 - 0.001), PART.STATIC, J.HEAD, MAT.SKIN);
+      add(prim(ellip(0.0056, 0.0046, 0.0056, 6, 4), hx + s * 0.0076, hy - 0.0195, hz + nz0 - 0.0015), PART.STATIC, J.HEAD, MAT.SKIN);
     }
   }
   for (const s of [-1, 1]) {
     if (!far) {
-      // Sculpted outer ear helix + inner ear lobe
-      add(prim(ellip(0.012, 0.027, 0.019, 7, 5), hx + s * 0.083, hy - 0.004, hz - 0.012, 0, s * 0.35, 0), PART.STATIC, J.HEAD, MAT.SKIN);
-      add(prim(ellip(0.007, 0.016, 0.011, 5, 4), hx + s * 0.087, hy - 0.006, hz - 0.010, 0, s * 0.35, 0), PART.STATIC, J.HEAD, MAT.SKIN);
-      // 3D curved sclera, iris/pupil dome, upper eyelid & arched eyebrow
-      const ex = s * 0.031, ey = 0.014, ez = headZ(ex, ey) + 0.001;
-      add(prim(ellip(0.013, 0.0075, 0.004, 7, 5), hx + ex, hy + ey, hz + ez), PART.STATIC, J.HEAD, MAT.FIXED, 0, WHITE);
-      add(prim(ellip(0.0065, 0.0065, 0.0038, 6, 5), hx + ex, hy + ey, hz + ez + 0.0018), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.12, 0.08, 0.06]);
-      const bz = headZ(s * 0.031, 0.034) + 0.001;
-      add(prim(rbox(0.032, 0.0075, 0.007, 0.0028, 1), hx + s * 0.031, hy + 0.034, hz + bz - 0.001, 0, s * 0.14, -s * 0.1), PART.STATIC, J.HEAD, MAT.HAIR);
+      // Sculpted ears: outer shell + curved helix rim + inner concha recess aligned between brow and nose tip
+      const earX = hx + s * 0.081, earY = hy - 0.002, earZ = hz - 0.012;
+      add(prim(ellip(0.0085, 0.025, 0.016, 7, 5), earX, earY, earZ, 0, s * 0.30, 0), PART.STATIC, J.HEAD, MAT.SKIN);
+      add(featTube([
+        [earX - s * 0.001, earY + 0.012, earZ + 0.008, 0.0034, 0.0030],
+        [earX + s * 0.003, earY + 0.022, earZ + 0.001, 0.0036, 0.0032],
+        [earX + s * 0.005, earY + 0.014, earZ - 0.012, 0.0036, 0.0032],
+        [earX + s * 0.005, earY - 0.004, earZ - 0.015, 0.0034, 0.0030],
+        [earX + s * 0.002, earY - 0.021, earZ - 0.006, 0.0030, 0.0028],
+      ], 6), PART.STATIC, J.HEAD, MAT.SKIN);
+      add(prim(ellip(0.0055, 0.015, 0.010, 5, 4), earX + s * 0.004, earY - 0.003, earZ + 0.001, 0, s * 0.30, 0), PART.STATIC, J.HEAD, MAT.SKIN);
+
+      // Expressive multi-layered eyes: ivory sclera, varied iris, dark pupil, white catchlight, eyelid & lash rim
+      const ex = s * 0.031, ey = 0.014, ez = headZ(ex, ey) - 0.0030;
+      add(prim(ellip(0.0124, 0.0086, 0.0062, 8, 6), hx + ex, hy + ey, hz + ez), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.97, 0.96, 0.94]);
+      add(prim(ellip(0.0060, 0.0060, 0.0028, 8, 5), hx + ex, hy + ey, hz + ez + 0.0044), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.22, 0.42, 0.62]);
+      add(prim(ellip(0.0030, 0.0030, 0.0018, 6, 4), hx + ex, hy + ey, hz + ez + 0.0058), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.04, 0.04, 0.05]);
+      add(prim(ellip(0.0013, 0.0013, 0.0010, 5, 4), hx + ex + 0.0020, hy + ey + 0.0020, hz + ez + 0.0064), PART.STATIC, J.HEAD, MAT.FIXED, 0, [1.0, 1.0, 1.0]);
+      // Curved upper eyelid hood + dark upper lash rim
+      const lid = new THREE.SphereGeometry(0.0128, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.42);
+      lid.scale(1.0, 0.72, 0.56);
+      add(prim(lid, hx + ex, hy + ey + 0.0005, hz + ez, 0.55, 0, -s * 0.05), PART.STATIC, J.HEAD, MAT.SKIN);
+      add(featTube([
+        [hx + ex - 0.0112, hy + ey + 0.0018, hz + ez + 0.0042, 0.0011, 0.0012],
+        [hx + ex - 0.0055, hy + ey + 0.0062, hz + ez + 0.0054, 0.0013, 0.0013],
+        [hx + ex, hy + ey + 0.0074, hz + ez + 0.0058, 0.0014, 0.0014],
+        [hx + ex + 0.0055, hy + ey + 0.0062, hz + ez + 0.0054, 0.0013, 0.0013],
+        [hx + ex + 0.0112, hy + ey + 0.0018, hz + ez + 0.0042, 0.0011, 0.0012],
+      ], 5), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.08, 0.06, 0.05]);
+
+      // Naturally arched, tapered 3D eyebrow hugging the brow ridge
+      const browPts = [];
+      for (let k = 0; k <= 4; k++) {
+        const t = k / 4;
+        const bx = s * (0.014 + t * 0.034);
+        const by = 0.031 + Math.sin(t * Math.PI * 0.85) * 0.0052 - t * 0.0015;
+        const bz = headZ(bx, by) + 0.0012;
+        const r = 0.0029 * (1.0 - 0.52 * t * t) * (k === 0 || k === 4 ? 0.55 : 1.0);
+        browPts.push([hx + bx, hy + by, hz + bz, r, r * 0.78]);
+      }
+      add(featTube(browPts, 6), PART.STATIC, J.HEAD, MAT.HAIR);
+
       for (const o of [OPT.GLASSES]) {
-        add(prim(new THREE.TorusGeometry(0.017, 0.0025, 4, 10), hx + ex, hy + ey, hz + ez + 0.012), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.06, 0.06, 0.07]);
-        add(quad(0.032, 0.03, hx + ex, hy + ey, hz + ez + 0.011), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.12, 0.14, 0.16]);
+        add(prim(new THREE.TorusGeometry(0.017, 0.0025, 4, 10), hx + ex, hy + ey, hz + ez + 0.015), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.06, 0.06, 0.07]);
+        add(quad(0.032, 0.03, hx + ex, hy + ey, hz + ez + 0.014), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.12, 0.14, 0.16]);
         add(prim(rbox(0.004, 0.004, 0.11, 0.0015, 1), hx + s * 0.075, hy + ey + 0.004, hz - 0.03), PART.STATIC, J.HEAD, MAT.FIXED, o, [0.06, 0.06, 0.07]);
       }
     }
   }
   if (!far) {
-    // 3D sculpted upper and lower lips
-    const mz = headZ(0, -0.052) + 0.001;
-    add(prim(ellip(0.016, 0.0042, 0.0045, 7, 4), hx, hy - 0.049, hz + mz), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.62, 0.31, 0.29]);
-    add(prim(ellip(0.015, 0.0045, 0.0045, 7, 4), hx, hy - 0.055, hz + mz - 0.0005), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.54, 0.26, 0.25]);
+    // 3D sculpted upper lip (subtle Cupid's bow) and fuller lower lip cushion
+    const uLipPts = [], lLipPts = [];
+    for (let k = 0; k <= 4; k++) {
+      const t = k / 4, lx = (t - 0.5) * 0.031, ax = Math.abs(lx);
+      const bow = Math.exp(-(((ax - 0.0055) / 0.0045) ** 2)) * 0.0015 - Math.exp(-((ax / 0.003) ** 2)) * 0.0005;
+      const uy = -0.049 + bow - ((ax / 0.016) ** 2) * 0.0016;
+      const ly = -0.0548 + ((ax / 0.015) ** 2) * 0.0024;
+      const ur = 0.0028 * (k === 0 || k === 4 ? 0.45 : 0.9 + 0.2 * Math.sin(t * Math.PI));
+      const lr = 0.0034 * (k === 0 || k === 4 ? 0.45 : 0.95 + 0.2 * Math.sin(t * Math.PI));
+      uLipPts.push([hx + lx, hy + uy, hz + headZ(lx, uy) + 0.0008, ur, ur * 0.9]);
+      lLipPts.push([hx + lx * 0.86, hy + ly, hz + headZ(lx * 0.86, ly) + 0.0006, lr, lr * 0.9]);
+    }
+    add(featTube(uLipPts, 6), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.64, 0.34, 0.32]);
+    add(featTube(lLipPts, 6), PART.STATIC, J.HEAD, MAT.FIXED, 0, [0.58, 0.30, 0.29]);
     add(prim(rbox(0.016, 0.004, 0.004, 0.0015, 1), hx, hy + 0.016, hz + headZ(0, 0.016) + 0.002), PART.STATIC, J.HEAD, MAT.FIXED, OPT.GLASSES, [0.06, 0.06, 0.07]);
   }
-  // ---- hair (grown from the scalp, textured crown & side-part wave) ----
-  const hw = far ? 12 : 18, hh = far ? 9 : 13;
+  // ---- hair (grown from the scalp, textured crown, swept bangs & side framing locks) ----
+  const hw = far ? 12 : 20, hh = far ? 9 : 14;
   add(headSurface(hw, hh, null, shellOff(scalpW, (ux, uy, uz) => 0.006 + 0.014 * smooth(-0.2, 0.9, uy) + 0.0035 * Math.sin(ux * 9.0 + uz * 4.0) * smooth(0.1, 0.8, uy))), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
-  // Side-parted forelock wave on crown front
+  // Swept front bangs/forelock & temple sideburns so hair frames the forehead naturally
   if (!far) {
-    add(prim(ellip(0.048, 0.016, 0.028, 8, 5), hx + 0.012, hy + 0.088, hz + 0.068, 0.22, 0.15, -0.18), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
+    add(featTube([
+      [hx + 0.024, hy + 0.094, hz + 0.060, 0.015, 0.009],
+      [hx - 0.006, hy + 0.089, hz + 0.076, 0.021, 0.011],
+      [hx - 0.036, hy + 0.074, hz + 0.078, 0.017, 0.009],
+      [hx - 0.056, hy + 0.056, hz + 0.064, 0.008, 0.005],
+    ], 7), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
+    for (const s of [-1, 1]) {
+      add(featTube([
+        [hx + s * 0.068, hy + 0.050, hz + 0.034, 0.009, 0.005],
+        [hx + s * 0.074, hy + 0.024, hz + 0.022, 0.007, 0.004],
+        [hx + s * 0.073, hy - 0.002, hz + 0.010, 0.004, 0.003],
+      ], 6), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_SHORT);
+      // Curtain bangs & side framing locks for long hair
+      add(featTube([
+        [hx + s * 0.010, hy + 0.090, hz + 0.068, 0.014, 0.008],
+        [hx + s * 0.038, hy + 0.074, hz + 0.076, 0.018, 0.010],
+        [hx + s * 0.068, hy + 0.042, hz + 0.060, 0.016, 0.010],
+        [hx + s * 0.084, hy - 0.020, hz + 0.036, 0.015, 0.011],
+        [hx + s * 0.082, hy - 0.095, hz + 0.020, 0.010, 0.008],
+      ], 7), PART.STATIC, J.HEAD, MAT.HAIR, OPT.HAIR_LONG);
+      // Delicate temple wisps for ponytail & bun
+      for (const o of [OPT.PONYTAIL, OPT.BUN]) {
+        add(featTube([
+          [hx + s * 0.064, hy + 0.054, hz + 0.044, 0.007, 0.004],
+          [hx + s * 0.074, hy + 0.022, hz + 0.030, 0.005, 0.0035],
+          [hx + s * 0.072, hy - 0.012, hz + 0.022, 0.003, 0.0025],
+        ], 6), PART.STATIC, J.HEAD, MAT.HAIR, o);
+      }
+    }
   }
   add(headSurface(far ? 8 : 14, far ? 6 : 11, (ux, uy) => uy < 0.2, shellOff(beardW, () => 0.006)), PART.STATIC, J.HEAD, MAT.HAIR, OPT.BEARD);
   // Long hair: a rounded drape from the crown down the back to the shoulders.
@@ -739,16 +858,53 @@ export const PERSON_BEGIN_GLSL = `
   transformed = pP;
   if (pOpt > 0 && ((pStyle >> (pOpt - 1)) & 1) == 0) transformed = vec3(0.0, 1.1, 0.0);
 `;
-// Colour slot -> instance colour, with outfit switches (shorts / short sleeves show skin, white shoes).
+// Colour slot -> instance colour, with outfit switches plus procedural face blush, AO, iris variety, lip harmony & hair-strand shading.
 export const PERSON_COLOR_GLSL = `
   {
     float m = aInfo.y;
     float jj = aInfo.w;
     int st = int(iAnim.z + 0.5);
+    bool isFem = ((st >> 12) & 1) == 1;
     vec3 c = m < 0.5 ? iSkin : m < 1.5 ? iShirt : m < 2.5 ? iPants : m < 3.5 ? vColor.rgb : m < 4.5 ? iHair : iAcc;
     if (m > 1.5 && m < 2.5 && ((st >> 14) & 1) == 1 && ((jj == 3.0 || jj == 6.0) && position.y < 0.6 || jj == 4.0 || jj == 7.0)) c = iSkin;
     if (m > 0.5 && m < 1.5 && ((st >> 15) & 1) == 1 && ((jj == 9.0 || jj == 11.0) && position.y < 1.3 || jj == 10.0 || jj == 12.0)) c = iSkin;
     if (m > 2.5 && m < 3.5 && (jj == 5.0 || jj == 8.0) && vColor.r > 0.1 && ((st >> 16) & 1) == 1) c = vec3(0.86, 0.86, 0.84);
+    if (jj == 2.0) {
+      vec3 hp = position - vec3(0.0, 1.635, 0.012);
+      if (m < 0.5) {
+        // Warm subsurface cheek & nose blush + subtle eye-socket, under-nose, chin & inner-ear AO
+        float front = smoothstep(0.02, 0.075, hp.z);
+        float cheek = exp(-((abs(hp.x) - 0.042) * (abs(hp.x) - 0.042)) / 0.00045 - ((hp.y + 0.016) * (hp.y + 0.016)) / 0.00042) * front;
+        float noseWarm = exp(-(hp.x * hp.x) / 0.00018 - ((hp.y + 0.014) * (hp.y + 0.014)) / 0.00035) * front;
+        vec3 blush = iSkin * vec3(1.06, 0.86, 0.82) + vec3(0.05, 0.0, 0.0);
+        c = mix(c, blush, clamp((cheek * (isFem ? 0.34 : 0.20) + noseWarm * 0.14), 0.0, 0.40));
+        float sockAO = exp(-((abs(hp.x) - 0.031) * (abs(hp.x) - 0.031)) / 0.00022 - ((hp.y - 0.014) * (hp.y - 0.014)) / 0.00018) * front;
+        float underNoseAO = exp(-(hp.x * hp.x) / 0.00016 - ((hp.y + 0.029) * (hp.y + 0.029)) / 0.00012) * front;
+        float chinAO = smoothstep(-0.060, -0.105, hp.y) * (1.0 - smoothstep(0.06, 0.095, hp.z));
+        float earAO = smoothstep(0.080, 0.088, abs(hp.x)) * (1.0 - smoothstep(-0.02, 0.01, hp.z));
+        float ao = clamp(sockAO * 0.14 + underNoseAO * 0.14 + chinAO * 0.14 + earAO * 0.15, 0.0, 0.30);
+        c *= (1.0 - ao);
+      } else if (m > 2.5 && m < 3.5) {
+        if (vColor.b > 0.55 && vColor.r < 0.28) {
+          // Varied natural iris colors per character seed
+          float h = fract(sin(dot(iHair + iSkin, vec3(12.9898, 78.233, 37.719)) + iGait.w * 0.37) * 43758.5453);
+          c = h < 0.34 ? vec3(0.28, 0.16, 0.09)
+            : h < 0.56 ? vec3(0.42, 0.30, 0.14)
+            : h < 0.74 ? vec3(0.22, 0.38, 0.54)
+            : h < 0.88 ? vec3(0.24, 0.40, 0.24)
+            : vec3(0.14, 0.09, 0.07);
+        } else if (vColor.r > 0.52 && vColor.g < 0.40 && vColor.b < 0.38) {
+          // Skin-harmonized natural muted rose/terracotta lips
+          float upperShade = vColor.r > 0.61 ? 0.92 : 1.0;
+          vec3 targetLip = isFem ? vec3(0.68, 0.32, 0.34) : vec3(0.58, 0.31, 0.30);
+          c = mix(iSkin * 0.85, targetLip, isFem ? 0.52 : 0.34) * upperShade;
+        }
+      } else if (m > 3.5 && m < 4.5) {
+        // Subtle directional hair-strand shading variation
+        float strand = 0.90 + 0.12 * sin(hp.x * 115.0 + hp.z * 65.0 + hp.y * 24.0);
+        c *= strand;
+      }
+    }
     vColor.rgb = c;
   }
 `;

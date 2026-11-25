@@ -507,7 +507,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261125_r2" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261125_r3" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -2414,6 +2414,15 @@ class WorldExplorerApp {
         this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col.z));
       }
 
+      const hitFurn = this.streetFeatures?.collideWalker?.(this.pos, 0.36);
+      const hitVeg = this.vegetation?.collideWalker?.(this.pos, 0.36);
+      const hitPlaces = this.places?.collideWalker?.(this.pos, 0.36);
+      if (hitFurn || hitVeg || hitPlaces) {
+        const col2 = this.collision.resolve(this.pos.x, this.pos.y + 0.6, this.pos.z, this.yaw, 0.45, [0]);
+        this.pos.x = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col2.x));
+        this.pos.z = Math.max(-HALF_WORLD + 20, Math.min(HALF_WORLD - 20, col2.z));
+      }
+
       const prevPosY = this.pos.y;
       const prevWalkVelY = this.walkVelY || 0;
       this.walkVelY = Math.max(-62.0, prevWalkVelY - 25.0 * dt);
@@ -2902,6 +2911,7 @@ class WorldExplorerApp {
     }
     this.speed *= this.vegetation.ram(this.pos, this.yaw, this.speed, spec, this.isDrivingTank()); // [tree-damage] knock trees down
     if (this.streetFeatures) this.speed *= this.streetFeatures.collideVehicle(this.pos, this.yaw, this.speed, spec); // [prop-damage]
+    if (this.places) this.speed *= this.places.collideVehicle(this.pos, this.yaw, this.speed, spec);
 
     const sinY = Math.sin(this.yaw);
     const cosY = Math.cos(this.yaw);

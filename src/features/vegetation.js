@@ -573,6 +573,42 @@ export class VegetationSystem {
     return this.damage.ram(pos, yaw, speed, len, mass);
   }
 
+  /**
+   * 3D physical collision for walkers/pedestrians against every non-bush tree trunk in loaded chunks
+   * (procedural + real OSM trees across all species).
+   */
+  collideWalker(pos, playerRadius = 0.36) {
+    if (!pos || !this.root.visible || !this.damage || !this.damage.n) return false;
+    const D = this.damage;
+    let hit = false;
+    D._query(pos.x - 3.0, pos.z - 3.0, pos.x + 3.0, pos.z + 3.0, (i) => {
+      const sp = D.sp[i];
+      if (sp === SP_BUSH || sp >= SPECIES_COUNT) return;
+      const dim = TREE_DIM[sp];
+      const s = D.s[i], sy = D.sy[i];
+      const treeH = (dim ? dim.h : 8.0) * sy;
+      if (treeH < 1.2) return;
+      const ty = D.y[i];
+      if (pos.y >= ty + treeH - 0.12 || pos.y + 1.75 <= ty) return;
+      const trunkR = Math.max(0.24, Math.max(dim ? dim.tr : 0.32, 0.28) * s);
+      const tx = D.x[i], tz = D.z[i];
+      const ox = pos.x - tx, oz = pos.z - tz;
+      const minDist = playerRadius + trunkR;
+      const d2 = ox * ox + oz * oz;
+      if (d2 < minDist * minDist) {
+        const d = Math.sqrt(d2);
+        if (d > 1e-5) {
+          pos.x = tx + (ox / d) * minDist;
+          pos.z = tz + (oz / d) * minDist;
+        } else {
+          pos.x = tx + minDist;
+        }
+        hit = true;
+      }
+    });
+    return hit;
+  }
+
   _updateClimate(cp, loadedChunks) {
     let best = null, bd = Infinity;
     for (const g of loadedChunks.values()) {

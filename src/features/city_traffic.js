@@ -2262,6 +2262,16 @@ export class CityTraffic {
     return true;
   }
 
+  _collidePedProps(ped, app) {
+    if (!app) return;
+    const pedPos = this._pedColPos || (this._pedColPos = { x: 0, y: 0, z: 0 });
+    pedPos.x = ped.x; pedPos.y = ped.y; pedPos.z = ped.z;
+    app.streetFeatures?.collideWalker?.(pedPos, 0.30);
+    app.vegetation?.collideWalker?.(pedPos, 0.30);
+    app.places?.collideWalker?.(pedPos, 0.30);
+    ped.x = pedPos.x; ped.z = pedPos.z;
+  }
+
   _updatePed(ped, dt, now, app) {
     if (ped.state === 'falling_apart' || ped.state === 'lying') {
       this._updateRagdollPed(ped, dt);
@@ -2297,9 +2307,10 @@ export class CityTraffic {
       }
       return;
     }
-    if (this.kaiju && this.kaiju.ped(ped, dt)) return; // [kaiju] panic flee (off the sidewalk graph)
-    if (this.damage && this.damage.ped(ped, dt)) return; // [car-explosions] flee from explosions
-    if (this.agents.drive(ped, dt)) return; // [people-agents] brain command / flinch
+    if ((this.kaiju && this.kaiju.ped(ped, dt)) || (this.damage && this.damage.ped(ped, dt)) || this.agents.drive(ped, dt)) {
+      this._collidePedProps(ped, app);
+      return;
+    }
     const e = ped.e;
     if (!e || !e.alive) { ped.active = false; return; } // [polish] actors are off the graph
     let speed = ped.v;
@@ -2388,6 +2399,7 @@ export class CityTraffic {
         return;
       }
     }
+    this._collidePedProps(ped, app);
     ped.groundY = ped.y;
     const moving = speed > 0.05 || ped.crossState === 2;
     const v = ped.crossState === 2 ? ped.v : speed;

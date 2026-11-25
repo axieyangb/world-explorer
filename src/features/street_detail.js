@@ -777,7 +777,7 @@ export class StreetDetail {
     }
 
     // Hydrants, benches, bins
-    const simple = [[d.hyd, 'hydrant', 'hydrant', 'hydrants', 0.8], [d.bench, 'bench', 'bench', 'benches', 0.9], [d.bins, 'bin', 'bin', 'bins', 0.7]];
+    const simple = [[d.hyd, 'hydrant', 'hydrant', 'hydrants', 0.9], [d.bench, 'bench', 'bench', 'benches', 0.9], [d.bins, 'bin', 'bin', 'bins', 0.7]];
     for (const [arr, type, pk, nk, off] of simple) {
       for (let i = 0; i < arr.length; i += 2) {
         const g = ground(toX(arr[i + 1]), toZ(arr[i]), off, 6);

@@ -507,7 +507,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats, isP
   };
 
   // Strict road-surface & curb clearance test against EVERY road segment at the same vertical level in the chunk
-  const onOtherRoad = (x, z, ownId, margin = 1.35, refY = null, ignoreOwn = false) => {
+  const onOtherRoad = (x, z, ownId, margin = 1.35, refY = null, ignoreOwn = false, ownMargin = 1.15) => {
     const list = segGrid.query(x, z);
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
@@ -520,7 +520,7 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats, isP
       const px = s.x1 + (s.x2 - s.x1) * t, pz = s.z1 + (s.z2 - s.z1) * t;
       const isPed = s.cls === 'footway' || s.cls === 'pedestrian' || s.cls === 'steps' || s.cls === 'cycleway';
       const reqMargin = isPed ? 0.55 : (ignoreOwn ? Math.max(0.25, margin) : Math.max(1.25, margin));
-      const lim = s.id === ownId ? s.hw + Math.min(1.15, reqMargin) : s.hw + reqMargin;
+      const lim = s.id === ownId ? s.hw + Math.min(ownMargin, reqMargin) : s.hw + reqMargin;
       if ((x - px) * (x - px) + (z - pz) * (z - pz) < lim * lim) return true;
     }
     return false;
@@ -1322,14 +1322,19 @@ export function computeStreetFeatures(root, data, ox, oz, worldOrigin, mats, isP
       }
     });
 
-    // Fire hydrants on the sidewalk (dense in the US)
+    // Fire hydrants on the sidewalk (safely inset behind curb, never on drivable road asphalt)
     if (style.hydrant > 0) {
       place(90, 17, (cx, cy, cz, k) => {
         if (hash2(cx, cz) > style.hydrant) return;
         let side = k % 2 === 0 ? -1 : 1;
         if (s.oneway) side = style.left ? -1 : 1;
-        const x = cx + rx * side * (s.hw + 1.45), z = cz + rz * side * (s.hw + 1.45);
-        if (!ok(x, z, 10.0, cy, 1.4)) return;
+        const off = s.hw + 0.9;
+        const x = cx + rx * side * off, z = cz + rz * side * off;
+        if (!inChunk(x, z)) return;
+        if (isPointInWater && isPointInWater(x, z, 2.5)) return;
+        if (nearNode(x, z, 10.0)) return;
+        if (onOtherRoad(x, z, s.id, 1.4, cy, false, 0.65)) return;
+        if (inBuilding(x, z) || !isFree(x, z)) return;
         push('hydrant', x, cy + 0.04, z, rotFor(-rx * side, -rz * side));
         occupy(x, z);
       });
