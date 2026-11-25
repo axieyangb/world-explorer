@@ -184,6 +184,7 @@ function closestPointOnSeg2D(px, pz, ax, az, bx, bz, out) {
 
 const _cpA = { x: 0, z: 0, t: 0 };
 const _cpB = { x: 0, z: 0, t: 0 };
+const EMPTY_DECK_SEGS = [];
 
 /**
  * Oriented 2D capsule-vs-capsule hull intersection between vessel A and vessel B.
@@ -280,6 +281,8 @@ export class Maritime {
 
     this.vessels = [];
     this.pierBoats = [];
+    this._chunkBridgeCache = new WeakMap();
+    this._colStamp = 0;
     this.region = null;
     this.origin = null;
     this.mode = 'none';          // 'sim' | 'live'
@@ -738,44 +741,8 @@ export class Maritime {
       }
     }
 
-    // 2. Boat-vs-Pier Deck & Piling Collision
-    if (this.app.loadedChunks) {
-      for (const g of this.app.loadedChunks.values()) {
-        const segs = (g.userData && g.userData.deckSegments) || [];
-        for (let i = 0; i < segs.length; i++) {
-          const s = segs[i];
-          if (s.cls !== 'pier') continue;
-          const pw = (s.width || 3.5) * 0.5 + halfW;
-          for (const k of [-0.65, 0, 0.65]) {
-            const hx = v.x + fx * (halfL * k), hz = v.z + fz * (halfL * k);
-            closestPointOnSeg2D(hx, hz, s.x1, s.z1, s.x2, s.z2, _cpB);
-            const dx = hx - _cpB.x, dz = hz - _cpB.z;
-            const d2 = dx * dx + dz * dz;
-            if (d2 < pw * pw) {
-              const d = Math.sqrt(d2) || 0.01;
-              const pnx = dx / d, pnz = dz / d;
-              const pen = pw - d;
-              v.x += pnx * (pen + 0.08);
-              v.z += pnz * (pen + 0.08);
-              const velX = fx * this.boatSpeed + (v.vx || 0);
-              const velZ = fz * this.boatSpeed + (v.vz || 0);
-              const vn = velX * pnx + velZ * pnz;
-              if (vn < 0) {
-                const impactSpd = -vn;
-                this.boatSpeed *= 0.35;
-                v.vx = (v.vx || 0) - pnx * vn * 1.25;
-                v.vz = (v.vz || 0) - pnz * vn * 1.25;
-                v.rollImpulse = (v.rollImpulse || 0) + clamp((pnx * fz - pnz * fx) * impactSpd * 0.04, -0.28, 0.28);
-                if (impactSpd > 6.5 && !(v._hitCooldown > 0)) {
-                  v._hitCooldown = 0.45;
-                  this.damageVessel(v, (impactSpd - 5.5) * 0.045, _cpB.x, _cpB.z);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+    // 2. Boat-vs-Pier & Low-Bridge Deck Clearance Collision
+    this._resolveDeckCollisions(v, dt, true);
 
     // 3. Player Boat vs. All Other Vessels (Moving & Moored/Docked)
     this._resolveVesselPairCollisions(v, dt);
@@ -1158,80 +1125,268 @@ export class Maritime {
     if (v.hp <= 0) this._sink(v);
   }
 
-  /** Resolve capsule hull collision between vessel `a` and all other nearby active vessels. */
-  _resolveVesselPairCollisions(a, dt = 0.016) {
+  _getChunkBridgeSegs(ud) {
+    const roads = ud && ud.roadSegments;
+    if (!roads || !roads.length) return EMPTY_DECK_SEGS;
+    let cached = this._chunkBridgeCache && this._chunkBridgeCache.get(roads);
+    if (cached) return cached;
+    cached = [];
+    for (let i = 0; i < roads.length; i++) {
+      const s = roads[i];
+      if (s && !s.tunnel && s.onWater !== false && (s.bridge || s.isBridge || s.cls === 'bridge')) {
+        cached.push(s);
+      }
+    }
+    if (!this._chunkBridgeCache) this._chunkBridgeCache = new WeakMap();
+    this._chunkBridgeCache.set(roads, cached);
+    return cached;
+  }
+
+  _collideDeckSegList(v, segs, dt, isPlayer, topY, fx, fz, rx, rz, halfL, halfW) {
+    let blocked = false;
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i];
+      if (!s) continue;
+      const isPier = s.cls === 'pier';
+      const isBridge = !isPier && !s.tunnel && (s.cls === 'bridge' || Boolean(s.isBridge) || Boolean(s.bridge));
+      if (!isPier && !isBridge) continue;
+      const pw = (s.width || 3.5) * 0.5 + halfW;
+      const pw2 = pw * pw;
+      let bestD2 = pw2;
+      let bestDx = 0, bestDz = 0, bestCpX = 0, bestCpZ = 0;
+      for (const k of [-0.65, -0.32, 0, 0.32, 0.65]) {
+        const hx = v.x + fx * (halfL * k), hz = v.z + fz * (halfL * k);
+        closestPointOnSeg2D(hx, hz, s.x1, s.z1, s.x2, s.z2, _cpB);
+        if (isBridge) {
+          const deckY = Number.isFinite(s.y)
+            ? s.y
+            : (Number.isFinite(s.y1) && Number.isFinite(s.y2)
+              ? s.y1 + (s.y2 - s.y1) * (_cpB.t || 0)
+              : (s.y1 ?? s.y2 ?? 0));
+          if (topY <= deckY - 1.2) continue;
+        }
+        const dx = hx - _cpB.x, dz = hz - _cpB.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          bestDx = dx; bestDz = dz;
+          bestCpX = _cpB.x; bestCpZ = _cpB.z;
+        }
+      }
+      if (bestD2 >= pw2) continue;
+
+      closestPointOnSeg2D(v.x, v.z, s.x1, s.z1, s.x2, s.z2, _cpA);
+      const cdx = v.x - _cpA.x, cdz = v.z - _cpA.z;
+      const cd2 = cdx * cdx + cdz * cdz;
+      let d, pnx, pnz;
+      if (bestD2 > 1e-6) {
+        d = Math.sqrt(bestD2);
+        pnx = bestDx / d;
+        pnz = bestDz / d;
+        // Keep push oriented toward the vessel center side so straddling hulls never fight across a thin pier
+        if (cd2 > 1e-6 && cdx * pnx + cdz * pnz < 0) {
+          const cd = Math.sqrt(cd2);
+          pnx = cdx / cd;
+          pnz = cdz / cd;
+          d = Math.min(d, cd);
+        }
+      } else if (cd2 > 1e-6) {
+        const cd = Math.sqrt(cd2);
+        pnx = cdx / cd;
+        pnz = cdz / cd;
+        d = 0;
+      } else {
+        d = 0;
+        const sdx = s.x2 - s.x1, sdz = s.z2 - s.z1;
+        const sl = Math.hypot(sdx, sdz);
+        if (sl > 1e-4) {
+          pnx = -sdz / sl; pnz = sdx / sl;
+          if (pnx * fx + pnz * fz > 0) { pnx = -pnx; pnz = -pnz; }
+        } else {
+          pnx = -fx; pnz = -fz;
+        }
+      }
+
+      const push = pw - d + 0.08;
+      const pushX = pnx * push, pushZ = pnz * push;
+      v.x += pushX;
+      v.z += pushZ;
+
+      const spd = isPlayer ? this.boatSpeed : (v.v || 0);
+      const velX = fx * spd + (v.vx || 0);
+      const velZ = fz * spd + (v.vz || 0);
+      const vn = velX * pnx + velZ * pnz;
+      const headDot = fx * pnx + fz * pnz;
+      if (vn < 0) {
+        const impactSpd = -vn;
+        if (isPlayer) {
+          this.boatSpeed = (isBridge && headDot < -0.5) ? 0 : this.boatSpeed * 0.35;
+          v.vx = (v.vx || 0) - pnx * vn * 1.25;
+          v.vz = (v.vz || 0) - pnz * vn * 1.25;
+          v.rollImpulse = (v.rollImpulse || 0) + clamp((pnx * fz - pnz * fx) * impactSpd * 0.04, -0.28, 0.28);
+          if (impactSpd > 6.5 && !(v._hitCooldown > 0)) {
+            v._hitCooldown = 0.45;
+            this.damageVessel(v, (impactSpd - 5.5) * 0.045, bestCpX, bestCpZ);
+          }
+        } else {
+          v.v = headDot < -0.35 ? 0 : (v.v || 0) * 0.45;
+          v.vx = (v.vx || 0) - pnx * vn * 1.1;
+          v.vz = (v.vz || 0) - pnz * vn * 1.1;
+          v.rollImpulse = (v.rollImpulse || 0) + clamp((pnx * fz - pnz * fx) * impactSpd * 0.04, -0.28, 0.28);
+        }
+      }
+      if (!isPlayer && v.path && v.cum) {
+        const alongPush = pushX * fx + pushZ * fz;
+        const latPush = pushX * rx + pushZ * rz;
+        v.s = clamp(v.s + v.dir * alongPush, 0, v.cum[v.cum.length - 1]);
+        v.avoidLat = clamp((v.avoidLat || 0) + latPush, -28, 28);
+        if (headDot < -0.35) blocked = true;
+      }
+    }
+    return blocked;
+  }
+
+  /** Resolve hull & mast/superstructure collisions against piers and low bridge decks in loaded chunks. */
+  _resolveDeckCollisions(v, dt = 0.016, isPlayer = false) {
+    const chunks = this.app && this.app.loadedChunks;
+    if (!v || !chunks) return;
+    if (v.halfLen == null || v.halfWidth == null || v.topY == null) updateVesselCollisionBounds(v);
+    const halfL = v.halfLen || 6.0;
+    const halfW = v.halfWidth || 2.2;
+    const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
+    const rx = fz, rz = -fx;
+    const baseWaterY = Number.isFinite(v.y) ? v.y : 0;
+    const topY = baseWaterY + (v.topY || ((VESSEL_TYPES[v.type]?.height || 8) * (v.sy || 1)));
+    let blocked = false;
+    for (const g of chunks.values()) {
+      const ud = g && g.userData;
+      if (!ud) continue;
+      if (Number.isFinite(ud.ox) && Number.isFinite(ud.oz) && (Math.abs(v.x - ud.ox) > 650 || Math.abs(v.z - ud.oz) > 650)) continue;
+      if (ud.deckSegments && ud.deckSegments.length) {
+        if (this._collideDeckSegList(v, ud.deckSegments, dt, isPlayer, topY, fx, fz, rx, rz, halfL, halfW)) blocked = true;
+      }
+      const bridgeSegs = this._getChunkBridgeSegs(ud);
+      if (bridgeSegs.length) {
+        if (this._collideDeckSegList(v, bridgeSegs, dt, isPlayer, topY, fx, fz, rx, rz, halfL, halfW)) blocked = true;
+      }
+    }
+    if (!isPlayer && v.path && v.cum) {
+      if (blocked) {
+        v._deckBlockT = (v._deckBlockT || 0) + dt;
+        if (v._deckBlockT > 1.5 && (v.kind === 'tug' || v.kind === 'sail')) {
+          v.dir = -v.dir;
+          v._deckBlockT = 0;
+        }
+      } else {
+        v._deckBlockT = 0;
+      }
+    }
+  }
+
+  _resolveVesselPair(a, b) {
+    const hit = intersectVesselHulls(a, b);
+    if (!hit) return;
+
+    const { pen, nx, nz, cx, cz } = hit;
+    const massA = (a.halfLen || 6) * (a.halfWidth || 2.2);
+    const massB = (b.halfLen || 6) * (b.halfWidth || 2.2);
+    const invA = a.state === 'moored' ? 0 : (a.state === 'anchor' ? 0.15 : 1 / Math.max(4, massA));
+    const invB = b.state === 'moored' ? 0 : (b.state === 'anchor' ? 0.15 : 1 / Math.max(4, massB));
+    const invSum = invA + invB;
+    if (invSum <= 0) return;
+    const shareA = invA / invSum;
+    const shareB = invB / invSum;
+
+    // Immediately separate the two hulls so they never clip or pass through
+    const pushDist = pen + 0.06;
+    const pushAx = nx * pushDist * shareA;
+    const pushAz = nz * pushDist * shareA;
+    a.x += pushAx;
+    a.z += pushAz;
+    if (shareB > 0) {
+      b.x -= nx * pushDist * shareB;
+      b.z -= nz * pushDist * shareB;
+    }
+    if (a.path && a.cum && a.state !== 'player' && shareA > 0) {
+      const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
+      const rx = fz, rz = -fx;
+      a.s = clamp(a.s + a.dir * (pushAx * fx + pushAz * fz), 0, a.cum[a.cum.length - 1]);
+      a.avoidLat = clamp((a.avoidLat || 0) + (pushAx * rx + pushAz * rz), -28, 28);
+    }
+
+    // Compute relative velocity at contact normal
+    const vax = Math.sin(a.yaw) * (a.state === 'player' ? this.boatSpeed : (a.v || 0)) + (a.vx || 0);
+    const vaz = Math.cos(a.yaw) * (a.state === 'player' ? this.boatSpeed : (a.v || 0)) + (a.vz || 0);
+    const vbx = Math.sin(b.yaw) * (b.state === 'player' ? this.boatSpeed : (b.v || 0)) + (b.vx || 0);
+    const vbz = Math.cos(b.yaw) * (b.state === 'player' ? this.boatSpeed : (b.v || 0)) + (b.vz || 0);
+
+    const rvx = vax - vbx, rvz = vaz - vbz;
+    const relVn = rvx * nx + rvz * nz;
+
+    if (relVn < 0) {
+      const impactSpd = -relVn;
+      const restitution = 0.42;
+      const j = (1 + restitution) * impactSpd;
+
+      a.vx = (a.vx || 0) + nx * j * shareA;
+      a.vz = (a.vz || 0) + nz * j * shareA;
+      if (shareB > 0) {
+        b.vx = (b.vx || 0) - nx * j * shareB;
+        b.vz = (b.vz || 0) - nz * j * shareB;
+      }
+
+      if (a.state === 'player') {
+        const headDot = Math.sin(a.yaw) * nx + Math.cos(a.yaw) * nz;
+        if (headDot * this.boatSpeed < 0) {
+          this.boatSpeed *= Math.max(-0.25, 1 - Math.abs(headDot) * 0.88);
+        }
+      } else if (a.v > 0 && shareA > 0) {
+        a.v *= 0.45;
+      }
+      if (b.state === 'player') {
+        const headDot = Math.sin(b.yaw) * (-nx) + Math.cos(b.yaw) * (-nz);
+        if (headDot * this.boatSpeed < 0) {
+          this.boatSpeed *= Math.max(-0.25, 1 - Math.abs(headDot) * 0.88);
+        }
+      } else if (b.v > 0 && shareB > 0) {
+        b.v *= 0.45;
+      }
+
+      // Impart hydrodynamic hull roll rock to moving vessels
+      const rollKick = clamp(impactSpd * 0.032, 0.06, 0.34);
+      if (shareA > 0) {
+        a.rollImpulse = clamp((a.rollImpulse || 0) + rollKick * (nx * Math.cos(a.yaw) - nz * Math.sin(a.yaw) >= 0 ? 1 : -1), -0.38, 0.38);
+      }
+      if (shareB > 0) {
+        b.rollImpulse = clamp((b.rollImpulse || 0) - rollKick * (nx * Math.cos(b.yaw) - nz * Math.sin(b.yaw) >= 0 ? 1 : -1), -0.38, 0.38);
+      }
+
+      // High-speed collision damage (> 5.5 m/s)
+      if (impactSpd > 5.5 && !(a._hitCooldown > 0) && !(b._hitCooldown > 0)) {
+        a._hitCooldown = 0.45;
+        b._hitCooldown = 0.45;
+        const baseDmg = (impactSpd - 5.5) * 0.065;
+        this.damageVessel(a, baseDmg * (0.5 + shareA), cx, cz);
+        this.damageVessel(b, baseDmg * (0.5 + shareB), cx, cz);
+      }
+    }
+  }
+
+  /** Resolve capsule hull collision between vessel `a` and all other nearby active vessels and moored pierBoats. */
+  _resolveVesselPairCollisions(a, _dt = 0.016) {
     if (!a || a.dead || a.state === 'sink' || a.state === 'sunk') return;
+    const stamp = (this._colStamp = (this._colStamp || 0) + 1);
     for (let i = 0; i < this.vessels.length; i++) {
       const b = this.vessels[i];
       if (!b || b === a || b.dead || b.state === 'sink' || b.state === 'sunk') continue;
-      const hit = intersectVesselHulls(a, b);
-      if (!hit) continue;
-
-      const { pen, nx, nz, cx, cz } = hit;
-      const massA = (a.halfLen || 6) * (a.halfWidth || 2.2);
-      const massB = (b.halfLen || 6) * (b.halfWidth || 2.2);
-      const invA = a.state === 'anchor' ? 0.15 : 1 / Math.max(4, massA);
-      const invB = b.state === 'anchor' ? 0.15 : 1 / Math.max(4, massB);
-      const invSum = invA + invB || 1;
-      const shareA = invA / invSum;
-      const shareB = invB / invSum;
-
-      // Immediately separate the two hulls so they never clip or pass through
-      const pushDist = pen + 0.06;
-      a.x += nx * pushDist * shareA;
-      a.z += nz * pushDist * shareA;
-      b.x -= nx * pushDist * shareB;
-      b.z -= nz * pushDist * shareB;
-
-      // Compute relative velocity at contact normal
-      const vax = Math.sin(a.yaw) * (a.state === 'player' ? this.boatSpeed : (a.v || 0)) + (a.vx || 0);
-      const vaz = Math.cos(a.yaw) * (a.state === 'player' ? this.boatSpeed : (a.v || 0)) + (a.vz || 0);
-      const vbx = Math.sin(b.yaw) * (b.state === 'player' ? this.boatSpeed : (b.v || 0)) + (b.vx || 0);
-      const vbz = Math.cos(b.yaw) * (b.state === 'player' ? this.boatSpeed : (b.v || 0)) + (b.vz || 0);
-
-      const rvx = vax - vbx, rvz = vaz - vbz;
-      const relVn = rvx * nx + rvz * nz;
-
-      if (relVn < 0) {
-        const impactSpd = -relVn;
-        const restitution = 0.42;
-        const j = (1 + restitution) * impactSpd;
-
-        a.vx = (a.vx || 0) + nx * j * shareA;
-        a.vz = (a.vz || 0) + nz * j * shareA;
-        b.vx = (b.vx || 0) - nx * j * shareB;
-        b.vz = (b.vz || 0) - nz * j * shareB;
-
-        if (a.state === 'player') {
-          const headDot = Math.sin(a.yaw) * nx + Math.cos(a.yaw) * nz;
-          if (headDot * this.boatSpeed < 0) {
-            this.boatSpeed *= Math.max(-0.25, 1 - Math.abs(headDot) * 0.88);
-          }
-        } else if (a.v > 0) {
-          a.v *= 0.45;
-        }
-        if (b.state === 'player') {
-          const headDot = Math.sin(b.yaw) * (-nx) + Math.cos(b.yaw) * (-nz);
-          if (headDot * this.boatSpeed < 0) {
-            this.boatSpeed *= Math.max(-0.25, 1 - Math.abs(headDot) * 0.88);
-          }
-        } else if (b.v > 0) {
-          b.v *= 0.45;
-        }
-
-        // Impart hydrodynamic hull roll rock to both vessels
-        const rollKick = clamp(impactSpd * 0.032, 0.06, 0.34);
-        a.rollImpulse = clamp((a.rollImpulse || 0) + rollKick * (nx * Math.cos(a.yaw) - nz * Math.sin(a.yaw) >= 0 ? 1 : -1), -0.38, 0.38);
-        b.rollImpulse = clamp((b.rollImpulse || 0) - rollKick * (nx * Math.cos(b.yaw) - nz * Math.sin(b.yaw) >= 0 ? 1 : -1), -0.38, 0.38);
-
-        // High-speed collision damage (> 5.5 m/s)
-        if (impactSpd > 5.5 && !(a._hitCooldown > 0) && !(b._hitCooldown > 0)) {
-          a._hitCooldown = 0.45;
-          b._hitCooldown = 0.45;
-          const baseDmg = (impactSpd - 5.5) * 0.065;
-          this.damageVessel(a, baseDmg * (0.5 + shareA), cx, cz);
-          this.damageVessel(b, baseDmg * (0.5 + shareB), cx, cz);
-        }
+      b._colStamp = stamp;
+      this._resolveVesselPair(a, b);
+    }
+    if (Array.isArray(this.pierBoats)) {
+      for (let i = 0; i < this.pierBoats.length; i++) {
+        const b = this.pierBoats[i];
+        if (!b || b === a || b._colStamp === stamp || b.dead || b.state === 'sink' || b.state === 'sunk') continue;
+        this._resolveVesselPair(a, b);
       }
     }
   }
@@ -1341,13 +1496,11 @@ export class Maritime {
         const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
         const rx = fz, rz = -fx; // starboard unit vector
         const rA = v.colRadius || 10;
-        for (let j = 0; j < this.vessels.length; j++) {
-          const o = this.vessels[j];
-          if (!o || o === v || o.dead || o.state === 'sink' || o.state === 'sunk') continue;
+        const checkVesselLookahead = (o) => {
           const dx = o.x - v.x, dz = o.z - v.z;
           const rSum = rA + (o.colRadius || 10);
           const lookDist = 2.2 * rSum;
-          if (dx * dx + dz * dz > lookDist * lookDist) continue;
+          if (dx * dx + dz * dz > lookDist * lookDist) return;
           const fwdProj = dx * fx + dz * fz;
           const latProj = dx * rx + dz * rz;
           if (fwdProj > -rSum * 0.25 && fwdProj < lookDist && Math.abs(latProj) < rSum * 1.15) {
@@ -1356,6 +1509,63 @@ export class Maritime {
             // Give way to starboard (or away from obstacle centerline)
             const steerDir = latProj > 2.0 ? -1 : 1;
             avoidLatTarget += steerDir * Math.min(18, (v.halfWidth || 3) * 2.4) * urgency;
+          }
+        };
+        const lookStamp = (this._colStamp = (this._colStamp || 0) + 1);
+        for (let j = 0; j < this.vessels.length; j++) {
+          const o = this.vessels[j];
+          if (!o || o === v || o.dead || o.state === 'sink' || o.state === 'sunk') continue;
+          o._colStamp = lookStamp;
+          checkVesselLookahead(o);
+        }
+        if (Array.isArray(this.pierBoats)) {
+          for (let j = 0; j < this.pierBoats.length; j++) {
+            const o = this.pierBoats[j];
+            if (!o || o === v || o._colStamp === lookStamp || o.dead || o.state === 'sink' || o.state === 'sunk') continue;
+            checkVesselLookahead(o);
+          }
+        }
+        if (this.app && this.app.loadedChunks) {
+          const baseWaterY = Number.isFinite(v.y) ? v.y : 0;
+          const topY = baseWaterY + (v.topY || ((VESSEL_TYPES[v.type]?.height || 8) * (v.sy || 1)));
+          const lookLen = (v.halfLen || 10) * 2.2 + 28;
+          const probeX = v.x + fx * (lookLen * 0.55), probeZ = v.z + fz * (lookLen * 0.55);
+          const halfW = v.halfWidth || 3;
+          const checkDeckAhead = (segs) => {
+            for (let j = 0; j < segs.length; j++) {
+              const s = segs[j];
+              if (!s) continue;
+              const isPier = s.cls === 'pier';
+              const isBridge = !isPier && !s.tunnel && (s.cls === 'bridge' || Boolean(s.isBridge) || Boolean(s.bridge));
+              if (!isPier && !isBridge) continue;
+              closestPointOnSeg2D(probeX, probeZ, s.x1, s.z1, s.x2, s.z2, _cpB);
+              if (isBridge) {
+                const deckY = Number.isFinite(s.y)
+                  ? s.y
+                  : (Number.isFinite(s.y1) && Number.isFinite(s.y2)
+                    ? s.y1 + (s.y2 - s.y1) * (_cpB.t || 0)
+                    : (s.y1 ?? s.y2 ?? 0));
+                if (topY <= deckY - 1.2) continue;
+              }
+              const dx = _cpB.x - v.x, dz = _cpB.z - v.z;
+              const fwdProj = dx * fx + dz * fz;
+              const latProj = dx * rx + dz * rz;
+              const latLim = (s.width || 3.5) * 0.5 + halfW + 4.5;
+              if (fwdProj > -(v.halfLen || 6) && fwdProj < lookLen && Math.abs(latProj) < latLim) {
+                const urgency = 1.0 - clamp(fwdProj / lookLen, 0, 1);
+                avoidSpdScale = Math.min(avoidSpdScale, isBridge ? Math.max(0.0, 1.0 - urgency * 1.15) : Math.max(0.1, 1.0 - urgency * 0.9));
+                const steerDir = latProj >= 0 ? -1 : 1;
+                avoidLatTarget += steerDir * Math.min(20, halfW * 2.8) * urgency;
+              }
+            }
+          };
+          for (const g of this.app.loadedChunks.values()) {
+            const ud = g && g.userData;
+            if (!ud) continue;
+            if (Number.isFinite(ud.ox) && Number.isFinite(ud.oz) && (Math.abs(v.x - ud.ox) > 650 || Math.abs(v.z - ud.oz) > 650)) continue;
+            if (ud.deckSegments && ud.deckSegments.length) checkDeckAhead(ud.deckSegments);
+            const bridgeSegs = this._getChunkBridgeSegs(ud);
+            if (bridgeSegs.length) checkDeckAhead(bridgeSegs);
           }
         }
         v.avoidLat = (v.avoidLat || 0) + (avoidLatTarget - (v.avoidLat || 0)) * Math.min(1, dt * 1.8);
@@ -1422,11 +1632,12 @@ export class Maritime {
       }
     }
 
-    // Hard pairwise hull separation across all active vessels so crossing boats never clip through each other
+    // Hard pier/bridge clearance & pairwise hull separation across all active vessels so boats never clip
     for (let i = 0; i < this.vessels.length; i++) {
       const a = this.vessels[i];
       if (!a || a.dead || a.state === 'sink' || a.state === 'sunk') continue;
       if (a.state === 'moored' || a.state === 'anchor') continue;
+      if (a.state !== 'player') this._resolveDeckCollisions(a, dt, false);
       this._resolveVesselPairCollisions(a, dt);
     }
 

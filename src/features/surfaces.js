@@ -23,6 +23,7 @@ export const SURFACE_UNIFORMS = {
   uAtmoTime: { value: 0 },
   uWet: { value: 0 },
   uRain: { value: 0 },
+  uSnowCover: { value: 0.0 },
   uSkyZenith: { value: new THREE.Color(0x2b6cb0) },
   uSkyHorizon: { value: new THREE.Color(0xbfd8ec) },
   uLightLevel: { value: 1 },
@@ -800,6 +801,16 @@ const makeTerrainDetail = (isPark) => `
       grRelief += (sandRipple - 0.5) * 0.06 * (1.0 - wetSandMask) * coastMask;
     }
   }
+  if (uSnowCover > 0.001) {
+    float upMask = smoothstep(0.75, 0.92, vWorldNorm.y);
+    float snowWater = ${isPark ? "0.0" : "smoothstep(0.02, 0.08, diffuseColor.b - max(diffuseColor.r, diffuseColor.g * 0.92))"};
+    float frostN = atmoNoise(wp * 0.045) * 0.55 + atmoNoise(wp * 0.35 + 3.1) * 0.30 + atmoNoise(wp * 2.1) * 0.15;
+    float frostPatch = smoothstep(0.28, 0.72, frostN + uSnowCover * 0.35);
+    float frostAmt = clamp(uSnowCover * upMask * frostPatch * (1.0 - snowWater), 0.0, 0.78);
+    vec3 frostCol = mix(vec3(0.84, 0.89, 0.95), vec3(0.95, 0.97, 1.0), frostN);
+    diffuseColor.rgb = mix(diffuseColor.rgb, frostCol, frostAmt);
+    grRough = mix(grRough, 0.28, frostAmt * 0.6);
+  }
 }
 `;
 
@@ -808,8 +819,9 @@ function patchTerrain(mat, isPark = false) {
     mat,
     (shader) => {
       shader.uniforms.uTideOffset = SURFACE_UNIFORMS.uTideOffset;
+      shader.uniforms.uSnowCover = SURFACE_UNIFORMS.uSnowCover;
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform float uTideOffset;')
+        .replace('#include <common>', '#include <common>\nuniform float uTideOffset;\nuniform float uSnowCover;')
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>\n${makeTerrainDetail(isPark)}`
@@ -955,6 +967,62 @@ function patchWetGround(mat, amount, key) {
   );
 }
 
+function patchRoofFrost(mat) {
+  chainCompile(
+    mat,
+    (shader) => {
+      shader.uniforms.uSnowCover = SURFACE_UNIFORMS.uSnowCover;
+      addWorldPosAndNormVarying(shader);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\nuniform float uSnowCover;\nvarying vec3 vAtmoWorld;\nvarying vec3 vWorldNorm;\n${NOISE_GLSL}`)
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          if (uSnowCover > 0.001) {
+            float upMask = smoothstep(0.75, 0.92, vWorldNorm.y);
+            float fn = atmoNoise(vAtmoWorld.xz * 0.12) * 0.6 + atmoNoise(vAtmoWorld.xz * 0.65 + 4.1) * 0.4;
+            float frostAmt = clamp(uSnowCover * upMask * smoothstep(0.25, 0.72, fn + uSnowCover * 0.35), 0.0, 0.76);
+            diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.85, 0.90, 0.96), vec3(0.96, 0.98, 1.0), fn), frostAmt);
+          }`
+        );
+    },
+    '-roof-frost-1'
+  );
+}
+
+function patchWfcRoofFrost(mat) {
+  chainCompile(
+    mat,
+    (shader) => {
+      shader.uniforms.uSnowCover = SURFACE_UNIFORMS.uSnowCover;
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          uniform float uSnowCover;
+          float wfcFrostHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+          float wfcFrostNoise(vec2 p) {
+            vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(wfcFrostHash(i), wfcFrostHash(i + vec2(1.0, 0.0)), u.x),
+                       mix(wfcFrostHash(i + vec2(0.0, 1.0)), wfcFrostHash(i + vec2(1.0, 1.0)), u.x), u.y);
+          }`
+        )
+        .replace(
+          '#include <lights_physical_fragment>',
+          `if (uSnowCover > 0.001) {
+            float upMask = smoothstep(0.75, 0.92, vWorldNorm.y);
+            float fn = wfcFrostNoise(vBldgWorld.xz * 0.12) * 0.6 + wfcFrostNoise(vBldgWorld.xz * 0.65 + 4.1) * 0.4;
+            float frostAmt = clamp(uSnowCover * upMask * smoothstep(0.25, 0.72, fn + uSnowCover * 0.35), 0.0, 0.76);
+            diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.85, 0.90, 0.96), vec3(0.96, 0.98, 1.0), fn), frostAmt);
+            roughnessFactor = mix(roughnessFactor, 0.35, frostAmt * 0.5);
+          }
+          #include <lights_physical_fragment>`
+        );
+    },
+    '-wfc-roof-frost-1'
+  );
+}
+
 export function installSurfaceShaders(mats) {
   if (!mats) return;
   if (mats.waterMat) patchWater(mats.waterMat);
@@ -974,4 +1042,6 @@ export function installSurfaceShaders(mats) {
   if (mats.streetLineMat) patchLines(mats.streetLineMat, true, 'atmo-lines-1');
   if (mats.markingMat) patchLines(mats.markingMat, true, 'atmo-lines-1');
   if (mats.streetDecalMat) patchLines(mats.streetDecalMat, false, 'atmo-decal-1');
+  if (mats.roofMat) patchRoofFrost(mats.roofMat);
+  if (mats.wfcBldgMat) patchWfcRoofFrost(mats.wfcBldgMat);
 }

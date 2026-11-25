@@ -41,7 +41,7 @@ export function weatherFromOpenMeteo(cur) {
   if (isFog) fog = Math.max(fog, 0.8);
   if (snow) fog = Math.max(fog, 0.25 * snow);
 
-  const weather = rain > 0 || snow > 0 ? 'rain' : fog > 0.5 ? 'fog' : cloud > 0.55 ? 'cloudy' : 'clear';
+  const weather = snow > 0 ? 'snow' : rain > 0 ? 'rain' : fog > 0.5 ? 'fog' : cloud > 0.55 ? 'cloudy' : 'clear';
   const icon = isThunder ? 'ϟ' : snow ? '❄' : rain ? '☂' : fog > 0.5 ? '≋' : cloud > 0.75 ? '☁' : cloud > 0.4 ? '⛅' : '☀';
   const windMs = Math.max(0, (cur.wind_speed_10m ?? 0) / 3.6);
   const windTo = ((cur.wind_direction_10m ?? 0) + 180) * DEG; // direction the wind blows toward
@@ -110,6 +110,7 @@ export class LiveWeather {
     this.timer = 1;
     this.inFlight = false;
     this.time = 0;
+    this.liveSnow = 0;
     this.snowLevel = 0;
     this.wind = new THREE.Vector2();
     this._gen = app.teleportGeneration || 0;
@@ -154,7 +155,7 @@ export class LiveWeather {
     const d = this.data;
     if (!atmo || !d || typeof atmo.setLive !== 'function') return;
     const label = d.tempC == null ? d.icon : `${d.icon} ${d.tempC}°C`;
-    atmo.setLive({ weather: d.weather, cloud: d.cloud, rain: d.rain, fog: d.fog, label, utcOffsetH: d.utcOffsetH });
+    atmo.setLive({ weather: d.weather, cloud: d.cloud, rain: d.rain, snow: d.snow, fog: d.fog, label, utcOffsetH: d.utcOffsetH });
   }
 
   update(dt) {
@@ -183,9 +184,15 @@ export class LiveWeather {
     if (rf && rf.uniforms.uWind) rf.uniforms.uWind.value.set(
       Math.max(-12, Math.min(12, this.wind.x * 0.8)), Math.max(-12, Math.min(12, this.wind.y * 0.8)));
 
-    // Snow
-    const tSnow = liveOn ? d.snow : 0;
-    this.snowLevel += (tSnow - this.snowLevel) * (1 - Math.exp(-dt / 6));
+    // Snow: live snow or manual/URL Snow preset, fading out above 2,500 m / during Space Launch
+    const tLiveSnow = liveOn ? d.snow : 0;
+    this.liveSnow += (tLiveSnow - this.liveSnow) * (1 - Math.exp(-dt / 6));
+    const spaceLaunchActive = Boolean(app.spaceLaunch && (app.spaceLaunch.isActive?.() || app.spaceLaunch.isControllingCamera?.()));
+    const camAltM = app.camera ? Math.max(0, app.camera.position.y) : 0;
+    const spaceAltM = spaceLaunchActive ? Math.max(0, (app.spaceLaunch.altitudeKm || 0) * 1000) : 0;
+    const effectiveAltM = Math.max(camAltM, spaceAltM);
+    const snowAltFade = (spaceLaunchActive && effectiveAltM > 1500) ? 0 : (1 - smooth(2500, 4000, effectiveAltM));
+    this.snowLevel = Math.max(this.liveSnow, atmo?.snow || 0) * snowAltFade;
     const sm = this.snow.mesh;
     sm.visible = this.snowLevel > 0.01;
     if (sm.visible) {

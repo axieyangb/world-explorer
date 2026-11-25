@@ -1429,6 +1429,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
     getEdgeGroundY = null,
     localRoads = null,
     wallOutOffset = 0.0,
+    getNeighborClearance = null,
     region = 'beijing',
     arch: archRegion = null, // [roofs]
   } = bldgInfo;
@@ -1665,6 +1666,20 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         const z1 = rz1 + nz * wallOutOffset;
         const x2 = rx2 + nx * wallOutOffset;
         const z2 = rz2 + nz * wallOutOffset;
+        const edgeHasClearance = (u0, u1, needDist) => {
+          if (!getNeighborClearance || isHole) return true;
+          const uA = Math.max(0, Math.min(len, u0 + 0.12));
+          const uB = Math.max(0, Math.min(len, u1 - 0.12));
+          const uM = Math.max(0, Math.min(len, (u0 + u1) * 0.5));
+          const samples = uB - uA > 2.2 ? [uA, uM, uB] : [uM];
+          for (let sIdx = 0; sIdx < samples.length; sIdx++) {
+            const uS = samples[sIdx];
+            if (getNeighborClearance(x1 + tx * uS, z1 + tz * uS, nx, nz, needDist + 0.35, entityIdx) < needDist) {
+              return false;
+            }
+          }
+          return true;
+        };
 
         // Resolve local sidewalk/terrain elevation at this edge midpoint for tier 0
         let edgeSurfY = tier.y0;
@@ -1846,7 +1861,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             const du0 = Math.max(0.18, uCenter - dw * 0.5);
             const du1 = Math.min(len - 0.18, uCenter + dw * 0.5);
 
-            if (dSpec.hasStoop && edgeSpan >= 4.2) {
+            if (dSpec.hasStoop && edgeSpan >= 4.2 && edgeHasClearance(du0 - 0.2, du1 + 0.2, 1.55)) {
               // NYC Brownstone 4-step 3D sandstone stoop + side cheek balustrades + elevated parlor door
               const stoopH = Math.min(0.84, plinthH > 0.2 ? plinthH : 0.80);
               const stoopW = Math.min(len - 0.2, (du1 - du0) * 0.82);
@@ -1938,51 +1953,53 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
               pushBoxWithRoofUv(x1, edgeSurfY, z1, tx, tz, nx, nz, du1 - 0.03, Math.min(len - 0.02, du1 + 0.11), 0.0, doorTopRel, 0.02, 0.11, pilasterCol, false);
 
               const canDepth = dSpec.canopyDepth || 0.36;
-              const canV0 = doorTopRel - 0.06;
-              const canV1 = doorTopRel + 0.11;
-              const canCol =
-                doorIdx === 1 || doorIdx === 6 || doorIdx === 9
-                  ? [0.22, 0.21, 0.20] // Dark bronze/metal canopy
-                  : doorIdx === 7
-                    ? [0.34, 0.35, 0.37] // Grey tile hutong gatehouse eaves
-                    : pilasterCol;
-              pushBoxWithRoofUv(
-                x1,
-                edgeSurfY,
-                z1,
-                tx,
-                tz,
-                nx,
-                nz,
-                Math.max(0.02, du0 - 0.14),
-                Math.min(len - 0.02, du1 + 0.14),
-                canV0,
-                canV1,
-                0.02,
-                canDepth,
-                canCol,
-                false
-              );
+              if (edgeHasClearance(du0 - 0.14, du1 + 0.14, canDepth + 0.22)) {
+                const canV0 = doorTopRel - 0.06;
+                const canV1 = doorTopRel + 0.11;
+                const canCol =
+                  doorIdx === 1 || doorIdx === 6 || doorIdx === 9
+                    ? [0.22, 0.21, 0.20] // Dark bronze/metal canopy
+                    : doorIdx === 7
+                      ? [0.34, 0.35, 0.37] // Grey tile hutong gatehouse eaves
+                      : pilasterCol;
+                pushBoxWithRoofUv(
+                  x1,
+                  edgeSurfY,
+                  z1,
+                  tx,
+                  tz,
+                  nx,
+                  nz,
+                  Math.max(0.02, du0 - 0.14),
+                  Math.min(len - 0.02, du1 + 0.14),
+                  canV0,
+                  canV1,
+                  0.02,
+                  canDepth,
+                  canCol,
+                  false
+                );
 
-              // Warm downlight / entrance sconce under canopy (glows at sunset & night via vEmissive)
-              const lightW = Math.min(0.75, (du1 - du0) * 0.28);
-              pushBoxWithRoofUv(
-                x1,
-                edgeSurfY,
-                z1,
-                tx,
-                tz,
-                nx,
-                nz,
-                uCenter - lightW * 0.5,
-                uCenter + lightW * 0.5,
-                canV0 - 0.07,
-                canV0,
-                0.07,
-                Math.min(canDepth - 0.04, 0.34),
-                warmLightRgb,
-                true
-              );
+                // Warm downlight / entrance sconce under canopy (glows at sunset & night via vEmissive)
+                const lightW = Math.min(0.75, (du1 - du0) * 0.28);
+                pushBoxWithRoofUv(
+                  x1,
+                  edgeSurfY,
+                  z1,
+                  tx,
+                  tz,
+                  nx,
+                  nz,
+                  uCenter - lightW * 0.5,
+                  uCenter + lightW * 0.5,
+                  canV0 - 0.07,
+                  canV0,
+                  0.07,
+                  Math.min(canDepth - 0.04, 0.34),
+                  warmLightRgb,
+                  true
+                );
+              }
             }
           }
         }
@@ -2016,8 +2033,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             const acBodyCol = [0.82, 0.81, 0.78];
             const acGrilleCol = [0.22, 0.24, 0.26];
             const edgeSeed = (seed ^ Math.imul(i + 1, 2654435761) ^ Math.imul(tIdx + 1, 1597334677)) >>> 0;
-            const hasBalconies = (edgeSeed % 5) < 3;
-            const hasAcUnits = ((edgeSeed >>> 4) % 4) < 2;
+            const hasBalconies = (edgeSeed % 5) < 3 && edgeHasClearance(0.2, len - 0.2, 0.88);
+            const hasAcUnits = ((edgeSeed >>> 4) % 4) < 2 && edgeHasClearance(0.2, len - 0.2, 0.52);
             const balStride = nWallBays >= 4 ? 2 : 1;
             const balOffset = (edgeSeed >>> 8) % balStride;
 
@@ -2100,7 +2117,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
                 const stW = Math.min(2.1, len * 0.34);
                 const su0 = Math.max(0.25, uCenter - stW * 0.5);
                 const su1 = Math.min(len - 0.25, uCenter + stW * 0.5);
-                if (su1 - su0 < 1.1) continue;
+                if (su1 - su0 < 1.1 || !edgeHasClearance(su0 - 0.2, su1 + 0.2, 1.32)) continue;
                 const stoopH = 0.45;
                 for (let st = 0; st < 3; st++) {
                   const sv0 = (st / 3) * stoopH;
@@ -2162,6 +2179,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
                 const by1 = shaftY1 - 0.45;
                 if (by1 - by0 < 2.4) continue;
 
+                if (!edgeHasClearance(bu0 - 0.08, bu1 + 0.08, bayDepth + 0.34)) continue;
                 const fu0 = bu0 + chamfer;
                 const fu1 = bu1 - chamfer;
                 const wOff = 0.04;
@@ -2367,7 +2385,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
             const pu1 = Math.min(len - 0.35, fuMid + platW * 0.5);
             const platD = 0.82;
             const maxFeFl = Math.min(upperFloors, 9);
-            if (pu1 - pu0 >= 1.35) {
+            if (pu1 - pu0 >= 1.35 && edgeHasClearance(pu0, pu1, platD + 0.25)) {
               for (let fl = 1; fl < maxFeFl; fl++) {
                 const fy = fl * floorH;
                 // Perforated cast-iron landing platform grating + front & side safety railings
@@ -2410,8 +2428,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           const wroughtIronCol = [0.14 * dirShade, 0.15 * dirShade, 0.17 * dirShade];
           const stoneMoldingCol = [Math.min(1, pCol[0] * dirShade * 1.05), Math.min(1, pCol[1] * dirShade * 1.04), Math.min(1, pCol[2] * dirShade * 1.02)];
           // Continuous Haussmann wrought-iron balcony band at Noble Floor (floor 1) and top Mansard base (upperFloors - 1)
-          const haussmannBandFloors = upperFloors >= 5 ? [1, upperFloors - 1] : [1];
-          for (const bFl of haussmannBandFloors) {
+          const haussmannBandFloors = (upperFloors >= 5 ? [1, upperFloors - 1] : [1]);
+          if (edgeHasClearance(0.15, len - 0.15, 0.66)) for (const bFl of haussmannBandFloors) {
             if (bFl >= 1 && bFl < upperFloors) {
               const by = bFl * floorH;
               pushDetailWallBox(x1, upperY0, z1, tx, tz, nx, nz, 0.12, len - 0.12, by - 0.10, by + 0.07, 0.02, 0.46, stoneMoldingCol, false);
@@ -2437,7 +2455,8 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           (btype === 'apartments' || btype === 'residential' || btype === 'hotel' || upperSpec.index === 14 || upperSpec.index === 20) &&
           totalSpan >= 28.0 &&
           len >= 7.5 &&
-          upperFloors >= 6
+          upperFloors >= 6 &&
+          edgeHasClearance(0.2, len - 0.2, 0.98)
         ) {
           // Modern High-Rise Residential Glass-Box Loggia Balconies
           const floorH = upperSpan / upperFloors;
@@ -2477,7 +2496,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
         const ornStone = [Math.min(1, ornAv[0] * ornWt[0] * 1.12 * dirShade), Math.min(1, ornAv[1] * ornWt[1] * 1.12 * dirShade), Math.min(1, ornAv[2] * ornWt[2] * 1.12 * dirShade)];
         // An arcade needs a front to carry it: a retail podium, or a long street front of a building of 4+ storeys
         const arcadeFront = hasRetailPodium || (len >= 14.0 && edgeSpan >= 13.0 && !EAST_ASIA_ARCH[archRegion]);
-        if (!isHole && tIdx === 0 && isCommOrCivicGround && arcadeFront && len >= 9.0 && edgeSpan >= 4.2) {
+        if (!isHole && tIdx === 0 && isCommOrCivicGround && arcadeFront && len >= 9.0 && edgeSpan >= 4.2 && edgeHasClearance(0.2, len - 0.2, 0.76)) {
           const hasRoadEntrance = Boolean(entranceMap && entranceMap.has(i));
           const colSeed = (seed ^ Math.imul(i + 1, 1597334677)) >>> 0;
           if (hasRoadEntrance || (hasRetailPodium && (colSeed & 1) === 0)) {
@@ -2501,7 +2520,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
               const mqW = Math.min(7.8, Math.max(3.8, len * 0.34));
               const mqu0 = Math.max(0.4, mainDoorU - mqW * 0.5);
               const mqu1 = Math.min(len - 0.4, mainDoorU + mqW * 0.5);
-              if (mqu1 - mqu0 >= 3.2) {
+              if (mqu1 - mqu0 >= 3.2 && edgeHasClearance(mqu0, mqu1, 1.70)) {
                 const mqY = Math.min(edgeSpan - 0.5, Math.max(3.4, arcadeH - 0.18));
                 const mqDepth = 1.48;
                 const bronzeCol = [0.26 * dirShade, 0.22 * dirShade, 0.18 * dirShade];
@@ -2529,6 +2548,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           const pu0 = (len - portW) * 0.5;
           const pu1 = pu0 + portW;
           const portD = 1.45;
+          if (edgeHasClearance(pu0 - 0.4, pu1 + 0.4, portD + 0.65)) {
           const colH = Math.min(edgeSpan * 0.62, 7.2);
           const stoneCol = ornStone;
           const shadowStone = [stoneCol[0] * 0.9, stoneCol[1] * 0.9, stoneCol[2] * 0.9];
@@ -2556,6 +2576,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
               0.04, portD + 0.12, stoneCol, false
             );
           }
+          }
         }
 
         // Corporate / Tech / Finance / Media / Hotel HQ Double-Height Glass Atrium & Cantilevered Entrance Marquee
@@ -2565,6 +2586,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
           const mu0 = (len - marqW) * 0.5;
           const mu1 = mu0 + marqW;
           const marqD = 1.85;
+          if (!edgeHasClearance(mu0 - 0.48, mu1 + 0.48, marqD + 0.25)) continue;
           const atriumH = Math.min(edgeSpan * 0.65, 6.8);
           const steelCol = [0.24 * dirShade, 0.26 * dirShade, 0.29 * dirShade];
           const glassAtriumCol = [0.20, 0.34, 0.48];
@@ -3062,6 +3084,7 @@ export function appendCompactChunkBuildingWFC(bldgInfo, pos, norm, col, triEntit
       detailSink,
       pushBox: pushWorldBox,
       pushWallQuad,
+      getNeighborClearance,
       region,
     });
   }

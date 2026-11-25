@@ -255,6 +255,34 @@ function buildContouredAirfoilGeometry(side, stations, profSegs = 18, isVertical
  * Builds a multi-part 3D vehicle model pivoted at bottom-center (y = 0 at tire contact).
  * Local forward is +Z, right is +X, up is +Y.
  */
+function computeRearWheelOffset(wheels, typeId) {
+  let rearZ = Infinity;
+  for (const w of wheels) {
+    const piv = w && w.parent;
+    if (!piv) continue;
+    if (piv.position.z < rearZ) rearZ = piv.position.z;
+  }
+  if (!Number.isFinite(rearZ)) {
+    const spec = VEHICLE_SPECS.find((s) => s.id === typeId);
+    return {
+      halfTrack: (spec?.width || 2.0) * 0.44,
+      rearZ: -(spec?.length || 4.6) * 0.34,
+    };
+  }
+  let halfTrack = 0;
+  for (const w of wheels) {
+    const piv = w && w.parent;
+    if (!piv) continue;
+    if (Math.abs(piv.position.z - rearZ) < 0.25) {
+      halfTrack = Math.max(halfTrack, Math.abs(piv.position.x));
+    }
+  }
+  return {
+    halfTrack: halfTrack || 0.9,
+    rearZ,
+  };
+}
+
 export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
   if (typeId === 'fighter_jet' || typeId === 'plane' || typeId === 'propeller_plane') {
     return createPlaneModel(typeId === 'propeller_plane' ? 'propeller_plane' : 'fighter_jet', options);
@@ -263,7 +291,11 @@ export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
     return createHeroVehicleModel(typeId, options);
   }
   if (!options.standalone && isCustomFleetVehicle(typeId)) {
-    return buildFleetVehicleModel(typeId, options);
+    const fleetGroup = buildFleetVehicleModel(typeId, options);
+    if (fleetGroup && fleetGroup.userData && !fleetGroup.userData.rearWheelOffset) {
+      fleetGroup.userData.rearWheelOffset = computeRearWheelOffset(fleetGroup.userData.wheels || [], typeId);
+    }
+    return fleetGroup;
   }
   const group = new THREE.Group();
   const chassis = new THREE.Group();
@@ -291,7 +323,7 @@ export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
   const interiorMat = new THREE.MeshStandardMaterial({ color: 0x28303d, roughness: 0.62, metalness: 0.18 });
   const headLightMat = new THREE.MeshBasicMaterial({ color: 0xfff5d6 });
   const drlLightMat = new THREE.MeshBasicMaterial({ color: 0xe0f7ff });
-  const tailLightMat = new THREE.MeshBasicMaterial({ color: 0xff1e2e });
+  const tailLightMat = new THREE.MeshBasicMaterial({ color: 0x8c141c });
 
   const wheels = [];
   const frontSteerPivots = [];
@@ -1219,6 +1251,8 @@ export function createVehicleModel(typeId = 'cyber_mach1', options = {}) {
     chassis,
     wheels,
     frontSteerPivots,
+    tailLightMat,
+    rearWheelOffset: computeRearWheelOffset(wheels, typeId),
     nitroVfx,
     vfxParts,
   };
@@ -1257,6 +1291,19 @@ function createHeroVehicleModel(typeId, options) {
     radius: big ? 0.34 : hero.exhausts.length > 2 && style !== 'diesel' ? 0.12 : undefined, length: big ? 3.8 : undefined,
     aeroFlaps: vfxParts.aeroFlaps,
   });
+  let tailLightMat = null;
+  chassis.traverse((obj) => {
+    if (!tailLightMat && obj.isMesh && obj.material?.userData?.emitCode === 2) {
+      tailLightMat = obj.material;
+    }
+  });
+  if (tailLightMat) {
+    tailLightMat.color.setHex(0x8c141c);
+    if (tailLightMat.emissive) {
+      tailLightMat.emissive.setHex(0x8c141c);
+      tailLightMat.emissiveIntensity = 0.35;
+    }
+  }
   group.userData = {
     ...(hero.userData || {}),
     typeId,
@@ -1264,6 +1311,8 @@ function createHeroVehicleModel(typeId, options) {
     chassis,
     wheels: hero.wheels,
     frontSteerPivots: hero.frontSteerPivots,
+    tailLightMat,
+    rearWheelOffset: computeRearWheelOffset(hero.wheels, typeId),
     nitroVfx,
     vfxParts,
     paintMeshes: hero.paintMeshes,

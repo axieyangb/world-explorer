@@ -2304,8 +2304,37 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     return true;
   };
 
+  const TREE_CELL = 4.0;
+  const treeGrid = new Map();
+  const treeKey = (gx, gz) => ((gx + 2048) << 12) | (gz + 2048);
+  const canPlantTree = (x, z, rNew) => {
+    const gx = Math.floor(x / TREE_CELL);
+    const gz = Math.floor(z / TREE_CELL);
+    const span = rNew > 0.4 ? 2 : 1;
+    for (let dz = -span; dz <= span; dz++) {
+      for (let dx = -span; dx <= span; dx++) {
+        const list = treeGrid.get(treeKey(gx + dx, gz + dz));
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          const t = list[i];
+          const minD = Math.max(3.2, 2.0 * (rNew + t.r));
+          const ddx = x - t.x, ddz = z - t.z;
+          if (ddx * ddx + ddz * ddz < minD * minD) return false;
+        }
+      }
+    }
+    return true;
+  };
+  const recordTree = (x, z, rNew) => {
+    const k = treeKey(Math.floor(x / TREE_CELL), Math.floor(z / TREE_CELL));
+    let list = treeGrid.get(k);
+    if (!list) { list = []; treeGrid.set(k, list); }
+    list.push({ x, z, r: rNew });
+  };
+
   const pushRaw = (sp, x, y, z, sXZ, sY, rot, r, g, b) => {
     if (count >= MAX_CHUNK_INSTANCES) return false;
+    if (sp !== SP_BUSH && !canPlantTree(x, z, sXZ)) return count < MAX_CHUNK_INSTANCES;
     const o = count * INST_STRIDE;
     inst[o] = ox + x;
     inst[o + 1] = y;
@@ -2318,10 +2347,12 @@ export function buildVegetationLayer({ cx, cz, ox, oz, data, roadSegments, isPoi
     inst[o + 8] = b;
     species[count] = sp;
     count++;
+    if (sp !== SP_BUSH) recordTree(x, z, sXZ);
     return true;
   };
   // [feature/climate-flora] palette entry -> species/color/scale after season + altitude (null look = no tree here)
   const plantTree = (e, x, z, sXZ, sY, rng, isStreetTree = false) => {
+    if (count >= MAX_CHUNK_INSTANCES) return false;
     const y = sampleTreeSurfaceY(x, z, isStreetTree);
     const lk = floraLook(ctx, e, rng(), rng(), y + baseAsl);
     if (!lk) return count < MAX_CHUNK_INSTANCES;

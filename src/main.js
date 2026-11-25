@@ -173,6 +173,13 @@ function showGraphicsLost() {
 }
 
 const TIME_PRESET_ORDER = ["noon", "sunset", "night", "overcast"];
+const TAIL_LAMP_RUN_COLOR = new THREE.Color(0x8c141c);
+const TAIL_LAMP_BRAKE_COLOR = new THREE.Color(0xff2233);
+const MAX_SKID_QUADS = 240;
+const SKID_MIN_STEP = 0.45;
+const SKID_HALF_WIDTH = 0.14;
+const MAX_SMOKE = 24;
+const SMOKE_LIFE = 0.65;
 
 // [integration perf] Beijing skyline LOD as one InstancedMesh per ~5 km tile (frustum culling), behind the
 // single-InstancedMesh API the horizon code uses (setMatrixAt / setColorAt / instanceMatrix.needsUpdate).
@@ -441,6 +448,7 @@ class WorldExplorerApp {
     this.vehicleMesh.position.copy(this.pos);
     this.vehicleMesh.rotation.y = this.yaw;
     this.scene.add(this.vehicleMesh);
+    this._initDriftAndBrakeVfx();
     this.parkedCars = new ParkedCars(this); // [parked-cars] cars you got out of stay where you left them
     this.carjack = new Carjack(this); // [polish]
 
@@ -498,7 +506,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261123_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261125_r1" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -899,6 +907,8 @@ class WorldExplorerApp {
 
     this.teleportGeneration = (this.teleportGeneration || 0) + 1;
     this.isTeleporting = true;
+    this._clearDriftVfx();
+    this._resetBrakeLights();
     this.water.reset(); // fix/water
     if (this.maritime) {
       this.maritime.vessels.length = 0;
@@ -2216,6 +2226,8 @@ class WorldExplorerApp {
 
   /** A teleport arrives at rest at this.pos: FSD off, no carried fall, boat left behind, airliner moved along. */
   _resetMotionForTeleport() {
+    this._clearDriftVfx();
+    this._resetBrakeLights();
     if (this.fsd && this.fsd.active) this.stopFsd();
     if (this.mode === "boat" && this.maritime) {
       // The target is a place on land, so step off; the boat stays moored where it was.
@@ -2616,6 +2628,8 @@ class WorldExplorerApp {
       this.nitroActive = false;
       this._driveLatVel = 0;
       this._driveDriftSlip = 0;
+      this._skidActive = false;
+      this._resetBrakeLights();
       updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
       return;
     }
@@ -2623,6 +2637,8 @@ class WorldExplorerApp {
       this.nitroActive = false;
       this._driveLatVel = 0;
       this._driveDriftSlip = 0;
+      this._skidActive = false;
+      this._resetBrakeLights();
       return;
     }
     const spec = VEHICLE_SPECS[this.vehicleIdx];
@@ -2645,6 +2661,8 @@ class WorldExplorerApp {
       throttle = fsdDriveOut.throttle;
       steerInput = fsdDriveOut.steerInput;
       handbrake = fsdDriveOut.handbrake;
+    } else {
+      this._fsdBraking = false;
     }
     const isNitro = shiftPressed && throttle > 0 && !(this.poiVenues && this.poiVenues.nitroEmpty); // [venues-poi] nitro tank
     this.nitroActive = isNitro;
@@ -2969,9 +2987,298 @@ class WorldExplorerApp {
     }
     updateVehicleDriver(this.vehicleMesh, this.avatarMesh, this.steerAngle); // [drivers]
 
+    const isBraking = !this.fsdActive
+      ? (handbrake || (throttle < -0.1 && this.speed > 1.5))
+      : (this._fsdBraking || false);
+    this._updateBrakeLights(dt, isBraking);
+    this._updateDriftVfx(dt, rearSup.y, handbrake);
+
     updateEntityNitroVfx(this.vehicleMesh, isNitro && Math.abs(this.speed) > 1.5, this.speed, this.vfxTime);
     updateEntityNitroVfx(this.avatarMesh, false, 0, this.vfxTime);
     updateEntityNitroVfx(this.heliMesh, false, 0, this.vfxTime);
+  }
+
+  _initDriftAndBrakeVfx() {
+    this._brakeLightAlpha = 0;
+    this._fsdBraking = false;
+
+    // Pre-allocated zero-allocation Tire Skid Mark Pool (1 draw call)
+    const skidGeo = new THREE.BufferGeometry();
+    this._skidPosArr = new Float32Array(MAX_SKID_QUADS * 4 * 3);
+    const skidIndices = new Uint16Array(MAX_SKID_QUADS * 6);
+    for (let q = 0; q < MAX_SKID_QUADS; q++) {
+      const v = q * 4;
+      const k = q * 6;
+      skidIndices[k] = v;
+      skidIndices[k + 1] = v + 1;
+      skidIndices[k + 2] = v + 2;
+      skidIndices[k + 3] = v;
+      skidIndices[k + 4] = v + 2;
+      skidIndices[k + 5] = v + 3;
+    }
+    this._skidPosAttr = new THREE.BufferAttribute(this._skidPosArr, 3);
+    this._skidPosAttr.setUsage(THREE.DynamicDrawUsage);
+    skidGeo.setAttribute("position", this._skidPosAttr);
+    skidGeo.setIndex(new THREE.BufferAttribute(skidIndices, 1));
+    this._skidMesh = new THREE.Mesh(
+      skidGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0x14161a,
+        transparent: true,
+        opacity: 0.48,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        side: THREE.DoubleSide,
+      })
+    );
+    this._skidMesh.frustumCulled = false;
+    this._skidMesh.renderOrder = 2;
+    this.scene.add(this._skidMesh);
+    this._skidHead = 0;
+    this._skidActive = false;
+    this._skidPrevLX = 0;
+    this._skidPrevLY = 0;
+    this._skidPrevLZ = 0;
+    this._skidPrevRX = 0;
+    this._skidPrevRY = 0;
+    this._skidPrevRZ = 0;
+
+    // Pre-allocated zero-allocation Drift Tire Smoke Pool (1 draw call)
+    const smokeGeo = new THREE.BufferGeometry();
+    this._smokePosArr = new Float32Array(MAX_SMOKE * 3);
+    this._smokeSizeArr = new Float32Array(MAX_SMOKE);
+    this._smokeAlphaArr = new Float32Array(MAX_SMOKE);
+    this._smokeVelArr = new Float32Array(MAX_SMOKE * 3);
+    this._smokeAgeArr = new Float32Array(MAX_SMOKE);
+    this._smokeAgeArr.fill(-1);
+    this._smokePosAttr = new THREE.BufferAttribute(this._smokePosArr, 3);
+    this._smokePosAttr.setUsage(THREE.DynamicDrawUsage);
+    this._smokeSizeAttr = new THREE.BufferAttribute(this._smokeSizeArr, 1);
+    this._smokeSizeAttr.setUsage(THREE.DynamicDrawUsage);
+    this._smokeAlphaAttr = new THREE.BufferAttribute(this._smokeAlphaArr, 1);
+    this._smokeAlphaAttr.setUsage(THREE.DynamicDrawUsage);
+    smokeGeo.setAttribute("position", this._smokePosAttr);
+    smokeGeo.setAttribute("aSize", this._smokeSizeAttr);
+    smokeGeo.setAttribute("aAlpha", this._smokeAlphaAttr);
+    this._smokeMat = new THREE.ShaderMaterial({
+      uniforms: { uScale: { value: 600 } },
+      vertexShader: "attribute float aSize; attribute float aAlpha; varying float vAlpha; uniform float uScale; void main() { vAlpha = aAlpha; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = aAlpha > 0.002 ? clamp(aSize * (uScale / max(-mv.z, 0.5)), 2.0, 140.0) : 0.0; gl_Position = projectionMatrix * mv; }",
+      fragmentShader: "varying float vAlpha; void main() { if (vAlpha <= 0.002) discard; vec2 uv = gl_PointCoord - vec2(0.5); float d = length(uv) * 2.0; if (d >= 1.0) discard; float soft = pow(1.0 - d, 1.65); gl_FragColor = vec4(0.84, 0.86, 0.89, soft * vAlpha); }",
+      transparent: true,
+      depthWrite: false,
+    });
+    this._smokePoints = new THREE.Points(smokeGeo, this._smokeMat);
+    this._smokePoints.frustumCulled = false;
+    this._smokePoints.visible = false;
+    this._smokePoints.renderOrder = 4;
+    this.scene.add(this._smokePoints);
+    this._smokeHead = 0;
+    this._smokeSpawnTimer = 0;
+  }
+
+  _clearDriftVfx() {
+    if (this._skidPosArr) {
+      this._skidPosArr.fill(0);
+      this._skidHead = 0;
+      this._skidActive = false;
+      this._skidPosAttr.needsUpdate = true;
+    }
+    if (this._smokeAgeArr) {
+      this._smokeAgeArr.fill(-1);
+      this._smokeAlphaArr.fill(0);
+      this._smokeSizeArr.fill(0);
+      this._smokePosAttr.needsUpdate = true;
+      this._smokeSizeAttr.needsUpdate = true;
+      this._smokeAlphaAttr.needsUpdate = true;
+      this._smokePoints.visible = false;
+      this._smokeSpawnTimer = 0;
+    }
+  }
+
+  _resetBrakeLights(mesh = this.vehicleMesh) {
+    this._brakeLightAlpha = 0;
+    this._fsdBraking = false;
+    const ud = mesh && mesh.userData;
+    if (!ud) return;
+    if (ud.tailLightMat) {
+      ud.tailLightMat.color.copy(TAIL_LAMP_RUN_COLOR);
+      if (ud.tailLightMat.emissive) {
+        ud.tailLightMat.emissive.copy(TAIL_LAMP_RUN_COLOR);
+        ud.tailLightMat.emissiveIntensity = 0.35;
+      }
+    }
+    if (ud.rearLightPool && ud.rearLightPool.intensity !== undefined) {
+      ud.rearLightPool.intensity = 0;
+    }
+  }
+
+  _updateBrakeLights(dt, isBraking) {
+    const target = isBraking ? 1 : 0;
+    const rate = isBraking ? 18 : 10;
+    this._brakeLightAlpha = THREE.MathUtils.lerp(this._brakeLightAlpha || 0, target, Math.min(1, rate * dt));
+    const tailMat = this.vehicleMesh?.userData?.tailLightMat;
+    const nightAmt = this.atmosphere?.nightLights?.on || 0;
+    if (tailMat) {
+      tailMat.color.lerpColors(TAIL_LAMP_RUN_COLOR, TAIL_LAMP_BRAKE_COLOR, this._brakeLightAlpha);
+      if (tailMat.emissive) {
+        tailMat.emissive.lerpColors(TAIL_LAMP_RUN_COLOR, TAIL_LAMP_BRAKE_COLOR, this._brakeLightAlpha);
+        tailMat.emissiveIntensity = THREE.MathUtils.lerp(
+          0.35 + nightAmt * 0.25,
+          1.55 + nightAmt * 0.45,
+          this._brakeLightAlpha
+        );
+      }
+    }
+    const rearLightPool = this.vehicleMesh?.userData?.rearLightPool;
+    if (rearLightPool && rearLightPool.intensity !== undefined) {
+      rearLightPool.intensity = nightAmt > 0.05
+        ? (0.35 + this._brakeLightAlpha * 1.15) * nightAmt
+        : 0;
+    }
+  }
+
+  _stampSkidQuad(px, py, pz, cx, cy, cz) {
+    const dx = cx - px;
+    const dz = cz - pz;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return;
+    const nx = (-dz / len) * SKID_HALF_WIDTH;
+    const nz = (dx / len) * SKID_HALF_WIDTH;
+    const b = this._skidHead * 12;
+    const a = this._skidPosArr;
+    a[b] = px - nx;     a[b + 1] = py;  a[b + 2] = pz - nz;
+    a[b + 3] = px + nx; a[b + 4] = py;  a[b + 5] = pz + nz;
+    a[b + 6] = cx + nx; a[b + 7] = cy;  a[b + 8] = cz + nz;
+    a[b + 9] = cx - nx; a[b + 10] = cy; a[b + 11] = cz - nz;
+    this._skidHead = (this._skidHead + 1) % MAX_SKID_QUADS;
+  }
+
+  _spawnSmokePuff(x, y, z, vx, vy, vz) {
+    const i = this._smokeHead;
+    this._smokeHead = (this._smokeHead + 1) % MAX_SMOKE;
+    const j = i * 3;
+    this._smokePosArr[j] = x;
+    this._smokePosArr[j + 1] = y;
+    this._smokePosArr[j + 2] = z;
+    this._smokeVelArr[j] = vx;
+    this._smokeVelArr[j + 1] = vy;
+    this._smokeVelArr[j + 2] = vz;
+    this._smokeAgeArr[i] = 0;
+    this._smokeSizeArr[i] = 0.72;
+    this._smokeAlphaArr[i] = 0.05;
+    this._smokePoints.visible = true;
+  }
+
+  _updateDriftVfx(dt, groundY, handbrake) {
+    if (!this._skidPosArr) return;
+    const inWater = Boolean(this._inWater || (this.water && this.water.sink));
+    const groundedDrive = this.mode === "drive" && this.isGrounded && !inWater;
+    const skidding = groundedDrive && (this._driveDriftSlip > 0.28 || (handbrake && Math.abs(this.speed) > 12));
+    const smoking = groundedDrive && !this._prefersReducedMotion() && this._driveDriftSlip > 0.35 && Math.abs(this.speed) > 8;
+
+    if (!skidding && !smoking) {
+      this._skidActive = false;
+      this._smokeSpawnTimer = 0;
+      return;
+    }
+
+    const rw = this.vehicleMesh?.userData?.rearWheelOffset;
+    const halfTrack = rw ? rw.halfTrack : 0.92;
+    const rearZ = rw ? rw.rearZ : -1.35;
+    const sinY = Math.sin(this.yaw);
+    const cosY = Math.cos(this.yaw);
+    const axX = this.pos.x + sinY * rearZ;
+    const axZ = this.pos.z + cosY * rearZ;
+    const lx = axX - cosY * halfTrack;
+    const lz = axZ + sinY * halfTrack;
+    const rx = axX + cosY * halfTrack;
+    const rz = axZ - sinY * halfTrack;
+    const tireY = groundY + 0.04;
+
+    if (skidding) {
+      if (!this._skidActive) {
+        this._skidPrevLX = lx; this._skidPrevLY = tireY; this._skidPrevLZ = lz;
+        this._skidPrevRX = rx; this._skidPrevRY = tireY; this._skidPrevRZ = rz;
+        this._skidActive = true;
+      } else {
+        const dL = Math.hypot(lx - this._skidPrevLX, lz - this._skidPrevLZ);
+        const dR = Math.hypot(rx - this._skidPrevRX, rz - this._skidPrevRZ);
+        if (dL > 12 || dR > 12) {
+          this._skidPrevLX = lx; this._skidPrevLY = tireY; this._skidPrevLZ = lz;
+          this._skidPrevRX = rx; this._skidPrevRY = tireY; this._skidPrevRZ = rz;
+        } else if (Math.max(dL, dR) >= SKID_MIN_STEP) {
+          this._stampSkidQuad(this._skidPrevLX, this._skidPrevLY, this._skidPrevLZ, lx, tireY, lz);
+          this._stampSkidQuad(this._skidPrevRX, this._skidPrevRY, this._skidPrevRZ, rx, tireY, rz);
+          this._skidPosAttr.needsUpdate = true;
+          this._skidPrevLX = lx; this._skidPrevLY = tireY; this._skidPrevLZ = lz;
+          this._skidPrevRX = rx; this._skidPrevRY = tireY; this._skidPrevRZ = rz;
+        }
+      }
+    } else {
+      this._skidActive = false;
+    }
+
+    if (smoking) {
+      this._smokeSpawnTimer += dt;
+      let bursts = 0;
+      while (this._smokeSpawnTimer >= 0.045 && bursts < 2) {
+        this._smokeSpawnTimer -= 0.045;
+        bursts++;
+        const backX = -sinY * 0.28;
+        const backZ = -cosY * 0.28;
+        const driftSign = Math.sign(this._driveLatVel || 0);
+        const latVx = cosY * driftSign * 0.9;
+        const latVz = -sinY * driftSign * 0.9;
+        this._spawnSmokePuff(
+          lx + backX, groundY + 0.22, lz + backZ,
+          latVx + (Math.random() - 0.5) * 0.9, 1.35 + Math.random() * 0.75, latVz + (Math.random() - 0.5) * 0.9
+        );
+        this._spawnSmokePuff(
+          rx + backX, groundY + 0.22, rz + backZ,
+          latVx + (Math.random() - 0.5) * 0.9, 1.35 + Math.random() * 0.75, latVz + (Math.random() - 0.5) * 0.9
+        );
+      }
+    } else {
+      this._smokeSpawnTimer = 0;
+    }
+  }
+
+  _tickDriftSmokePool(dt) {
+    if (!this._smokePoints || !this._smokePoints.visible) return;
+    const h = this.renderer?.domElement?.height || window.innerHeight || 720;
+    const fovRad = THREE.MathUtils.degToRad(this.camera?.fov || 60);
+    this._smokeMat.uniforms.uScale.value = (h * 0.5) / Math.tan(fovRad * 0.5);
+
+    let activeCount = 0;
+    const drag = Math.max(0, 1 - 1.8 * dt);
+    for (let i = 0; i < MAX_SMOKE; i++) {
+      let age = this._smokeAgeArr[i];
+      if (age < 0) continue;
+      age += dt;
+      if (age >= SMOKE_LIFE) {
+        this._smokeAgeArr[i] = -1;
+        this._smokeAlphaArr[i] = 0;
+        this._smokeSizeArr[i] = 0;
+      } else {
+        this._smokeAgeArr[i] = age;
+        const t = age / SMOKE_LIFE;
+        const j = i * 3;
+        this._smokePosArr[j] += this._smokeVelArr[j] * dt;
+        this._smokePosArr[j + 1] += this._smokeVelArr[j + 1] * dt;
+        this._smokePosArr[j + 2] += this._smokeVelArr[j + 2] * dt;
+        this._smokeVelArr[j] *= drag;
+        this._smokeVelArr[j + 1] += 0.45 * dt;
+        this._smokeVelArr[j + 2] *= drag;
+        this._smokeSizeArr[i] = 0.72 + t * 2.15;
+        this._smokeAlphaArr[i] = Math.sin(Math.min(1, t * 5.0) * Math.PI * 0.5) * Math.pow(1.0 - t, 1.45) * 0.36;
+        activeCount++;
+      }
+    }
+    this._smokePosAttr.needsUpdate = true;
+    this._smokeSizeAttr.needsUpdate = true;
+    this._smokeAlphaAttr.needsUpdate = true;
+    if (activeCount === 0) this._smokePoints.visible = false;
   }
 
   _updateCamera(dt) {
@@ -3777,6 +4084,10 @@ class WorldExplorerApp {
       this.heliMesh.rotation.y = this.yaw;
       this.camPivot.copy(this.pos);
     }
+    if (prevMode === "drive" && newMode !== "drive") {
+      this._skidActive = false;
+      this._resetBrakeLights();
+    }
     if (prevMode === "helicopter" && newMode !== "helicopter" && this.heli) this.heli.onExit();
     this._showControlsHint(this.mode);
     if (!this._applyingStartupMode) this._syncUrlParams(undefined, undefined, this.mode);
@@ -3791,6 +4102,7 @@ class WorldExplorerApp {
     stopVehicleSirenAudio();
     this.sirenActive = false;
     if (this.vehicleMesh.userData) this.vehicleMesh.userData.sirenActive = false;
+    this._resetBrakeLights();
     updateEntityNitroVfx(this.vehicleMesh, false, 0, this.vfxTime);
     const e = this.parkedCars.park(this.vehicleMesh, this.vehicleIdx, this.pos.x, this.pos.y, this.pos.z, this.yaw, vd ? vd.playerHealth : 1);
     this.speed = 0;
@@ -4879,6 +5191,7 @@ class WorldExplorerApp {
     );
     if (distToDest < 10.0) {
       this.speed = 0;
+      this._fsdBraking = true;
       this._onFsdArrived();
       return { throttle: 0, steerInput: 0, handbrake: true };
     }
@@ -4933,6 +5246,7 @@ class WorldExplorerApp {
       } else {
         this.speed = -6.5;
         this.yaw += revSteer * 0.85 * dt;
+        this._fsdBraking = false;
         return { throttle: -1, steerInput: revSteer, handbrake: false };
       }
     }
@@ -5114,6 +5428,7 @@ class WorldExplorerApp {
     let targetFsdSpeed = Math.min(spec.maxSpeed * 0.76, Math.min(26.0, classSpeedLimit)) * cornerFactor * turnLookFactor * approachFactor;
 
     // Traffic signal compliance: smoothly brake to stop at stop line on red signal facing intersection
+    let redSignalBraking = false;
     const sigs = this.signals;
     if (sigs && sigs.length > 0) {
       for (let si = 0; si < sigs.length; si++) {
@@ -5127,6 +5442,7 @@ class WorldExplorerApp {
             const stopDist = Math.max(0, fwd - 4.5);
             const redBrakeSpeed = Math.min(targetFsdSpeed, stopDist * 0.95);
             targetFsdSpeed = Math.min(targetFsdSpeed, redBrakeSpeed);
+            if (stopDist < 1.8 || targetFsdSpeed < this.speed - 0.5) redSignalBraking = true;
             if (stopDist < 1.8) {
               this.speed = Math.max(0, this.speed - 30.0 * dt);
               if (this.speed < 0.6) { this.speed = 0; }
@@ -5195,10 +5511,12 @@ class WorldExplorerApp {
       f.noProgressT = (f.noProgressT || 0) + dt; // queuing behind traffic is not being stuck
     }
     if (f.unstickTries >= 3 || f.noProgressT > 20.0) {
+      this._fsdBraking = true;
       this._onFsdStuck();
       return { throttle: 0, steerInput: 0, handbrake: true };
     }
 
+    this._fsdBraking = Boolean(handbrake || redSignalBraking || (throttle < -0.1 && this.speed > 1.0));
     return { throttle, steerInput, handbrake };
   }
 
@@ -5455,6 +5773,7 @@ class WorldExplorerApp {
     const inOuterSpace = this.spaceLaunch && this.spaceLaunch.isInOuterSpace();
     if (!inLaunch) {
       this._updatePhysics(dt);
+      this._tickDriftSmokePool(dt);
       if (this.kaiju) this.kaiju.update(dt, rawDt); // [kaiju]
       if (this.walkerWeapons) this.walkerWeapons.update(dt);
       if (this.weaponPickups) this.weaponPickups.update(dt); // [weapon-pickups]

@@ -9,12 +9,36 @@
 
 import * as THREE from '../../vendor/three.module.js';
 import { getLang, translateRoadName } from '../i18n.js';
-import { isNight } from './daylight.js';
+import { isNight, getDaylight, getWeather } from './daylight.js';
 import { QUALITY } from './quality.js'; // [ui-mobile]
 import { buildAirlinerInstancedGeometries } from './airliner_models.js';
 import { getBeijingTerrainElevation } from '../environment.js';
 
 const STRIDE = 8;
+const RL_COLORS = [
+  new THREE.Color(0xfff7e6), // 0: warm-white edge light
+  new THREE.Color(0x22ff66), // 1: emerald aviation green threshold
+  new THREE.Color(0xff2a2a), // 2: aviation red end light
+  new THREE.Color(0xffd89b), // 3: amber-white approach light bar
+];
+
+function makeGlowSpriteTexture() {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+  g.addColorStop(0.22, 'rgba(255,255,255,0.92)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.38)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
 const M4 = new THREE.Matrix4();
 const Q = new THREE.Quaternion();
 const V = new THREE.Vector3();
@@ -1625,6 +1649,29 @@ export class PlacesSystem {
     this.beaconOn = new THREE.Color(0xff2a1a);
     this.beaconOff = new THREE.Color(0x3a0b07);
 
+    // Airport runway edge, threshold, end, approach & PAPI lights (single additive Points draw call)
+    const RL_CAP = 12000;
+    this.runwayLightsGeom = new THREE.BufferGeometry();
+    this.runwayLightsGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * RL_CAP), 3));
+    this.runwayLightsGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(3 * RL_CAP), 3));
+    this.runwayLightsGeom.setDrawRange(0, 0);
+    this.runwayLightsMat = new THREE.PointsMaterial({
+      size: 3.6,
+      map: makeGlowSpriteTexture(),
+      vertexColors: true,
+      transparent: true,
+      opacity: 0,
+      sizeAttenuation: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+    });
+    this.runwayLights = new THREE.Points(this.runwayLightsGeom, this.runwayLightsMat);
+    this.runwayLights.frustumCulled = false;
+    this.runwayLights.renderOrder = 6;
+    this.runwayLights.visible = false;
+    this.root.add(this.runwayLights);
+
     this.trackedGroups = new Set();
     this.lastX = Infinity;
     this.lastZ = Infinity;
@@ -1716,6 +1763,7 @@ export class PlacesSystem {
     }
     out.trainCars = this.trainPool.count;
     out.beacons = this.beaconGeom.drawRange.count;
+    out.runwayLights = this.runwayLightsGeom.drawRange.count;
     out.labels = this.labelSprites.filter((s) => s.visible).length;
     out.skyPlanes = this._skyPlanes.length;
     out.runwayPlanes = this._runwayPlanes.length;
@@ -1749,7 +1797,7 @@ export class PlacesSystem {
     this._updateTrains(dt);
     this._updateRunwayPlanes(dt);
     this._updateSkyPlanes(dt, playerPos || camPos);
-    this._updateNight();
+    this._updateNight(dt);
     this.labelTimer -= dt;
     if (this.labelTimer <= 0) {
       this.labelTimer = 0.25;
@@ -1831,6 +1879,11 @@ export class PlacesSystem {
     let nBeacon = 0;
     const bArr = this.beaconGeom.attributes.position.array;
     const bCap = bArr.length / 3;
+    let nRunwayLight = 0;
+    let papiIdx = 0;
+    const rlPos = this.runwayLightsGeom.attributes.position.array;
+    const rlCol = this.runwayLightsGeom.attributes.color.array;
+    const rlCap = rlPos.length / 3;
     for (const g of this.trackedGroups) {
       const pl = g.userData && g.userData.places;
       if (!pl) continue;
@@ -1902,6 +1955,24 @@ export class PlacesSystem {
           nBeacon++;
         }
       }
+      if (pl.runwayLights && chunkDist < 4500) {
+        const rl = pl.runwayLights;
+        for (let i = 0; i < rl.length && nRunwayLight < rlCap; i += 4) {
+          const t = rl[i + 3] | 0;
+          rlPos[nRunwayLight * 3] = rl[i];
+          rlPos[nRunwayLight * 3 + 1] = rl[i + 1];
+          rlPos[nRunwayLight * 3 + 2] = rl[i + 2];
+          let c = RL_COLORS[t] || RL_COLORS[0];
+          if (t === 4) {
+            c = (papiIdx & 3) < 2 ? RL_COLORS[0] : RL_COLORS[2];
+            papiIdx++;
+          }
+          rlCol[nRunwayLight * 3] = c.r;
+          rlCol[nRunwayLight * 3 + 1] = c.g;
+          rlCol[nRunwayLight * 3 + 2] = c.b;
+          nRunwayLight++;
+        }
+      }
     }
     for (const [k, pool] of Object.entries(this.pools)) {
       pool.count = counts[k];
@@ -1910,6 +1981,9 @@ export class PlacesSystem {
     }
     this.beaconGeom.setDrawRange(0, nBeacon);
     this.beaconGeom.attributes.position.needsUpdate = true;
+    this.runwayLightsGeom.setDrawRange(0, nRunwayLight);
+    this.runwayLightsGeom.attributes.position.needsUpdate = true;
+    this.runwayLightsGeom.attributes.color.needsUpdate = true;
   }
 
   // ------------------------------------------------------------------ trains
@@ -2243,8 +2317,8 @@ export class PlacesSystem {
     }
   }
 
-  // ------------------------------------------------------------------ night: beacons + sign glow
-  _updateNight() {
+  // ------------------------------------------------------------------ night: beacons + sign glow + runway lights
+  _updateNight(dt = 0) {
     const night = isNight();
     if (night !== this.lastNight) {
       this.lastNight = night;
@@ -2253,6 +2327,21 @@ export class PlacesSystem {
     // Red obstruction lights: ~40 flashes/min
     this.beacons.visible = night;
     if (night) this.beacons.material.color.copy(this.time % 1.5 < 0.7 ? this.beaconOn : this.beaconOff);
+
+    // Runway lights glow at dusk, night, fog, rain, and snow; unobtrusive in bright noon sun
+    const dl = getDaylight();
+    const nightW = Math.max(0, Math.min(1, 1 - (dl - 0.15) / 0.55));
+    const atmo = typeof window !== 'undefined' ? window.__ATMOSPHERE__?.getState?.() : null;
+    let wx = 0;
+    if (atmo) wx = Math.max(atmo.fog || 0, atmo.rain || 0, atmo.snow || 0);
+    else {
+      const w = getWeather();
+      if (w === 'fog' || w === 'rain' || w === 'snow') wx = 0.85;
+    }
+    const targetOp = Math.min(1, Math.max(nightW, wx * 0.65));
+    const blend = dt > 0 ? 1 - Math.exp(-dt * 4) : 1;
+    this.runwayLightsMat.opacity += (targetOp - this.runwayLightsMat.opacity) * blend;
+    this.runwayLights.visible = this.runwayLightsGeom.drawRange.count > 0 && this.runwayLightsMat.opacity > 0.01;
   }
 
   // ------------------------------------------------------------------ labels

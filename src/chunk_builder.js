@@ -1558,14 +1558,39 @@ export function createChunkBuildTask(cx, cz, ox, oz, data, mats, layerVisibility
           }
         }
 
+        const chunkBuildingsForStage = dropBuildingsOnBridgeDecks(data.buildings || [], roadSegments, isPointInWater, ox, oz); // [elevated-roads]
+        const railBuildingFootprints = [];
+        for (let bi = 0; bi < chunkBuildingsForStage.length; bi++) {
+          const rb = chunkBuildingsForStage[bi];
+          const flat = rb && rb[11];
+          const rawMinH = rb ? rb[5] || 0 : 0;
+          if (!flat || flat.length < 6 || rawMinH > 2.0) continue;
+          let bMinX = Infinity, bMaxX = -Infinity, bMinZ = Infinity, bMaxZ = -Infinity;
+          for (let k = 0; k < flat.length; k += 2) {
+            const x = flat[k], z = flat[k + 1];
+            if (x < bMinX) bMinX = x;
+            if (x > bMaxX) bMaxX = x;
+            if (z < bMinZ) bMinZ = z;
+            if (z > bMaxZ) bMaxZ = z;
+          }
+          railBuildingFootprints.push({
+            minX: bMinX + ox,
+            maxX: bMaxX + ox,
+            minZ: bMinZ + oz,
+            maxZ: bMaxZ + oz,
+            flatOuter: flat,
+            minH: rawMinH,
+          });
+        }
+
         // 3. Railways & Elevated Subway Viaducts
         // [feature/rail-transit] real-geometry tracks (ballast/street/catenary/viaducts) + vehicle network payload
-        if (data.rail) root.userData.rail = buildRailTrack(data.rail, ox, oz, subGroups.railways, mats, roadSegments);
+        if (data.rail) root.userData.rail = buildRailTrack(data.rail, ox, oz, subGroups.railways, mats, roadSegments, buildingColliders, railBuildingFootprints);
         else buildRailways(data.railways || [], ox, oz, subGroups.railways, mats);
         delete roadSegments.liftWays; // [release-6-integ]
 
         buildingTask = createBuildingBuildTask(
-          dropBuildingsOnBridgeDecks(data.buildings || [], roadSegments, isPointInWater, ox, oz), // [elevated-roads]
+          chunkBuildingsForStage,
           ox,
           oz,
           subGroups.buildings,
@@ -3643,6 +3668,120 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
     namedRoadPts.push({ mx, mz, name: seg.rawName });
   }
 
+  const BLDG_GRID_CELL = 24.0;
+  const bldgGrid = new Map();
+  const bldgEntries = new Array(buildings.length);
+  const entityToBldgEntry = new Map();
+  let clearanceStamp = 0;
+  const bldgCellKey = (gx, gz) => ((gx + 2048) << 12) | (gz + 2048);
+
+  for (let bi = 0; bi < buildings.length; bi++) {
+    const bb = buildings[bi];
+    const flat = bb && bb[11];
+    if (!flat || flat.length < 6) continue;
+    let bx0 = Infinity, bx1 = -Infinity, bz0 = Infinity, bz1 = -Infinity;
+    for (let k = 0; k < flat.length; k += 2) {
+      const x = flat[k], z = flat[k + 1];
+      if (x < bx0) bx0 = x;
+      if (x > bx1) bx1 = x;
+      if (z < bz0) bz0 = z;
+      if (z > bz1) bz1 = z;
+    }
+    const entry = {
+      bIdx: bi,
+      isPart: Boolean(bb[3]),
+      minH: bb[5] || 0,
+      maxH: bb[4] || 0,
+      minX: bx0,
+      maxX: bx1,
+      minZ: bz0,
+      maxZ: bz1,
+      flatOuter: flat,
+      entityIdx: -1,
+      skipped: false,
+      stamp: 0,
+    };
+    bldgEntries[bi] = entry;
+    const gx0 = Math.floor(bx0 / BLDG_GRID_CELL), gx1 = Math.floor(bx1 / BLDG_GRID_CELL);
+    const gz0 = Math.floor(bz0 / BLDG_GRID_CELL), gz1 = Math.floor(bz1 / BLDG_GRID_CELL);
+    for (let gz = gz0; gz <= gz1; gz++) {
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const k = bldgCellKey(gx, gz);
+        let list = bldgGrid.get(k);
+        if (!list) { list = []; bldgGrid.set(k, list); }
+        list.push(entry);
+      }
+    }
+  }
+
+  const getNeighborClearance = (wx, wz, nx, nz, maxDist = 4.0, selfEntityIdx = -1) => {
+    const nl = Math.hypot(nx, nz);
+    if (nl < 1e-6 || maxDist <= 0) return maxDist;
+    const dx = nx / nl, dz = nz / nl;
+    const selfEntry = selfEntityIdx >= 0 ? entityToBldgEntry.get(selfEntityIdx) : null;
+    const rx0 = Math.min(wx, wx + dx * maxDist) - 0.5;
+    const rx1 = Math.max(wx, wx + dx * maxDist) + 0.5;
+    const rz0 = Math.min(wz, wz + dz * maxDist) - 0.5;
+    const rz1 = Math.max(wz, wz + dz * maxDist) + 0.5;
+    const gx0 = Math.floor(rx0 / BLDG_GRID_CELL), gx1 = Math.floor(rx1 / BLDG_GRID_CELL);
+    const gz0 = Math.floor(rz0 / BLDG_GRID_CELL), gz1 = Math.floor(rz1 / BLDG_GRID_CELL);
+    clearanceStamp++;
+    let best = maxDist;
+    const pxProbe = wx + dx * 0.15, pzProbe = wz + dz * 0.15;
+
+    for (let gz = gz0; gz <= gz1; gz++) {
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const list = bldgGrid.get(bldgCellKey(gx, gz));
+        if (!list) continue;
+        for (let li = 0; li < list.length; li++) {
+          const e = list[li];
+          if (e.stamp === clearanceStamp) continue;
+          e.stamp = clearanceStamp;
+          if (e.skipped || (selfEntityIdx >= 0 && e.entityIdx === selfEntityIdx) || (selfEntry && e === selfEntry)) continue;
+          if (selfEntry) {
+            if (selfEntry.minH > 2.0 && e.maxH <= selfEntry.minH + 0.5) continue;
+            if (!selfEntry.isPart && e.isPart && e.minH > 2.0) continue;
+            if (selfEntry.isPart && e.isPart && (e.maxH <= selfEntry.minH + 0.5 || e.minH >= selfEntry.maxH - 0.5)) continue;
+          }
+          // Ray-AABB slab test over [0, best]
+          let tmin = 0, tmax = best;
+          if (Math.abs(dx) < 1e-8) {
+            if (wx < e.minX - 0.05 || wx > e.maxX + 0.05) continue;
+          } else {
+            let t1 = (e.minX - 0.05 - wx) / dx, t2 = (e.maxX + 0.05 - wx) / dx;
+            if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+            tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+            if (tmin > tmax) continue;
+          }
+          if (Math.abs(dz) < 1e-8) {
+            if (wz < e.minZ - 0.05 || wz > e.maxZ + 0.05) continue;
+          } else {
+            let t1 = (e.minZ - 0.05 - wz) / dz, t2 = (e.maxZ + 0.05 - wz) / dz;
+            if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+            tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+            if (tmin > tmax) continue;
+          }
+
+          const f = e.flatOuter;
+          if (pointInRing2D(pxProbe, pzProbe, f)) return 0;
+          for (let k = 0; k < f.length; k += 2) {
+            const m = (k + 2) % f.length;
+            const ax = f[k], az = f[k + 1];
+            const ex = f[m] - ax, ez = f[m + 1] - az;
+            const denom = dx * ez - dz * ex;
+            if (Math.abs(denom) < 1e-8) continue;
+            const qx = ax - wx, qz = az - wz;
+            const t = (qx * ez - qz * ex) / denom;
+            if (t < 0 || t >= best) continue;
+            const u = (qx * dz - qz * dx) / denom;
+            if (u >= -0.02 && u <= 1.02) best = t;
+          }
+        }
+      }
+    }
+    return best;
+  };
+
   let curIdx = 0;
   let finalized = false;
 
@@ -3746,7 +3885,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
               }
             }
           }
-          if (bldgInWater) continue;
+          if (bldgInWater) { if (bldgEntries[i]) bldgEntries[i].skipped = true; continue; }
         }
 
         // Check duplicate footprints & validate elevated building parts BEFORE pushing to entityTable or buildingColliders
@@ -3757,6 +3896,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
           if (rawMinH <= 2.0 && !isPart) {
             for (let cIdx = 0; cIdx < buildingColliders.length; cIdx++) {
               const bc = buildingColliders[cIdx];
+              if (bc.isPlatform) continue;
               const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
               const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
               const interArea = ix * iz;
@@ -3773,11 +3913,12 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
                 }
               }
             }
-            if (overlapsExistingBldg) continue;
+            if (overlapsExistingBldg) { if (bldgEntries[i]) bldgEntries[i].skipped = true; continue; }
           } else if (rawMinH > 0) {
             let maxSupportRawH = 0;
             for (let cIdx = 0; cIdx < buildingColliders.length; cIdx++) {
               const bc = buildingColliders[cIdx];
+              if (bc.isPlatform) continue;
               const ix = Math.max(0.0, Math.min(curMaxX, bc.maxX) - Math.max(curMinX, bc.minX));
               const iz = Math.max(0.0, Math.min(curMaxZ, bc.maxZ) - Math.max(curMinZ, bc.minZ));
               const interArea = ix * iz;
@@ -3799,6 +3940,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
               effRawMinH = 0;
             } else {
               // Orphaned high-altitude block with no supporting tower underneath: skip so it never floats in mid-air
+              if (bldgEntries[i]) bldgEntries[i].skipped = true;
               continue;
             }
           }
@@ -3884,6 +4026,11 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             : `${typeLabel} (building=yes)`;
 
         const entityIdx = entityTable.length;
+        if (bldgEntries[i]) {
+          bldgEntries[i].entityIdx = entityIdx;
+          bldgEntries[i].minH = effRawMinH;
+          entityToBldgEntry.set(entityIdx, bldgEntries[i]);
+        }
         const entityRecord = {
           kind: 'building',
           id: matchedLm && matchedLm.osmIds && matchedLm.osmIds[0] ? matchedLm.osmIds[0] : osmId,
@@ -3958,6 +4105,7 @@ function createBuildingBuildTask(buildings, ox, oz, bldgGroup, mats, buildingCol
             getEdgeGroundY,
             localRoads,
             wallOutOffset,
+            getNeighborClearance,
             region: regionTag,
             ...roofInfoFor(roofCtx, cx, cz, rawColour, b[8]), // [roofs] arch region, land-use flavour, roof tags, detail sink
           },

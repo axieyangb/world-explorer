@@ -123,12 +123,17 @@ function evalEdgeSmooth(e, s, hint, out) {
   return i;
 }
 
-function obbOverlap(ax, az, ahx, ahz, aL, aW, bx, bz, bhx, bhz, bL, bW) {
+const _obbAxes = new Float64Array(8);
+
+function obbOverlap(ax, az, ahx, ahz, aL, aW, bx, bz, bhx, bhz, bL, bW, out = null) {
   const dx = ax - bx, dz = az - bz;
-  const axes = [ahx, ahz, -ahz, ahx, bhx, bhz, -bhz, bhx];
+  _obbAxes[0] = ahx; _obbAxes[1] = ahz;
+  _obbAxes[2] = -ahz; _obbAxes[3] = ahx;
+  _obbAxes[4] = bhx; _obbAxes[5] = bhz;
+  _obbAxes[6] = -bhz; _obbAxes[7] = bhx;
   let best = Infinity, nx = 0, nz = 0;
   for (let k = 0; k < 8; k += 2) {
-    const x = axes[k], z = axes[k + 1];
+    const x = _obbAxes[k], z = _obbAxes[k + 1];
     const rA = aL * Math.abs(ahx * x + ahz * z) + aW * Math.abs(-ahz * x + ahx * z);
     const rB = bL * Math.abs(bhx * x + bhz * z) + bW * Math.abs(-bhz * x + bhx * z);
     const d = dx * x + dz * z;
@@ -136,6 +141,7 @@ function obbOverlap(ax, az, ahx, ahz, aL, aW, bx, bz, bhx, bhz, bL, bW) {
     if (o <= 0) return null;
     if (o < best) { best = o; nx = d >= 0 ? x : -x; nz = d >= 0 ? z : -z; }
   }
+  if (out) { out.depth = best; out.nx = nx; out.nz = nz; return out; }
   return { depth: best, nx, nz };
 }
 
@@ -220,6 +226,11 @@ export class CityTraffic {
     this._pl = { gap: Infinity, v: 0 };
     this.tmp2 = { x: 0, y: 0, z: 0, ux: 0, uz: 1, slope: 0 };
     this.cells = new Map();
+    this._carSepHash = new Map();
+    this._carSepPool = [];
+    this._carSepUsed = [];
+    this._carSepActive = [];
+    this._sepObbOut = { depth: 0, nx: 0, nz: 0 };
     this.frustum = new THREE.Frustum();
     this.projM = new THREE.Matrix4();
     this.sphere = new THREE.Sphere(new THREE.Vector3(), 4);
@@ -767,7 +778,18 @@ export class CityTraffic {
     const de = A.inD, nx = A.outD;
     if (n.xpF === this.frame) for (const p of n.xp) if (p.e === de.e || p.e === nx.e) return false;
     this._purgeRsv(n);
-    const force = c.waitT > 40; // nothing waits forever (a gridlock breaks on its own)
+    const wantForce = c.waitT > 40; // break genuine gridlocks only when conflicting holders are stopped
+    for (const h of n.rsv) {
+      if (h === c) continue;
+      const B = this._arcAt(h, n);
+      if (!B || (B.inD === de && B.lane === A.lane)) continue; // same lane: plain car following
+      if (this._arcConflict(A, B, (c.wid + h.wid) * 0.5 + 0.6)) {
+        if (!wantForce) return false;
+        const hSpd = Math.max(h.v || 0, Number.isFinite(h.speed) ? h.speed : 0);
+        if (hSpd >= 0.5) return false;
+      }
+    }
+    const force = wantForce;
     if (!force) {
       // don't block the box: room for the whole car behind the last car in the exit lane
       // [traffic-r2] an exit that is only a chunk-border stub continues on `after`: its crosswalk and queue are there
@@ -798,12 +820,6 @@ export class CityTraffic {
       if (queued) { room = Math.min(room, exLen - clr) - queued; leadSlow = true; }
       // an internal connector of a big junction only has to be free (the next node's check covers the exit)
       if (this._internal(nx) ? room < 0.5 && leadSlow : room < c.len + 2.5 && leadSlow) return false;
-      for (const h of n.rsv) {
-        if (h === c) continue;
-        const B = this._arcAt(h, n);
-        if (!B || (B.inD === de && B.lane === A.lane)) continue; // same lane: plain car following
-        if (this._arcConflict(A, B, (c.wid + h.wid) * 0.5 + 0.6)) return false;
-      }
     }
     if (c.waitT < 20) {
       const eta = toLine / Math.max(c.v, 0.1);
@@ -1475,6 +1491,7 @@ export class CityTraffic {
       c.rpitch += (-Math.atan(c.slope) + clamp(-(c.acc || 0) * 0.004, -0.02, 0.035) - c.rpitch) * (1 - Math.exp(-dt * 10));
       active++;
     }
+    this._separateAICars();
     this._separateWrecks();
     if (!allowSpawn) return active;
     const initial = this.fillBoost > 0;
@@ -1490,6 +1507,133 @@ export class CityTraffic {
 
   // [traffic-fix] A wreck that lands on a car, another wreck or a parked car is pushed off it (wrecks are the
   // light, physics-owned party; live cars stay in their lanes). The player is handled in _collidePlayer.
+  /** Pairwise 2D spatial-hash (10 m cells) OBB separation and yield braking for active AI cars. */
+  _separateAICars() {
+    const hash = this._carSepHash || (this._carSepHash = new Map());
+    const pool = this._carSepPool || (this._carSepPool = []);
+    const used = this._carSepUsed || (this._carSepUsed = []);
+    const act = this._carSepActive || (this._carSepActive = []);
+    const obbOut = this._sepObbOut || (this._sepObbOut = { depth: 0, nx: 0, nz: 0 });
+    for (let i = 0; i < used.length; i++) {
+      const bucket = used[i];
+      bucket.length = 0;
+      pool.push(bucket);
+    }
+    used.length = 0;
+    hash.clear();
+    act.length = 0;
+
+    const CELL = 10;
+    const HALF_CLEAR = 0.175; // 0.35 m total clearance between OBBs
+    for (let i = 0; i < this.cars.length; i++) {
+      const c = this.cars[i];
+      if (!c || !c.active || c.kWreck || c.dState >= 2 || c.dPose) continue;
+      if (!(c.len > 0) || !(c.wid > 0)) continue;
+      const sx = c.x + (c.kxOff || 0);
+      const sz = c.z + (c.kzOff || 0);
+      c._sepX = sx;
+      c._sepZ = sz;
+      c._sepIdx = act.length;
+      act.push(c);
+      const cx = Math.floor(sx / CELL);
+      const cz = Math.floor(sz / CELL);
+      const key = (cx + 20000) * 40000 + (cz + 20000);
+      let bucket = hash.get(key);
+      if (!bucket) {
+        bucket = pool.length ? pool.pop() : [];
+        hash.set(key, bucket);
+        used.push(bucket);
+      }
+      bucket.push(c);
+    }
+
+    for (let i = 0; i < act.length; i++) {
+      const a = act[i];
+      const cx = Math.floor(a._sepX / CELL);
+      const cz = Math.floor(a._sepZ / CELL);
+      const aBusy = Boolean(a.inArc || Math.abs(a.sw || 0) > 0.02 || a.laneF !== a.lane);
+      for (let gx = -1; gx <= 1; gx++) {
+        for (let gz = -1; gz <= 1; gz++) {
+          const bucket = hash.get((cx + gx + 20000) * 40000 + (cz + gz + 20000));
+          if (!bucket) continue;
+          for (let j = 0; j < bucket.length; j++) {
+            const b = bucket[j];
+            if (b._sepIdx <= a._sepIdx) continue;
+            if (Math.abs((a.y || 0) - (b.y || 0)) > 2.8) continue;
+            const dx = a._sepX - b._sepX;
+            const dz = a._sepZ - b._sepZ;
+            const maxDist = aBusy || b.inArc || Math.abs(b.sw || 0) > 0.02 || b.laneF !== b.lane
+              ? Math.max(9.0, (a.len + b.len) * 0.5 + 1.0)
+              : 9.0;
+            if (dx * dx + dz * dz > maxDist * maxDist) continue;
+
+            const r = obbOverlap(
+              a._sepX, a._sepZ, a.ux, a.uz, a.len * 0.5 + HALF_CLEAR, a.wid * 0.5 + HALF_CLEAR,
+              b._sepX, b._sepZ, b.ux, b.uz, b.len * 0.5 + HALF_CLEAR, b.wid * 0.5 + HALF_CLEAR,
+              obbOut
+            );
+            if (!r) continue;
+
+            const halfSep = Math.min(r.depth, 2.5) * 0.5;
+            const pushX = r.nx * halfSep;
+            const pushZ = r.nz * halfSep;
+
+            const aKx0 = a.kxOff || 0;
+            const aKz0 = a.kzOff || 0;
+            const aKx1 = clamp(aKx0 + pushX, -5.5, 5.5);
+            const aKz1 = clamp(aKz0 + pushZ, -5.5, 5.5);
+            const dAx = aKx1 - aKx0;
+            const dAz = aKz1 - aKz0;
+            a.kxOff = aKx1;
+            a.kzOff = aKz1;
+            a._sepX += dAx;
+            a._sepZ += dAz;
+            if (Number.isFinite(a.rx)) a.rx += dAx;
+            if (Number.isFinite(a.rz)) a.rz += dAz;
+
+            const bKx0 = b.kxOff || 0;
+            const bKz0 = b.kzOff || 0;
+            const bKx1 = clamp(bKx0 - pushX, -5.5, 5.5);
+            const bKz1 = clamp(bKz0 - pushZ, -5.5, 5.5);
+            const dBx = bKx1 - bKx0;
+            const dBz = bKz1 - bKz0;
+            b.kxOff = bKx1;
+            b.kzOff = bKz1;
+            b._sepX += dBx;
+            b._sepZ += dBz;
+            if (Number.isFinite(b.rx)) b.rx += dBx;
+            if (Number.isFinite(b.rz)) b.rz += dBz;
+
+            const dist = Math.hypot(dx, dz) || 1;
+            const invD = 1 / dist;
+            const aTowardB = (-dx * a.ux - dz * a.uz) * invD;
+            const bTowardA = (dx * b.ux + dz * b.uz) * invD;
+            const aIntoN = -(a.ux * r.nx + a.uz * r.nz);
+            const bIntoN = b.ux * r.nx + b.uz * r.nz;
+            const aYields = (aTowardB + aIntoN) >= (bTowardA + bIntoN);
+            const c = aYields ? a : b;
+            const o = aYields ? b : a;
+            const cTowardO = aYields ? aTowardB : bTowardA;
+            const cIntoN = aYields ? aIntoN : bIntoN;
+            if (cTowardO > 0.2 || cIntoN > 0.25) {
+              const hdotAbs = Math.abs(a.ux * b.ux + a.uz * b.uz);
+              const cSpeed = Number.isFinite(c.speed) ? c.speed : (c.v || 0);
+              const oSpeed = Number.isFinite(o.speed) ? o.speed : (o.v || 0);
+              const flankHit = hdotAbs < 0.55 && cIntoN > 0.45;
+              const targetSpd = flankHit ? 0 : Math.min(cSpeed, oSpeed * 0.5);
+              if (targetSpd < cSpeed) {
+                c.v = targetSpd;
+                c.speed = targetSpd;
+                c._lastSyncedV = targetSpd;
+                c.brake = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   _separateWrecks() {
     const ws = this.damage && this.damage.wrecks;
     if (!ws || !ws.length) return;

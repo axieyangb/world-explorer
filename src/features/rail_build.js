@@ -496,7 +496,7 @@ function densify(wpts, e) {
  * Builds rail meshes into `group` (chunk-local coords) and returns the main-thread payload.
  * @param {{lines: Array, stops: Array}} rail
  */
-export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
+export function buildRailTrack(rail, ox, oz, group, mats, roadSegments, buildingColliders = null, buildingFootprints = null) {
   const out = { lines: [], stops: [] };
   if (!rail || !rail.lines) return out;
   const lines = rail.lines.map(densifyLine); // [rail-road-clearance] crossing raises / caps act locally
@@ -706,7 +706,7 @@ export function buildRailTrack(rail, ox, oz, group, mats, roadSegments) {
     }
   }
 
-  buildStationPlatforms(sink, rail.stops, stationTracks, tunnelEnds, ox, oz, inChunk);
+  buildStationPlatforms(sink, rail.stops, stationTracks, tunnelEnds, ox, oz, inChunk, roadSegments, buildingColliders, buildingFootprints);
 
   for (const s of rail.stops || []) out.stops.push([s[0] + ox, s[1] + oz, s[2], s[3]]);
 
@@ -955,7 +955,7 @@ function findCorridorTrackExtent(stationTracks, cx, cz, tx, tz, nx, nz, trackY) 
   return { minTrackN: minN, maxTrackN: maxN };
 }
 
-function emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, sMin, sMax, yAt, elevated) {
+function emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, sMin, sMax, yAt, elevated, buildingColliders = null) {
   const nInner = nMid - side * 1.9;
   const nOuter = nMid + side * 1.9;
   const copingInner = nInner - side * 0.06;
@@ -1022,15 +1022,43 @@ function emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, sMin
     }
     emitPrismST(sink, cx, cz, tx, tz, nx, nz, sEnd - 0.04, sEnd + 0.04, nInner + side * 0.35, nOuter - side * 0.25, topEnd + 0.88, topEnd + 0.96, topEnd + 0.88, topEnd + 0.96, C.steelDark);
   }
+
+  if (!useViaductPiers && Array.isArray(buildingColliders)) {
+    const nLo = Math.min(copingInner, nOuter);
+    const nHi = Math.max(copingInner, nOuter);
+    const c0x = cx + tx * sMin + nx * nLo, c0z = cz + tz * sMin + nz * nLo;
+    const c1x = cx + tx * sMax + nx * nLo, c1z = cz + tz * sMax + nz * nLo;
+    const c2x = cx + tx * sMax + nx * nHi, c2z = cz + tz * sMax + nz * nHi;
+    const c3x = cx + tx * sMin + nx * nHi, c3z = cz + tz * sMin + nz * nHi;
+    const minX = Math.min(c0x, c1x, c2x, c3x) + ox;
+    const maxX = Math.max(c0x, c1x, c2x, c3x) + ox;
+    const minZ = Math.min(c0z, c1z, c2z, c3z) + oz;
+    const maxZ = Math.max(c0z, c1z, c2z, c3z) + oz;
+    const topY = Math.max(yAt(sMin), yAt((sMin + sMax) * 0.5), yAt(sMax)) + 1.05;
+    buildingColliders.push({
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      h: topY,
+      rawH: Math.max(1.2, topY - minGroundY),
+      flatOuter: [c0x, c0z, c1x, c1z, c2x, c2z, c3x, c3z],
+      ox,
+      oz,
+      isPlatform: true,
+    });
+  }
 }
 
-function emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass) {
-  const numBays = Math.max(2, Math.round((canopyHalf * 2) / 8));
+function emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, sStart, sEnd, yAt, hasOverpass) {
+  const span = sEnd - sStart;
+  const numBays = Math.max(1, Math.round(span / 8));
+  if (numBays < 1 || span < 6.0) return;
   const P = (s, n, y) => [cx + tx * s + nx * n, y, cz + tz * s + nz * n];
 
   // Y-frame support columns every 8 m
   for (let k = 0; k <= numBays; k++) {
-    const sCol = -canopyHalf + k * 8;
+    const sCol = sStart + k * 8;
     if (hasOverpass && Math.abs(sCol) < 0.5) continue;
     const deckY = yAt(sCol) + 1.05;
     const forkY = deckY + 2.48;
@@ -1046,7 +1074,7 @@ function emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf
   // Canopy roof split into 4 m sub-bays for transverse rafters + slope following
   const subBays = numBays * 2;
   for (let b = 0; b < subBays; b++) {
-    const sA = -canopyHalf + b * 4;
+    const sA = sStart + b * 4;
     const sB = sA + 4;
     const eaveA = yAt(sA) + 1.05 + 3.60;
     const eaveB = yAt(sB) + 1.05 + 3.60;
@@ -1075,13 +1103,15 @@ function emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf
   }
 }
 
-function emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass) {
-  const numBays = Math.max(2, Math.round((canopyHalf * 2) / 8));
+function emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, sStart, sEnd, yAt, hasOverpass) {
+  const span = sEnd - sStart;
+  const numBays = Math.max(1, Math.round(span / 8));
+  if (numBays < 1 || span < 6.0) return;
   const inStairZone = (s) => hasOverpass && s > -2.5 && s < 11.4;
 
   // Waiting benches (steel frame + warm timber slats) & glass windbreak shelter panels
   for (let b = 0; b < numBays; b++) {
-    const sBay = -canopyHalf + 4 + b * 8;
+    const sBay = sStart + 4 + b * 8;
     for (const sBench of [sBay - 1.9, sBay + 1.9]) {
       if (inStairZone(sBench)) continue;
       const deckY = yAt(sBench) + 1.05;
@@ -1107,7 +1137,8 @@ function emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyH
   }
 
   // Blue/white overhead departure signboards suspended under the canopy
-  const signPositions = canopyHalf >= 20 ? [-14, 14] : [-canopyHalf * 0.5, canopyHalf * 0.5];
+  const midS = (sStart + sEnd) * 0.5;
+  const signPositions = span >= 32 ? [sStart + 6, sEnd - 6] : [midS];
   for (const sSign of signPositions) {
     if (hasOverpass && Math.abs(sSign) < 2.5) continue;
     const deckY = yAt(sSign) + 1.05;
@@ -1186,12 +1217,133 @@ function emitStationOverpass(sink, cx, cz, tx, tz, nx, nz, leftMid, rightMid, yA
   }
 }
 
-function buildStationPlatforms(sink, stops, stationTracks, tunnelEnds, ox, oz, inChunk) {
+function pointInRing2D(px, pz, flat) {
+  let inside = false;
+  const n = flat.length;
+  for (let i = 0, j = n - 2; i < n; j = i, i += 2) {
+    const zi = flat[i + 1], zj = flat[j + 1];
+    if ((zi > pz) !== (zj > pz) && px < ((flat[j] - flat[i]) * (pz - zi)) / (zj - zi + 1e-12) + flat[i]) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function dist2PointToPoly(px, pz, flat) {
+  let best = Infinity;
+  const n = flat.length;
+  for (let i = 0, j = n - 2; i < n; j = i, i += 2) {
+    const ax = flat[j], az = flat[j + 1];
+    const dx = flat[i] - ax, dz = flat[i + 1] - az;
+    const l2 = dx * dx + dz * dz;
+    let t = l2 > 1e-9 ? ((px - ax) * dx + (pz - az) * dz) / l2 : 0;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const qx = ax + dx * t - px, qz = az + dz * t - pz;
+    const d2 = qx * qx + qz * qz;
+    if (d2 < best) best = d2;
+  }
+  return best;
+}
+
+function makeObstacleIndex(ox, oz, roadSegments, buildingColliders, buildingFootprints) {
+  const CELL = 24.0;
+  const key = (gx, gz) => ((gx + 2048) << 12) | (gz + 2048);
+  const bGrid = new Map();
+  const rGrid = new Map();
+  const bSrc = buildingFootprints && buildingFootprints.length ? buildingFootprints : buildingColliders;
+
+  const insertBox = (grid, minX, minZ, maxX, maxZ, item) => {
+    const x0 = Math.floor(minX / CELL), x1 = Math.floor(maxX / CELL);
+    const z0 = Math.floor(minZ / CELL), z1 = Math.floor(maxZ / CELL);
+    for (let gz = z0; gz <= z1; gz++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        const k = key(gx, gz);
+        let list = grid.get(k);
+        if (!list) { list = []; grid.set(k, list); }
+        list.push(item);
+      }
+    }
+  };
+
+  if (bSrc && bSrc.length) {
+    for (let i = 0; i < bSrc.length; i++) {
+      const b = bSrc[i];
+      if (!b || b.isPlatform || (b.minH != null && b.minH > 2.0)) continue;
+      const minX = b.minX - ox, maxX = b.maxX - ox;
+      const minZ = b.minZ - oz, maxZ = b.maxZ - oz;
+      if (maxX < -540 || minX > 540 || maxZ < -540 || minZ > 540) continue;
+      const item = { minX, maxX, minZ, maxZ, flat: b.flatOuter || null };
+      insertBox(bGrid, minX - 1.0, minZ - 1.0, maxX + 1.0, maxZ + 1.0, item);
+    }
+  }
+
+  if (roadSegments && roadSegments.length) {
+    for (let i = 0; i < roadSegments.length; i++) {
+      const s = roadSegments[i];
+      if (!s || s.bridge || s.tunnel) continue;
+      const ax = s.x1 - ox, az = s.z1 - oz;
+      const bx = s.x2 - ox, bz = s.z2 - oz;
+      const hw = (s.width || 6) * 0.5;
+      const pad = hw + 2.0;
+      const minX = Math.min(ax, bx) - pad, maxX = Math.max(ax, bx) + pad;
+      const minZ = Math.min(az, bz) - pad, maxZ = Math.max(az, bz) + pad;
+      if (maxX < -540 || minX > 540 || maxZ < -540 || minZ > 540) continue;
+      insertBox(rGrid, minX, minZ, maxX, maxZ, { ax, az, bx, bz, hw });
+    }
+  }
+
+  const hitsBuilding = (lx, lz, margin = 0.6) => {
+    const gx = Math.floor(lx / CELL), gz = Math.floor(lz / CELL);
+    const m2 = margin * margin;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const list = bGrid.get(key(gx + dx, gz + dz));
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          const b = list[i];
+          if (lx < b.minX - margin || lx > b.maxX + margin || lz < b.minZ - margin || lz > b.maxZ + margin) continue;
+          if (!b.flat || b.flat.length < 6) return true;
+          if (pointInRing2D(lx, lz, b.flat) || dist2PointToPoly(lx, lz, b.flat) < m2) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const hitsRoad = (lx, lz, extra = 1.5) => {
+    const gx = Math.floor(lx / CELL), gz = Math.floor(lz / CELL);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const list = rGrid.get(key(gx + dx, gz + dz));
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          const r = list[i];
+          const lim = r.hw + extra;
+          if (lx < Math.min(r.ax, r.bx) - lim || lx > Math.max(r.ax, r.bx) + lim || lz < Math.min(r.az, r.bz) - lim || lz > Math.max(r.az, r.bz) + lim) continue;
+          const rdx = r.bx - r.ax, rdz = r.bz - r.az;
+          const l2 = rdx * rdx + rdz * rdz;
+          let t = l2 > 1e-6 ? ((lx - r.ax) * rdx + (lz - r.az) * rdz) / l2 : 0;
+          if (t < 0) t = 0;
+          else if (t > 1) t = 1;
+          const qx = r.ax + rdx * t - lx, qz = r.az + rdz * t - lz;
+          if (qx * qx + qz * qz < lim * lim) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  return { hitsBuilding, hitsRoad };
+}
+
+function buildStationPlatforms(sink, stops, stationTracks, tunnelEnds, ox, oz, inChunk, roadSegments = null, buildingColliders = null, buildingFootprints = null) {
   if (!stops || !stops.length || !stationTracks.length) return;
   const candidates = stops
     .filter((s) => s && s[2] === 1 && Number.isFinite(s[0]) && Number.isFinite(s[1]) && inChunk(s[0], s[1]))
     .sort((a, b) => (b[3] ? 1 : 0) - (a[3] ? 1 : 0));
 
+  const obs = makeObstacleIndex(ox, oz, roadSegments, buildingColliders, buildingFootprints);
   const placed = [];
   const SNAP_R2 = 35 * 35;
   const DEDUP_R2 = 85 * 85;
@@ -1249,13 +1401,93 @@ function buildStationPlatforms(sink, stops, stationTracks, tunnelEnds, ox, oz, i
 
     const numBays = Math.max(2, Math.min(6, Math.floor((totalLen - 2) / 8)));
     const canopyHalf = numBays * 4;
-    const hasOverpass = tr.k === 'rail' && numBays >= 4 && totalLen >= 36;
+
+    const sideBounds = new Map();
+    const isBlockedAt = (sLocal, nVal, checkRoad) => {
+      const lx = cx + tx * sLocal + nx * nVal;
+      const lz = cz + tz * sLocal + nz * nVal;
+      if (obs.hitsBuilding(lx, lz, 0.6)) return true;
+      if (checkRoad && obs.hitsRoad(lx, lz, 1.5)) return true;
+      return false;
+    };
 
     for (const [side, nMid] of [[-1, leftMid], [1, rightMid]]) {
-      emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, -halfLen, halfLen, yAt, elevated);
-      emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass);
-      emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyHalf, yAt, hasOverpass);
+      const nInner = nMid - side * 1.9;
+      const nOuter = nMid + side * 1.9;
+      const nSamples = [nInner, nMid, nOuter];
+      const nSteps = Math.max(8, Math.ceil(totalLen / 1.5));
+      const ds = totalLen / nSteps;
+      let bestStart = 0, bestEnd = -1, bestLen = 0;
+      let runStart = null;
+      for (let k = 0; k <= nSteps; k++) {
+        const sLocal = -halfLen + k * ds;
+        const checkRoad = !elevated || (yAt(sLocal) - railGroundY(cx + ox + tx * sLocal + nx * nMid, cz + oz + tz * sLocal + nz * nMid) < 4.5);
+        let blocked = false;
+        for (let m = 0; m < nSamples.length; m++) {
+          if (isBlockedAt(sLocal, nSamples[m], checkRoad)) { blocked = true; break; }
+        }
+        if (!blocked) {
+          if (runStart === null) runStart = sLocal;
+          const runLen = sLocal - runStart;
+          if (runLen > bestLen) { bestLen = runLen; bestStart = runStart; bestEnd = sLocal; }
+        } else {
+          runStart = null;
+        }
+      }
+      if (bestLen >= 12.0) {
+        sideBounds.set(side, { nMid, sMinSide: bestStart, sMaxSide: bestEnd });
+      }
     }
+
+    if (sideBounds.size === 0) continue;
+
+    let hasOverpass = tr.k === 'rail' && numBays >= 4 && totalLen >= 36 && sideBounds.has(-1) && sideBounds.has(1);
+    if (hasOverpass) {
+      const bL = sideBounds.get(-1), bR = sideBounds.get(1);
+      if (bL.sMinSide > -2.2 || bL.sMaxSide < 11.0 || bR.sMinSide > -2.2 || bR.sMaxSide < 11.0) {
+        hasOverpass = false;
+      } else {
+        // Verify overpass bridge deck & stairway landings (sTop=1.72..sBot=10.52) do not hit buildings or roads
+        for (let nVal = leftMid - 1.5; nVal <= rightMid + 1.5 && hasOverpass; nVal += 2.0) {
+          for (const sVal of [-1.86, 0.0, 1.86]) {
+            if (isBlockedAt(sVal, nVal, !elevated)) { hasOverpass = false; break; }
+          }
+        }
+        for (const [side, nMid] of [[-1, leftMid], [1, rightMid]]) {
+          if (!hasOverpass) break;
+          const nA = nMid + side * 0.05, nB = nMid + side * 1.45;
+          for (let sVal = 1.72; sVal <= 10.6; sVal += 1.8) {
+            const checkRoad = !elevated || (yAt(sVal) - railGroundY(cx + ox + tx * sVal + nx * nMid, cz + oz + tz * sVal + nz * nMid) < 4.5);
+            if (isBlockedAt(sVal, nA, checkRoad) || isBlockedAt(sVal, nB, checkRoad)) {
+              hasOverpass = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    for (const [side, info] of sideBounds.entries()) {
+      const { nMid, sMinSide, sMaxSide } = info;
+      emitPlatformDeck(sink, cx, cz, tx, tz, nx, nz, ox, oz, side, nMid, sMinSide, sMaxSide, yAt, elevated, buildingColliders);
+
+      let canopyS0, canopyS1;
+      if (hasOverpass) {
+        canopyS0 = Math.max(-canopyHalf, Math.ceil(sMinSide / 8) * 8);
+        canopyS1 = Math.min(canopyHalf, Math.floor(sMaxSide / 8) * 8);
+      } else {
+        const sideLen = sMaxSide - sMinSide;
+        const sideBays = Math.max(1, Math.min(6, Math.floor((sideLen - 1.0) / 8)));
+        const sideMid = (sMinSide + sMaxSide) * 0.5;
+        canopyS0 = sideMid - sideBays * 4;
+        canopyS1 = sideMid + sideBays * 4;
+      }
+      if (canopyS1 - canopyS0 >= 8.0) {
+        emitPlatformCanopy(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyS0, canopyS1, yAt, hasOverpass);
+        emitPlatformFurniture(sink, cx, cz, tx, tz, nx, nz, side, nMid, canopyS0, canopyS1, yAt, hasOverpass);
+      }
+    }
+
     if (hasOverpass) {
       emitStationOverpass(sink, cx, cz, tx, tz, nx, nz, leftMid, rightMid, yAt);
     }

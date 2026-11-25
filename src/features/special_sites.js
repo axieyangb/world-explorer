@@ -493,17 +493,51 @@ function createEmitter(ctx) {
  * - Roof clerestory light monitors along terminal spine
  * - Integrated Ramp Control Tower Cab (area >= 2400 m²) with 360° green-tinted glass, radome, and red beacons
  */
+function clampProjAt(ctx, wx, wz, nx, nz, proj, minKeep = 0.8) {
+  if (!ctx.getNeighborClearance || proj <= 0) return proj;
+  const clr = ctx.getNeighborClearance(wx, wz, nx, nz, proj + 0.5, ctx.entityIdx ?? -1);
+  const clamped = Math.min(proj, Math.max(0, clr - 0.35));
+  return clamped < minKeep ? 0 : clamped;
+}
+
+function clampFacadeProjV(ctx, obb, uSamples, vEdge, dirSign, proj, minKeep = 0.8) {
+  if (!ctx.getNeighborClearance || proj <= 0) return proj;
+  const nx = dirSign * obb.vx, nz = dirSign * obb.vz;
+  let out = proj;
+  for (let i = 0; i < uSamples.length; i++) {
+    const [wx, wz] = obbToWorld(obb, uSamples[i], vEdge);
+    out = Math.min(out, clampProjAt(ctx, wx, wz, nx, nz, proj, minKeep));
+    if (out === 0) return 0;
+  }
+  return out;
+}
+
+function clampFacadeProjU(ctx, obb, uEdge, vSamples, dirSign, proj, minKeep = 0.8) {
+  if (!ctx.getNeighborClearance || proj <= 0) return proj;
+  const nx = dirSign * obb.ux, nz = dirSign * obb.uz;
+  let out = proj;
+  for (let i = 0; i < vSamples.length; i++) {
+    const [wx, wz] = obbToWorld(obb, uEdge, vSamples[i]);
+    out = Math.min(out, clampProjAt(ctx, wx, wz, nx, nz, proj, minKeep));
+    if (out === 0) return 0;
+  }
+  return out;
+}
+
 function emitAirportTerminal(ctx, obb, emit) {
   const { yBase, yTop, totalH, area, ccwOuter, holes } = ctx;
   const frontSign = pickPrimaryFrontSide(ccwOuter, obb);
   const halfU = obb.uLen * 0.5;
   const halfV = obb.vLen * 0.5;
 
-  const overhangV = clamp(obb.vLen * 0.14, 3.5, 5.5);
-  const overhangU = clamp(obb.uLen * 0.04, 2.0, 4.2);
-  const wingHalfV = halfV + overhangV;
-  const wingU0 = -halfU - overhangU;
-  const wingU1 = halfU + overhangU;
+  const rawOverhangV = clamp(obb.vLen * 0.14, 3.5, 5.5);
+  const rawOverhangU = clamp(obb.uLen * 0.04, 2.0, 4.2);
+  const overhangVPlus = clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], halfV, 1, rawOverhangV);
+  const overhangVMinus = clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], -halfV, -1, rawOverhangV);
+  const overhangUPlus = clampFacadeProjU(ctx, obb, halfU, [-halfV * 0.6, 0, halfV * 0.6], 1, rawOverhangU);
+  const overhangUMinus = clampFacadeProjU(ctx, obb, -halfU, [-halfV * 0.6, 0, halfV * 0.6], -1, rawOverhangU);
+  const wingU0 = -halfU - overhangUMinus;
+  const wingU1 = halfU + overhangUPlus;
 
   // Gull-wing cross-section: dipped central spine + arched shoulders + soaring upturned wingtips
   const gullLift = (t) => {
@@ -514,7 +548,8 @@ function emitAirportTerminal(ctx, obb, emit) {
   const gullPts = [];
   for (let i = 0; i <= segs; i++) {
     const t = -1.0 + (2.0 * i) / segs;
-    gullPts.push({ v: t * wingHalfV, y: yTop + gullLift(t) });
+    const halfSpanV = t < 0 ? halfV + overhangVMinus : halfV + overhangVPlus;
+    gullPts.push({ v: t * halfSpanV, y: yTop + gullLift(t) });
   }
 
   const titaniumCol = [0.85, 0.89, 0.93];
@@ -535,9 +570,11 @@ function emitAirportTerminal(ctx, obb, emit) {
   const nBays = clamp(Math.round(obb.uLen / 11.5), 3, 14);
   const baySpan = obb.uLen / nBays;
   const eaveY = yTop + gullLift(0.95) - 0.45;
-  const eaveV = wingHalfV * 0.93;
   const wallV = halfV + 0.25;
   for (const sgn of [-1, 1]) {
+    const sideOv = sgn > 0 ? overhangVPlus : overhangVMinus;
+    if (sideOv <= 0) continue;
+    const eaveV = (halfV + sideOv) * 0.93;
     for (let b = 0; b < nBays; b++) {
       const uCenter = -halfU + (b + 0.5) * baySpan;
       const spreadU = Math.min(3.8, baySpan * 0.42);
@@ -564,16 +601,18 @@ function emitAirportTerminal(ctx, obb, emit) {
   // Curbside Departure Canopy & Signage Band along the primary front wall
   const canopyLen = Math.min(obb.uLen * 0.82, Math.max(14.0, obb.uLen - 4.0));
   const canopyY = yBase + clamp(totalH * 0.36, 4.1, 5.2);
-  const canopyProj = 3.8;
-  const [canX, canZ] = obbToWorld(obb, 0, frontSign * (halfV + canopyProj * 0.5));
-  emit.pushOrientedBox(canX, canopyY, canZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.5, 0.22, canopyProj * 0.5, [0.24, 0.48, 0.68]);
-  // Steel frame fascia & crisp blue/white departure signage band
-  const [fasX, fasZ] = obbToWorld(obb, 0, frontSign * (halfV + canopyProj + 0.06));
-  emit.pushOrientedBox(fasX, canopyY + 0.22, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.5 + 0.2, 0.42, 0.18, [0.10, 0.44, 0.88], true);
-  emit.pushOrientedBox(fasX, canopyY + 0.64, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.5 + 0.2, 0.14, 0.20, [0.95, 0.97, 1.0], false);
-  // Warm under-canopy departure lighting strip
-  const [ledX, ledZ] = obbToWorld(obb, 0, frontSign * (halfV + canopyProj * 0.45));
-  emit.pushOrientedBox(ledX, canopyY - 0.12, ledZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.46, 0.08, 0.35, [1.0, 0.88, 0.64], true, true);
+  const canopyProj = clampFacadeProjV(ctx, obb, [-canopyLen * 0.4, 0, canopyLen * 0.4], frontSign * halfV, frontSign, 3.8);
+  if (canopyProj > 0) {
+    const [canX, canZ] = obbToWorld(obb, 0, frontSign * (halfV + canopyProj * 0.5));
+    emit.pushOrientedBox(canX, canopyY, canZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.5, 0.22, canopyProj * 0.5, [0.24, 0.48, 0.68]);
+    // Steel frame fascia & crisp blue/white departure signage band
+    const [fasX, fasZ] = obbToWorld(obb, 0, frontSign * (halfV + canopyProj + 0.06));
+    emit.pushOrientedBox(fasX, canopyY + 0.22, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.5 + 0.2, 0.42, 0.18, [0.10, 0.44, 0.88], true);
+    emit.pushOrientedBox(fasX, canopyY + 0.64, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.5 + 0.2, 0.14, 0.20, [0.95, 0.97, 1.0], false);
+    // Warm under-canopy departure lighting strip
+    const [ledX, ledZ] = obbToWorld(obb, 0, frontSign * (halfV + canopyProj * 0.45));
+    emit.pushOrientedBox(ledX, canopyY - 0.12, ledZ, obb.ux, obb.uz, obb.vx, obb.vz, canopyLen * 0.46, 0.08, 0.35, [1.0, 0.88, 0.64], true, true);
+  }
 
   // Roof Clerestory Light Monitor running along the terminal spine
   const clereLen = obb.uLen * 0.72;
@@ -784,14 +823,20 @@ function emitTrainStation(ctx, obb, emit) {
     const portW = clamp(obb.uLen * 0.28, 8.0, 18.0);
     const portH = clamp(totalH * 0.85, 6.5, 11.5);
     const stoneCol = [0.82, 0.79, 0.72];
-    const [pCx, pCz] = obbToWorld(obb, 0, frontSign * (halfV + 0.9));
-    emit.pushOrientedBox(pCx, yBase, pCz, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.5, portH, 0.95, stoneCol);
-    // Glazed arch recess & warm canopy marquee
-    const [gCx, gCz] = obbToWorld(obb, 0, frontSign * (halfV + 1.88));
-    emit.pushOrientedBox(gCx, yBase + 0.2, gCz, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.34, portH * 0.72, 0.12, [0.22, 0.44, 0.62], true);
-    const [canX, canZ] = obbToWorld(obb, 0, frontSign * (halfV + 2.5));
-    emit.pushOrientedBox(canX, yBase + clamp(portH * 0.44, 3.8, 5.2), canZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.46, 0.26, 1.35, trussCol);
-    emit.pushOrientedBox(canX, yBase + clamp(portH * 0.44, 3.8, 5.2) - 0.10, canZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.42, 0.08, 1.0, [1.0, 0.88, 0.60], true, true);
+    const portMaxProj = clampFacadeProjV(ctx, obb, [-portW * 0.4, 0, portW * 0.4], frontSign * halfV, frontSign, 3.85);
+    if (portMaxProj >= 1.95) {
+      const [pCx, pCz] = obbToWorld(obb, 0, frontSign * (halfV + 0.9));
+      emit.pushOrientedBox(pCx, yBase, pCz, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.5, portH, 0.95, stoneCol);
+      // Glazed arch recess & warm canopy marquee
+      const [gCx, gCz] = obbToWorld(obb, 0, frontSign * (halfV + 1.88));
+      emit.pushOrientedBox(gCx, yBase + 0.2, gCz, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.34, portH * 0.72, 0.12, [0.22, 0.44, 0.62], true);
+      const canDepth = Math.min(2.7, portMaxProj - 1.15);
+      if (canDepth >= 0.8) {
+        const [canX, canZ] = obbToWorld(obb, 0, frontSign * (halfV + 1.15 + canDepth * 0.5));
+        emit.pushOrientedBox(canX, yBase + clamp(portH * 0.44, 3.8, 5.2), canZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.46, 0.26, canDepth * 0.5, trussCol);
+        emit.pushOrientedBox(canX, yBase + clamp(portH * 0.44, 3.8, 5.2) - 0.10, canZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.42, 0.08, Math.max(0.3, canDepth * 0.37), [1.0, 0.88, 0.60], true, true);
+      }
+    }
 
     // Monumental Square Station Clock Tower rising 10-16 m above vault crown
     const anchor = findSafeRoofPoint(ccwOuter, holes, obb, 0, frontSign * halfV * 0.45, 2.5);
@@ -853,8 +898,12 @@ function emitFerryTerminal(ctx, obb, emit) {
   const frontSign = pickPrimaryFrontSide(ccwOuter, obb);
   const halfU = obb.uLen * 0.5;
   const halfV = obb.vLen * 0.5;
-  const ovU = clamp(obb.uLen * 0.06, 2.5, 4.2);
-  const ovV = clamp(obb.vLen * 0.14, 2.8, 4.2);
+  const rawOvU = clamp(obb.uLen * 0.06, 2.5, 4.2);
+  const rawOvV = clamp(obb.vLen * 0.14, 2.8, 4.2);
+  const ovUPlus = clampFacadeProjU(ctx, obb, halfU, [-halfV * 0.6, 0, halfV * 0.6], 1, rawOvU);
+  const ovUMinus = clampFacadeProjU(ctx, obb, -halfU, [-halfV * 0.6, 0, halfV * 0.6], -1, rawOvU);
+  const ovVPlus = clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], halfV, 1, rawOvV);
+  const ovVMinus = clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], -halfV, -1, rawOvV);
 
   // Dual-crest sinusoidal nautical wave profile along U (swept across V)
   const waveSegs = 12;
@@ -863,8 +912,8 @@ function emitFerryTerminal(ctx, obb, emit) {
   const cedarSoffit = [0.64, 0.42, 0.24];
   const marineTrim = [0.16, 0.42, 0.66];
 
-  const v0 = -halfV - ovV, v1 = halfV + ovV;
-  const uStart = -halfU - ovU, uEnd = halfU + ovU;
+  const v0 = -halfV - ovVMinus, v1 = halfV + ovVPlus;
+  const uStart = -halfU - ovUMinus, uEnd = halfU + ovUPlus;
   const waveY = (t) => yTop + 0.55 + waveAmp * (0.5 + 0.5 * Math.sin(t * Math.PI * 2.5 - Math.PI * 0.35));
 
   for (let i = 0; i < waveSegs; i++) {
@@ -889,9 +938,11 @@ function emitFerryTerminal(ctx, obb, emit) {
   // Harbor concourse promenade deck & white marine railing along the front/harbor sides
   const promY = yBase + clamp(totalH * 0.42, 3.6, 4.8);
   for (const sgn of [-1, 1]) {
-    const [px, pz] = obbToWorld(obb, 0, sgn * (halfV + 1.1));
-    emit.pushOrientedBox(px, promY, pz, obb.ux, obb.uz, obb.vx, obb.vz, halfU + 0.6, 0.24, 1.15, waveTopCol);
-    const [rx, rz] = obbToWorld(obb, 0, sgn * (halfV + 2.15));
+    const promDepth = clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], sgn * halfV, sgn, 2.25);
+    if (promDepth <= 0) continue;
+    const [px, pz] = obbToWorld(obb, 0, sgn * (halfV + promDepth * 0.5));
+    emit.pushOrientedBox(px, promY, pz, obb.ux, obb.uz, obb.vx, obb.vz, halfU + 0.6, 0.24, promDepth * 0.5, waveTopCol);
+    const [rx, rz] = obbToWorld(obb, 0, sgn * (halfV + promDepth - 0.1));
     emit.pushOrientedBox(rx, promY + 0.95, rz, obb.ux, obb.uz, obb.vx, obb.vz, halfU + 0.6, 0.08, 0.08, waveTopCol, false, true);
   }
 
@@ -932,34 +983,21 @@ function emitHospital(ctx, obb, emit) {
   // Horizontal clinical sun-visor slabs along both long walls
   const slabStep = 3.8;
   const nSlabs = clamp(Math.floor((totalH - 4.2) / slabStep), 1, 14);
+  const visorOk = {
+    [-1]: clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], -halfV, -1, 0.56, 0.5) > 0,
+    [1]: clampFacadeProjV(ctx, obb, [-halfU * 0.7, 0, halfU * 0.7], halfV, 1, 0.56, 0.5) > 0,
+  };
   for (let s = 1; s <= nSlabs; s++) {
     const sy = yBase + 4.2 + s * slabStep;
     if (sy > yTop - 0.8) break;
     if (s % 2 === 1 || nSlabs <= 4) {
       for (const sgn of [-1, 1]) {
+        if (!visorOk[sgn]) continue;
         const [sx, sz] = obbToWorld(obb, 0, sgn * (halfV + 0.24));
         emit.pushOrientedBox(sx, sy, sz, obb.ux, obb.uz, obb.vx, obb.vz, halfU + 0.18, 0.16, 0.32, crispWhite, false, true);
       }
     }
   }
-
-  // Emergency / Ambulance Drop-Off Porte-Cochère Canopy on primary front
-  const portW = clamp(obb.uLen * 0.34, 8.5, 16.0);
-  const portProj = 4.8;
-  const portY = yBase + clamp(totalH * 0.32, 4.0, 4.8);
-  const [canX, canZ] = obbToWorld(obb, 0, frontSign * (halfV + portProj * 0.5));
-  emit.pushOrientedBox(canX, portY, canZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.5, 0.38, portProj * 0.5, crispWhite);
-  // Bold red emergency fascia trim around canopy front & sides
-  const [fasX, fasZ] = obbToWorld(obb, 0, frontSign * (halfV + portProj + 0.06));
-  emit.pushOrientedBox(fasX, portY + 0.32, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.5 + 0.15, 0.38, 0.16, medRed, true);
-  // Twin crisp white canopy support piers
-  for (const colU of [-portW * 0.42, portW * 0.42]) {
-    const [cxp, czp] = obbToWorld(obb, colU, frontSign * (halfV + portProj - 0.55));
-    emit.pushOrientedBox(cxp, yBase, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.32, portY, 0.32, crispWhite);
-  }
-  // Bright warm ambulance bay under-canopy light
-  const [ambX, ambZ] = obbToWorld(obb, 0, frontSign * (halfV + portProj * 0.45));
-  emit.pushOrientedBox(ambX, portY - 0.12, ambZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.38, 0.08, 0.8, [1.0, 0.95, 0.86], true, true);
 
   // Helper to emit a crisp 3D Red Cross (+) emblem facing along normal (frontSign * V)
   const emitRedCross = (cx, cy, cz, size) => {
@@ -973,8 +1011,29 @@ function emitHospital(ctx, obb, emit) {
     emit.pushOrientedBox(rx, cy - armThick, rz, obb.ux, obb.uz, fVx, fVz, armLen, armThick * 2, 0.10, medRed, true);
   };
 
-  // Canopy Red Cross + Prominent Upper Facade Red Cross
-  emitRedCross(fasX + frontSign * obb.vx * 0.16, portY + 0.55, fasZ + frontSign * obb.vz * 0.16, 1.35);
+  // Emergency / Ambulance Drop-Off Porte-Cochère Canopy on primary front
+  const portW = clamp(obb.uLen * 0.34, 8.5, 16.0);
+  const portProj = clampFacadeProjV(ctx, obb, [-portW * 0.4, 0, portW * 0.4], frontSign * halfV, frontSign, 4.8);
+  const portY = yBase + clamp(totalH * 0.32, 4.0, 4.8);
+  if (portProj > 0) {
+    const [canX, canZ] = obbToWorld(obb, 0, frontSign * (halfV + portProj * 0.5));
+    emit.pushOrientedBox(canX, portY, canZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.5, 0.38, portProj * 0.5, crispWhite);
+    // Bold red emergency fascia trim around canopy front & sides
+    const [fasX, fasZ] = obbToWorld(obb, 0, frontSign * (halfV + portProj + 0.06));
+    emit.pushOrientedBox(fasX, portY + 0.32, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.5 + 0.15, 0.38, 0.16, medRed, true);
+    // Twin crisp white canopy support piers
+    if (portProj >= 1.2) {
+      for (const colU of [-portW * 0.42, portW * 0.42]) {
+        const [cxp, czp] = obbToWorld(obb, colU, frontSign * (halfV + Math.max(0.4, portProj - 0.55)));
+        emit.pushOrientedBox(cxp, yBase, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.32, portY, 0.32, crispWhite);
+      }
+    }
+    // Bright warm ambulance bay under-canopy light
+    const [ambX, ambZ] = obbToWorld(obb, 0, frontSign * (halfV + portProj * 0.45));
+    emit.pushOrientedBox(ambX, portY - 0.12, ambZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.38, 0.08, Math.min(0.8, portProj * 0.3), [1.0, 0.95, 0.86], true, true);
+    // Canopy Red Cross
+    emitRedCross(fasX + frontSign * obb.vx * 0.16, portY + 0.55, fasZ + frontSign * obb.vz * 0.16, 1.35);
+  }
   if (totalH >= 8.5) {
     const upperSize = clamp(totalH * 0.15, 1.8, 3.8);
     const upperY = Math.max(portY + upperSize + 1.4, yTop - upperSize * 0.95 - 0.6);
@@ -1040,64 +1099,71 @@ function emitMuseum(ctx, obb, emit) {
 
   // Monumental front colonnade & stepped terrace along primary facade
   const colW = clamp(obb.uLen * 0.56, 10.0, 28.0);
-  const portDepth = clamp(obb.vLen * 0.14, 2.4, 3.8);
+  const rawPortDepth = clamp(obb.vLen * 0.14, 2.4, 3.8);
+  const maxStairExt = clampFacadeProjV(ctx, obb, [-colW * 0.42, 0, colW * 0.42], frontSign * halfV, frontSign, rawPortDepth + 1.5);
+  const portDepth = maxStairExt > 0 ? clampFacadeProjV(ctx, obb, [-colW * 0.42, 0, colW * 0.42], frontSign * halfV, frontSign, rawPortDepth) : 0;
   const colH = clamp(totalH * 0.72, 5.2, 10.5);
   const stepRise = 0.85;
 
   // 3 wide front entrance stone steps + stylobate deck
-  for (let st = 0; st < 3; st++) {
-    const ext = portDepth + 1.5 - st * 0.52;
-    const [sx, sz] = obbToWorld(obb, 0, frontSign * (halfV + ext * 0.5));
-    emit.pushOrientedBox(sx, yBase + st * 0.28, sz, obb.ux, obb.uz, obb.vx, obb.vz, colW * 0.5 + (2 - st) * 0.45, 0.28, ext * 0.5, stepStone);
-  }
-
-  // Fluted front columns + vertical exhibition banners between bays
-  const nCols = clamp(Math.round(colW / 3.2) | 1, 5, 11); // odd count creates clear central entry bay
-  const colCenterV = frontSign * (halfV + portDepth - 0.55);
-  const colSpanU = colW - 1.4;
-  const colBaseY = yBase + stepRise;
-  const colShaftH = Math.max(3.6, colH - 0.7);
-  for (let c = 0; c < nCols; c++) {
-    const cu = -colSpanU * 0.5 + (c / (nCols - 1)) * colSpanU;
-    const [cxp, czp] = obbToWorld(obb, cu, colCenterV);
-    emit.pushOrientedBox(cxp, colBaseY, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.44, 0.34, 0.44, shadowStone);
-    emit.pushCylinder(cxp, colBaseY + 0.34, czp, 0.36, 0.30, colShaftH, 10, limestone);
-    emit.pushOrientedBox(cxp, colBaseY + 0.34 + colShaftH, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.46, 0.36, 0.46, limestone);
-
-    // Vertical cultural exhibition banners in outer bays (leaving central entry bay open)
-    if (c < nCols - 1 && Math.abs(c - (nCols - 2) * 0.5) > 0.6 && c % 2 === 0) {
-      const bu = cu + colSpanU / ((nCols - 1) * 2);
-      const [bx, bz] = obbToWorld(obb, bu, colCenterV - frontSign * 0.22);
-      const bannerCol = (c % 4 === 0) ? [0.74, 0.16, 0.20] : [0.16, 0.36, 0.66];
-      emit.pushOrientedBox(bx, colBaseY + colShaftH * 0.26, bz, obb.ux, obb.uz, obb.vx, obb.vz, 0.55, colShaftH * 0.58, 0.06, bannerCol, false, true);
+  if (maxStairExt > 0) {
+    const stepStride = Math.min(0.52, maxStairExt * 0.16);
+    for (let st = 0; st < 3; st++) {
+      const ext = Math.max(0.4, maxStairExt - st * stepStride);
+      const [sx, sz] = obbToWorld(obb, 0, frontSign * (halfV + ext * 0.5));
+      emit.pushOrientedBox(sx, yBase + st * 0.28, sz, obb.ux, obb.uz, obb.vx, obb.vz, colW * 0.5 + (2 - st) * 0.45, 0.28, ext * 0.5, stepStone);
     }
   }
 
-  // Entablature frieze beam + true angled triangular pediment
-  const entY = colBaseY + 0.34 + colShaftH + 0.36;
-  const entH = 0.85;
-  const [entX, entZ] = obbToWorld(obb, 0, frontSign * (halfV + portDepth * 0.5));
-  emit.pushOrientedBox(entX, entY, entZ, obb.ux, obb.uz, obb.vx, obb.vz, colW * 0.5 + 0.35, entH, portDepth * 0.5 + 0.25, limestone);
+  // Fluted front columns + vertical exhibition banners between bays + entablature + pediment
+  if (portDepth > 0) {
+    const nCols = clamp(Math.round(colW / 3.2) | 1, 5, 11); // odd count creates clear central entry bay
+    const colCenterV = frontSign * (halfV + portDepth - 0.55);
+    const colSpanU = colW - 1.4;
+    const colBaseY = yBase + stepRise;
+    const colShaftH = Math.max(3.6, colH - 0.7);
+    for (let c = 0; c < nCols; c++) {
+      const cu = -colSpanU * 0.5 + (c / (nCols - 1)) * colSpanU;
+      const [cxp, czp] = obbToWorld(obb, cu, colCenterV);
+      emit.pushOrientedBox(cxp, colBaseY, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.44, 0.34, 0.44, shadowStone);
+      emit.pushCylinder(cxp, colBaseY + 0.34, czp, 0.36, 0.30, colShaftH, 10, limestone);
+      emit.pushOrientedBox(cxp, colBaseY + 0.34 + colShaftH, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.46, 0.36, 0.46, limestone);
 
-  const pedY0 = entY + entH;
-  const pedRise = clamp(colW * 0.11, 1.5, 3.0);
-  const pedHalfU = colW * 0.5 + 0.45;
-  const vIn = frontSign * halfV;
-  const vOut = frontSign * (halfV + portDepth + 0.30);
-  const [pLIn, pRIn, pApexIn] = [obbToWorld(obb, -pedHalfU, vIn), obbToWorld(obb, pedHalfU, vIn), obbToWorld(obb, 0, vIn)];
-  const [pLOut, pROut, pApexOut] = [obbToWorld(obb, -pedHalfU, vOut), obbToWorld(obb, pedHalfU, vOut), obbToWorld(obb, 0, vOut)];
-  const fNx = frontSign * obb.vx, fNz = frontSign * obb.vz;
+      // Vertical cultural exhibition banners in outer bays (leaving central entry bay open)
+      if (c < nCols - 1 && Math.abs(c - (nCols - 2) * 0.5) > 0.6 && c % 2 === 0) {
+        const bu = cu + colSpanU / ((nCols - 1) * 2);
+        const [bx, bz] = obbToWorld(obb, bu, colCenterV - frontSign * 0.22);
+        const bannerCol = (c % 4 === 0) ? [0.74, 0.16, 0.20] : [0.16, 0.36, 0.66];
+        emit.pushOrientedBox(bx, colBaseY + colShaftH * 0.26, bz, obb.ux, obb.uz, obb.vx, obb.vz, 0.55, colShaftH * 0.58, 0.06, bannerCol, false, true);
+      }
+    }
 
-  if (frontSign > 0) {
-    emit.pushTri(pLOut[0], pedY0, pLOut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pROut[0], pedY0, pROut[1], fNx, 0, fNz, shadowStone);
-    emit.pushTri(pRIn[0], pedY0, pRIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pLIn[0], pedY0, pLIn[1], -fNx, 0, -fNz, shadowStone);
-    emit.pushQuad(pLIn[0], pedY0, pLIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pLOut[0], pedY0, pLOut[1], null, null, null, limestone);
-    emit.pushQuad(pApexIn[0], pedY0 + pedRise, pApexIn[1], pRIn[0], pedY0, pRIn[1], pROut[0], pedY0, pROut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], null, null, null, limestone);
-  } else {
-    emit.pushTri(pROut[0], pedY0, pROut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pLOut[0], pedY0, pLOut[1], fNx, 0, fNz, shadowStone);
-    emit.pushTri(pLIn[0], pedY0, pLIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pRIn[0], pedY0, pRIn[1], -fNx, 0, -fNz, shadowStone);
-    emit.pushQuad(pLOut[0], pedY0, pLOut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pLIn[0], pedY0, pLIn[1], null, null, null, limestone);
-    emit.pushQuad(pApexOut[0], pedY0 + pedRise, pApexOut[1], pROut[0], pedY0, pROut[1], pRIn[0], pedY0, pRIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], null, null, null, limestone);
+    // Entablature frieze beam + true angled triangular pediment
+    const entY = colBaseY + 0.34 + colShaftH + 0.36;
+    const entH = 0.85;
+    const [entX, entZ] = obbToWorld(obb, 0, frontSign * (halfV + portDepth * 0.5));
+    emit.pushOrientedBox(entX, entY, entZ, obb.ux, obb.uz, obb.vx, obb.vz, colW * 0.5 + 0.35, entH, portDepth * 0.5 + 0.25, limestone);
+
+    const pedY0 = entY + entH;
+    const pedRise = clamp(colW * 0.11, 1.5, 3.0);
+    const pedHalfU = colW * 0.5 + 0.45;
+    const vIn = frontSign * halfV;
+    const vOut = frontSign * (halfV + portDepth + 0.30);
+    const [pLIn, pRIn, pApexIn] = [obbToWorld(obb, -pedHalfU, vIn), obbToWorld(obb, pedHalfU, vIn), obbToWorld(obb, 0, vIn)];
+    const [pLOut, pROut, pApexOut] = [obbToWorld(obb, -pedHalfU, vOut), obbToWorld(obb, pedHalfU, vOut), obbToWorld(obb, 0, vOut)];
+    const fNx = frontSign * obb.vx, fNz = frontSign * obb.vz;
+
+    if (frontSign > 0) {
+      emit.pushTri(pLOut[0], pedY0, pLOut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pROut[0], pedY0, pROut[1], fNx, 0, fNz, shadowStone);
+      emit.pushTri(pRIn[0], pedY0, pRIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pLIn[0], pedY0, pLIn[1], -fNx, 0, -fNz, shadowStone);
+      emit.pushQuad(pLIn[0], pedY0, pLIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pLOut[0], pedY0, pLOut[1], null, null, null, limestone);
+      emit.pushQuad(pApexIn[0], pedY0 + pedRise, pApexIn[1], pRIn[0], pedY0, pRIn[1], pROut[0], pedY0, pROut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], null, null, null, limestone);
+    } else {
+      emit.pushTri(pROut[0], pedY0, pROut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pLOut[0], pedY0, pLOut[1], fNx, 0, fNz, shadowStone);
+      emit.pushTri(pLIn[0], pedY0, pLIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pRIn[0], pedY0, pRIn[1], -fNx, 0, -fNz, shadowStone);
+      emit.pushQuad(pLOut[0], pedY0, pLOut[1], pApexOut[0], pedY0 + pedRise, pApexOut[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], pLIn[0], pedY0, pLIn[1], null, null, null, limestone);
+      emit.pushQuad(pApexOut[0], pedY0 + pedRise, pApexOut[1], pROut[0], pedY0, pROut[1], pRIn[0], pedY0, pRIn[1], pApexIn[0], pedY0 + pedRise, pApexIn[1], null, null, null, limestone);
+    }
   }
 
   // Central Rooftop Crystalline Glass Pyramid or Vaulted Skylight Dome
@@ -1169,19 +1235,21 @@ function emitMall(ctx, obb, emit) {
   // Double-height glazed retail entrance portal + cantilevered glass marquee
   const portW = clamp(obb.uLen * 0.34, 8.0, 18.0);
   const portH = clamp(totalH * 0.58, 5.2, 8.2);
-  const marqProj = 3.2;
-  const [pCx, pCz] = obbToWorld(obb, 0, frontSign * (halfV + 0.35));
-  emit.pushOrientedBox(pCx, yBase, pCz, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.46, portH, 0.45, glassCol, true);
-  for (const colU of [-portW * 0.48, portW * 0.48]) {
-    const [cxp, czp] = obbToWorld(obb, colU, frontSign * (halfV + 0.55));
-    emit.pushOrientedBox(cxp, yBase, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.34, portH + 0.5, 0.48, steelCol);
-  }
+  const marqProj = clampFacadeProjV(ctx, obb, [-portW * 0.42, 0, portW * 0.42], frontSign * halfV, frontSign, 3.2);
+  if (marqProj > 0) {
+    const [pCx, pCz] = obbToWorld(obb, 0, frontSign * (halfV + 0.35));
+    emit.pushOrientedBox(pCx, yBase, pCz, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.46, portH, 0.45, glassCol, true);
+    for (const colU of [-portW * 0.48, portW * 0.48]) {
+      const [cxp, czp] = obbToWorld(obb, colU, frontSign * (halfV + 0.55));
+      emit.pushOrientedBox(cxp, yBase, czp, obb.ux, obb.uz, obb.vx, obb.vz, 0.34, portH + 0.5, 0.48, steelCol);
+    }
 
-  const [marqX, marqZ] = obbToWorld(obb, 0, frontSign * (halfV + marqProj * 0.5));
-  emit.pushOrientedBox(marqX, yBase + portH - 0.15, marqZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.52, 0.24, marqProj * 0.5, [0.26, 0.52, 0.72]);
-  const [fasX, fasZ] = obbToWorld(obb, 0, frontSign * (halfV + marqProj + 0.08));
-  emit.pushOrientedBox(fasX, yBase + portH + 0.05, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.54, 0.42, 0.14, amberSign, true);
-  emit.pushOrientedBox(marqX, yBase + portH - 0.26, marqZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.44, 0.08, 0.55, warmGlow, true, true);
+    const [marqX, marqZ] = obbToWorld(obb, 0, frontSign * (halfV + marqProj * 0.5));
+    emit.pushOrientedBox(marqX, yBase + portH - 0.15, marqZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.52, 0.24, marqProj * 0.5, [0.26, 0.52, 0.72]);
+    const [fasX, fasZ] = obbToWorld(obb, 0, frontSign * (halfV + marqProj + 0.08));
+    emit.pushOrientedBox(fasX, yBase + portH + 0.05, fasZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.54, 0.42, 0.14, amberSign, true);
+    emit.pushOrientedBox(marqX, yBase + portH - 0.26, marqZ, obb.ux, obb.uz, obb.vx, obb.vz, portW * 0.44, 0.08, Math.min(0.55, marqProj * 0.25), warmGlow, true, true);
+  }
 
   // Upper facade architectural signage fascia band
   if (totalH >= 8.0) {

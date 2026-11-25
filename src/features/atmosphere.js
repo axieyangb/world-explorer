@@ -9,7 +9,7 @@ import { initNightLights, NIGHT_LIGHT_UNIFORMS } from './night_lights.js'; // [n
 /**
  * Atmosphere system: continuous day/night cycle (real solar position at the current lat/lon,
  * 1 game day = 24 real minutes, starting from the real local solar time), moon + stars, weather
- * (clear / cloudy / rain / fog) with smooth transitions, and the single "time & weather" dock pill.
+ * (clear / cloudy / rain / snow / fog) with smooth transitions, and the single "time & weather" dock pill.
  *
  * Wiring (main.js): `this.atmosphere = initAtmosphere(this)` after the sky dome + shared materials
  * exist, and `this.atmosphere.update(dt)` once per frame. Everything else is driven from here.
@@ -67,18 +67,19 @@ function litFraction(h) {
 const FOG_GREY = new THREE.Color(0xa9b2ba);
 
 const WEATHER = {
-  clear: { cloud: 0.24, rain: 0, fog: 0 },
-  cloudy: { cloud: 0.72, rain: 0, fog: 0 },
-  rain: { cloud: 0.96, rain: 1, fog: 0.2 },
-  fog: { cloud: 0.62, rain: 0, fog: 1 },
+  clear: { cloud: 0.24, rain: 0, snow: 0, fog: 0 },
+  cloudy: { cloud: 0.72, rain: 0, snow: 0, fog: 0 },
+  rain: { cloud: 0.96, rain: 1, snow: 0, fog: 0.2 },
+  snow: { cloud: 0.78, rain: 0, snow: 0.85, fog: 0.22 },
+  fog: { cloud: 0.62, rain: 0, snow: 0, fog: 1 },
 };
-const WEATHER_ORDER = ['clear', 'cloudy', 'rain', 'fog'];
+const WEATHER_ORDER = ['clear', 'cloudy', 'rain', 'snow', 'fog'];
 
 const LABELS = {
   en: { time: 'Time', weather: 'Weather', now: 'Now', dawn: 'Dawn', noon: 'Noon', dusk: 'Dusk', night: 'Night',
-    clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' },
+    clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', snow: 'Snow', fog: 'Fog' },
   zh: { time: '时间', weather: '天气', now: '现在', dawn: '清晨', noon: '正午', dusk: '黄昏', night: '夜晚',
-    clear: '晴', cloudy: '多云', rain: '雨', fog: '雾' },
+    clear: '晴', cloudy: '多云', rain: '雨', snow: '下雪', fog: '雾' },
 };
 
 const smooth = (a, b, x) => {
@@ -132,6 +133,7 @@ class AtmosphereSystem {
     const w0 = WEATHER[this.weather];
     this.cloud = w0.cloud;
     this.rain = w0.rain;
+    this.snow = w0.snow || 0;
     this.fog = w0.fog;
     this.wet = w0.rain;
 
@@ -191,6 +193,7 @@ class AtmosphereSystem {
       daylight: Number(this.daylight.toFixed(3)),
       cloud: Number(this.cloud.toFixed(2)),
       rain: Number(this.rain.toFixed(2)),
+      snow: Number(this.snow.toFixed(2)),
       fog: Number(this.fog.toFixed(2)),
       wet: Number(this.wet.toFixed(2)),
       fogDensity: this.app.scene.fog ? this.app.scene.fog.density : 0,
@@ -247,6 +250,7 @@ class AtmosphereSystem {
       const t = WEATHER[w];
       this.cloud = t.cloud;
       this.rain = t.rain;
+      this.snow = t.snow || 0;
       this.fog = t.fog;
       this.wet = t.rain;
     }
@@ -307,6 +311,7 @@ class AtmosphereSystem {
     const k = 1 - Math.exp(-dt / 6);
     this.cloud = lerp(this.cloud, tgt.cloud, k);
     this.rain = lerp(this.rain, tgt.rain, k);
+    this.snow = lerp(this.snow, tgt.snow || 0, k);
     this.fog = lerp(this.fog, tgt.fog, k);
     const wetK = 1 - Math.exp(-dt / (tgt.rain > this.wet ? 15 : 60));
     this.wet = lerp(this.wet, tgt.rain, wetK);
@@ -341,6 +346,7 @@ class AtmosphereSystem {
     const fogAltFade = spaceLaunchActive ? (1 - smooth(1500, 4500, effectiveAltM)) : (1 - smooth(2500, 6000, effectiveAltM));
     const spaceStrat = spaceLaunchActive ? smooth(5000, 65000, effectiveAltM) : 0;
     const rain = this.rain * rainAltFade;
+    const snow = this.snow * rainAltFade;
     const fog = this.fog * fogAltFade;
 
     // Blend colors: time keyframes, then weather
@@ -380,7 +386,7 @@ class AtmosphereSystem {
       this.keyDir.set(m.x, Math.max(Math.abs(m.y), 0.45), m.z).normalize();
     }
     keyInt *= 1 - 0.5 * dayishOvc - 0.25 * ovc * nightW;
-    keyInt *= 1 - 0.25 * rain - 0.35 * fog;
+    keyInt *= 1 - 0.25 * rain - 0.35 * fog - 0.15 * snow;
 
     const hemiInt = lerp(blendNum('hemiInt'), KF.overcast.hemiInt, dayishOvc) * (1 - 0.12 * rain);
     const ambInt = lerp(blendNum('ambInt'), KF.overcast.ambInt, dayishOvc);
@@ -401,7 +407,7 @@ class AtmosphereSystem {
     }
     fogCol.lerp(
       this._fogGrey.copy(FOG_GREY).multiplyScalar(0.12 + 0.88 * rawDaylight),
-      Math.min(1, fog + 0.4 * rain)
+      Math.min(1, fog + 0.4 * rain + 0.22 * snow)
     );
     // [night] urban light pollution: grows with how many street lamps are around (rural places stay dark),
     // brighter under cloud / in fog where the light scatters back down
@@ -471,7 +477,7 @@ class AtmosphereSystem {
     u.uCloudCover.value = this.cloud;
     u.uCloudLit.value.copy(c.cloudLit);
     u.uCloudDark.value.copy(c.cloudDark);
-    u.uFogMix.value = Math.min(1, fog * 0.9 + rain * 0.35);
+    u.uFogMix.value = Math.min(1, fog * 0.9 + rain * 0.35 + snow * 0.25);
     // sky shader writes raw (no tone map / sRGB), so hand it the display-space fog color to match fogged terrain
     if (spaceStrat > 0.001) {
       u.uZenithColor.value.lerp(this._spaceZenith, spaceStrat);
@@ -488,6 +494,7 @@ class AtmosphereSystem {
     SURFACE_UNIFORMS.uAtmoTime.value = this.time;
     SURFACE_UNIFORMS.uWet.value = this.wet;
     SURFACE_UNIFORMS.uRain.value = rain;
+    SURFACE_UNIFORMS.uSnowCover.value = this.snow * 0.65;
     SURFACE_UNIFORMS.uSkyZenith.value.copy(c.zenith).lerp(fogCol, fog * 0.8);
     SURFACE_UNIFORMS.uSkyHorizon.value.copy(c.horizon).lerp(fogCol, fog * 0.8);
     SURFACE_UNIFORMS.uLightLevel.value = 0.12 + 0.88 * this.daylight;
