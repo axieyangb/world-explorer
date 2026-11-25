@@ -114,6 +114,7 @@ import { getSignalPhase } from "./features/signals.js";
 import { SpaceLaunchSystem } from "./features/space_launch_system.js"; // [feature/space-launch]
 import { AmbientAudio } from "./features/ambient_audio.js";
 import { ScenicTourAndChallenges, SCENIC_STOPS } from "./features/scenic_tour.js";
+import { WildlifeSystem } from "./features/wildlife.js";
 const CHUNK_SIZE = 1000;
 const HALF_WORLD = 20000;
 const GRID_DIM = 40;
@@ -145,7 +146,7 @@ const FRAME_STEPS = [
   "streetDetail.update", "vegetation.update", "places.update", "airliner.updateAmbient", "railTransit.update",
   "liveSky.update", "liveWeather.update", "aurora.update", "seaState.update", "satellites.update",
   "reflections.update", "venueRides.update", "poiVenues.update", "placesInfo.update", "landmarks.update",
-  "scenicTour.update", "mapSystem.updateMinimap",
+  "scenicTour.update", "wildlife.update", "mapSystem.updateMinimap",
 ].map((step) => step.split("."));
 
 // Shown when the WebGL context is lost (GPU reset, driver crash, too many tabs). The scene does not survive
@@ -506,7 +507,7 @@ class WorldExplorerApp {
     this._demGen = 0;
     try {
       const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
-      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261125_r1" : null);
+      const workerUrl = window.__CHUNK_WORKER_BLOB_URL__ || (isHttp ? "src/chunk_worker.js?v=20261125_r2" : null);
       if (!workerUrl) return;
       const opts = window.__CHUNK_WORKER_BLOB_URL__ ? undefined : { type: "module" };
       for (let i = 0; i < CHUNK_WORKERS; i++) {
@@ -752,6 +753,7 @@ class WorldExplorerApp {
     this.liveWeather = initLiveWeather(this); // [live-sky-weather] real weather -> atmosphere
     this.aurora = initAurora(this); // [aurora] live NOAA aurora nowcast -> night sky
     this.seaState = initSeaState(this); // [sea-state] live waves/swell -> water shader + ship motion
+    this.wildlife = new WildlifeSystem(this);
     this.satellites = initSatellites(this); // [satellites] real satellites + ISS in the night sky
     this.reflections = new ReflectionProbe(this.renderer, this.skyDome); // [hero-vehicles] live-sky reflections on the player's car
     this.nitroFx = new NitroFx(this); // [nitro-fx] boost flames, sparks, trails, speed lines, shake, audio
@@ -2226,6 +2228,7 @@ class WorldExplorerApp {
 
   /** A teleport arrives at rest at this.pos: FSD off, no carried fall, boat left behind, airliner moved along. */
   _resetMotionForTeleport() {
+    this.wildlife?.resetForTeleport?.();
     this._clearDriftVfx();
     this._resetBrakeLights();
     if (this.fsd && this.fsd.active) this.stopFsd();
@@ -5815,6 +5818,7 @@ class WorldExplorerApp {
     if (this.placesInfo) this.placesInfo.update(dt); // places-info
     if (this.landmarks) this.landmarks.update(dt); // feature/famous-landmarks
     if (this.scenicTour) this.scenicTour.update(dt);
+    if (this.wildlife) this.wildlife.update(dt);
     this._updateHud();
 
     if (this.skyDome && this.skyDome.mesh) {

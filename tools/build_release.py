@@ -118,6 +118,7 @@ MOD_ID_MAP = {
     'src/features/hero_heli.js': '__MOD_hero_heli',  # [hero-vehicles]
     'src/features/nitro_fx.js': '__MOD_nitro_fx',  # [nitro-fx]
     'src/features/sea_state.js': '__MOD_sea_state',  # [sea-state]
+    'src/features/wildlife.js': '__MOD_wildlife',
     'src/features/satellites.js': '__MOD_satellites',  # [satellites]
     'src/navigation.js': '__MOD_navigation',
     'src/map_modal.js': '__MOD_map_modal',
